@@ -1,0 +1,73 @@
+{
+  "id": "bastion",
+  "name": "Bastion",
+  "archetype": "frontline",
+  "maxHp": 130,
+  "abilities": [
+    {
+      "id": "crushing_slam",
+      "name": "Crushing Slam",
+      "phase": "blast",
+      "shape": "cone",
+      "range": 2,
+      "cooldown": 0,
+      "energyGain": 8,
+      "effects": [{ "kind": "damage", "amount": 24 }],
+      "description": "Short cone smash. Melee range — ignores cover."
+    },
+    {
+      "id": "bulwark",
+      "name": "Bulwark",
+      "phase": "prep",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 3,
+      "energyGain": 6,
+      "effects": [{ "kind": "shield", "amount": 30, "duration": 1 }],
+      "description": "Raise a 30-point shield for this turn. The classic answer to a predicted burst."
+    },
+    {
+      "id": "ram_charge",
+      "name": "Ram Charge",
+      "phase": "dash",
+      "shape": "path",
+      "range": 4,
+      "cooldown": 3,
+      "energyGain": 8,
+      "effects": [
+        { "kind": "damage", "amount": 15 },
+        { "kind": "knockback", "amount": 1 }
+      ],
+      "description": "Charge in a straight line; the first enemy hit takes 15 damage and is knocked back 1 square (losing their Move)."
+    },
+    {
+      "id": "chain_hook",
+      "name": "Chain Hook",
+      "phase": "blast",
+      "shape": "line",
+      "range": 5,
+      "cooldown": 3,
+      "energyGain": 10,
+      "effects": [
+        { "kind": "damage", "amount": 10 },
+        { "kind": "pull", "amount": 2 }
+      ],
+      "description": "Hook the first enemy in a line: 10 damage, dragged 2 squares toward Bastion, Move cancelled. Sets up next turn's Slam."
+    }
+  ],
+  "ultimate": {
+    "id": "fortress_protocol",
+    "name": "Fortress Protocol",
+    "phase": "prep",
+    "shape": "self",
+    "range": 0,
+    "cooldown": 0,
+    "energyGain": 0,
+    "effects": [
+      { "kind": "shield", "amount": 50, "duration": 2 },
+      { "kind": "unstoppable", "duration": 2 },
+      { "kind": "might", "duration": 2 }
+    ],
+    "description": "For 2 turns: 50 shield, Unstoppable, and Might. Walk at them. (100 energy)"
+  }
+}

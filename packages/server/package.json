@@ -1,0 +1,7 @@
+{
+  "name": "@cards/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker room server — implemented at M3. wrangler is added as a devDependency then."
+}

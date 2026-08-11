@@ -1,0 +1,73 @@
+{
+  "id": "wisp",
+  "name": "Wisp",
+  "archetype": "trickster",
+  "maxHp": 85,
+  "abilities": [
+    {
+      "id": "dagger_flurry",
+      "name": "Dagger Flurry",
+      "phase": "blast",
+      "shape": "cone",
+      "range": 2,
+      "cooldown": 0,
+      "energyGain": 8,
+      "effects": [{ "kind": "damage", "amount": 22 }],
+      "description": "Close-range flurry. Melee — ignores cover. (M4 design note: +8 bonus vs targets with no cover — ENGINE ASK.)"
+    },
+    {
+      "id": "blink",
+      "name": "Blink",
+      "phase": "dash",
+      "shape": "square",
+      "range": 4,
+      "cooldown": 2,
+      "energyGain": 4,
+      "effects": [{ "kind": "teleport" }],
+      "description": "Teleport to any open square within 4. Ignores walls. The best dodge in the game — on a 2-turn clock."
+    },
+    {
+      "id": "veil_decoy",
+      "name": "Veil & Decoy",
+      "phase": "prep",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 4,
+      "energyGain": 6,
+      "effects": [
+        { "kind": "stealth", "duration": 1 },
+        { "kind": "decoy", "duration": 1 }
+      ],
+      "description": "Vanish for a turn and leave a decoy at your current square. (Decoy behavior: OPEN ruling in edge-cases.md — Designer specs before implementation.)"
+    },
+    {
+      "id": "bola",
+      "name": "Bola",
+      "phase": "blast",
+      "shape": "line",
+      "range": 6,
+      "cooldown": 2,
+      "energyGain": 8,
+      "effects": [
+        { "kind": "damage", "amount": 12 },
+        { "kind": "slow", "duration": 1 }
+      ],
+      "description": "Thrown bola: 12 damage and Slow for a turn. Wisp's tool for keeping Bastion off her and catching Vex mid-rotation."
+    }
+  ],
+  "ultimate": {
+    "id": "shadowstep_strike",
+    "name": "Shadowstep Strike",
+    "phase": "dash",
+    "shape": "square",
+    "range": 7,
+    "cooldown": 0,
+    "energyGain": 0,
+    "effects": [
+      { "kind": "teleport" },
+      { "kind": "damage", "amount": 40 },
+      { "kind": "untargetable", "duration": 1 }
+    ],
+    "description": "Untargetable this turn; appear at the aimed square and strike any adjacent enemy for 40. The ultimate read — arrives during Dash, before their Blast lands. (100 energy)"
+  }
+}

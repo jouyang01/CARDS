@@ -1,0 +1,68 @@
+{
+  "id": "vex",
+  "name": "Vex",
+  "archetype": "firepower",
+  "maxHp": 95,
+  "abilities": [
+    {
+      "id": "rail_shot",
+      "name": "Rail Shot",
+      "phase": "blast",
+      "shape": "line",
+      "range": 8,
+      "cooldown": 0,
+      "energyGain": 8,
+      "effects": [{ "kind": "damage", "amount": 26 }],
+      "description": "Piercing shot along a line. Vex's bread and butter — punishes anyone standing still."
+    },
+    {
+      "id": "frag_grenade",
+      "name": "Frag Grenade",
+      "phase": "blast",
+      "shape": "circle",
+      "range": 6,
+      "radius": 2,
+      "cooldown": 3,
+      "energyGain": 10,
+      "delayTurns": 1,
+      "effects": [{ "kind": "damage", "amount": 34 }],
+      "description": "Lobbed grenade that detonates at the aimed area NEXT turn. Zone denial — forces the opponent to move where you want."
+    },
+    {
+      "id": "combat_roll",
+      "name": "Combat Roll",
+      "phase": "dash",
+      "shape": "path",
+      "range": 3,
+      "cooldown": 2,
+      "energyGain": 4,
+      "effects": [{ "kind": "teleport" }],
+      "description": "Quick roll up to 3 squares. Dodges Blast-phase attacks aimed at your old position."
+    },
+    {
+      "id": "overwatch_trap",
+      "name": "Overwatch Trap",
+      "phase": "prep",
+      "shape": "square",
+      "range": 4,
+      "cooldown": 3,
+      "energyGain": 5,
+      "effects": [
+        { "kind": "trap", "amount": 20 },
+        { "kind": "reveal", "duration": 2 }
+      ],
+      "description": "Plants a hidden trap. Triggers on entry: 20 damage and Reveals the victim for 2 turns."
+    }
+  ],
+  "ultimate": {
+    "id": "lance_of_dawn",
+    "name": "Lance of Dawn",
+    "phase": "blast",
+    "shape": "line",
+    "range": 99,
+    "cooldown": 0,
+    "energyGain": 0,
+    "effects": [{ "kind": "damage", "amount": 45 }],
+    "description": "Map-length beam along a chosen lane. The lane is telegraphed to the opponent during their decision phase NEXT-turn pressure; landing it is a read. (100 energy)"
+  }
+}

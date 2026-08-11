@@ -1,0 +1,14 @@
+{
+  "name": "cards",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm run test -w @cards/engine",
+    "dev": "npm run dev -w @cards/client",
+    "build": "npm run build -w @cards/client",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

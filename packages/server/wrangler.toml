@@ -1,0 +1,14 @@
+# Cloudflare Worker config — activated at M3 (docs/BACKLOG.md item 17).
+# Deploy with: npx wrangler deploy   (requires free Cloudflare account login)
+name = "cards-rooms"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+# Durable Object bindings will be added at M3:
+# [[durable_objects.bindings]]
+# name = "ROOM"
+# class_name = "GameRoom"
+#
+# [[migrations]]
+# tag = "v1"
+# new_sqlite_classes = ["GameRoom"]

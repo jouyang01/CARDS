@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cards — 1v1 tactics duel</title>
+    <style>
+      :root {
+        --bg: #12141a;
+        --panel: #1b1e27;
+        --grid-line: #2a2e3b;
+        --open: #20242f;
+        --wall: #4a5065;
+        --cover: #6b5b3e;
+        --brush: #2e4632;
+        --spawn0: #4f8cff;
+        --spawn1: #ff6b5e;
+        --text: #d7dae2;
+      }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+        font-family: system-ui, -apple-system, sans-serif; }
+      #app { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; }
+      h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: 0.5px; }
+      #board { background: var(--panel); border-radius: 8px; box-shadow: 0 4px 24px rgb(0 0 0 / 0.4); }
+      #legend { display: flex; gap: 16px; font-size: 13px; opacity: 0.85; }
+      .chip { display: inline-flex; align-items: center; gap: 6px; }
+      .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+      footer { font-size: 12px; opacity: 0.5; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <h1>CARDS — Duel Arena</h1>
+      <div id="board"></div>
+      <div id="legend"></div>
+      <footer>M0 scaffold · engine + netcode land in M1–M3 (see docs/BACKLOG.md)</footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
