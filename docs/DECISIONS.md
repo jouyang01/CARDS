@@ -20,3 +20,23 @@
   edge-mounted half-walls are finer-grained; revisit only if playtests demand it.
 - **Root does not cancel an already-locked dash in v1.** Simpler, and preserves the
   dash-as-escape read. Revisit if it plays badly (flagged in edge-cases.md).
+
+## 2026-08-11 — Movement rulings (Builder, BACKLOG item 1)
+
+Implementing board + movement surfaced four gaps the spec and `edge-cases.md` do not
+cover, each resolved with the smallest call that keeps the engine deterministic.
+**(1) Orthogonal-only, so corner-cutting is structural, not policed.** GAME_SPEC §3 says
+"orthogonal steps; no diagonal corner cutting" — since a diagonal is never a legal step,
+a unit walking around a wall corner simply pays for both orthogonal squares; there is no
+separate corner rule and no diagonal movement anywhere in the engine.
+**(2) Haste and Slow are summed as percentage deltas before a single round-down**
+(`floor(base * (100 + haste − slow) / 100)`), so holding both nets back to the base
+budget — the same shape as the Might/Weaken net-zero rule in BACKLOG item 5, rather than
+applying two sequential round-downs whose result would depend on order.
+**(3) Dead units block nothing.** `edge-cases.md` rules that walls, cover, enemies and
+(in v1) allies block entry and pass-through; a unit at 0 HP is off the board until
+respawn, so it neither occupies nor blocks its square. **(4) Self-intersecting move paths
+are legal**, costing one budget point per square entered. Looping is never advantageous,
+and forbidding it would be an extra rule to specify against contested-square and trap
+resolution later. Root is enforced by zeroing the movement budget, so the same helper
+answers both "is this path legal" and "what may the UI highlight".
