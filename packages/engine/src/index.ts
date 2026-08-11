@@ -1,6 +1,8 @@
 export * from './types.js';
 export * from './constants.js';
 export * from './validate.js';
+export * from './board.js';
+export * from './movement.js';
 
 import type { GameState, MapDef, PlayerOrders, TurnResult } from './types.js';
 
