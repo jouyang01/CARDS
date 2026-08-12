@@ -18,12 +18,9 @@ export interface Vec2 {
 /**
  * Which of the two teams a unit / order belongs to. The engine is team-based
  * and player-count-blind (GAME_SPEC §1); the room layer maps players to the
- * characters they control. `PlayerId` remains as a deprecated alias so existing
- * callers keep compiling while the codebase migrates to team-centric names.
+ * characters they control (ARCHITECTURE "Teams vs. players").
  */
 export type TeamId = 0 | 1;
-/** @deprecated Use {@link TeamId}. Retained for back-compat during the rescope. */
-export type PlayerId = TeamId;
 
 // ── Phases ──────────────────────────────────────────────────────────────────
 
@@ -123,7 +120,7 @@ export interface MapDef {
   cover: Vec2[];
   /** Concealment patches. */
   brush: Vec2[];
-  /** spawns[playerId] = list of spawn squares (N units per side later). */
+  /** spawns[teamId] = list of that team's spawn squares (one per character). */
   spawns: [Vec2[], Vec2[]];
 }
 
@@ -140,7 +137,7 @@ export interface StatusInstance {
 export interface UnitState {
   unitId: string;
   characterId: string;
-  owner: PlayerId;
+  owner: TeamId;
   pos: Vec2;
   hp: number;
   /** Full HP for this character; heals cap here and respawn restores to it. */
@@ -156,7 +153,7 @@ export interface UnitState {
 
 export interface TrapState {
   id: string;
-  owner: PlayerId;
+  owner: TeamId;
   pos: Vec2;
   damage: number;
   /** Applied to whoever triggers it. */
@@ -187,7 +184,7 @@ export interface GameState {
   suddenDeath: boolean;
 }
 
-// ── Orders (what a player submits each turn) ────────────────────────────────
+// ── Orders (the per-team order set resolveTurn consumes) ────────────────────
 
 export interface AbilityOrder {
   abilityId: string;
@@ -204,8 +201,13 @@ export interface UnitOrders {
   sprint?: boolean;
 }
 
+/**
+ * One team's orders for a turn. The room layer merges each player's 1–2
+ * `UnitOrders` into their team's set before calling `resolveTurn`; the engine
+ * itself is player-count-blind (ARCHITECTURE "Teams vs. players").
+ */
 export interface PlayerOrders {
-  player: PlayerId;
+  team: TeamId;
   units: UnitOrders[];
 }
 
@@ -223,12 +225,12 @@ export type TurnEvent =
   | { type: 'statusApplied'; unitId: string; status: EffectKind; duration: number }
   | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
-  | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: PlayerId }
+  | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
   | { type: 'trapTriggered'; trapId: string; unitId: string }
-  | { type: 'death'; unitId: string; killer: PlayerId }
+  | { type: 'death'; unitId: string; killer: TeamId }
   | { type: 'respawn'; unitId: string; pos: Vec2 }
   | { type: 'energyGained'; unitId: string; amount: number }
-  | { type: 'gameEnd'; result: 'win' | 'draw'; winner?: PlayerId };
+  | { type: 'gameEnd'; result: 'win' | 'draw'; winner?: TeamId };
 
 export interface TurnResult {
   state: GameState;

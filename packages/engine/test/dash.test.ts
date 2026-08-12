@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTurn, type Roster } from '../src/resolve.js';
 import { makeMap, makeState, makeUnit } from './helpers.js';
-import type { AbilityDef, CharacterDef, GameState, PlayerId, TurnEvent, UnitOrders } from '../src/types.js';
+import type { AbilityDef, CharacterDef, GameState, TeamId, TurnEvent, UnitOrders } from '../src/types.js';
 
 const ability = (over: Partial<AbilityDef> & Pick<AbilityDef, 'id'>): AbilityDef => ({
   name: over.id,
@@ -32,7 +32,7 @@ const roster: Roster = { 'test-char': char };
 const OPEN = () => makeMap(Array.from({ length: 9 }, () => '.'.repeat(9)));
 
 function run(state: GameState, u0: UnitOrders[], u1: UnitOrders[], map = OPEN()) {
-  return resolveTurn(state, map, [{ player: 0 as PlayerId, units: u0 }, { player: 1 as PlayerId, units: u1 }], roster);
+  return resolveTurn(state, map, [{ team: 0 as TeamId, units: u0 }, { team: 1 as TeamId, units: u1 }], roster);
 }
 const unit = (s: GameState, id: string) => s.units.find((u) => u.unitId === id)!;
 

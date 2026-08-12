@@ -42,7 +42,7 @@ describe('allied contested square (resolution)', () => {
     const { state } = resolveTurn(
       makeState([a1, a2]),
       OPEN(9),
-      [{ player: 0, units: [{ unitId: 'a1', movePath: [{ x: 1, y: 0 }] }, { unitId: 'a2', movePath: [{ x: 1, y: 0 }] }] }, { player: 1, units: [] }],
+      [{ team: 0, units: [{ unitId: 'a1', movePath: [{ x: 1, y: 0 }] }, { unitId: 'a2', movePath: [{ x: 1, y: 0 }] }] }, { team: 1, units: [] }],
       {} as Roster,
     );
     expect(unit(state, 'a1').pos).toEqual({ x: 0, y: 0 });

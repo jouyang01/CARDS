@@ -15,7 +15,7 @@ const char: CharacterDef = {
 const roster: Roster = { 'test-char': char };
 const OPEN = () => makeMap(Array.from({ length: 9 }, () => '.'.repeat(9)));
 const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
-  resolveTurn(s, OPEN(), [{ player: 0, units: u0 }, { player: 1, units: u1 }], roster);
+  resolveTurn(s, OPEN(), [{ team: 0, units: u0 }, { team: 1, units: u1 }], roster);
 
 describe('format table', () => {
   it('matches GAME_SPEC §1', () => {

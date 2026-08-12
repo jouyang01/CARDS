@@ -45,8 +45,8 @@ import type {
   EffectKind,
   GameState,
   MapDef,
-  PlayerId,
   PlayerOrders,
+  TeamId,
   TrapState,
   TurnEvent,
   TurnResult,
@@ -127,17 +127,17 @@ function isSelfOrUtility(def: AbilityDef): boolean {
  * Validate a single unit's order against the current draft, dropping any illegal
  * component (an unusable ability, an illegal path) rather than the whole order —
  * deterministic rejection, never a throw. Returns `undefined` if the unit is not
- * this player's or is dead.
+ * this team's or is dead.
  */
 function planUnit(
   board: Board,
   draft: GameState,
   roster: Roster,
-  player: PlayerId,
+  team: TeamId,
   order: UnitOrders,
 ): UnitPlan | undefined {
   const unit = draft.units.find((u) => u.unitId === order.unitId);
-  if (unit === undefined || unit.owner !== player || !unit.alive) return undefined;
+  if (unit === undefined || unit.owner !== team || !unit.alive) return undefined;
 
   let ability: PlannedAbility | undefined;
   const found = order.ability !== undefined ? findAbility(roster, unit.characterId, order.ability.abilityId) : undefined;
@@ -202,7 +202,7 @@ function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonl
 // ── Death ───────────────────────────────────────────────────────────────────
 
 /** Mark a unit dead (mid-phase), tally the kill and clear its statuses. */
-function killUnit(draft: GameState, victim: UnitState, killer: PlayerId, events: TurnEvent[]): void {
+function killUnit(draft: GameState, victim: UnitState, killer: TeamId, events: TurnEvent[]): void {
   if (!victim.alive) return;
   victim.alive = false;
   victim.hp = 0;
@@ -821,7 +821,7 @@ export function resolveTurn(
   const plans: UnitPlan[] = [];
   for (const po of orders) {
     for (const uo of po.units) {
-      const plan = planUnit(board, draft, roster, po.player, uo);
+      const plan = planUnit(board, draft, roster, po.team, uo);
       if (plan !== undefined) plans.push(plan);
     }
   }

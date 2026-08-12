@@ -20,7 +20,7 @@ const char: CharacterDef = {
 const roster: Roster = { 'test-char': char };
 const OPEN = () => makeMap(Array.from({ length: 11 }, () => '.'.repeat(11)));
 const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
-  resolveTurn(s, OPEN(), [{ player: 0, units: u0 }, { player: 1, units: u1 }], roster);
+  resolveTurn(s, OPEN(), [{ team: 0, units: u0 }, { team: 1, units: u1 }], roster);
 const unit = (s: GameState, id: string) => s.units.find((u) => u.unitId === id)!;
 
 describe('ally-aware AoE effects (no friendly fire)', () => {

@@ -41,12 +41,12 @@ const freshState = (): GameState => makeState([makeUnit('A', 0, { x: 1, y: 7 }),
 /** A fixed 12-turn order log: approach, then trade line shots down row 7. */
 function orderLog(): [PlayerOrders, PlayerOrders][] {
   const approach: [PlayerOrders, PlayerOrders] = [
-    { player: 0, units: [{ unitId: 'A', sprint: true, movePath: [2, 3, 4, 5, 6].map((x) => ({ x, y: 7 })) }] },
-    { player: 1, units: [{ unitId: 'B', sprint: true, movePath: [12, 11, 10, 9, 8].map((x) => ({ x, y: 7 })) }] },
+    { team: 0, units: [{ unitId: 'A', sprint: true, movePath: [2, 3, 4, 5, 6].map((x) => ({ x, y: 7 })) }] },
+    { team: 1, units: [{ unitId: 'B', sprint: true, movePath: [12, 11, 10, 9, 8].map((x) => ({ x, y: 7 })) }] },
   ];
   const trade: [PlayerOrders, PlayerOrders] = [
-    { player: 0, units: [{ unitId: 'A', ability: { abilityId: 'shoot', target: [{ x: 14, y: 7 }] } }] },
-    { player: 1, units: [{ unitId: 'B', ability: { abilityId: 'shoot', target: [{ x: 0, y: 7 }] } }] },
+    { team: 0, units: [{ unitId: 'A', ability: { abilityId: 'shoot', target: [{ x: 14, y: 7 }] } }] },
+    { team: 1, units: [{ unitId: 'B', ability: { abilityId: 'shoot', target: [{ x: 0, y: 7 }] } }] },
   ];
   return [approach, ...Array.from({ length: 11 }, () => trade)];
 }

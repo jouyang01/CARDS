@@ -66,7 +66,7 @@ describe('respawn to the first unoccupied team spawn square', () => {
     const a1 = makeUnit('a1', 0, { x: 0, y: 0 }); // living ally sitting on spawn[0]
     const a2 = makeUnit('a2', 0, { x: 5, y: 5 }, { alive: false, hp: 0, respawnIn: 1 }); // due to respawn now
     const enemy = makeUnit('E', 1, { x: 8, y: 8 });
-    const { state, events } = resolveTurn(makeState([a1, a2, enemy]), map, [{ player: 0, units: [] }, { player: 1, units: [] }], {} as Roster);
+    const { state, events } = resolveTurn(makeState([a1, a2, enemy]), map, [{ team: 0, units: [] }, { team: 1, units: [] }], {} as Roster);
     expect(unit(state, 'a1').pos).toEqual({ x: 0, y: 0 }); // ally held its spawn
     expect(unit(state, 'a2').alive).toBe(true);
     expect(unit(state, 'a2').pos).toEqual({ x: 0, y: 2 }); // respawned to the first free spawn

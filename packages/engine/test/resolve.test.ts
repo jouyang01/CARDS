@@ -5,7 +5,7 @@ import type {
   AbilityDef,
   CharacterDef,
   GameState,
-  PlayerId,
+  TeamId,
   TurnEvent,
   UnitOrders,
   Vec2,
@@ -45,11 +45,11 @@ const roster: Roster = { 'test-char': testChar };
 
 const OPEN = () => makeMap(Array.from({ length: 9 }, () => '.'.repeat(9)));
 
-function orders(player: PlayerId, units: UnitOrders[]) {
-  return { player, units };
+function orders(team: TeamId, units: UnitOrders[]) {
+  return { team, units };
 }
 
-/** Run one turn from a state with per-player unit orders. */
+/** Run one turn from a state with per-team unit orders. */
 function run(state: GameState, u0: UnitOrders[], u1: UnitOrders[], map = OPEN()) {
   return resolveTurn(state, map, [orders(0, u0), orders(1, u1)], roster);
 }
