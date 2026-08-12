@@ -27,7 +27,7 @@ import {
   vecKey,
 } from './board.js';
 import { HASTE_PCT, MOVE_RANGE, SLOW_PCT, SPRINT_RANGE } from './constants.js';
-import type { EffectKind, GameState, TerrainKind, UnitState, Vec2 } from './types.js';
+import type { EffectKind, GameState, TerrainKind, TurnEvent, UnitState, Vec2 } from './types.js';
 
 // ── Statuses that bear on movement ──────────────────────────────────────────
 
@@ -206,4 +206,134 @@ export function validateMovePath(
     prev = p;
   }
   return { valid: true, cost: path.length };
+}
+
+// ── Move-phase resolution (simultaneous) ────────────────────────────────────
+
+/** A unit's already-validated Move-phase path (empty = holds). */
+export interface MovePlan {
+  unitId: string;
+  path: readonly Vec2[];
+}
+
+/**
+ * Resolve the Move phase: every unit walks its path **simultaneously**, one
+ * synchronised step at a time. Mutates the moving units' `pos` in `state` and
+ * returns the `moveStep` events in resolution order (the rendering contract).
+ *
+ * Simultaneity rules (GAME_SPEC §2 Move, docs/design/edge-cases.md, and the
+ * step-timing ruling in docs/DECISIONS.md):
+ * - **Contested square** — when two or more units would enter the *same* square
+ *   on the same step, none of them do; each stops on the square it last
+ *   reached (edge-cases "Contested square").
+ * - A unit whose next square is already held by a unit that is *not* moving this
+ *   step (a stopped or never-moving unit) is blocked and stops there too. Paths
+ *   were validated against the starting board, so this only bites on squares a
+ *   stopping unit newly occupies — a unit that arrives a step earlier holds the
+ *   square against a later arrival.
+ * - Stopping is for the rest of the phase; the unit's remaining path is dropped.
+ *
+ * Trap triggers, knockback's Move-cancellation, and death mid-path are later
+ * backlog items (7–10) and deliberately absent here.
+ */
+export function resolveMovePhase(
+  board: Board,
+  state: GameState,
+  plans: readonly MovePlan[],
+): TurnEvent[] {
+  const events: TurnEvent[] = [];
+  const byId = new Map(state.units.map((u) => [u.unitId, u] as const));
+
+  interface Mover {
+    unit: UnitState;
+    path: readonly Vec2[];
+    /** Index of the next square to step onto. */
+    idx: number;
+    /** False once the unit has stopped or finished; it proposes no more steps. */
+    active: boolean;
+  }
+
+  // Movers in `plans` order (the caller builds it in state.units order, so the
+  // whole phase is deterministic). Dead units and empty paths never move.
+  const movers: Mover[] = [];
+  for (const plan of plans) {
+    const unit = byId.get(plan.unitId);
+    if (unit === undefined || !unit.alive || plan.path.length === 0) continue;
+    movers.push({ unit, path: plan.path, idx: 0, active: true });
+  }
+  if (!inBoundsPathGuard(board, movers)) return events;
+
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+
+    // Each still-active mover proposes its next square.
+    const proposals = new Map<string, Vec2>();
+    for (const m of movers) {
+      if (m.active && m.idx < m.path.length) proposals.set(m.unit.unitId, m.path[m.idx]!);
+    }
+    if (proposals.size === 0) break;
+
+    // Fix-point: a unit whose target is blocked or contested stops, which frees
+    // its old square as an obstacle and may in turn stop another unit. Iterate
+    // until the moving set is stable.
+    const moving = new Set<string>(proposals.keys());
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const held = new Set<string>();
+      for (const u of state.units) {
+        if (u.alive && !moving.has(u.unitId)) held.add(vecKey(u.pos));
+      }
+      const targetCount = new Map<string, number>();
+      for (const id of moving) {
+        const k = vecKey(proposals.get(id)!);
+        targetCount.set(k, (targetCount.get(k) ?? 0) + 1);
+      }
+      const stopping: string[] = [];
+      for (const id of moving) {
+        const k = vecKey(proposals.get(id)!);
+        if (held.has(k) || (targetCount.get(k) ?? 0) >= 2) stopping.push(id);
+      }
+      for (const id of stopping) {
+        moving.delete(id);
+        changed = true;
+      }
+    }
+
+    // Apply: movers in `moving` advance; the rest stop for the phase.
+    for (const m of movers) {
+      if (!m.active || m.idx >= m.path.length) continue;
+      if (!moving.has(m.unit.unitId)) {
+        m.active = false;
+        continue;
+      }
+      const from = { x: m.unit.pos.x, y: m.unit.pos.y };
+      const target = m.path[m.idx]!;
+      const to = { x: target.x, y: target.y };
+      events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to });
+      m.unit.pos = to;
+      m.idx += 1;
+      progressed = true;
+      if (m.idx >= m.path.length) m.active = false;
+    }
+  }
+
+  return events;
+}
+
+/**
+ * Defensive guard: a caller should only pass paths that already cleared
+ * `validateMovePath`, so every square is in bounds. If one is not, resolve
+ * nothing rather than walk a unit off the board — determinism over a partial
+ * mutation.
+ */
+function inBoundsPathGuard(
+  board: Board,
+  movers: readonly { path: readonly Vec2[] }[],
+): boolean {
+  for (const m of movers) {
+    for (const p of m.path) if (!inBounds(board, p)) return false;
+  }
+  return true;
 }

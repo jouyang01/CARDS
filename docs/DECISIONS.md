@@ -102,3 +102,35 @@ playtests find corner-hugging too easy to shoot around, the lever is the same on
 for line of sight: make a touched corner count as crossing. `range <= 1` (melee) ignores
 cover per spec, and a flat 50% applies regardless of how many cover squares a defender
 hugs — the reduction is a boolean, not a stack.
+
+## 2026-08-12 — Turn pipeline skeleton: two calls the docs left open (Builder, BACKLOG item 4)
+
+**(1) `resolveTurn` takes a fourth argument, a `Roster`.** ARCHITECTURE.md sketches
+`resolveTurn(state, map, orders)`, but a unit's `GameState` entry carries only a
+`characterId`, and the pipeline cannot bucket an order into its phase (or check its
+cooldown, range, or ultimate cost) without the `AbilityDef`. Rather than fatten
+`GameState` with content on every wire message — content is data, not state (golden rule
+#2), and the netcode syncs *orders*, a few hundred bytes — I pass a `Roster`: a read-only
+index from `characterId` (and `abilityId`) to definitions, built once from
+`data/characters/*.json`. Signature is now `resolveTurn(state, map, orders, roster)`.
+ARCHITECTURE.md's three-arg sketch should be updated to match (flagged for whoever owns
+that doc; the Builder does not edit it). Item 12 builds the shipped roster from JSON;
+until then tests use a dummy.
+
+**(2) Movement resolves in synchronised steps, and a "contested square" is a same-step
+collision.** `edge-cases.md` rules that when two units Move to the same square, neither
+enters and each stops on its last square before it — but it does not say whether "the same
+square" means the same *destination* or the same square *at the same instant*. The engine
+walks every unit's path one synchronised step at a time: a square is contested only when
+two or more units would step onto it on the *same* step (then all of them stop there); a
+unit that reaches a shared square a step earlier holds it, and the later arrival is blocked
+and stops. This is the reading that makes the four-phase simultaneous model coherent — a
+single global clock, no per-unit priority coin-flip — and it falls out cleanly because a
+path validated against the starting board never even targets another unit's *start* square,
+so the only conflicts left are squares that were empty when the turn began. A unit blocked
+or contested stops for the rest of the phase (remaining path dropped), matching "stops on
+the last square before the contested square." Trap triggers, knockback's Move-cancellation,
+and mid-path death are later items (7–10) and are not in the resolver yet. The skeleton
+also does **not** run end-of-turn bookkeeping (energy tick, cooldown tick, respawn, win
+check) or advance the turn counter — those arrive with items 5, 6, and 10 — so item 4
+changes state only through the Move phase.

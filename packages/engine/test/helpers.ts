@@ -6,7 +6,17 @@
  * Row 0 is the first string; x increases left→right, y increases top→bottom.
  */
 
-import type { GameState, MapDef, PlayerId, StatusInstance, UnitState, Vec2 } from '../src/types.js';
+import { buildRoster, type Roster } from '../src/roster.js';
+import type {
+  AbilityDef,
+  CharacterDef,
+  GameState,
+  MapDef,
+  PlayerId,
+  StatusInstance,
+  UnitState,
+  Vec2,
+} from '../src/types.js';
 
 export function makeMap(rows: string[], overrides: Partial<MapDef> = {}): MapDef {
   const height = rows.length;
@@ -85,4 +95,55 @@ export function keys(squares: readonly { pos: Vec2 }[]): string[] {
 
 export function posKeys(squares: readonly Vec2[]): string[] {
   return squares.map((p) => `${p.x},${p.y}`).sort();
+}
+
+// ── Pipeline fixtures (BACKLOG item 4) ──────────────────────────────────────
+
+function ability(id: string, over: Partial<AbilityDef>): AbilityDef {
+  return {
+    id,
+    name: id,
+    phase: 'blast',
+    shape: 'self',
+    range: 0,
+    cooldown: 0,
+    energyGain: 0,
+    effects: [{ kind: 'damage', amount: 1 }],
+    description: id,
+    ...over,
+  };
+}
+
+/**
+ * A test dummy character with one ability tagged in each resolution phase plus a
+ * cooldown ability and an ultimate, so pipeline tests can exercise phase
+ * bucketing and every validation branch without depending on shipped content.
+ */
+export const DUMMY_CHARACTER: CharacterDef = {
+  id: 'dummy',
+  name: 'Dummy',
+  archetype: 'firepower',
+  maxHp: 100,
+  abilities: [
+    ability('prep_stance', { phase: 'prep', shape: 'self' }),
+    ability('dash_roll', { phase: 'dash', shape: 'path', range: 3, effects: [{ kind: 'teleport' }] }),
+    ability('blast_shot', { phase: 'blast', shape: 'line', range: 5 }),
+    ability('slow_bomb', { phase: 'blast', shape: 'square', range: 4, cooldown: 3 }),
+  ],
+  ultimate: ability('ult_beam', { phase: 'blast', shape: 'line', range: 9, effects: [{ kind: 'damage', amount: 40 }] }),
+};
+
+/** Roster over the dummy (plus any extra characters a test needs). */
+export function dummyRoster(...extra: CharacterDef[]): Roster {
+  return buildRoster([DUMMY_CHARACTER, ...extra]);
+}
+
+/** A dummy-character unit (its abilities resolve against `dummyRoster`). */
+export function makeDummy(
+  unitId: string,
+  owner: PlayerId,
+  pos: Vec2,
+  overrides: Partial<UnitState> = {},
+): UnitState {
+  return makeUnit(unitId, owner, pos, { characterId: 'dummy', ...overrides });
 }
