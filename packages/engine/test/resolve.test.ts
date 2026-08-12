@@ -47,9 +47,15 @@ describe('resolveTurn — phase order (BACKLOG item 4 signature)', () => {
       { type: 'phaseStart', phase: 'dash' },
       { type: 'abilityFired', unitId: 'a1', abilityId: 'dash_roll', area: [{ x: 1, y: 2 }, { x: 2, y: 2 }] },
       { type: 'phaseStart', phase: 'blast' },
+      // The two Blast shots are aimed at empty squares, so no damage lands.
       { type: 'abilityFired', unitId: 'b0', abilityId: 'blast_shot', area: [{ x: 6, y: 0 }] },
       { type: 'abilityFired', unitId: 'b1', abilityId: 'slow_bomb', area: [{ x: 6, y: 2 }] },
       { type: 'phaseStart', phase: 'move' },
+      // End-of-turn passive energy (+5), living units in state.units order.
+      { type: 'energyGained', unitId: 'a0', amount: 5 },
+      { type: 'energyGained', unitId: 'a1', amount: 5 },
+      { type: 'energyGained', unitId: 'b0', amount: 5 },
+      { type: 'energyGained', unitId: 'b1', amount: 5 },
     ]);
   });
 
@@ -60,22 +66,93 @@ describe('resolveTurn — phase order (BACKLOG item 4 signature)', () => {
   });
 });
 
-describe('resolveTurn — the skeleton resolves no ability effects yet', () => {
+describe('resolveTurn — effects still deferred to later items', () => {
   it('a fired dash does not move the unit (dash movement is item 7)', () => {
     const state = makeState([makeDummy('u0', 0, { x: 0, y: 2 }), makeDummy('u1', 1, { x: 8, y: 8 })]);
     const { state: next } = resolveTurn(state, map, twoP([{ unitId: 'u0', ability: { abilityId: 'dash_roll', target: [{ x: 1, y: 2 }, { x: 2, y: 2 }] } }]), roster);
     expect(next.units.find((u) => u.unitId === 'u0')!.pos).toEqual({ x: 0, y: 2 });
   });
 
-  it('a fired blast leaves hp and energy untouched (damage/energy are items 5)', () => {
+  it('a unit dropped to 0 HP is left at 0 — no death/kill yet (item 10)', () => {
+    const state = makeState([makeDummy('u0', 0, { x: 0, y: 0 }), makeDummy('u1', 1, { x: 5, y: 0 }, { hp: 15 })]);
+    const { state: next } = resolveTurn(state, map, twoP([{ unitId: 'u0', ability: { abilityId: 'blast_shot', target: [{ x: 5, y: 0 }] } }]), roster);
+    const victim = next.units.find((u) => u.unitId === 'u1')!;
+    expect(victim.hp).toBe(0);
+    expect(victim.alive).toBe(true);
+    expect(next.kills).toEqual([0, 0]);
+  });
+});
+
+describe('resolveTurn — Blast damage and energy (BACKLOG item 5)', () => {
+  const find = (s: GameState, id: string) => s.units.find((u) => u.unitId === id)!;
+
+  it('deals damage and grants on-hit + passive energy', () => {
     const state = makeState([
       makeDummy('u0', 0, { x: 0, y: 0 }, { energy: 20 }),
-      makeDummy('u1', 1, { x: 5, y: 0 }, { hp: 90 }),
+      makeDummy('u1', 1, { x: 5, y: 0 }, { hp: 100 }),
     ]);
-    const { state: next } = resolveTurn(state, map, twoP([{ unitId: 'u0', ability: { abilityId: 'blast_shot', target: [{ x: 5, y: 0 }] } }]), roster);
-    expect(next.units.find((u) => u.unitId === 'u0')!.energy).toBe(20);
+    const { state: next, events } = resolveTurn(state, map, twoP([{ unitId: 'u0', ability: { abilityId: 'blast_shot', target: [{ x: 5, y: 0 }] } }]), roster);
+    expect(events).toContainEqual({ type: 'damage', unitId: 'u1', amount: 20, absorbed: 0 });
+    expect(find(next, 'u1').hp).toBe(80);
+    // 20 start + 8 on-hit (energyGain) + 5 passive = 33.
+    expect(events).toContainEqual({ type: 'energyGained', unitId: 'u0', amount: 8 });
+    expect(events).toContainEqual({ type: 'energyGained', unitId: 'u0', amount: 5 });
+    expect(events).toContainEqual({ type: 'energyGained', unitId: 'u1', amount: 5 });
+    expect(find(next, 'u0').energy).toBe(33);
+    expect(find(next, 'u1').energy).toBe(5);
+  });
+
+  it('a shot absorbed by a shield reports the absorb and grants no HP damage', () => {
+    const state = makeState([
+      makeDummy('u0', 0, { x: 0, y: 0 }),
+      makeDummy('u1', 1, { x: 5, y: 0 }, { hp: 100, statuses: [{ kind: 'shield', remaining: 2, amount: 12 }] }),
+    ]);
+    const { state: next, events } = resolveTurn(state, map, twoP([{ unitId: 'u0', ability: { abilityId: 'blast_shot', target: [{ x: 5, y: 0 }] } }]), roster);
+    expect(events).toContainEqual({ type: 'damage', unitId: 'u1', amount: 8, absorbed: 12 });
+    expect(find(next, 'u1').hp).toBe(92);
+    expect(find(next, 'u1').statuses.some((s) => s.kind === 'shield')).toBe(false);
+  });
+
+  it('does not grant energy when the shot lands on nobody', () => {
+    const state = makeState([makeDummy('u0', 0, { x: 0, y: 0 }, { energy: 0 }), makeDummy('u1', 1, { x: 8, y: 8 })]);
+    const { state: next, events } = resolveTurn(state, map, twoP([{ unitId: 'u0', ability: { abilityId: 'blast_shot', target: [{ x: 4, y: 0 }] } }]), roster);
+    // No on-hit energy; only the passive +5.
+    expect(events.filter((e) => e.type === 'energyGained' && e.unitId === 'u0')).toEqual([{ type: 'energyGained', unitId: 'u0', amount: 5 }]);
+    expect(find(next, 'u0').energy).toBe(5);
+  });
+
+  it('halves damage behind cover (round down), reusing item 3', () => {
+    // Cover at (1,0) sits between attacker (0,0) and defender (2,0), on the side
+    // the shot crosses. 20 → floor(20 * 50/100) = 10.
+    const coverMap = makeMap(['.o.......', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '.........']);
+    const state = makeState([makeDummy('u0', 0, { x: 0, y: 0 }), makeDummy('u1', 1, { x: 2, y: 0 }, { hp: 100 })]);
+    const { state: next, events } = resolveTurn(state, coverMap, twoP([{ unitId: 'u0', ability: { abilityId: 'blast_shot', target: [{ x: 2, y: 0 }] } }]), roster);
+    expect(events).toContainEqual({ type: 'damage', unitId: 'u1', amount: 10, absorbed: 0 });
     expect(next.units.find((u) => u.unitId === 'u1')!.hp).toBe(90);
-    expect(next.turn).toBe(1); // the skeleton does not run end-of-turn bookkeeping
+  });
+
+  it('spends the ultimate’s energy on use (100 → 0), then the passive drip', () => {
+    const state = makeState([makeDummy('u0', 0, { x: 0, y: 0 }, { energy: 100 }), makeDummy('u1', 1, { x: 3, y: 0 }, { hp: 100 })]);
+    const { state: next, events } = resolveTurn(state, map, twoP([{ unitId: 'u0', ability: { abilityId: 'ult_beam', target: [{ x: 3, y: 0 }] } }]), roster);
+    expect(next.units.find((u) => u.unitId === 'u1')!.hp).toBe(60); // 40 damage
+    expect(next.units.find((u) => u.unitId === 'u0')!.energy).toBe(5); // reset to 0, +5 passive
+    expect(events).toContainEqual({ type: 'damage', unitId: 'u1', amount: 40, absorbed: 0 });
+  });
+
+  it('both players’ Blast damage lands simultaneously, even into overkill', () => {
+    const state = makeState([
+      makeDummy('u0', 0, { x: 0, y: 0 }, { hp: 15 }),
+      makeDummy('u1', 1, { x: 1, y: 0 }, { hp: 15 }),
+    ]);
+    const orders = twoP(
+      [{ unitId: 'u0', ability: { abilityId: 'blast_shot', target: [{ x: 1, y: 0 }] } }],
+      [{ unitId: 'u1', ability: { abilityId: 'blast_shot', target: [{ x: 0, y: 0 }] } }],
+    );
+    const { state: next, events } = resolveTurn(state, map, orders, roster);
+    // Neither shot is robbed: both units take their full hit down to 0.
+    expect(next.units.find((u) => u.unitId === 'u0')!.hp).toBe(0);
+    expect(next.units.find((u) => u.unitId === 'u1')!.hp).toBe(0);
+    expect(events.filter((e) => e.type === 'damage')).toHaveLength(2);
   });
 });
 

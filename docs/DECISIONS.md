@@ -134,3 +134,38 @@ and mid-path death are later items (7–10) and are not in the resolver yet. The
 also does **not** run end-of-turn bookkeeping (energy tick, cooldown tick, respawn, win
 check) or advance the turn counter — those arrive with items 5, 6, and 10 — so item 4
 changes state only through the Move phase.
+
+## 2026-08-12 — Combat economy: three rounding/scope calls (Builder, BACKLOG item 5)
+
+**(1) Damage rounding order is fixed: outgoing modifiers → cover → shields → HP, each an
+independent floor.** GAME_SPEC gives Might/Weaken as "±25% outgoing (round down)" and cover
+as "50% (round down)" but does not say how they compose. I apply the attacker's Might/Weaken
+first (`scaleDamage`, summed as `floor(base·(100+might−weaken)/100)` so both held nets to
+base, mirroring Haste/Slow), then the defender's cover reduction (`coverReducedDamage`,
+item 3), then shields, then HP. Two separate floors, outgoing-before-incoming — the natural
+reading and the one that keeps each modifier's own round-down independent and machine-stable.
+`applyDamage` reports HP *actually* lost (not overkill) as the `damage` event's `amount`, so
+a health bar animates the real drop; shields fully drained are removed, partial ones keep
+their amount and duration.
+
+**(2) Energized scales ability-granted energy, not the passive drip.** GAME_SPEC §5 says
+"+50% energy gained (round down)" and, separately, "+5 passive per turn." I read Energized as
+boosting energy *earned from abilities* (on-hit `energyGain`, and self-buff-on-use later) —
+not the flat passive tick, which is a fixed baseline drip rather than "gained" energy.
+Treating the passive as Energized-boosted would silently hand a +2/turn bonus to anyone
+holding the status, which is not what a combat buff should do. If playtests want the passive
+boosted too, it is a one-line change in the end-of-turn step.
+
+**(3) The passive +5 goes to living units only; the dead retain but do not gain.** GAME_SPEC
+§1 says a dead character keeps its energy through respawn and its cooldowns keep ticking, but
+is silent on whether it also earns the passive while down. A unit at 0 HP is off the board
+(the same rule that makes it neither block movement nor cast sight), so it banks nothing until
+it respawns. Minimal call; revisit if respawn timing makes it feel punishing.
+
+Scope, for the Analyzer: item 5 wires **Blast damage + on-hit/passive energy + the ultimate's
+on-use energy reset** into the pipeline. Until shape expansion exists, "the aimed squares" are
+the order's raw target squares (a hit is an enemy standing on one), so line/cone/circle are not
+yet spread across their full footprint — an interim contract flagged in `resolveBlastDamage`.
+Non-damage ability effects (buffs, shields, heals via `addShield`/`applyHeal`, dash movement)
+are logged as `abilityFired` but not applied; a unit reduced to 0 HP is left alive at 0 for the
+deaths/respawn/win system (item 10). The turn counter still does not advance here.

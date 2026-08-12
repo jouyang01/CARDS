@@ -11,21 +11,25 @@
  * exactly `PHASES`. Every phase emits a `phaseStart` even when nobody acts, so
  * the event log always carries the full four-phase skeleton for playback.
  *
- * SCOPE — BACKLOG item 4, "turn pipeline skeleton, no abilities yet beyond a
- * test dummy": this wires up order validation, phase bucketing, and the
- * execution loop. Prep/Dash/Blast abilities are *fired* — an `abilityFired`
- * event is logged at the ability's tagged phase — but their effects are not yet
- * resolved. Damage, shields, statuses, dash movement, knockback, traps, deaths
- * and the end-of-turn economy (energy tick, cooldown tick, respawn, win check)
- * are their own backlog items (5–10) and are intentionally absent; the turn
- * counter is therefore left untouched here. Only the Move phase changes state,
- * via `resolveMovePhase`.
+ * SCOPE — grows one backlog item at a time. Item 4 built order validation,
+ * phase bucketing, the execution loop, and Move resolution. Item 5 adds combat
+ * economy: Blast-phase damage (Might/Weaken → cover → shields → HP), on-hit and
+ * passive (+5, end of turn) energy, and the ultimate's on-use energy reset.
+ *
+ * Still deferred to their own items: statuses apply/refresh/tick and cooldown
+ * ticking (6), dash movement (7), knockback (8), traps (9), and deaths/respawn/
+ * win plus the turn-counter advance (10). A unit reduced to 0 HP is left at 0
+ * here — nothing yet removes it or awards a kill. Non-damage ability effects
+ * (buffs, shields, heals) are logged as `abilityFired` but not yet applied.
  */
 
-import { buildBoard } from './board.js';
+import { type Board, buildBoard, vecKey } from './board.js';
+import { applyDamage, scaleDamage, scaleEnergyGain } from './combat.js';
+import { PASSIVE_ENERGY } from './constants.js';
+import { coverReducedDamage, isBehindCover } from './cover.js';
 import { validateOrders } from './orders.js';
 import { type MovePlan, resolveMovePhase } from './movement.js';
-import { abilityOf, type Roster } from './roster.js';
+import { abilityOf, isUltimate, type Roster } from './roster.js';
 import {
   type AbilityDef,
   type AbilityOrder,
@@ -94,8 +98,10 @@ export function resolveTurn(
     }
 
     // Prep / Dash / Blast: fire abilities tagged for this phase, in unit order.
-    // Effects are resolved by later backlog items; the skeleton only logs the
-    // shot and the squares it was aimed at.
+    // Spending the ultimate's energy is an "on use" cost, so it happens here for
+    // whatever phase the ult is tagged with. Non-damage effects (buffs, shields,
+    // heals, dash movement, knockback, traps) are still later items — the shot
+    // is logged, and in Blast its damage lands (below).
     for (const unit of next.units) {
       const fired = abilityByUnit.get(unit.unitId);
       if (fired === undefined || fired.def.phase !== phase) continue;
@@ -109,8 +115,75 @@ export function resolveTurn(
         abilityId: fired.order.abilityId,
         area,
       });
+      if (isUltimate(roster, unit.characterId, fired.order.abilityId)) unit.energy = 0;
     }
+
+    // Blast damage resolves after every shot in the phase is fired, so it reads
+    // as "everyone shoots, then all damage lands simultaneously" (GAME_SPEC §2).
+    if (phase === 'blast') resolveBlastDamage(board, next, abilityByUnit, roster, events);
+  }
+
+  // End of turn: the passive energy drip (GAME_SPEC §5). Living units only —
+  // the dead retain energy but do not gain (see docs/DECISIONS.md). Turn-counter
+  // advance, cooldown/status ticks, respawn and the win check are items 6/10.
+  for (const unit of next.units) {
+    if (!unit.alive) continue;
+    unit.energy += PASSIVE_ENERGY;
+    events.push({ type: 'energyGained', unitId: unit.unitId, amount: PASSIVE_ENERGY });
   }
 
   return { state: next, events };
+}
+
+/**
+ * Apply Blast-phase damage. For each attacker that fired a damaging Blast
+ * ability, every living enemy standing on an aimed square takes
+ * `scaleDamage` (attacker Might/Weaken) → cover reduction (item 3) → shields →
+ * HP. An ability that lands on ≥1 enemy grants its `energyGain` once
+ * (Energized-scaled) to the caster (GAME_SPEC §4, edge-cases "Energy on
+ * multi-hit"). Mutates `next` and appends `damage`/`energyGained` events.
+ *
+ * Interim targeting contract (until shape expansion exists): the "aimed squares"
+ * are the order's raw target squares — line/cone/circle are not yet expanded, so
+ * a hit is an enemy standing exactly on a targeted square. Applying attacks in
+ * caster order is deterministic and simultaneity-faithful: an attacker's damage
+ * depends only on its own statuses and the defender's fixed position/cover, and
+ * cumulative damage to one defender is order-independent.
+ */
+function resolveBlastDamage(
+  board: Board,
+  next: GameState,
+  abilityByUnit: ReadonlyMap<string, { def: AbilityDef; order: AbilityOrder }>,
+  roster: Roster,
+  events: TurnEvent[],
+): void {
+  for (const attacker of next.units) {
+    if (!attacker.alive) continue;
+    const fired = abilityByUnit.get(attacker.unitId);
+    if (fired === undefined || fired.def.phase !== 'blast') continue;
+    const damage = fired.def.effects.find((e) => e.kind === 'damage');
+    if (damage?.amount === undefined) continue;
+
+    const aimed = new Set(fired.order.target.map(vecKey));
+    let hitEnemy = false;
+    for (const target of next.units) {
+      if (target.owner === attacker.owner || !target.alive) continue;
+      if (!aimed.has(vecKey(target.pos))) continue;
+      const scaled = scaleDamage(damage.amount, attacker);
+      const dealt = isBehindCover(board, attacker.pos, target.pos, fired.def.range)
+        ? coverReducedDamage(scaled)
+        : scaled;
+      const result = applyDamage(target, dealt);
+      target.hp = result.unit.hp;
+      target.statuses = result.unit.statuses;
+      events.push({ type: 'damage', unitId: target.unitId, amount: result.hpDamage, absorbed: result.absorbed });
+      hitEnemy = true;
+    }
+
+    if (hitEnemy && fired.def.energyGain > 0) {
+      const gained = scaleEnergyGain(fired.def.energyGain, attacker);
+      attacker.energy += gained;
+      events.push({ type: 'energyGained', unitId: attacker.unitId, amount: gained });
+    }
+  }
 }

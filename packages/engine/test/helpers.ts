@@ -127,7 +127,7 @@ export const DUMMY_CHARACTER: CharacterDef = {
   abilities: [
     ability('prep_stance', { phase: 'prep', shape: 'self' }),
     ability('dash_roll', { phase: 'dash', shape: 'path', range: 3, effects: [{ kind: 'teleport' }] }),
-    ability('blast_shot', { phase: 'blast', shape: 'line', range: 5 }),
+    ability('blast_shot', { phase: 'blast', shape: 'line', range: 5, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }] }),
     ability('slow_bomb', { phase: 'blast', shape: 'square', range: 4, cooldown: 3 }),
   ],
   ultimate: ability('ult_beam', { phase: 'blast', shape: 'line', range: 9, effects: [{ kind: 'damage', amount: 40 }] }),

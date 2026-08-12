@@ -5,6 +5,7 @@ export * from './board.js';
 export * from './movement.js';
 export * from './vision.js';
 export * from './cover.js';
+export * from './combat.js';
 export * from './roster.js';
 export * from './orders.js';
 export * from './resolve.js';
