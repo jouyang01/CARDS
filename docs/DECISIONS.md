@@ -132,3 +132,57 @@ full HP, fresh statuses (energy and cooldowns retained) for T+2 — implemented 
 counting the respawn timer down for units already dead at the start of a turn.
 **(10) Dash immunity is emergent, not special-cased:** Blast resolves against post-Dash
 positions, so a unit that dashed off the aimed square is simply not there to be hit.
+
+## 2026-08-12 — Dash / displacement / trap / delayed rulings (Builder, items 7/8/9/12)
+
+**(1) A charge stops in front of the first unit it reaches** (enemy or ally); if that
+unit is an enemy and the ability deals damage, it is the one struck. A teleport requires
+an open, unoccupied destination (walls may be crossed, per Blink) and fizzles harmlessly
+otherwise. A teleport-strike (Shadowstep) hits every enemy adjacent (Chebyshev 1) to its
+landing square. **(2) Displacement from any source resolves together at the end of Blast**
+(golden rule #4): dash-applied knockbacks (Ram Charge) are queued alongside blast-applied
+ones (Chain Hook) and applied in collection order — dash before blast — which is
+deterministic. Direction is the 8-way step from source to victim (away for knockback,
+toward for pull); the victim stops on the last open square before a wall, cover, edge or
+unit, and a pull never lands on the puller. **(3) Being targeted by knockback/pull cancels
+the victim's Move even if it could not actually travel** (e.g. shoved into a wall) — the
+intent is disrupted. Unstoppable units are immune and keep their Move. **(4) Knockback does
+not trigger traps** in v1 — edge-cases lists only dash and move as trigger phases; a unit
+shoved onto a trap is not "entering" under its own power. Flagged for a ruling.
+**(5) Traps trigger only for enemies of the owner**, are one-shot (consumed on trigger),
+deal raw damage (no Might/Weaken/cover), and apply their non-trap effects (Reveal) to the
+crosser; the owner's own team is safe. **(6) Reveal-on-attack fires only when damage is
+actually dealt** — a pure knockback/pull or a missed shot does not reveal the attacker.
+**(7) Delayed abilities are blast-phase only in v1** (the grenade is the only content):
+they arm on cast (cooldown starts, area locked, telegraphed via an `abilityFired` event)
+and detonate on the stated later turn, folded into that turn's simultaneous Blast. Delayed
+damage is the locked base amount with **no attacker scaling and no cover** (an area
+detonation has no attack line) and resolves even if the caster moved or died; a living
+caster gains the ability's energy on a hit. Delayed prep/dash abilities are **not wired**
+(no content needs them) — an ENGINE ASK if a designer wants them.
+
+## Open Questions for the Analyzer — 2026-08-12
+
+- **BACKLOG mismatch (blocking clarity).** The on-disk `docs/BACKLOG.md` is the M0-seeded
+  list (items 1–17, no "Spec Notes", no 3a/5a). My session's Analyzer Notes referenced
+  items 3a/5a/6–12 with Spec Notes that do not exist in the repo. I treated the Analyzer
+  Notes as authoritative and built the full combat core, mapping commits: 5a→shapes,
+  6→status, 3+5→combat/cover, 4+3a+10→pipeline, 7→dash, 8→knockback, 9→traps,
+  11→determinism, 12→real chars. Please reconcile BACKLOG.md (add the real item text +
+  Spec Notes) so future sessions aren't guessing.
+- **`resolveTurn` signature (items 4/12).** I added a 4th arg `roster: Record<charId,
+  CharacterDef>`; ARCHITECTURE lists `(state, map, orders)`. Confirm this is acceptable or
+  specify an alternative (e.g. embedding defs in state). See DECISIONS 2026-08-12 pipeline (1).
+- **Energy-on-use rule (spec §4 is terse).** I grant energyGain on hit OR for self/utility
+  abilities (shape self, or a teleport/trap/decoy effect). Confirm dash-dodges and trap
+  placements should pay energy on use (I ruled yes). Items 6/7/9.
+- **Reveal-on-attack duration.** I used 2 turns = "until end of next turn". Confirm vs a
+  literal "1". Item 6 / edge-cases.
+- **Passive energy while dead.** I grant passive +5 to living units only (corpses keep
+  energy + tick cooldowns but don't build charge). Confirm. Item 10.
+- **Knockback into traps** (see ruling 4 above) and **decoy** (Wisp veil_decoy: still an
+  OPEN ruling in edge-cases; I apply Stealth and skip the decoy entity) — both need a spec.
+- **Ally convoy limitation (item 3a/1).** A Move path onto a currently-occupied square is
+  rejected at validation, so same-direction ally convoys aren't expressible in v1
+  (irrelevant at 1v1). Note for the 2v2 milestone; the swap/contested resolver already
+  handles crossing paths.
