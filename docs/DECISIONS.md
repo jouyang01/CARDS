@@ -67,3 +67,19 @@ Wisp proves oppressive, breaking Stealth at range 1 is the first lever to pull.
 Consequently a dead unit is neither seen nor a seer (it is off the board until respawn,
 the same rule that makes it block nothing during movement), and a player always sees
 their own units regardless of terrain, which keeps the N-per-side architecture honest.
+
+## 2026-08-12 — Two vision rulings added after self-review (Builder, BACKLOG item 2)
+
+**(6) Units do not block line of sight.** `hasLineOfSight` takes only a board, so a
+body can never occlude a sightline — the Atlas Reactor behaviour, and the one that
+keeps free-aim honest: if standing behind the enemy granted cover, the mind-game would
+become a positioning puzzle about hiding *behind* people. GAME_SPEC §3 lists only walls
+as blockers and is silent on units, so this records the reading rather than inventing a
+rule. **(7) Reveal masks Stealth; it does not end it — and that is a trap for BACKLOG
+item 6.** GAME_SPEC §6 says Stealth is "broken by attacking or taking damage", while
+`edge-cases.md` rules that attacking applies Reveal for one turn. Because `canSee`
+checks Reveal before Stealth, an attack *looks* like it breaks Stealth: the unit is
+visible that turn. But the Stealth status is still on the unit, so it re-hides the
+moment Reveal expires. Whoever implements status application must clear Stealth
+outright on attack and on damage rather than relying on the Reveal it grants. Flagged
+here because the bug would surface a milestone later, in a file that looks correct.
