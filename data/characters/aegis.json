@@ -1,0 +1,74 @@
+{
+  "id": "aegis",
+  "name": "Aegis",
+  "archetype": "frontline",
+  "maxHp": 120,
+  "abilities": [
+    {
+      "id": "shield_bash",
+      "name": "Shield Bash",
+      "phase": "blast",
+      "shape": "cone",
+      "range": 2,
+      "cooldown": 0,
+      "energyGain": 8,
+      "effects": [{ "kind": "damage", "amount": 20 }],
+      "description": "A short crushing arc with the tower shield. Melee — ignores cover."
+    },
+    {
+      "id": "barrier_pulse",
+      "name": "Barrier Pulse",
+      "phase": "prep",
+      "shape": "circle",
+      "range": 4,
+      "radius": 1,
+      "cooldown": 2,
+      "energyGain": 6,
+      "effects": [{ "kind": "shield", "amount": 20, "duration": 1 }],
+      "description": "Allies in the aimed area gain a 20-point shield for the turn. Aim it at yourself or the teammate about to be dived."
+    },
+    {
+      "id": "intercept",
+      "name": "Intercept",
+      "phase": "dash",
+      "shape": "square",
+      "range": 4,
+      "cooldown": 3,
+      "energyGain": 5,
+      "effects": [
+        { "kind": "teleport" },
+        { "kind": "shield", "amount": 12, "duration": 1 }
+      ],
+      "description": "Dash to a square within 4 and raise a 12-point shield. Resolves before Blast — arrive at the ally being dived, or leave the trap you're standing in."
+    },
+    {
+      "id": "grounding_strike",
+      "name": "Grounding Strike",
+      "phase": "blast",
+      "shape": "line",
+      "range": 4,
+      "cooldown": 2,
+      "energyGain": 8,
+      "effects": [
+        { "kind": "damage", "amount": 14 },
+        { "kind": "slow", "duration": 1 }
+      ],
+      "description": "A grounding blow: 14 damage and Slow for a turn. Peel — a slowed diver never finishes the walk."
+    }
+  ],
+  "ultimate": {
+    "id": "warding_halo",
+    "name": "Warding Halo",
+    "phase": "prep",
+    "shape": "circle",
+    "range": 0,
+    "radius": 2,
+    "cooldown": 0,
+    "energyGain": 0,
+    "effects": [
+      { "kind": "shield", "amount": 40, "duration": 2 },
+      { "kind": "weaken", "duration": 1 }
+    ],
+    "description": "A halo of force centered on Aegis: allies within 2 squares gain a 40-point shield for 2 turns; enemies within it are Weakened. Stand between your carry and their team. (100 energy)"
+  }
+}
