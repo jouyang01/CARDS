@@ -440,20 +440,48 @@ interface Hit {
   victim: UnitState;
   raw: number;
   range: number;
+  /** Pre-computed damage, bypassing Might/Weaken and cover (delayed detonations). */
+  fixedDamage?: number;
+  /** Delayed detonations do not reveal or break the caster's Stealth. */
+  delayed?: boolean;
 }
 
-function runBlast(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], events: TurnEvent[]): void {
+function runBlast(
+  draft: GameState,
+  board: Board,
+  roster: Roster,
+  plans: UnitPlan[],
+  pending: Displacement[],
+  events: TurnEvent[],
+): void {
   events.push({ type: 'phaseStart', phase: 'blast' });
 
   const hits: Hit[] = [];
   const debuffs: { victim: UnitState; effect: AbilityEffect }[] = [];
   const displacers: { effects: readonly AbilityEffect[]; victim: UnitState; source: Vec2 }[] = [];
 
+  // Grenades and other delayed blasts locked on an earlier turn detonate now, at
+  // their locked squares, folded into this turn's simultaneous damage.
+  detonateDelayedBlasts(draft, roster, hits, debuffs, events);
+
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'blast' || !plan.unit.alive) continue;
     events.push({ type: 'abilityFired', unitId: plan.unit.unitId, abilityId: a.def.id, area: a.area });
     markAbilityUsed(plan.unit, a);
+
+    // A delayed ability (e.g. a grenade) is armed now and detonates on a later
+    // turn at these locked squares (GAME_SPEC §2); no immediate effect.
+    if (a.def.delayTurns !== undefined && a.def.delayTurns > 0) {
+      draft.delayed.push({
+        casterUnitId: plan.unit.unitId,
+        abilityId: a.def.id,
+        phase: 'blast',
+        area: a.area.map((p) => ({ x: p.x, y: p.y })),
+        turnsRemaining: a.def.delayTurns,
+      });
+      continue;
+    }
 
     // Gather against post-Dash positions so mutual damage is simultaneous.
     const area = new Set(a.area.map(vecKey));
@@ -480,12 +508,12 @@ function runBlast(draft: GameState, board: Board, plans: UnitPlan[], pending: Di
   const dealtDamage = new Set<string>();
   for (const hit of hits) {
     if (!hit.victim.alive) continue;
-    const behindCover = isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range);
-    const final = computeDamage(hit.raw, hit.attacker, behindCover);
+    const final =
+      hit.fixedDamage ?? computeDamage(hit.raw, hit.attacker, isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range));
     const res = applyDamage(hit.victim, final);
     events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed });
     removeStatus(hit.victim, 'stealth'); // taking damage breaks Stealth
-    dealtDamage.add(hit.attacker.unitId);
+    if (!hit.delayed) dealtDamage.add(hit.attacker.unitId);
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
 
@@ -507,6 +535,48 @@ function runBlast(draft: GameState, board: Board, plans: UnitPlan[], pending: Di
     removeStatus(unit, 'stealth');
     applyStatus(unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
     events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS });
+  }
+}
+
+/**
+ * Detonate delayed blast abilities that came due this turn, appending their hits
+ * and debuffs to the simultaneous Blast lists. They resolve at their locked
+ * squares regardless of whether the caster moved or died (edge-cases: delayed
+ * abilities). Damage is the locked base amount — no Might/Weaken, no cover (an
+ * area detonation has no attack line); knockback/pull are not carried by any v1
+ * delayed content and are skipped. Energy is granted to a living caster on hit.
+ */
+function detonateDelayedBlasts(
+  draft: GameState,
+  roster: Roster,
+  hits: Hit[],
+  debuffs: { victim: UnitState; effect: AbilityEffect }[],
+  events: TurnEvent[],
+): void {
+  const due = draft.delayed.filter((d) => d.turnsRemaining <= 0 && d.phase === 'blast');
+  draft.delayed = draft.delayed.filter((d) => !(d.turnsRemaining <= 0 && d.phase === 'blast'));
+  for (const d of due) {
+    const caster = draft.units.find((u) => u.unitId === d.casterUnitId);
+    if (caster === undefined) continue;
+    const found = findAbility(roster, caster.characterId, d.abilityId);
+    if (found === undefined) continue;
+    const def = found.def;
+    events.push({ type: 'abilityFired', unitId: caster.unitId, abilityId: def.id, area: d.area });
+
+    const area = new Set(d.area.map(vecKey));
+    let hitEnemy = false;
+    for (const enemy of draft.units) {
+      if (enemy.owner === caster.owner || !enemy.alive || !area.has(vecKey(enemy.pos))) continue;
+      hitEnemy = true;
+      for (const e of def.effects) {
+        if (e.kind === 'damage') hits.push({ attacker: caster, victim: enemy, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
+        else if (isStatusKind(e.kind)) debuffs.push({ victim: enemy, effect: e });
+      }
+    }
+    if (hitEnemy && caster.alive) {
+      const gained = grantEnergy(caster, def.energyGain);
+      if (gained > 0) events.push({ type: 'energyGained', unitId: caster.unitId, amount: gained });
+    }
   }
 }
 
@@ -719,7 +789,7 @@ export function resolveTurn(
     const displaced = new Set<string>();
     runPrep(draft, board, plans, events);
     runDash(draft, board, plans, pending, events);
-    runBlast(draft, board, plans, pending, events);
+    runBlast(draft, board, roster, plans, pending, events);
     applyDisplacements(draft, board, pending, displaced, events);
     runMove(draft, board, plans, displaced, events);
     endOfTurn(draft, map, deadAtStart, events);
