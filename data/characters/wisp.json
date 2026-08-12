@@ -1,7 +1,7 @@
 {
   "id": "wisp",
   "name": "Wisp",
-  "archetype": "trickster",
+  "archetype": "firepower",
   "maxHp": 85,
   "abilities": [
     {

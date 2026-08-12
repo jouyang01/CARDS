@@ -84,6 +84,24 @@ moment Reveal expires. Whoever implements status application must clear Stealth
 outright on attack and on damage rather than relying on the Reveal it grants. Flagged
 here because the bug would surface a milestone later, in a file that looks correct.
 
+## 2026-08-12 — Launch roster expanded to 9; Support pulled forward to v1 (Designer)
+
+At the project owner's direction, the launch roster grows from 3 to 9 characters
+(`docs/design/roster-v1.md`), organized as three archetypes — Firepower, Frontline,
+Support — with a named theme per character and two archetype hybrids (Cinder:
+Firepower/Support, Aegis: Frontline/Support). This **reverses the 2026-08-11 "No
+Support archetype at launch" decision**: Supports are now designed to hold their own
+in 1v1 by requiring every beneficial effect to be self-applicable (aimed circles
+include the caster's square), with real-but-lower auto damage and one escape tool
+each; their full value unlocks at 2v2 with no kit changes. Kit structure is fixed at
+1 auto attack (cooldown 0, Blast) + 3 cooldown skills spanning ≥2 phases + 1
+ultimate (100 energy), which fits the existing `4 abilities + 1 ultimate` schema
+untouched. Wisp is reclassified `trickster` → `firepower` (theme "Phantom" / Stealth
+Firepower) so archetype is a balance class and theme carries the flavor;
+`'trickster'` stays in the `Archetype` type as a deprecated label — no engine change.
+The roster introduces two `ENGINE ASK`s recorded in roster-v1.md §9 (effect target
+affinity in mixed areas; energy gain on ally-benefit) that the Builder must not
+improvise around.
 ## 2026-08-12 — Shape expansion rulings (Builder, BACKLOG 5a)
 
 Turning an aimed order into affected squares needed geometry the spec leaves open.
