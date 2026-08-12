@@ -209,3 +209,59 @@ respawn-square order, per-player timer, teammate-visible plans) are drafted in
 squares per side (existing squares kept first, 180°-rotation symmetric) so one map
 serves every format. Engine work is queued as BACKLOG **M1.5 (items 13–16)**; no
 engine code changed with this rescope.
+
+## 2026-08-14 — Multiplayer-rescope engine build (Builder, E1 + M1.5 13–16, M2 17)
+
+Implemented the 2v2-default rescope in the engine (dev note: "confirm you have the
+multiplayer rescope and are implementing those changes"). Judgment calls beyond the
+rescope docs:
+**(1) Format lives on `GameState.format` (a `FormatId`);** the win check reads
+`FORMATS[format]` for kill target + turn limit. Global `KILLS_TO_WIN`/`TURN_LIMIT` were
+removed. Tests default to `1v1` so 1v1 dev behaviour is unchanged.
+**(2) `TeamId` added; `PlayerId` kept as a deprecated alias.** A full mechanical rename
+of the `PlayerOrders.player` field and every `owner: PlayerId` was deferred to avoid
+churning ~all tests for no behaviour change — flagged for the Analyzer to schedule.
+**(3) Effect polarity (no friendly fire).** Harmful = damage, weaken, slow, root,
+knockback, pull, **reveal** (reveal is hostile → enemies only). Beneficial = heal,
+shield, might, haste, energized, unstoppable, **stealth**. teleport/decoy/trap are
+neither (self/placement). AoE now applies harmful to enemies in-area and beneficial to
+own-team in-area (incl. the caster if inside). **Any beneficial-effect ability now pays
+its energyGain on use** (support abilities bank energy), extending the self/utility rule.
+**(4) Ally pass-through is enforced at the planning layer** (`reachableSquares` marks
+ally squares `canStop:false` but walks through them; `validateMovePath` allows an ally as
+an intermediate step, rejects it as a destination). At **resolution**, `stepMovers` keeps
+the safe no-two-units-on-one-square rule: a mover halts before a *stationary* ally rather
+than sliding through it that turn. So "pass-through" is fully a planning affordance in
+v1; true slide-through of a stationary ally at resolution is deferred (deterministic and
+AC-satisfying as-is). Flagged.
+**(5) Only blast-phase delayed abilities detonate** (unchanged from M1); still no
+prep/dash delayed content. **(6) Ally-aware effects are wired in Blast only** — an AoE
+*prep* buff to allies is not wired (no content; prep abilities are self-shape). Flag if
+a Designer drafts one.
+**(7) `createMatch` ids are `"<charId>-t<team>-<i>"`** (unique across duplicate picks);
+`createInitialState` keeps `"<charId>-0"` for the 1v1 convenience. Respawn goes to the
+first team spawn square (map order) no living ally holds.
+Client item 17 render reads engine state only and loops `state.units` (N-unit,
+team-coloured); no game logic client-side.
+
+## Open Questions for the Analyzer — 2026-08-14
+
+- **Two unreconciled Analyzer branches.** `claude/cards-code-review-h3mwjs` (M1 review,
+  based on my HEAD: marks M1 done, numbers 13–16 as the client batch, adds E1/E2) and
+  `claude/cards-multiplayer-configs-jcfoxf` (the rescope, based on `main`: renumbers 13–16
+  as the M1.5 teams batch, client → 17–20) **conflict on `BACKLOG.md` and
+  `edge-cases.md`**. I merged the **rescope** into my branch (per the dev note) and built
+  M1.5 13–16 + client 17; the code-review branch's E1 I also did. Please reconcile the
+  two into one canonical `BACKLOG.md` (M1 complete ✓ + M1.5 done ✓ + E1 done ✓ + client
+  17 done ✓; remaining: 18–20, E2 optional) and one `edge-cases.md`.
+- **This session's Analyzer Notes used the pre-rescope numbering** ("13 render → 16
+  hot-seat"). I followed the dev note and built the **rescope engine** (13–16 teams) +
+  render (17) instead, deferring the interactive client (18–20). Confirm that priority.
+- **Confirm the rescope judgment calls above**, esp. (3) effect polarity (is `reveal`
+  harmful / `stealth` beneficial for AoE filtering?), (4) ally pass-through at resolution
+  (v1 halts before a stationary ally — acceptable, or do you want true slide-through?),
+  and the beneficial-abilities-pay-energy-on-use rule.
+- **`PlayerId → TeamId` full rename** (fields `PlayerOrders.player`, `owner`): schedule it
+  as its own mechanical item so it doesn't ride inside a behaviour commit.
+- **Designer follow-ups still open** (unchanged): decoy entity (D1), `combat_roll`
+  path-vs-teleport, cover-vs-Might composition, duplicate-pick rule, Support kit draft.
