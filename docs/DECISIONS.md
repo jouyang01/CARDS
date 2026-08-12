@@ -40,3 +40,30 @@ are legal**, costing one budget point per square entered. Looping is never advan
 and forbidding it would be an extra rule to specify against contested-square and trap
 resolution later. Root is enforced by zeroing the movement budget, so the same helper
 answers both "is this path legal" and "what may the UI highlight".
+
+## 2026-08-12 — Line-of-sight and concealment rulings (Builder, BACKLOG item 2)
+
+Implementing vision surfaced five gaps the spec and `edge-cases.md` do not cover.
+**(1) Line of sight is exact segment geometry, and corner grazes are permissive.**
+Square centres are placed at odd coordinates in a doubled grid so the segment/square
+test is pure integer arithmetic with no epsilon; a wall blocks only when the sightline
+enters its *interior*, so a line passing exactly through a wall's corner still sees
+through. The alternative (a touched corner blocks) is equally symmetric but makes
+single wall squares cast surprisingly wide shadows. Flagged for playtest: two walls set
+diagonally do not seal the seam between them. **(2) "Vision is mutual" (GAME_SPEC §3)
+is a statement about range and line of sight, not about concealment.** Range and LoS
+are symmetric by construction, so neither player ever has a longer sight radius;
+concealment is deliberately one-way, since a unit that could not see out of brush while
+hidden inside it would make brush useless. **(3) Brush patches use orthogonal
+connectivity**, matching movement: brush squares touching only at a corner are separate
+patches, so "we are in the same brush" never means brush a unit could not have walked
+between. **(4) Adjacency for perception is Chebyshev — the eight surrounding squares —
+even though movement adjacency is orthogonal.** Vision range is already Chebyshev, and
+a unit standing diagonally against another is not plausibly unaware of them. **(5)
+Adjacency does not break Stealth.** GAME_SPEC §6 ties the adjacency exception to brush
+specifically, and Stealth is described as hiding a unit anywhere; only Reveal, attacking,
+or taking damage should end it. This is the ruling most likely to want revisiting — if
+Wisp proves oppressive, breaking Stealth at range 1 is the first lever to pull.
+Consequently a dead unit is neither seen nor a seer (it is off the board until respawn,
+the same rule that makes it block nothing during movement), and a player always sees
+their own units regardless of terrain, which keeps the N-per-side architecture honest.
