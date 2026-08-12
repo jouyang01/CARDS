@@ -21,6 +21,9 @@
         --shield: #62d0e0;
         --energy: #e0c04f;
         --bar-bg: #12141a;
+        --select: #f0f0f0;
+        --aim: #ff9a3e;
+        --reach: #4f8cff;
         --text: #d7dae2;
       }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
@@ -31,15 +34,25 @@
       #legend { display: flex; gap: 16px; font-size: 13px; opacity: 0.85; }
       .chip { display: inline-flex; align-items: center; gap: 6px; }
       .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+      #status { font-size: 15px; font-weight: 600; min-height: 20px; }
+      #controls { display: flex; flex-direction: column; gap: 6px; min-height: 40px; }
+      .control-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+      button { background: var(--open); color: var(--text); border: 1px solid var(--grid-line);
+        border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
+      button:hover:not(:disabled) { border-color: var(--reach); }
+      button:disabled { opacity: 0.4; cursor: not-allowed; }
+      button.sel { border-color: var(--aim); color: var(--aim); }
+      button.primary { background: var(--reach); color: #fff; border-color: var(--reach); font-weight: 600; }
       footer { font-size: 12px; opacity: 0.5; }
     </style>
   </head>
   <body>
     <div id="app">
       <h1>CARDS — Duel Arena</h1>
+      <div id="status"></div>
       <div id="board"></div>
-      <div id="legend"></div>
-      <footer>M2 render · driven entirely by the engine's GameState / TurnEvent log</footer>
+      <div id="controls"></div>
+      <footer>M2 hot-seat · order entry, resolution & playback driven entirely by the engine</footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
