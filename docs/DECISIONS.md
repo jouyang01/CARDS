@@ -284,3 +284,49 @@ team-coloured); no game logic client-side.
   as its own mechanical item so it doesn't ride inside a behaviour commit.
 - **Designer follow-ups still open** (unchanged): decoy entity (D1), `combat_roll`
   path-vs-teleport, cover-vs-Might composition, duplicate-pick rule, Support kit draft.
+
+## 2026-08-15 — TeamId rename + M2 client (Builder, T1 + items 18–20)
+
+Integrated `origin/main` (M1 engine + roster-v1's 9 characters + rescope docs) into the
+engine branch, then built the interactive client. Judgment calls:
+**(1) T1 rename is complete, not aliased.** `PlayerId` was deleted outright (nothing
+external depended on it) and `PlayerOrders.player` → `PlayerOrders.team`; the interface
+name `PlayerOrders` was kept (per the item's own wording) to bound churn. Pure mechanical
+change — all 226 engine tests pass unchanged.
+**(2) Client gets its own Vitest runner** (`packages/client/vitest.config.ts`, node env)
+so the AC-bearing *pure* logic — order building, event→view reconstruction, per-player
+order merging — is actually tested; root `npm test` now runs both workspaces
+(`--workspaces --if-present`). This broadens the constitution's "npm test = engine suite"
+— flagged. The interactive DOM shell (`app.ts`, `render.ts`) stays typecheck/build-verified
+only (no runtime test here), consistent with "client code, no engine tests".
+**(3) Playback reproduces the *board* (positions, HP, alive, kills)** purely from the
+event log. Two event-schema gaps mean it cannot reconstruct everything (flagged, not
+worked around): `statusApplied` carries no shield `amount`, and there is **no event for
+an ultimate's energy reset** — so shield pools and post-ult energy drift if derived from
+the log alone. HUD-only; the board is exact.
+**(4) Seat split** (`deriveSeats`): a team's characters are distributed ≤2 per player, the
+first `units−players` players getting 2 — yielding the 3-player 2v2 (1+1 vs 2) and 4v4
+(2+1+1). Player→character control is a client/room concern; the engine still sees two
+teams. **(5) E2 (cover-corner unify) left undone** — optional, and no cover code was
+touched this session.
+
+## Open Questions for the Analyzer — 2026-08-15
+
+- **Event-schema gaps for playback (item 19).** To let the client show shield pools and
+  post-ult energy without recomputing, the engine's `TurnEvent` log needs: (a) a shield
+  `amount` on `statusApplied` (or a dedicated `shielded` event), and (b) an event for an
+  ability spending/zeroing energy (the ult reset emits nothing today). Ruling requested
+  before I add them to `resolve.ts` — it's an engine event-schema change.
+- **Client test runner.** I added client Vitest and made root `npm test` run both
+  workspaces. Confirm that's the desired shape (vs. keeping `npm test` engine-only and a
+  separate client test command), and that CI should run client tests too.
+- **Main PR + stale branches.** `origin/main` trailed (had M1 engine + roster + rescope
+  docs but not M1.5/E1/render); I merged main into this branch and will PR it back.
+  After merge, retire `claude/cards-multiplayer-configs-jcfoxf`, `…engine-backlog-t96lxw`,
+  and `…code-review-h3mwjs` (their content is now on the engine branch / main).
+- **Interactive shell is not runtime-tested here** (no Playwright in the repo). Recommend
+  a headless smoke test (drive one hot-seat turn, assert resolve+playback) when tooling
+  is available — the pure logic under it is covered.
+- **Designer follow-ups still open** (unchanged): decoy (D1), `combat_roll`
+  path-vs-teleport, cover-vs-Might, duplicate-pick rule, and the roster-v1 §9 ENGINE ASKs
+  (effect target affinity; energy on ally-benefit) — do NOT implement in v1 without a ruling.
