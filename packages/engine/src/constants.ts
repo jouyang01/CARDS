@@ -13,6 +13,12 @@ export const RESPAWN_TURNS = 1;
 export const DECISION_SECONDS = 30;
 export const TIMEBANK_CHARGES = 1;
 export const TIMEBANK_SECONDS = 10;
+/**
+ * Turns of Reveal a unit gets for using a damaging ability. 2 = "until the end
+ * of the next turn" (GAME_SPEC §6 / edge-cases): applied during resolution, it
+ * survives this turn's end-of-turn tick and the next one.
+ */
+export const REVEAL_ON_ATTACK_TURNS = 2;
 /** Percent modifiers (round down when applied). */
 export const MIGHT_PCT = 25;
 export const WEAKEN_PCT = 25;

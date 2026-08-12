@@ -27,13 +27,10 @@ import {
   vecKey,
 } from './board.js';
 import { HASTE_PCT, MOVE_RANGE, SLOW_PCT, SPRINT_RANGE } from './constants.js';
-import type { EffectKind, GameState, TerrainKind, UnitState, Vec2 } from './types.js';
+import { hasStatus } from './status.js';
+import type { GameState, TerrainKind, UnitState, Vec2 } from './types.js';
 
 // ── Statuses that bear on movement ──────────────────────────────────────────
-
-export function hasStatus(unit: UnitState, kind: EffectKind): boolean {
-  return unit.statuses.some((s) => s.kind === kind && s.remaining > 0);
-}
 
 /**
  * How many squares this unit may walk in the Move phase.

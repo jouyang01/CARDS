@@ -133,6 +133,8 @@ export interface UnitState {
   owner: PlayerId;
   pos: Vec2;
   hp: number;
+  /** Full HP for this character; heals cap here and respawn restores to it. */
+  maxHp: number;
   energy: number;
   alive: boolean;
   /** Turns until respawn when dead (RESPAWN_TURNS at death). */

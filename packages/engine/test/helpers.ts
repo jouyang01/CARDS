@@ -48,6 +48,7 @@ export function makeUnit(
     owner,
     pos,
     hp: 100,
+    maxHp: 100,
     energy: 0,
     alive: true,
     respawnIn: 0,

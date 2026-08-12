@@ -20,9 +20,11 @@ jobs:
         run: npm run typecheck
       - name: Client build
         run: npm run build
-      - name: Determinism guard (no randomness/clock in engine)
+      - name: Determinism guard (no randomness/clock/IO in engine)
         run: |
-          if grep -rnE "Math\.random|Date\.now|new Date\(" packages/engine/src; then
-            echo "::error::Forbidden nondeterminism in packages/engine/src (CLAUDE.md rule 1)"
+          # Widened guard (CLAUDE.md rule 1): no clock, no RNG, no floats-from-random,
+          # no wall-clock timers, no crypto, no direct DOM/network/Node imports.
+          if grep -rnE "Math\.random|Date\.now|new Date|performance\.now|\bDate\(|crypto\.|require\(|process\.|\bfetch\(|from '(fs|path|os|crypto|node:)" packages/engine/src; then
+            echo "::error::Forbidden nondeterminism/IO in packages/engine/src (CLAUDE.md rule 1)"
             exit 1
           fi
