@@ -29,13 +29,12 @@ import {
   isBehindCover,
 } from './combat.js';
 import {
-  KILLS_TO_WIN,
   PASSIVE_ENERGY,
   RESPAWN_TURNS,
   REVEAL_ON_ATTACK_TURNS,
-  TURN_LIMIT,
   ULT_COST,
 } from './constants.js';
+import { getFormat } from './formats.js';
 import { movementBudget, validateMovePath } from './movement.js';
 import { aimInRange, direction8, expandShape } from './shapes.js';
 import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
@@ -43,10 +42,11 @@ import type {
   AbilityDef,
   AbilityEffect,
   CharacterDef,
+  EffectKind,
   GameState,
   MapDef,
-  PlayerId,
   PlayerOrders,
+  TeamId,
   TrapState,
   TurnEvent,
   TurnResult,
@@ -88,11 +88,38 @@ interface UnitPlan {
   sprint: boolean;
 }
 
+/**
+ * Effect allegiance (GAME_SPEC §1 / edge-cases "No friendly fire"): harmful
+ * effects only ever apply to enemies, beneficial effects only to the caster's
+ * own team. teleport/decoy/trap are neither — they are self/placement effects
+ * handled by their own phase, not filtered by area allegiance.
+ */
+const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+  'damage',
+  'weaken',
+  'slow',
+  'root',
+  'knockback',
+  'pull',
+  'reveal',
+]);
+const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+  'heal',
+  'shield',
+  'might',
+  'haste',
+  'energized',
+  'unstoppable',
+  'stealth',
+]);
+
 /** Does using this ability grant its energy even without hitting an enemy? */
 function isSelfOrUtility(def: AbilityDef): boolean {
   return (
     def.shape === 'self' ||
-    def.effects.some((e) => e.kind === 'teleport' || e.kind === 'trap' || e.kind === 'decoy')
+    def.effects.some(
+      (e) => e.kind === 'teleport' || e.kind === 'trap' || e.kind === 'decoy' || BENEFICIAL_KINDS.has(e.kind),
+    )
   );
 }
 
@@ -100,17 +127,17 @@ function isSelfOrUtility(def: AbilityDef): boolean {
  * Validate a single unit's order against the current draft, dropping any illegal
  * component (an unusable ability, an illegal path) rather than the whole order —
  * deterministic rejection, never a throw. Returns `undefined` if the unit is not
- * this player's or is dead.
+ * this team's or is dead.
  */
 function planUnit(
   board: Board,
   draft: GameState,
   roster: Roster,
-  player: PlayerId,
+  team: TeamId,
   order: UnitOrders,
 ): UnitPlan | undefined {
   const unit = draft.units.find((u) => u.unitId === order.unitId);
-  if (unit === undefined || unit.owner !== player || !unit.alive) return undefined;
+  if (unit === undefined || unit.owner !== team || !unit.alive) return undefined;
 
   let ability: PlannedAbility | undefined;
   const found = order.ability !== undefined ? findAbility(roster, unit.characterId, order.ability.abilityId) : undefined;
@@ -175,7 +202,7 @@ function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonl
 // ── Death ───────────────────────────────────────────────────────────────────
 
 /** Mark a unit dead (mid-phase), tally the kill and clear its statuses. */
-function killUnit(draft: GameState, victim: UnitState, killer: PlayerId, events: TurnEvent[]): void {
+function killUnit(draft: GameState, victim: UnitState, killer: TeamId, events: TurnEvent[]): void {
   if (!victim.alive) return;
   victim.alive = false;
   victim.hp = 0;
@@ -458,6 +485,7 @@ function runBlast(
 
   const hits: Hit[] = [];
   const debuffs: { victim: UnitState; effect: AbilityEffect }[] = [];
+  const benefits: { target: UnitState; effect: AbilityEffect }[] = [];
   const displacers: { effects: readonly AbilityEffect[]; victim: UnitState; source: Vec2 }[] = [];
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
@@ -484,19 +512,23 @@ function runBlast(
     }
 
     // Gather against post-Dash positions so mutual damage is simultaneous.
+    // Every unit in the area is considered; allegiance decides which effects
+    // apply (no friendly fire): harmful → enemies, beneficial → own team.
     const area = new Set(a.area.map(vecKey));
     let hitEnemy = false;
-    for (const enemy of draft.units) {
-      if (enemy.owner === plan.unit.owner || !enemy.alive) continue;
-      if (!area.has(vecKey(enemy.pos))) continue;
-      hitEnemy = true;
+    for (const target of draft.units) {
+      if (!target.alive || !area.has(vecKey(target.pos))) continue;
+      const enemy = target.owner !== plan.unit.owner;
       for (const e of a.def.effects) {
-        if (e.kind === 'damage') {
-          hits.push({ attacker: plan.unit, victim: enemy, raw: e.amount ?? 0, range: a.def.range });
-        } else if (e.kind === 'knockback' || e.kind === 'pull') {
-          displacers.push({ effects: [e], victim: enemy, source: plan.unit.pos });
-        } else if (isStatusKind(e.kind)) {
-          debuffs.push({ victim: enemy, effect: e });
+        if (HARMFUL_KINDS.has(e.kind)) {
+          if (!enemy) continue; // harmful effects never touch allies
+          hitEnemy = true;
+          if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, raw: e.amount ?? 0, range: a.def.range });
+          else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos });
+          else debuffs.push({ victim: target, effect: e }); // weaken/slow/root/reveal
+        } else if (BENEFICIAL_KINDS.has(e.kind)) {
+          if (enemy) continue; // beneficial effects never touch enemies
+          benefits.push({ target, effect: e });
         }
       }
     }
@@ -517,11 +549,16 @@ function runBlast(
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
 
-  // Non-displacement debuffs on survivors.
+  // Non-displacement debuffs on surviving enemies.
   for (const { victim, effect } of debuffs) {
     if (!victim.alive) continue;
     applyStatus(victim, effect.kind, effect.duration ?? 1);
     events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1 });
+  }
+
+  // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
+  for (const { target, effect } of benefits) {
+    if (target.alive) applySelfEffects(target, [effect], events);
   }
 
   // Queue displacement against survivors, to resolve at end of Blast (item 8).
@@ -674,10 +711,11 @@ function stepMovers(draft: GameState, movers: Mover[], step: number, events: Tur
 // ── End of turn ─────────────────────────────────────────────────────────────
 
 function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, events: TurnEvent[]): void {
-  // Passive energy for the living (a corpse does not build charge).
+  // Passive energy for the living (a corpse does not build charge). The flat
+  // drip is NOT boosted by Energized (E1) — pass scale:false.
   for (const u of draft.units) {
     if (!u.alive) continue;
-    const gained = grantEnergy(u, PASSIVE_ENERGY);
+    const gained = grantEnergy(u, PASSIVE_ENERGY, false);
     if (gained > 0) events.push({ type: 'energyGained', unitId: u.unitId, amount: gained });
   }
   // Cooldowns tick for everyone, alive or dead (edge-cases: cooldowns tick while dead).
@@ -703,10 +741,13 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
 }
 
 function reviveUnit(draft: GameState, map: MapDef, unit: UnitState, events: TurnEvent[]): void {
-  const team = draft.units.filter((u) => u.owner === unit.owner);
-  const idx = team.indexOf(unit);
+  // Respawn on the first team spawn square (map order) no living unit holds
+  // (edge-cases "Respawn square"). Map validation guarantees enough squares.
   const spawns = map.spawns[unit.owner];
-  const spawn = spawns[idx] ?? spawns[0]!;
+  const occupied = new Set(
+    draft.units.filter((u) => u.alive && u.owner === unit.owner).map((u) => vecKey(u.pos)),
+  );
+  const spawn = spawns.find((s) => !occupied.has(vecKey(s))) ?? spawns[0]!;
   unit.alive = true;
   unit.hp = unit.maxHp;
   unit.statuses = [];
@@ -715,13 +756,14 @@ function reviveUnit(draft: GameState, map: MapDef, unit: UnitState, events: Turn
   events.push({ type: 'respawn', unitId: unit.unitId, pos: unit.pos });
 }
 
-/** Win check + turn advance (GAME_SPEC §1, edge-cases turn-12 tiebreak). */
+/** Win check + turn advance, per the match format (GAME_SPEC §1, edge-cases tiebreak). */
 function resolveOutcome(draft: GameState, events: TurnEvent[]): void {
   if (draft.status !== 'active') return;
+  const { killsToWin, turnLimit } = getFormat(draft.format);
   const [k0, k1] = draft.kills;
-  const reached = k0 >= KILLS_TO_WIN || k1 >= KILLS_TO_WIN;
+  const reached = k0 >= killsToWin || k1 >= killsToWin;
   if (reached) {
-    if (k0 >= KILLS_TO_WIN && k1 >= KILLS_TO_WIN) {
+    if (k0 >= killsToWin && k1 >= killsToWin) {
       draft.status = 'draw';
       events.push({ type: 'gameEnd', result: 'draw' });
     } else {
@@ -731,7 +773,7 @@ function resolveOutcome(draft: GameState, events: TurnEvent[]): void {
     }
     return;
   }
-  if (draft.turn >= TURN_LIMIT) {
+  if (draft.turn >= turnLimit) {
     if (k0 !== k1) {
       draft.status = 'finished';
       draft.winner = k0 > k1 ? 0 : 1;
@@ -779,7 +821,7 @@ export function resolveTurn(
   const plans: UnitPlan[] = [];
   for (const po of orders) {
     for (const uo of po.units) {
-      const plan = planUnit(board, draft, roster, po.player, uo);
+      const plan = planUnit(board, draft, roster, po.team, uo);
       if (plan !== undefined) plans.push(plan);
     }
   }

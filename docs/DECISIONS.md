@@ -102,6 +102,7 @@ Firepower) so archetype is a balance class and theme carries the flavor;
 The roster introduces two `ENGINE ASK`s recorded in roster-v1.md §9 (effect target
 affinity in mixed areas; energy gain on ally-benefit) that the Builder must not
 improvise around.
+
 ## 2026-08-12 — Shape expansion rulings (Builder, BACKLOG 5a)
 
 Turning an aimed order into affected squares needed geometry the spec leaves open.
@@ -204,6 +205,7 @@ caster gains the ability's energy on a hit. Delayed prep/dash abilities are **no
   rejected at validation, so same-direction ally convoys aren't expressible in v1
   (irrelevant at 1v1). Note for the 2v2 milestone; the swap/contested resolver already
   handles crossing paths.
+
 ## 2026-08-12 — Formats rescoped: 2v2 default, 4v4 supported (Jerry + Claude)
 
 Jerry redefined match scope: **2v2 is the default format** (no longer a later
@@ -226,3 +228,105 @@ respawn-square order, per-player timer, teammate-visible plans) are drafted in
 squares per side (existing squares kept first, 180°-rotation symmetric) so one map
 serves every format. Engine work is queued as BACKLOG **M1.5 (items 13–16)**; no
 engine code changed with this rescope.
+
+## 2026-08-14 — Multiplayer-rescope engine build (Builder, E1 + M1.5 13–16, M2 17)
+
+Implemented the 2v2-default rescope in the engine (dev note: "confirm you have the
+multiplayer rescope and are implementing those changes"). Judgment calls beyond the
+rescope docs:
+**(1) Format lives on `GameState.format` (a `FormatId`);** the win check reads
+`FORMATS[format]` for kill target + turn limit. Global `KILLS_TO_WIN`/`TURN_LIMIT` were
+removed. Tests default to `1v1` so 1v1 dev behaviour is unchanged.
+**(2) `TeamId` added; `PlayerId` kept as a deprecated alias.** A full mechanical rename
+of the `PlayerOrders.player` field and every `owner: PlayerId` was deferred to avoid
+churning ~all tests for no behaviour change — flagged for the Analyzer to schedule.
+**(3) Effect polarity (no friendly fire).** Harmful = damage, weaken, slow, root,
+knockback, pull, **reveal** (reveal is hostile → enemies only). Beneficial = heal,
+shield, might, haste, energized, unstoppable, **stealth**. teleport/decoy/trap are
+neither (self/placement). AoE now applies harmful to enemies in-area and beneficial to
+own-team in-area (incl. the caster if inside). **Any beneficial-effect ability now pays
+its energyGain on use** (support abilities bank energy), extending the self/utility rule.
+**(4) Ally pass-through is enforced at the planning layer** (`reachableSquares` marks
+ally squares `canStop:false` but walks through them; `validateMovePath` allows an ally as
+an intermediate step, rejects it as a destination). At **resolution**, `stepMovers` keeps
+the safe no-two-units-on-one-square rule: a mover halts before a *stationary* ally rather
+than sliding through it that turn. So "pass-through" is fully a planning affordance in
+v1; true slide-through of a stationary ally at resolution is deferred (deterministic and
+AC-satisfying as-is). Flagged.
+**(5) Only blast-phase delayed abilities detonate** (unchanged from M1); still no
+prep/dash delayed content. **(6) Ally-aware effects are wired in Blast only** — an AoE
+*prep* buff to allies is not wired (no content; prep abilities are self-shape). Flag if
+a Designer drafts one.
+**(7) `createMatch` ids are `"<charId>-t<team>-<i>"`** (unique across duplicate picks);
+`createInitialState` keeps `"<charId>-0"` for the 1v1 convenience. Respawn goes to the
+first team spawn square (map order) no living ally holds.
+Client item 17 render reads engine state only and loops `state.units` (N-unit,
+team-coloured); no game logic client-side.
+
+## Open Questions for the Analyzer — 2026-08-14
+
+- **Two unreconciled Analyzer branches.** `claude/cards-code-review-h3mwjs` (M1 review,
+  based on my HEAD: marks M1 done, numbers 13–16 as the client batch, adds E1/E2) and
+  `claude/cards-multiplayer-configs-jcfoxf` (the rescope, based on `main`: renumbers 13–16
+  as the M1.5 teams batch, client → 17–20) **conflict on `BACKLOG.md` and
+  `edge-cases.md`**. I merged the **rescope** into my branch (per the dev note) and built
+  M1.5 13–16 + client 17; the code-review branch's E1 I also did. Please reconcile the
+  two into one canonical `BACKLOG.md` (M1 complete ✓ + M1.5 done ✓ + E1 done ✓ + client
+  17 done ✓; remaining: 18–20, E2 optional) and one `edge-cases.md`.
+- **This session's Analyzer Notes used the pre-rescope numbering** ("13 render → 16
+  hot-seat"). I followed the dev note and built the **rescope engine** (13–16 teams) +
+  render (17) instead, deferring the interactive client (18–20). Confirm that priority.
+- **Confirm the rescope judgment calls above**, esp. (3) effect polarity (is `reveal`
+  harmful / `stealth` beneficial for AoE filtering?), (4) ally pass-through at resolution
+  (v1 halts before a stationary ally — acceptable, or do you want true slide-through?),
+  and the beneficial-abilities-pay-energy-on-use rule.
+- **`PlayerId → TeamId` full rename** (fields `PlayerOrders.player`, `owner`): schedule it
+  as its own mechanical item so it doesn't ride inside a behaviour commit.
+- **Designer follow-ups still open** (unchanged): decoy entity (D1), `combat_roll`
+  path-vs-teleport, cover-vs-Might composition, duplicate-pick rule, Support kit draft.
+
+## 2026-08-15 — TeamId rename + M2 client (Builder, T1 + items 18–20)
+
+Integrated `origin/main` (M1 engine + roster-v1's 9 characters + rescope docs) into the
+engine branch, then built the interactive client. Judgment calls:
+**(1) T1 rename is complete, not aliased.** `PlayerId` was deleted outright (nothing
+external depended on it) and `PlayerOrders.player` → `PlayerOrders.team`; the interface
+name `PlayerOrders` was kept (per the item's own wording) to bound churn. Pure mechanical
+change — all 226 engine tests pass unchanged.
+**(2) Client gets its own Vitest runner** (`packages/client/vitest.config.ts`, node env)
+so the AC-bearing *pure* logic — order building, event→view reconstruction, per-player
+order merging — is actually tested; root `npm test` now runs both workspaces
+(`--workspaces --if-present`). This broadens the constitution's "npm test = engine suite"
+— flagged. The interactive DOM shell (`app.ts`, `render.ts`) stays typecheck/build-verified
+only (no runtime test here), consistent with "client code, no engine tests".
+**(3) Playback reproduces the *board* (positions, HP, alive, kills)** purely from the
+event log. Two event-schema gaps mean it cannot reconstruct everything (flagged, not
+worked around): `statusApplied` carries no shield `amount`, and there is **no event for
+an ultimate's energy reset** — so shield pools and post-ult energy drift if derived from
+the log alone. HUD-only; the board is exact.
+**(4) Seat split** (`deriveSeats`): a team's characters are distributed ≤2 per player, the
+first `units−players` players getting 2 — yielding the 3-player 2v2 (1+1 vs 2) and 4v4
+(2+1+1). Player→character control is a client/room concern; the engine still sees two
+teams. **(5) E2 (cover-corner unify) left undone** — optional, and no cover code was
+touched this session.
+
+## Open Questions for the Analyzer — 2026-08-15
+
+- **Event-schema gaps for playback (item 19).** To let the client show shield pools and
+  post-ult energy without recomputing, the engine's `TurnEvent` log needs: (a) a shield
+  `amount` on `statusApplied` (or a dedicated `shielded` event), and (b) an event for an
+  ability spending/zeroing energy (the ult reset emits nothing today). Ruling requested
+  before I add them to `resolve.ts` — it's an engine event-schema change.
+- **Client test runner.** I added client Vitest and made root `npm test` run both
+  workspaces. Confirm that's the desired shape (vs. keeping `npm test` engine-only and a
+  separate client test command), and that CI should run client tests too.
+- **Main PR + stale branches.** `origin/main` trailed (had M1 engine + roster + rescope
+  docs but not M1.5/E1/render); I merged main into this branch and will PR it back.
+  After merge, retire `claude/cards-multiplayer-configs-jcfoxf`, `…engine-backlog-t96lxw`,
+  and `…code-review-h3mwjs` (their content is now on the engine branch / main).
+- **Interactive shell is not runtime-tested here** (no Playwright in the repo). Recommend
+  a headless smoke test (drive one hot-seat turn, assert resolve+playback) when tooling
+  is available — the pure logic under it is covered.
+- **Designer follow-ups still open** (unchanged): decoy (D1), `combat_roll`
+  path-vs-teleport, cover-vs-Might, duplicate-pick rule, and the roster-v1 §9 ENGINE ASKs
+  (effect target affinity; energy on ally-benefit) — do NOT implement in v1 without a ruling.

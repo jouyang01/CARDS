@@ -36,13 +36,13 @@ describe("Vex's frag grenade (delayTurns: 1)", () => {
     const state = makeState([v, b]);
 
     const t1 = resolveTurn(state, OPEN(), [
-      { player: 0, units: [{ unitId: 'vex-0', ability: { abilityId: 'frag_grenade', target: [{ x: 7, y: 7 }] } }] },
-      { player: 1, units: [] },
+      { team: 0, units: [{ unitId: 'vex-0', ability: { abilityId: 'frag_grenade', target: [{ x: 7, y: 7 }] } }] },
+      { team: 1, units: [] },
     ], roster);
     expect(unit(t1.state, 'bastion-0').hp).toBe(130); // armed only, no damage yet
     expect(t1.state.delayed).toHaveLength(1);
 
-    const t2 = resolveTurn(t1.state, OPEN(), [{ player: 0, units: [] }, { player: 1, units: [] }], roster);
+    const t2 = resolveTurn(t1.state, OPEN(), [{ team: 0, units: [] }, { team: 1, units: [] }], roster);
     expect(unit(t2.state, 'bastion-0').hp).toBe(96); // 34 detonation on a Bastion that held its ground
     expect(t2.state.delayed).toHaveLength(0);
     expect(t2.events.some((e) => e.type === 'abilityFired' && e.abilityId === 'frag_grenade')).toBe(true);
@@ -54,11 +54,11 @@ describe("Vex's frag grenade (delayTurns: 1)", () => {
     const v = spawnUnit(VEX, 'vex-0', 0, { x: 5, y: 7 });
     const b = spawnUnit(BASTION, 'bastion-0', 1, { x: 7, y: 7 });
     const t1 = resolveTurn(makeState([v, b]), OPEN(), [
-      { player: 0, units: [{ unitId: 'vex-0', ability: { abilityId: 'frag_grenade', target: [{ x: 7, y: 7 }] } }] },
-      { player: 1, units: [{ unitId: 'bastion-0', sprint: true, movePath: [8, 9, 10, 11].map((x) => ({ x, y: 7 })) }] },
+      { team: 0, units: [{ unitId: 'vex-0', ability: { abilityId: 'frag_grenade', target: [{ x: 7, y: 7 }] } }] },
+      { team: 1, units: [{ unitId: 'bastion-0', sprint: true, movePath: [8, 9, 10, 11].map((x) => ({ x, y: 7 })) }] },
     ], roster);
     expect(unit(t1.state, 'bastion-0').pos).toEqual({ x: 11, y: 7 }); // walked clear
-    const t2 = resolveTurn(t1.state, OPEN(), [{ player: 0, units: [] }, { player: 1, units: [] }], roster);
+    const t2 = resolveTurn(t1.state, OPEN(), [{ team: 0, units: [] }, { team: 1, units: [] }], roster);
     expect(unit(t2.state, 'bastion-0').hp).toBe(130); // detonation at (7,7) finds nobody
   });
 });
@@ -68,8 +68,8 @@ describe("Bastion's kit through the pipeline", () => {
     const b = spawnUnit(BASTION, 'bastion-0', 0, { x: 2, y: 7 });
     const v = spawnUnit(VEX, 'vex-0', 1, { x: 5, y: 7 });
     const { state } = resolveTurn(makeState([b, v]), OPEN(), [
-      { player: 0, units: [{ unitId: 'bastion-0', ability: { abilityId: 'ram_charge', target: [{ x: 3, y: 7 }, { x: 4, y: 7 }, { x: 5, y: 7 }, { x: 6, y: 7 }] } }] },
-      { player: 1, units: [] },
+      { team: 0, units: [{ unitId: 'bastion-0', ability: { abilityId: 'ram_charge', target: [{ x: 3, y: 7 }, { x: 4, y: 7 }, { x: 5, y: 7 }, { x: 6, y: 7 }] } }] },
+      { team: 1, units: [] },
     ], roster);
     expect(unit(state, 'vex-0').hp).toBe(80); // 15 charge damage off Vex's 95
     expect(unit(state, 'vex-0').pos).toEqual({ x: 6, y: 7 }); // knocked back one square
@@ -79,8 +79,8 @@ describe("Bastion's kit through the pipeline", () => {
     const b = spawnUnit(BASTION, 'bastion-0', 0, { x: 5, y: 7 });
     const v = spawnUnit(VEX, 'vex-0', 1, { x: 5, y: 2 });
     const { state } = resolveTurn(makeState([b, v]), OPEN(), [
-      { player: 0, units: [{ unitId: 'bastion-0', ability: { abilityId: 'bulwark', target: [] } }] },
-      { player: 1, units: [{ unitId: 'vex-0', ability: { abilityId: 'rail_shot', target: [{ x: 5, y: 14 }] } }] },
+      { team: 0, units: [{ unitId: 'bastion-0', ability: { abilityId: 'bulwark', target: [] } }] },
+      { team: 1, units: [{ unitId: 'vex-0', ability: { abilityId: 'rail_shot', target: [{ x: 5, y: 14 }] } }] },
     ], roster);
     expect(unit(state, 'bastion-0').hp).toBe(130); // 26 rail fully soaked by the 30 shield
   });
@@ -93,8 +93,8 @@ describe('a decisive turn yields a winner and a coherent event log', () => {
     b.hp = 20;
     const state = makeState([v, b], { kills: [2, 0] });
     const { state: next, events } = resolveTurn(state, OPEN(), [
-      { player: 0, units: [{ unitId: 'vex-0', ability: { abilityId: 'rail_shot', target: [{ x: 14, y: 7 }] } }] },
-      { player: 1, units: [] },
+      { team: 0, units: [{ unitId: 'vex-0', ability: { abilityId: 'rail_shot', target: [{ x: 14, y: 7 }] } }] },
+      { team: 1, units: [] },
     ], roster);
     expect(next.kills).toEqual([3, 0]);
     expect(next.status).toBe('finished');
@@ -110,7 +110,7 @@ describe('a full scripted Vex-vs-Bastion match on the real arena', () => {
     let state = createInitialState(ARENA, VEX, BASTION);
     // Both close to mid-lane, then trade their kits turn after turn.
     const vexTurn = (t: number): PlayerOrders => ({
-      player: 0,
+      team: 0,
       units: [
         t === 0
           ? { unitId: 'vex-0', sprint: true, movePath: [{ x: 2, y: 7 }, { x: 2, y: 6 }, { x: 2, y: 5 }] }
@@ -120,7 +120,7 @@ describe('a full scripted Vex-vs-Bastion match on the real arena', () => {
       ],
     });
     const bastionTurn = (t: number): PlayerOrders => ({
-      player: 1,
+      team: 1,
       units: [
         t === 0
           ? { unitId: 'bastion-0', sprint: true, movePath: [{ x: 12, y: 7 }, { x: 12, y: 6 }, { x: 12, y: 5 }] }

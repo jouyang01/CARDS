@@ -6,7 +6,7 @@
  * Row 0 is the first string; x increases left→right, y increases top→bottom.
  */
 
-import type { GameState, MapDef, PlayerId, StatusInstance, UnitState, Vec2 } from '../src/types.js';
+import type { GameState, MapDef, TeamId, StatusInstance, UnitState, Vec2 } from '../src/types.js';
 
 export function makeMap(rows: string[], overrides: Partial<MapDef> = {}): MapDef {
   const height = rows.length;
@@ -38,7 +38,7 @@ export function makeMap(rows: string[], overrides: Partial<MapDef> = {}): MapDef
 
 export function makeUnit(
   unitId: string,
-  owner: PlayerId,
+  owner: TeamId,
   pos: Vec2,
   overrides: Partial<UnitState> = {},
 ): UnitState {
@@ -73,6 +73,8 @@ export function makeState(units: UnitState[], overrides: Partial<GameState> = {}
     traps: [],
     delayed: [],
     kills: [0, 0],
+    // Tests default to the 1v1 dev format (3 kills / turn 12) unless they override.
+    format: '1v1',
     status: 'active',
     suddenDeath: false,
     ...overrides,
