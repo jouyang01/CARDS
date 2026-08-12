@@ -42,6 +42,7 @@ import type {
   AbilityDef,
   AbilityEffect,
   CharacterDef,
+  EffectKind,
   GameState,
   MapDef,
   PlayerId,
@@ -87,11 +88,38 @@ interface UnitPlan {
   sprint: boolean;
 }
 
+/**
+ * Effect allegiance (GAME_SPEC §1 / edge-cases "No friendly fire"): harmful
+ * effects only ever apply to enemies, beneficial effects only to the caster's
+ * own team. teleport/decoy/trap are neither — they are self/placement effects
+ * handled by their own phase, not filtered by area allegiance.
+ */
+const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+  'damage',
+  'weaken',
+  'slow',
+  'root',
+  'knockback',
+  'pull',
+  'reveal',
+]);
+const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+  'heal',
+  'shield',
+  'might',
+  'haste',
+  'energized',
+  'unstoppable',
+  'stealth',
+]);
+
 /** Does using this ability grant its energy even without hitting an enemy? */
 function isSelfOrUtility(def: AbilityDef): boolean {
   return (
     def.shape === 'self' ||
-    def.effects.some((e) => e.kind === 'teleport' || e.kind === 'trap' || e.kind === 'decoy')
+    def.effects.some(
+      (e) => e.kind === 'teleport' || e.kind === 'trap' || e.kind === 'decoy' || BENEFICIAL_KINDS.has(e.kind),
+    )
   );
 }
 
@@ -457,6 +485,7 @@ function runBlast(
 
   const hits: Hit[] = [];
   const debuffs: { victim: UnitState; effect: AbilityEffect }[] = [];
+  const benefits: { target: UnitState; effect: AbilityEffect }[] = [];
   const displacers: { effects: readonly AbilityEffect[]; victim: UnitState; source: Vec2 }[] = [];
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
@@ -483,19 +512,23 @@ function runBlast(
     }
 
     // Gather against post-Dash positions so mutual damage is simultaneous.
+    // Every unit in the area is considered; allegiance decides which effects
+    // apply (no friendly fire): harmful → enemies, beneficial → own team.
     const area = new Set(a.area.map(vecKey));
     let hitEnemy = false;
-    for (const enemy of draft.units) {
-      if (enemy.owner === plan.unit.owner || !enemy.alive) continue;
-      if (!area.has(vecKey(enemy.pos))) continue;
-      hitEnemy = true;
+    for (const target of draft.units) {
+      if (!target.alive || !area.has(vecKey(target.pos))) continue;
+      const enemy = target.owner !== plan.unit.owner;
       for (const e of a.def.effects) {
-        if (e.kind === 'damage') {
-          hits.push({ attacker: plan.unit, victim: enemy, raw: e.amount ?? 0, range: a.def.range });
-        } else if (e.kind === 'knockback' || e.kind === 'pull') {
-          displacers.push({ effects: [e], victim: enemy, source: plan.unit.pos });
-        } else if (isStatusKind(e.kind)) {
-          debuffs.push({ victim: enemy, effect: e });
+        if (HARMFUL_KINDS.has(e.kind)) {
+          if (!enemy) continue; // harmful effects never touch allies
+          hitEnemy = true;
+          if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, raw: e.amount ?? 0, range: a.def.range });
+          else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos });
+          else debuffs.push({ victim: target, effect: e }); // weaken/slow/root/reveal
+        } else if (BENEFICIAL_KINDS.has(e.kind)) {
+          if (enemy) continue; // beneficial effects never touch enemies
+          benefits.push({ target, effect: e });
         }
       }
     }
@@ -516,11 +549,16 @@ function runBlast(
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
 
-  // Non-displacement debuffs on survivors.
+  // Non-displacement debuffs on surviving enemies.
   for (const { victim, effect } of debuffs) {
     if (!victim.alive) continue;
     applyStatus(victim, effect.kind, effect.duration ?? 1);
     events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1 });
+  }
+
+  // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
+  for (const { target, effect } of benefits) {
+    if (target.alive) applySelfEffects(target, [effect], events);
   }
 
   // Queue displacement against survivors, to resolve at end of Blast (item 8).
