@@ -1,6 +1,11 @@
 name: Deploy to GitHub Pages
+# Deploy only runs after the CI workflow succeeds on main, so a red build
+# (failing tests, typecheck, or the determinism guard) can never publish to
+# the live site. Manual runs via workflow_dispatch are still allowed.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -15,6 +20,8 @@ concurrency:
 
 jobs:
   build-and-deploy:
+    # Gate: proceed only when CI passed (workflow_run) or a human triggered it.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
