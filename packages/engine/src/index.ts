@@ -6,6 +6,7 @@ export * from './status.js';
 export * from './movement.js';
 export * from './vision.js';
 export * from './shapes.js';
+export * from './combat.js';
 
 import type { GameState, MapDef, PlayerOrders, TurnResult } from './types.js';
 
