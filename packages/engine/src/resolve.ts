@@ -741,10 +741,13 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
 }
 
 function reviveUnit(draft: GameState, map: MapDef, unit: UnitState, events: TurnEvent[]): void {
-  const team = draft.units.filter((u) => u.owner === unit.owner);
-  const idx = team.indexOf(unit);
+  // Respawn on the first team spawn square (map order) no living unit holds
+  // (edge-cases "Respawn square"). Map validation guarantees enough squares.
   const spawns = map.spawns[unit.owner];
-  const spawn = spawns[idx] ?? spawns[0]!;
+  const occupied = new Set(
+    draft.units.filter((u) => u.alive && u.owner === unit.owner).map((u) => vecKey(u.pos)),
+  );
+  const spawn = spawns.find((s) => !occupied.has(vecKey(s))) ?? spawns[0]!;
   unit.alive = true;
   unit.hp = unit.maxHp;
   unit.statuses = [];
