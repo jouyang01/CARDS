@@ -186,3 +186,25 @@ caster gains the ability's energy on a hit. Delayed prep/dash abilities are **no
   rejected at validation, so same-direction ally convoys aren't expressible in v1
   (irrelevant at 1v1). Note for the 2v2 milestone; the swap/contested resolver already
   handles crossing paths.
+## 2026-08-12 — Formats rescoped: 2v2 default, 4v4 supported (Jerry + Claude)
+
+Jerry redefined match scope: **2v2 is the default format** (no longer a later
+extension) and **4v4 is in scope**. A player controls **1 or 2 characters**, always on
+one team, so 2v2 runs with 2–4 players — including the asymmetric 3-player match (a
+two-player team versus one player running both characters) — and 4v4 with 4–8 players
+(minimum 4, since 8 characters at ≤2 per player needs 4 controllers). Judgment calls
+made while cascading this through the docs: **1v1 stays as a dev/testing format**
+(hot-seat and scripted engine matches). **Kill targets and turn limits become
+per-format** — 2v2: 4 kills / 16 turns (interpolated), 4v4: 5 / 20 (Atlas Reactor's
+numbers), 1v1 keeps 3 / 12 — Designer-tunable pending playtests. **The engine stays
+player-count-blind**: it models two teams of N units; the room layer owns the
+player→character control map and merges per-player submissions into per-team orders
+(new "Teams vs. players" section in ARCHITECTURE.md), so per-player timers, Time
+Banks, and disconnects are room concerns. **The "no Support archetype" call above is
+rescinded** — it assumed 1v1; ally heals now matter from day one. New team rulings
+(no friendly fire, ally pass-through, allied contested squares, team-shared vision,
+respawn-square order, per-player timer, teammate-visible plans) are drafted in
+`edge-cases.md`, the contentious ones as PROPOSED. `duel-arena.json` grew to 4 spawn
+squares per side (existing squares kept first, 180°-rotation symmetric) so one map
+serves every format. Engine work is queued as BACKLOG **M1.5 (items 13–16)**; no
+engine code changed with this rescope.

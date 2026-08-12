@@ -5,9 +5,12 @@ Every Claude session (Builder, Analyzer, Designer) reads this file first, then
 
 ## What this project is
 
-**Cards** is a free, browser-based, 1v1 simultaneous-turn tactics duel inspired by
-Atlas Reactor. Two players plan in secret each turn; the turn then resolves in four
-strict phases: **Prep → Dash → Blast → Move**. Full rules live in `docs/GAME_SPEC.md`.
+**Cards** is a free, browser-based, team-vs-team simultaneous-turn tactics duel
+inspired by Atlas Reactor. The default format is **2v2** — two characters per team,
+2–4 players, each player controlling 1 or 2 characters — with **4v4** (4–8 players,
+minimum 4) also supported. Both teams plan in secret each turn; the turn then resolves
+in four strict phases: **Prep → Dash → Blast → Move**. Full rules live in
+`docs/GAME_SPEC.md` (formats and player counts: §1).
 
 ## Golden rules (non-negotiable)
 
@@ -27,8 +30,9 @@ strict phases: **Prep → Dash → Blast → Move**. Full rules live in `docs/GA
    before Move. Dashing units are immune to Blast attacks aimed at their origin
    square. Knockbacks resolve simultaneously at the end of Blast and cancel the
    victim's Move. Do not "simplify" this.
-5. **Hidden information stays server-side.** Player orders are never sent to the
-   opponent's client until both have locked in (or the timer fires).
+5. **Hidden information stays server-side.** A player's orders are never sent to the
+   opposing team's clients until every player has locked in (or the timer fires).
+   Hidden information is team vs. team — teammates may see each other's plans.
 6. **Small commits, descriptive messages.** One logical change per commit. Push only
    when tests pass.
 

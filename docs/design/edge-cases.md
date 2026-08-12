@@ -8,8 +8,8 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
   that dies this phase still deals its full locked-in damage. Mutual kills award a
-  kill to both players; if that makes both hit 3 kills at once, the game is a draw
-  (display "Double KO").
+  kill to both teams; if that makes both teams hit the format's kill target at once,
+  the game is a draw (display "Double KO").
 - **RULED — Mid-phase death from earlier phases.** A character killed in Prep (e.g.,
   trap detonation) or Dash phase does NOT act in later phases this turn. Its locked
   Blast/Move orders are discarded.
@@ -42,6 +42,12 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   including the edge-swap case above. With 2 units this only matters for path planning;
   keep the rule general for N units (allies: also no pass-through in v1 — revisit at
   2v2).
+- **RULED — Contested square (both Move to the same square).** Neither enters it.
+  Each unit stops on the last square of its own path before the contested square.
+  Deterministic and symmetric; no priority coin-flip.
+- **RULED — Pass-through.** Units never pass through enemy units, walls, or cover.
+  Allies are ruled separately — see "Ally pass-through" under Teams & control below,
+  which supersedes the earlier "allies also block" lean now that 2v2 is the default.
 - **RULED — Knockback into wall/cover/edge.** The unit stops on the last open square
   along the knockback line. No collision damage in v1.
 - **RULED — Knockback + Move.** A displaced unit loses its Move this turn (per spec).
@@ -100,6 +106,37 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   absorbs a hit and expires) is a separate backlog item pending a Designer spec — the
   roster-v1 design branch is the place that spec should land. Until then the engine models
   no decoy, and content may carry the `decoy` effect harmlessly.
+
+## Teams & control (2v2 default, 4v4 — GAME_SPEC §1)
+
+- **RULED — Kill credit is team-level.** A kill increments the killing unit's team
+  tally. Traps and delayed abilities credit their caster's team even if the caster
+  has since died.
+- **PROPOSED — No friendly fire.** Harmful effects (damage, negative statuses,
+  knockback/pull) never affect the casting unit's own team, even inside the aimed
+  area, and a team's traps do not trigger for that team's units. Beneficial effects
+  (heal, shield, positive statuses) apply to allies in the area and never to enemies.
+  Free-aim is unchanged — the area is the area; team allegiance only filters which
+  effects apply to whom. (Atlas Reactor's model.)
+- **PROPOSED — Ally pass-through.** Units may move and dash *through* allies but may
+  not end movement on an occupied square. Enemies still block both entry and
+  pass-through.
+- **RULED — Allied contested square.** Two allies moving to the same square resolve
+  exactly like enemies: neither enters; each stops on the last square of its own path
+  before the contested square. One symmetric rule for every contested square.
+- **RULED — Respawn square.** A unit respawns on the first square of its team's spawn
+  list (map order) not occupied by a living unit. Map validation must guarantee
+  spawns-per-team ≥ characters-per-team for the formats the map supports.
+- **RULED — Timer with 2 characters.** The 30-second decision window is per player
+  and does not scale with characters controlled. The Time Bank charge is per player
+  and extends only that player's own deadline.
+- **RULED — Teammate information.** Teammates see each other's planned orders during
+  the Decision Phase. Hidden information is team vs. team, never within a team.
+- **OPEN — Duplicate picks.** May a team (or both teams) field the same character
+  twice? Designer to rule before the lobby is built at M3.
+- **OPEN — Partial-team disconnect (matters at M3).** If one player on a multi-player
+  team disconnects, does a teammate gain control of the abandoned characters? Current
+  lean: yes, after one fully missed turn. Decide when building the server.
 
 ## Economy & timing
 
