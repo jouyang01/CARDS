@@ -5,7 +5,7 @@
  * no I/O, integer math only. Terrain is indexed once from a `MapDef` so every
  * lookup is O(1) and iteration order never depends on object key order.
  *
- * Line of sight / vision deliberately live elsewhere (BACKLOG item 2).
+ * Line of sight / vision deliberately live elsewhere, in `vision.ts`.
  */
 
 import type { MapDef, TerrainKind, Vec2 } from './types.js';
