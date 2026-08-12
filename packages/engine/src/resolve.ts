@@ -20,7 +20,7 @@
  * and trap triggers (9) attach at the marked seams and grow in their own commits.
  */
 
-import { type Board, buildBoard, vecEq, vecKey } from './board.js';
+import { type Board, buildBoard, chebyshev, terrainAt, vecEq, vecKey } from './board.js';
 import {
   applyDamage,
   applyHeal,
@@ -256,6 +256,90 @@ function placeTraps(
     draft.traps.push(trap);
     events.push({ type: 'trapPlaced', trapId: trap.id, pos: trap.pos, owner: trap.owner });
   }
+}
+
+// ── Dash ────────────────────────────────────────────────────────────────────
+
+/**
+ * Dash phase: dashers move (charge path or teleport), damage-dealing dashes hit
+ * the first enemy struck, and self-statuses (e.g. Untargetable) apply. Blast
+ * immunity for the vacated square is emergent — Blast is resolved afterwards
+ * against these new positions, so a dasher is simply no longer where it was
+ * aimed at (edge-cases: dash immunity scope). Displacement from a dash is queued
+ * for end of Blast (BACKLOG item 8); trap triggers attach here (item 9).
+ */
+function runDash(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
+  events.push({ type: 'phaseStart', phase: 'dash' });
+  for (const plan of orderedPlans(draft, plans)) {
+    const a = plan.ability;
+    if (a === undefined || a.def.phase !== 'dash' || !plan.unit.alive) continue;
+    events.push({ type: 'abilityFired', unitId: plan.unit.unitId, abilityId: a.def.id, area: a.area });
+    markAbilityUsed(plan.unit, a);
+
+    // Move: a `path` charge walks until blocked; anything else teleports.
+    let charged: UnitState | undefined;
+    if (a.def.shape === 'path') charged = walkCharge(draft, plan.unit, a.aim, events);
+    else teleport(draft, board, plan.unit, a.aim[0], events);
+
+    // Damage: a charge hits the enemy it ran into; a teleport-strike hits enemies
+    // adjacent to where it landed.
+    const dmg = a.def.effects.find((e) => e.kind === 'damage');
+    let hitEnemy = false;
+    if (dmg !== undefined) {
+      const victims =
+        a.def.shape === 'path'
+          ? charged !== undefined
+            ? [charged]
+            : []
+          : draft.units.filter((u) => u.owner !== plan.unit.owner && u.alive && chebyshev(plan.unit.pos, u.pos) === 1);
+      for (const victim of victims) {
+        const behindCover = isBehindCover(board, plan.unit.pos, victim.pos, a.def.range);
+        const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
+        events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed });
+        removeStatus(victim, 'stealth');
+        hitEnemy = true;
+        if (res.died) killUnit(draft, victim, plan.unit.owner, events);
+      }
+    }
+
+    // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
+    applySelfEffects(plan.unit, a.def.effects, events);
+    grantUseEnergy(plan.unit, a.def, hitEnemy, events);
+    if (hitEnemy) {
+      removeStatus(plan.unit, 'stealth');
+      applyStatus(plan.unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
+      events.push({ type: 'statusApplied', unitId: plan.unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS });
+    }
+  }
+}
+
+/** Walk a charge along its path, stopping before the first unit; returns the
+ * enemy it ran into (the one it stopped in front of), if any. */
+function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState | undefined {
+  for (const step of path) {
+    const occupant = draft.units.find((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, step));
+    if (occupant !== undefined) {
+      return occupant.owner !== unit.owner ? occupant : undefined; // stop before it
+    }
+    const from = unit.pos;
+    unit.pos = { x: step.x, y: step.y };
+    events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
+    // Trap trigger on entry attaches here — BACKLOG item 9.
+  }
+  return undefined;
+}
+
+/** Teleport to `dest` if it is an open, unoccupied square (walls may be crossed). */
+function teleport(draft: GameState, board: Board, unit: UnitState, dest: Vec2 | undefined, events: TurnEvent[]): boolean {
+  if (dest === undefined) return false;
+  const t = terrainAt(board, dest);
+  if (t === 'wall' || t === 'cover' || t === 'oob') return false;
+  if (draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, dest))) return false;
+  const from = unit.pos;
+  unit.pos = { x: dest.x, y: dest.y };
+  events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
+  // Trap trigger on entry attaches here — BACKLOG item 9.
+  return true;
 }
 
 // ── Blast ───────────────────────────────────────────────────────────────────
@@ -534,7 +618,7 @@ export function resolveTurn(
 
   if (draft.status === 'active') {
     runPrep(draft, board, plans, events);
-    events.push({ type: 'phaseStart', phase: 'dash' }); // dash execution — BACKLOG item 7
+    runDash(draft, board, plans, events);
     runBlast(draft, board, plans, events);
     runMove(draft, board, plans, events);
     endOfTurn(draft, map, deadAtStart, events);
