@@ -69,6 +69,32 @@ export function isPassable(board: Board, occupied: ReadonlySet<string>, p: Vec2)
   return !blocksMovement(board, p) && !occupied.has(vecKey(p));
 }
 
+/**
+ * Living enemies of `mover` — they block both entry and pass-through
+ * (edge-cases "Pass-through"). Excludes the mover and the dead.
+ */
+export function enemyOccupied(state: GameState, mover: UnitState): Set<string> {
+  const out = new Set<string>();
+  for (const u of state.units) {
+    if (!u.alive || u.unitId === mover.unitId) continue;
+    if (u.owner !== mover.owner) out.add(vecKey(u.pos));
+  }
+  return out;
+}
+
+/**
+ * Living allies of `mover` — a unit may move/dash *through* an ally but may not
+ * *end* on it (edge-cases "Ally pass-through", 2v2 default). Excludes the mover.
+ */
+export function allyOccupied(state: GameState, mover: UnitState): Set<string> {
+  const out = new Set<string>();
+  for (const u of state.units) {
+    if (!u.alive || u.unitId === mover.unitId) continue;
+    if (u.owner === mover.owner) out.add(vecKey(u.pos));
+  }
+  return out;
+}
+
 // ── Reachability ────────────────────────────────────────────────────────────
 
 export interface ReachableSquare {
@@ -77,6 +103,12 @@ export interface ReachableSquare {
   cost: number;
   /** Square stepped from, for path reconstruction. Absent for the origin. */
   from?: Vec2;
+  /**
+   * Whether the unit may *stop* here. False for an ally-occupied square: the
+   * path may pass through it (so it stays in the BFS tree for reconstruction)
+   * but it is not a legal destination.
+   */
+  canStop: boolean;
 }
 
 /**
@@ -95,9 +127,10 @@ export function reachableSquares(
   const results: ReachableSquare[] = [];
   if (budget <= 0 || !inBounds(board, unit.pos)) return results;
 
-  const occupied = occupiedSquares(state, unit.unitId);
+  const enemies = enemyOccupied(state, unit);
+  const allies = allyOccupied(state, unit);
   const seen = new Set<string>([vecKey(unit.pos)]);
-  let frontier: ReachableSquare[] = [{ pos: unit.pos, cost: 0 }];
+  let frontier: ReachableSquare[] = [{ pos: unit.pos, cost: 0, canStop: true }];
 
   while (frontier.length > 0) {
     const next: ReachableSquare[] = [];
@@ -107,9 +140,11 @@ export function reachableSquares(
         const p: Vec2 = { x: cur.pos.x + d.x, y: cur.pos.y + d.y };
         const k = vecKey(p);
         if (seen.has(k)) continue;
-        if (!isPassable(board, occupied, p)) continue;
+        // Walls, cover, the map edge and enemies block traversal; allies do not.
+        if (blocksMovement(board, p) || enemies.has(k)) continue;
         seen.add(k);
-        const square: ReachableSquare = { pos: p, cost: cur.cost + 1, from: cur.pos };
+        // An ally square is walked through but is not a legal stopping point.
+        const square: ReachableSquare = { pos: p, cost: cur.cost + 1, from: cur.pos, canStop: !allies.has(k) };
         results.push(square);
         next.push(square);
       }
@@ -186,7 +221,9 @@ export function validateMovePath(
     return { valid: false, error: { code: 'exceedsBudget', budget, cost: path.length } };
   }
 
-  const occupied = occupiedSquares(state, unit.unitId);
+  const enemies = enemyOccupied(state, unit);
+  const allies = allyOccupied(state, unit);
+  const last = path.length - 1;
   let prev = unit.pos;
   for (const [i, p] of path.entries()) {
     if (!inBounds(board, p)) return { valid: false, error: { code: 'outOfBounds', index: i } };
@@ -199,7 +236,12 @@ export function validateMovePath(
         error: { code: 'blockedTerrain', index: i, terrain: terrainAt(board, p) as TerrainKind },
       };
     }
-    if (occupied.has(vecKey(p))) return { valid: false, error: { code: 'occupied', index: i } };
+    const k = vecKey(p);
+    // Enemies block every square; an ally blocks only as a *destination*
+    // (edge-cases: allies may be passed through but never ended on).
+    if (enemies.has(k) || (allies.has(k) && i === last)) {
+      return { valid: false, error: { code: 'occupied', index: i } };
+    }
     prev = p;
   }
   return { valid: true, cost: path.length };

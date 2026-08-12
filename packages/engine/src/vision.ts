@@ -34,7 +34,7 @@ import {
 } from './board.js';
 import { VISION_RANGE } from './constants.js';
 import { hasStatus } from './status.js';
-import type { GameState, UnitState, Vec2 } from './types.js';
+import type { GameState, TeamId, UnitState, Vec2 } from './types.js';
 
 /**
  * Does the segment between the centres of `from` and `to` clear every wall in
@@ -262,6 +262,51 @@ export function visibleEnemies(
   observer: UnitState,
 ): UnitState[] {
   return state.units.filter((u) => u.owner !== observer.owner && canSee(vision, observer, u));
+}
+
+// ── Team-shared vision (2v2 default — GAME_SPEC §3) ──────────────────────────
+
+/**
+ * Can any living member of `team` see `target`? Vision is shared within a team
+ * (GAME_SPEC §3): a square seen by one teammate is seen by all. A team always
+ * sees its own units.
+ */
+export function teamCanSee(vision: Vision, state: GameState, team: TeamId, target: UnitState): boolean {
+  if (!target.alive) return false;
+  if (target.owner === team) return true;
+  return state.units.some((u) => u.alive && u.owner === team && canSee(vision, u, target));
+}
+
+/** Enemy units the `team` can collectively see, in `state.units` order. */
+export function visibleEnemiesForTeam(vision: Vision, state: GameState, team: TeamId): UnitState[] {
+  return state.units.filter((u) => u.owner !== team && teamCanSee(vision, state, team, u));
+}
+
+/**
+ * The union of every living `team` member's field of view — the team's shared
+ * fog-of-war, deduplicated, in row-major order. This is what a client renders as
+ * "lit" for the whole team (a teammate's position grants vision of its
+ * surroundings).
+ */
+export function visibleSquaresForTeam(
+  vision: Vision,
+  state: GameState,
+  team: TeamId,
+  range: number = VISION_RANGE,
+): Vec2[] {
+  const seen = new Set<string>();
+  const out: Vec2[] = [];
+  for (const u of state.units) {
+    if (!u.alive || u.owner !== team) continue;
+    for (const p of visibleSquares(vision.board, u.pos, range)) {
+      const k = `${p.x},${p.y}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(p);
+    }
+  }
+  out.sort((a, b) => a.y - b.y || a.x - b.x);
+  return out;
 }
 
 /**

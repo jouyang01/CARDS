@@ -214,10 +214,14 @@ describe('units block each other', () => {
     expect(keys(out)).toEqual(['1,1']);
   });
 
-  it('an ally blocks too (edge-cases: no pass-through in v1)', () => {
+  it('an ally may be passed through but not stopped on (edge-cases: ally pass-through)', () => {
     const ally = makeUnit('a', 0, { x: 2, y: 1 });
     const out = reachableSquares(corridor(), makeState([mover, ally]), mover, 4);
-    expect(keys(out)).toEqual(['1,1']);
+    // BFS reaches past the ally; the ally square itself is not a legal stop.
+    expect(keys(out)).toEqual(['1,1', '2,1', '3,1', '4,1']);
+    const stoppable = out.filter((s) => s.canStop).map((s) => `${s.pos.x},${s.pos.y}`).sort();
+    expect(stoppable).toEqual(['1,1', '3,1', '4,1']);
+    expect(out.find((s) => s.pos.x === 2 && s.pos.y === 1)!.canStop).toBe(false);
   });
 
   it('a dead unit blocks nothing', () => {
