@@ -6,6 +6,8 @@
  * clock reads, no I/O. `resolveTurn` is a pure function of (state, map, orders).
  */
 
+import type { FormatId } from './formats.js';
+
 // ── Geometry ────────────────────────────────────────────────────────────────
 
 export interface Vec2 {
@@ -13,7 +15,15 @@ export interface Vec2 {
   y: number;
 }
 
-export type PlayerId = 0 | 1;
+/**
+ * Which of the two teams a unit / order belongs to. The engine is team-based
+ * and player-count-blind (GAME_SPEC §1); the room layer maps players to the
+ * characters they control. `PlayerId` remains as a deprecated alias so existing
+ * callers keep compiling while the codebase migrates to team-centric names.
+ */
+export type TeamId = 0 | 1;
+/** @deprecated Use {@link TeamId}. Retained for back-compat during the rescope. */
+export type PlayerId = TeamId;
 
 // ── Phases ──────────────────────────────────────────────────────────────────
 
@@ -167,10 +177,13 @@ export interface GameState {
   units: UnitState[];
   traps: TrapState[];
   delayed: PendingDelayedAbility[];
+  /** Per-team kill tally, `kills[teamId]`. */
   kills: [number, number];
+  /** Match format id (GAME_SPEC §1) — sets kill target and turn limit. */
+  format: FormatId;
   status: 'active' | 'finished' | 'draw';
-  winner?: PlayerId;
-  /** True once past TURN_LIMIT with tied kills. */
+  winner?: TeamId;
+  /** True once past the format's turn limit with tied kills. */
   suddenDeath: boolean;
 }
 

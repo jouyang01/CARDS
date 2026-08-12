@@ -29,13 +29,12 @@ import {
   isBehindCover,
 } from './combat.js';
 import {
-  KILLS_TO_WIN,
   PASSIVE_ENERGY,
   RESPAWN_TURNS,
   REVEAL_ON_ATTACK_TURNS,
-  TURN_LIMIT,
   ULT_COST,
 } from './constants.js';
+import { getFormat } from './formats.js';
 import { movementBudget, validateMovePath } from './movement.js';
 import { aimInRange, direction8, expandShape } from './shapes.js';
 import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
@@ -716,13 +715,14 @@ function reviveUnit(draft: GameState, map: MapDef, unit: UnitState, events: Turn
   events.push({ type: 'respawn', unitId: unit.unitId, pos: unit.pos });
 }
 
-/** Win check + turn advance (GAME_SPEC §1, edge-cases turn-12 tiebreak). */
+/** Win check + turn advance, per the match format (GAME_SPEC §1, edge-cases tiebreak). */
 function resolveOutcome(draft: GameState, events: TurnEvent[]): void {
   if (draft.status !== 'active') return;
+  const { killsToWin, turnLimit } = getFormat(draft.format);
   const [k0, k1] = draft.kills;
-  const reached = k0 >= KILLS_TO_WIN || k1 >= KILLS_TO_WIN;
+  const reached = k0 >= killsToWin || k1 >= killsToWin;
   if (reached) {
-    if (k0 >= KILLS_TO_WIN && k1 >= KILLS_TO_WIN) {
+    if (k0 >= killsToWin && k1 >= killsToWin) {
       draft.status = 'draw';
       events.push({ type: 'gameEnd', result: 'draw' });
     } else {
@@ -732,7 +732,7 @@ function resolveOutcome(draft: GameState, events: TurnEvent[]): void {
     }
     return;
   }
-  if (draft.turn >= TURN_LIMIT) {
+  if (draft.turn >= turnLimit) {
     if (k0 !== k1) {
       draft.status = 'finished';
       draft.winner = k0 > k1 ? 0 : 1;

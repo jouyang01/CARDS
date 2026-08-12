@@ -7,8 +7,7 @@ export const VISION_RANGE = 6;
 export const COVER_REDUCTION_PCT = 50;
 export const PASSIVE_ENERGY = 5;
 export const ULT_COST = 100;
-export const KILLS_TO_WIN = 3;
-export const TURN_LIMIT = 12;
+// KILLS_TO_WIN and TURN_LIMIT are per-format now — see `formats.ts` / GAME_SPEC §1.
 export const RESPAWN_TURNS = 1;
 export const DECISION_SECONDS = 30;
 export const TIMEBANK_CHARGES = 1;

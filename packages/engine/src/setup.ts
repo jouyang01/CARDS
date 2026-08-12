@@ -49,6 +49,7 @@ export function createInitialState(map: MapDef, p0: CharacterDef, p1: CharacterD
     traps: [],
     delayed: [],
     kills: [0, 0],
+    format: '1v1',
     status: 'active',
     suddenDeath: false,
   };
