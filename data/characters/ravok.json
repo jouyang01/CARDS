@@ -1,0 +1,77 @@
+{
+  "id": "ravok",
+  "name": "Ravok",
+  "archetype": "frontline",
+  "maxHp": 135,
+  "abilities": [
+    {
+      "id": "cleave",
+      "name": "Cleave",
+      "phase": "blast",
+      "shape": "cone",
+      "range": 2,
+      "cooldown": 0,
+      "energyGain": 8,
+      "effects": [{ "kind": "damage", "amount": 22 }],
+      "description": "Wide melee swing. Range 2 — ignores cover."
+    },
+    {
+      "id": "bullrush",
+      "name": "Bullrush",
+      "phase": "dash",
+      "shape": "path",
+      "range": 4,
+      "cooldown": 3,
+      "energyGain": 8,
+      "effects": [
+        { "kind": "damage", "amount": 14 },
+        { "kind": "knockback", "amount": 2 }
+      ],
+      "description": "Charge in a straight line: the first enemy hit takes 14 and is knocked back 2 squares, losing their Move."
+    },
+    {
+      "id": "blood_frenzy",
+      "name": "Blood Frenzy",
+      "phase": "prep",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 3,
+      "energyGain": 6,
+      "effects": [
+        { "kind": "heal", "amount": 20 },
+        { "kind": "might", "duration": 1 }
+      ],
+      "description": "Heal 20 and gain Might for a turn. Sustain through aggression — the heal comes with a threat attached."
+    },
+    {
+      "id": "shockwave",
+      "name": "Shockwave",
+      "phase": "blast",
+      "shape": "circle",
+      "range": 0,
+      "radius": 2,
+      "cooldown": 2,
+      "energyGain": 8,
+      "effects": [
+        { "kind": "damage", "amount": 12 },
+        { "kind": "slow", "duration": 1 }
+      ],
+      "description": "Stomp: all enemies within 2 squares take 12 and are Slowed. Disruption when surrounded."
+    }
+  ],
+  "ultimate": {
+    "id": "seismic_rupture",
+    "name": "Seismic Rupture",
+    "phase": "blast",
+    "shape": "circle",
+    "range": 0,
+    "radius": 3,
+    "cooldown": 0,
+    "energyGain": 0,
+    "effects": [
+      { "kind": "damage", "amount": 38 },
+      { "kind": "root", "duration": 1 }
+    ],
+    "description": "Shatter the ground: all enemies within 3 squares take 38 and are Rooted. Stand in the middle of them and detonate. (100 energy)"
+  }
+}

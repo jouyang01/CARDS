@@ -1,0 +1,75 @@
+{
+  "id": "cinder",
+  "name": "Cinder",
+  "archetype": "firepower",
+  "maxHp": 95,
+  "abilities": [
+    {
+      "id": "ember_bolt",
+      "name": "Ember Bolt",
+      "phase": "blast",
+      "shape": "line",
+      "range": 7,
+      "cooldown": 0,
+      "energyGain": 8,
+      "effects": [{ "kind": "damage", "amount": 22 }],
+      "description": "A searing bolt along a line. Slightly under a pure Firepower's auto — the buffs make up the difference."
+    },
+    {
+      "id": "flare_burst",
+      "name": "Flare Burst",
+      "phase": "blast",
+      "shape": "circle",
+      "range": 6,
+      "radius": 1,
+      "cooldown": 2,
+      "energyGain": 8,
+      "effects": [
+        { "kind": "damage", "amount": 18 },
+        { "kind": "reveal", "duration": 1 }
+      ],
+      "description": "A bursting flare: 18 damage and Reveal for a turn. The roster's stealth counter — checks ambushers and brush campers."
+    },
+    {
+      "id": "stoke_the_flame",
+      "name": "Stoke the Flame",
+      "phase": "prep",
+      "shape": "circle",
+      "range": 4,
+      "radius": 1,
+      "cooldown": 3,
+      "energyGain": 6,
+      "effects": [
+        { "kind": "might", "duration": 1 },
+        { "kind": "energized", "duration": 1 }
+      ],
+      "description": "Allies in the aimed area gain Might and Energized for a turn. Cinder makes damage, not HP. Self-cast when fighting alone."
+    },
+    {
+      "id": "backdraft",
+      "name": "Backdraft",
+      "phase": "dash",
+      "shape": "path",
+      "range": 3,
+      "cooldown": 3,
+      "energyGain": 4,
+      "effects": [{ "kind": "teleport" }],
+      "description": "Vanish in a gout of smoke, reappearing up to 3 squares away. Dodges Blast attacks aimed at your old square."
+    }
+  ],
+  "ultimate": {
+    "id": "solar_flare",
+    "name": "Solar Flare",
+    "phase": "blast",
+    "shape": "circle",
+    "range": 6,
+    "radius": 2,
+    "cooldown": 0,
+    "energyGain": 0,
+    "effects": [
+      { "kind": "damage", "amount": 35 },
+      { "kind": "weaken", "duration": 1 }
+    ],
+    "description": "A miniature sun detonates at the aimed area: 35 damage and Weaken for a turn. Damage now, and a blunted counter-swing after. (100 energy)"
+  }
+}

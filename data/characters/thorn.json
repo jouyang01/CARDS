@@ -1,0 +1,75 @@
+{
+  "id": "thorn",
+  "name": "Thorn",
+  "archetype": "support",
+  "maxHp": 100,
+  "abilities": [
+    {
+      "id": "barbed_sling",
+      "name": "Barbed Sling",
+      "phase": "blast",
+      "shape": "line",
+      "range": 6,
+      "cooldown": 0,
+      "energyGain": 8,
+      "effects": [{ "kind": "damage", "amount": 17 }],
+      "description": "A slung fistful of barbs. Steady poke while the garden grows."
+    },
+    {
+      "id": "snare_bloom",
+      "name": "Snare Bloom",
+      "phase": "prep",
+      "shape": "square",
+      "range": 4,
+      "cooldown": 2,
+      "energyGain": 5,
+      "effects": [
+        { "kind": "trap", "amount": 12 },
+        { "kind": "root", "duration": 1 }
+      ],
+      "description": "Plants a hidden snare. Triggers on entry in any phase: 12 damage and Root for a turn. A rooted victim loses their Move — and stands in Barbed Sling range."
+    },
+    {
+      "id": "lashing_vine",
+      "name": "Lashing Vine",
+      "phase": "blast",
+      "shape": "line",
+      "range": 5,
+      "cooldown": 3,
+      "energyGain": 8,
+      "effects": [
+        { "kind": "damage", "amount": 8 },
+        { "kind": "pull", "amount": 2 }
+      ],
+      "description": "A vine drags the first enemy in a line 2 squares toward Thorn, cancelling their Move. Low damage on purpose: its job is dragging enemies into Snare Blooms."
+    },
+    {
+      "id": "verdant_veil",
+      "name": "Verdant Veil",
+      "phase": "prep",
+      "shape": "circle",
+      "range": 5,
+      "radius": 1,
+      "cooldown": 2,
+      "energyGain": 6,
+      "effects": [{ "kind": "heal", "amount": 20 }],
+      "description": "Restorative spores heal allies in the aimed area for 20. Smaller than a Mender's heal — Thorn's defense budget is partly spent on control."
+    }
+  ],
+  "ultimate": {
+    "id": "overgrowth",
+    "name": "Overgrowth",
+    "phase": "prep",
+    "shape": "circle",
+    "range": 5,
+    "radius": 2,
+    "cooldown": 0,
+    "energyGain": 0,
+    "effects": [
+      { "kind": "heal", "amount": 30 },
+      { "kind": "root", "duration": 1 },
+      { "kind": "weaken", "duration": 1 }
+    ],
+    "description": "The ground erupts: allies in the area heal 30; enemies are Rooted and Weakened for a turn. The board itself takes a side. (100 energy)"
+  }
+}
