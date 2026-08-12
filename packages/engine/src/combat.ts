@@ -109,12 +109,16 @@ export function energyGainPct(unit: UnitState): number {
 }
 
 /**
- * Grant `base` energy, scaled by Energized (round down). Returns the amount
- * actually added. Energy is uncapped in v1 (banking above the ult cost is fine).
+ * Grant `base` energy and return the amount added. Energy is uncapped in v1
+ * (banking above the ult cost is fine).
+ *
+ * `scale` controls Energized: on by default for *earned* energy (ability use /
+ * on-hit), but the flat end-of-turn passive drip passes `scale: false` — GAME_SPEC
+ * §5 / edge-cases: "Energized scales earned energy, not the passive drip."
  */
-export function grantEnergy(unit: UnitState, base: number): number {
+export function grantEnergy(unit: UnitState, base: number, scale = true): number {
   if (base <= 0) return 0;
-  const gained = Math.floor((base * energyGainPct(unit)) / 100);
+  const gained = scale ? Math.floor((base * energyGainPct(unit)) / 100) : base;
   unit.energy += gained;
   return gained;
 }

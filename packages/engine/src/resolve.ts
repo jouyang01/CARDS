@@ -674,10 +674,11 @@ function stepMovers(draft: GameState, movers: Mover[], step: number, events: Tur
 // ── End of turn ─────────────────────────────────────────────────────────────
 
 function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, events: TurnEvent[]): void {
-  // Passive energy for the living (a corpse does not build charge).
+  // Passive energy for the living (a corpse does not build charge). The flat
+  // drip is NOT boosted by Energized (E1) — pass scale:false.
   for (const u of draft.units) {
     if (!u.alive) continue;
-    const gained = grantEnergy(u, PASSIVE_ENERGY);
+    const gained = grantEnergy(u, PASSIVE_ENERGY, false);
     if (gained > 0) events.push({ type: 'energyGained', unitId: u.unitId, amount: gained });
   }
   // Cooldowns tick for everyone, alive or dead (edge-cases: cooldowns tick while dead).

@@ -216,6 +216,14 @@ describe('energy and cooldowns', () => {
     expect(state.units.find((x) => x.unitId === 'u')!.energy).toBe(5); // passive only
   });
 
+  it('E1: Energized scales on-hit energy but NOT the flat passive drip', () => {
+    const u = withStatuses(makeUnit('u', 0, { x: 3, y: 3 }), status('energized', 2));
+    const e = makeUnit('e', 1, { x: 3, y: 5 });
+    const { state } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'shoot', target: [{ x: 3, y: 8 }] } }], []);
+    // on-hit 8 → floor(8*1.5)=12 (Energized-scaled); passive 5 stays flat (not 7).
+    expect(state.units.find((x) => x.unitId === 'u')!.energy).toBe(17);
+  });
+
   it('the ultimate needs 100 energy, resets to 0 on use', () => {
     const u = makeUnit('u', 0, { x: 3, y: 3 }, { energy: 100 });
     const e = makeUnit('e', 1, { x: 3, y: 5 });
