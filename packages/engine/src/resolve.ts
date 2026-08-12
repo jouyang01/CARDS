@@ -37,8 +37,8 @@ import {
   ULT_COST,
 } from './constants.js';
 import { movementBudget, validateMovePath } from './movement.js';
-import { aimInRange, expandShape } from './shapes.js';
-import { applyStatus, hasStatus, isStatusKind, removeStatus, tickStatuses } from './status.js';
+import { aimInRange, direction8, expandShape } from './shapes.js';
+import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import type {
   AbilityDef,
   AbilityEffect,
@@ -185,6 +185,64 @@ function killUnit(draft: GameState, victim: UnitState, killer: PlayerId, events:
   events.push({ type: 'death', unitId: victim.unitId, killer });
 }
 
+// ── Displacement (knockback / pull) ─────────────────────────────────────────
+
+interface Displacement {
+  victim: UnitState;
+  kind: 'knockback' | 'pull';
+  amount: number;
+  /** The attacker square the push is measured from. */
+  source: Vec2;
+}
+
+/** Collect a hit ability's knockback/pull effects against a victim. */
+function collectDisplacement(pending: Displacement[], effects: readonly AbilityEffect[], victim: UnitState, source: Vec2): void {
+  for (const e of effects) {
+    if (e.kind === 'knockback' || e.kind === 'pull') {
+      pending.push({ victim, kind: e.kind, amount: e.amount ?? 0, source: { x: source.x, y: source.y } });
+    }
+  }
+}
+
+/**
+ * Resolve all displacement at the end of Blast (golden rule #4): each victim is
+ * pushed away from (knockback) or toward (pull) its source, stopping on the last
+ * open square before a wall, cover, edge or unit (edge-cases: knockback into
+ * wall). Unstoppable victims are immune. A displaced unit loses its Move this
+ * turn whether or not it actually travelled (its intent is disrupted). Processed
+ * in collection order — dash before blast — which is deterministic.
+ */
+function applyDisplacements(
+  draft: GameState,
+  board: Board,
+  pending: Displacement[],
+  displaced: Set<string>,
+  events: TurnEvent[],
+): void {
+  for (const d of pending) {
+    if (!d.victim.alive || isImmuneTo(d.victim, d.kind)) continue;
+    displaced.add(d.victim.unitId); // loses Move (edge-cases: knockback + Move)
+    const dir = d.kind === 'knockback' ? direction8(d.source, d.victim.pos) : direction8(d.victim.pos, d.source);
+    if (dir.x === 0 && dir.y === 0) continue;
+
+    let cur = d.victim.pos;
+    for (let step = 0; step < d.amount; step++) {
+      const nxt: Vec2 = { x: cur.x + dir.x, y: cur.y + dir.y };
+      if (d.kind === 'pull' && vecEq(nxt, d.source)) break; // never land on the puller
+      const t = terrainAt(board, nxt);
+      if (t === 'wall' || t === 'cover' || t === 'oob') break;
+      if (draft.units.some((u) => u.alive && u.unitId !== d.victim.unitId && vecEq(u.pos, nxt))) break;
+      cur = nxt;
+    }
+    if (!vecEq(cur, d.victim.pos)) {
+      const from = d.victim.pos;
+      d.victim.pos = { x: cur.x, y: cur.y };
+      events.push({ type: 'displaced', unitId: d.victim.unitId, from, to: d.victim.pos, kind: d.kind });
+      // Traps do not trigger on knockback in v1 (edge-cases list dash/move only).
+    }
+  }
+}
+
 // ── Prep ────────────────────────────────────────────────────────────────────
 
 /** Mark an ability as used: spend ult energy and start its cooldown. */
@@ -268,7 +326,7 @@ function placeTraps(
  * aimed at (edge-cases: dash immunity scope). Displacement from a dash is queued
  * for end of Blast (BACKLOG item 8); trap triggers attach here (item 9).
  */
-function runDash(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
+function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'dash' });
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
@@ -299,6 +357,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], events: Turn
         removeStatus(victim, 'stealth');
         hitEnemy = true;
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
+        else collectDisplacement(pending, a.def.effects, victim, plan.unit.pos);
       }
     }
 
@@ -351,12 +410,12 @@ interface Hit {
   range: number;
 }
 
-function runBlast(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
+function runBlast(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'blast' });
 
   const hits: Hit[] = [];
   const debuffs: { victim: UnitState; effect: AbilityEffect }[] = [];
-  const attackersThatHit = new Set<string>();
+  const displacers: { effects: readonly AbilityEffect[]; victim: UnitState; source: Vec2 }[] = [];
 
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
@@ -375,18 +434,18 @@ function runBlast(draft: GameState, board: Board, plans: UnitPlan[], events: Tur
         if (e.kind === 'damage') {
           hits.push({ attacker: plan.unit, victim: enemy, raw: e.amount ?? 0, range: a.def.range });
         } else if (e.kind === 'knockback' || e.kind === 'pull') {
-          // Displacement resolves simultaneously at end of Blast — BACKLOG item 8.
+          displacers.push({ effects: [e], victim: enemy, source: plan.unit.pos });
         } else if (isStatusKind(e.kind)) {
           debuffs.push({ victim: enemy, effect: e });
         }
       }
     }
-    if (hitEnemy) attackersThatHit.add(plan.unit.unitId);
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
   }
 
   // Apply all damage. Deaths happen here but every hit was gathered first, so a
   // unit that dies still dealt its damage (edge-cases: mutual damage).
+  const dealtDamage = new Set<string>();
   for (const hit of hits) {
     if (!hit.victim.alive) continue;
     const behindCover = isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range);
@@ -394,6 +453,7 @@ function runBlast(draft: GameState, board: Board, plans: UnitPlan[], events: Tur
     const res = applyDamage(hit.victim, final);
     events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed });
     removeStatus(hit.victim, 'stealth'); // taking damage breaks Stealth
+    dealtDamage.add(hit.attacker.unitId);
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
 
@@ -404,9 +464,14 @@ function runBlast(draft: GameState, board: Board, plans: UnitPlan[], events: Tur
     events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1 });
   }
 
-  // Attacking reveals you and breaks your own Stealth (GAME_SPEC §6 / edge-cases).
+  // Queue displacement against survivors, to resolve at end of Blast (item 8).
+  for (const { effects, victim, source } of displacers) {
+    if (victim.alive) collectDisplacement(pending, effects, victim, source);
+  }
+
+  // A *damaging* attack reveals you and breaks your own Stealth (GAME_SPEC §6).
   for (const unit of draft.units) {
-    if (!attackersThatHit.has(unit.unitId)) continue;
+    if (!dealtDamage.has(unit.unitId)) continue;
     removeStatus(unit, 'stealth');
     applyStatus(unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
     events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS });
@@ -421,12 +486,13 @@ interface Mover {
   halted: boolean;
 }
 
-function runMove(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
+function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: ReadonlySet<string>, events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'move' });
 
   const movers: Mover[] = [];
   for (const plan of orderedPlans(draft, plans)) {
     if (plan.movePath.length === 0 || !plan.unit.alive) continue;
+    if (displaced.has(plan.unit.unitId)) continue; // knocked back/pulled → loses Move
     if (hasStatus(plan.unit, 'root')) continue; // rooted (incl. in Blast) loses Move
     const budget = movementBudget(plan.unit, plan.sprint);
     const path = plan.movePath.slice(0, budget);
@@ -617,10 +683,13 @@ export function resolveTurn(
   }
 
   if (draft.status === 'active') {
+    const pending: Displacement[] = [];
+    const displaced = new Set<string>();
     runPrep(draft, board, plans, events);
-    runDash(draft, board, plans, events);
-    runBlast(draft, board, plans, events);
-    runMove(draft, board, plans, events);
+    runDash(draft, board, plans, pending, events);
+    runBlast(draft, board, plans, pending, events);
+    applyDisplacements(draft, board, pending, displaced, events);
+    runMove(draft, board, plans, displaced, events);
     endOfTurn(draft, map, deadAtStart, events);
     resolveOutcome(draft, events);
   }
