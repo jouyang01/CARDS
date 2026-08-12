@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Cards — 1v1 tactics duel</title>
+    <title>Cards — team tactics duel</title>
     <style>
       :root {
         --bg: #12141a;
@@ -15,6 +15,12 @@
         --brush: #2e4632;
         --spawn0: #4f8cff;
         --spawn1: #ff6b5e;
+        --team0: #4f8cff;
+        --team1: #ff6b5e;
+        --hp: #5ad17f;
+        --shield: #62d0e0;
+        --energy: #e0c04f;
+        --bar-bg: #12141a;
         --text: #d7dae2;
       }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
@@ -33,7 +39,7 @@
       <h1>CARDS — Duel Arena</h1>
       <div id="board"></div>
       <div id="legend"></div>
-      <footer>M0 scaffold · engine + netcode land in M1–M3 (see docs/BACKLOG.md)</footer>
+      <footer>M2 render · driven entirely by the engine's GameState / TurnEvent log</footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
