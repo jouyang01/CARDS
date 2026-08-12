@@ -33,9 +33,7 @@ import {
   vecEq,
 } from './board.js';
 import { VISION_RANGE } from './constants.js';
-// `hasStatus` is a status-system utility that currently lives with movement;
-// BACKLOG item 6 gives statuses their own module and both callers move to it.
-import { hasStatus } from './movement.js';
+import { hasStatus } from './status.js';
 import type { GameState, UnitState, Vec2 } from './types.js';
 
 /**
