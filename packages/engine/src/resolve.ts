@@ -185,6 +185,38 @@ function killUnit(draft: GameState, victim: UnitState, killer: PlayerId, events:
   events.push({ type: 'death', unitId: victim.unitId, killer });
 }
 
+// ── Traps ───────────────────────────────────────────────────────────────────
+
+/**
+ * Trigger any enemy trap on the square `unit` just entered (edge-cases: traps
+ * fire on entry in any phase). Trap damage is raw — Might/Weaken and cover do
+ * not apply (see DECISIONS.md) — and the trap's non-trap effects (e.g. Reveal)
+ * hit the victim. A trap is one-shot: it is consumed when it fires. A unit that
+ * merely *starts* on a freshly-placed trap never calls this, so it is safe until
+ * it re-enters. Returns true if the victim died.
+ */
+function triggerTrapsOnEntry(draft: GameState, unit: UnitState, events: TurnEvent[]): boolean {
+  if (!unit.alive) return false;
+  for (const trap of draft.traps.filter((t) => t.owner !== unit.owner && vecEq(t.pos, unit.pos))) {
+    draft.traps = draft.traps.filter((t) => t.id !== trap.id); // consumed
+    events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
+    const res = applyDamage(unit, trap.damage);
+    events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed });
+    removeStatus(unit, 'stealth'); // taking damage breaks Stealth
+    for (const e of trap.onTrigger) {
+      if (isStatusKind(e.kind)) {
+        applyStatus(unit, e.kind, e.duration ?? 1);
+        events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1 });
+      }
+    }
+    if (res.died) {
+      killUnit(draft, unit, trap.owner, events);
+      return true;
+    }
+  }
+  return false;
+}
+
 // ── Displacement (knockback / pull) ─────────────────────────────────────────
 
 interface Displacement {
@@ -383,7 +415,7 @@ function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], ev
     const from = unit.pos;
     unit.pos = { x: step.x, y: step.y };
     events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-    // Trap trigger on entry attaches here — BACKLOG item 9.
+    if (triggerTrapsOnEntry(draft, unit, events)) return undefined; // died mid-charge
   }
   return undefined;
 }
@@ -397,7 +429,7 @@ function teleport(draft: GameState, board: Board, unit: UnitState, dest: Vec2 | 
   const from = unit.pos;
   unit.pos = { x: dest.x, y: dest.y };
   events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-  // Trap trigger on entry attaches here — BACKLOG item 9.
+  triggerTrapsOnEntry(draft, unit, events);
   return true;
 }
 
@@ -508,7 +540,7 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
 
 /** Resolve one simultaneous step across all still-moving units. */
 function stepMovers(draft: GameState, movers: Mover[], step: number, events: TurnEvent[]): void {
-  const active = movers.filter((m) => !m.halted && step < m.path.length);
+  const active = movers.filter((m) => !m.halted && m.unit.alive && step < m.path.length);
   if (active.length === 0) return;
 
   const target = new Map<Mover, Vec2>();
@@ -562,7 +594,7 @@ function stepMovers(draft: GameState, movers: Mover[], step: number, events: Tur
       const to = target.get(m)!;
       m.unit.pos = { x: to.x, y: to.y };
       events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
-      // Trap triggers on entry attach here — BACKLOG item 9.
+      if (triggerTrapsOnEntry(draft, m.unit, events)) m.halted = true; // died → path discarded
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
     }
