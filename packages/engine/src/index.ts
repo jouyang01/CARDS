@@ -4,6 +4,7 @@ export * from './validate.js';
 export * from './board.js';
 export * from './movement.js';
 export * from './vision.js';
+export * from './shapes.js';
 
 import type { GameState, MapDef, PlayerOrders, TurnResult } from './types.js';
 
