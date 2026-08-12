@@ -1,0 +1,72 @@
+{
+  "id": "kestrel",
+  "name": "Kestrel",
+  "archetype": "firepower",
+  "maxHp": 90,
+  "abilities": [
+    {
+      "id": "twin_bolts",
+      "name": "Twin Bolts",
+      "phase": "blast",
+      "shape": "line",
+      "range": 6,
+      "cooldown": 0,
+      "energyGain": 8,
+      "effects": [{ "kind": "damage", "amount": 24 }],
+      "description": "Paired mid-range bolts along a line. Kestrel's default turn between repositions."
+    },
+    {
+      "id": "skim",
+      "name": "Skim",
+      "phase": "dash",
+      "shape": "path",
+      "range": 4,
+      "cooldown": 2,
+      "energyGain": 5,
+      "effects": [{ "kind": "damage", "amount": 12 }],
+      "description": "Glide up to 4 squares; the first enemy passed takes 12 damage. The dodge is also the poke — dodges Blast attacks aimed at your old square."
+    },
+    {
+      "id": "slipstream",
+      "name": "Slipstream",
+      "phase": "prep",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 3,
+      "energyGain": 5,
+      "effects": [
+        { "kind": "haste", "duration": 1 },
+        { "kind": "energized", "duration": 1 }
+      ],
+      "description": "Ride the wind: Haste and Energized for a turn. Converts a quiet turn into position and ult tempo."
+    },
+    {
+      "id": "kite_shot",
+      "name": "Kite Shot",
+      "phase": "blast",
+      "shape": "line",
+      "range": 7,
+      "cooldown": 2,
+      "energyGain": 8,
+      "effects": [
+        { "kind": "damage", "amount": 16 },
+        { "kind": "slow", "duration": 1 }
+      ],
+      "description": "A long shot that Slows for a turn. Opens the gap that Skim spends."
+    }
+  ],
+  "ultimate": {
+    "id": "tempest_run",
+    "name": "Tempest Run",
+    "phase": "dash",
+    "shape": "path",
+    "range": 8,
+    "cooldown": 0,
+    "energyGain": 0,
+    "effects": [
+      { "kind": "damage", "amount": 35 },
+      { "kind": "slow", "duration": 1 }
+    ],
+    "description": "A full-board damaging dash: every enemy passed takes 35 and is Slowed. Resolves in the Dash phase, so it also dodges the turn's Blast. (100 energy)"
+  }
+}
