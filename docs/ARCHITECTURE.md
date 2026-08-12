@@ -1,13 +1,28 @@
 # ARCHITECTURE.md — Cards
 
+## Direction (v1 → later)
+
+Cards is a simultaneous-turn PvP tactics duel (1v1 now; 2v2/3v3 later — never hardcode
+single-unit assumptions). One character controlled per player in v1 (two later). 2D SVG
+visuals now; the engine emits an event log so a 3D renderer can be swapped in later
+without touching game logic. Every layer below is built to that shape: the engine takes
+**unit lists, not single-unit fields**, and the client is a pure consumer of the
+`TurnEvent[]` log, never a re-implementation of game rules.
+
 ## The core decision
 
 The game is a **pure, deterministic simulation engine** in TypeScript
 (`packages/engine`), shared verbatim by client and server:
 
 ```
-resolveTurn(state: GameState, map: MapDef, orders: PlayerOrders[]): TurnResult
+resolveTurn(state: GameState, map: MapDef, orders: [PlayerOrders, PlayerOrders], roster: Roster): TurnResult
 ```
+
+The fourth argument, `roster`, is a read-only index from `characterId`/`abilityId` to
+`AbilityDef`s, built once from `data/characters/*.json`. It lets the pipeline find an
+order's phase, range, cooldown and ultimate cost without fattening `GameState` — content
+is data, not state (golden rule #2), and the netcode still syncs only orders. Rationale
+in `docs/DECISIONS.md` (2026-08-12, turn pipeline skeleton).
 
 No randomness, no wall clock, no I/O, integer math only. Given identical inputs,
 identical outputs on every machine. Consequences:
