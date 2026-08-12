@@ -62,11 +62,6 @@ export function hasLineOfSight(board: Board, from: Vec2, to: Vec2): boolean {
   if (!inBounds(board, from) || !inBounds(board, to)) return false;
   if (vecEq(from, to)) return true;
 
-  const ax = 2 * from.x + 1;
-  const ay = 2 * from.y + 1;
-  const bx = 2 * to.x + 1;
-  const by = 2 * to.y + 1;
-
   const minX = Math.min(from.x, to.x);
   const maxX = Math.max(from.x, to.x);
   const minY = Math.min(from.y, to.y);
@@ -78,10 +73,31 @@ export function hasLineOfSight(board: Board, from: Vec2, to: Vec2): boolean {
     for (let x = minX; x <= maxX; x++) {
       if ((x === from.x && y === from.y) || (x === to.x && y === to.y)) continue;
       if (terrainAt(board, { x, y }) !== 'wall') continue;
-      if (segmentEntersSquare(ax, ay, bx, by, x, y)) return false;
+      if (segmentCrossesSquare(from, to, { x, y })) return false;
     }
   }
   return true;
+}
+
+/**
+ * Does the segment between the **centres** of squares `from` and `to` enter the
+ * open interior of `square`?
+ *
+ * The shared geometry kernel, expressed in whole-square coordinates. Line of
+ * sight uses it to ask "does a wall block the view"; cover (`cover.ts`) uses it
+ * to ask "does the attack line cross the covered side" — the covered side being
+ * the edge a cover square shares with the defender it hugs. One implementation,
+ * one corner-graze convention (see `segmentEntersSquare`), no re-derivation.
+ */
+export function segmentCrossesSquare(from: Vec2, to: Vec2, square: Vec2): boolean {
+  return segmentEntersSquare(
+    2 * from.x + 1,
+    2 * from.y + 1,
+    2 * to.x + 1,
+    2 * to.y + 1,
+    square.x,
+    square.y,
+  );
 }
 
 /**

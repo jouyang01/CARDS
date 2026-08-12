@@ -83,3 +83,22 @@ visible that turn. But the Stealth status is still on the unit, so it re-hides t
 moment Reveal expires. Whoever implements status application must clear Stealth
 outright on attack and on damage rather than relying on the Reveal it grants. Flagged
 here because the bug would surface a milestone later, in a file that looks correct.
+
+## 2026-08-12 — Cover geometry ruling (Builder, BACKLOG item 3)
+
+**Cover inherits line-of-sight's corner-permissive geometry.** GAME_SPEC §3 says cover
+protects when "the attack's line from attacker to defender crosses that side"; it does
+not say what a line grazing the corner shared by the defender and its cover does. Rather
+than invent a second convention, `isBehindCover` reuses `segmentCrossesSquare` — the same
+doubled-coordinate kernel `hasLineOfSight` is built on — and asks whether the attacker→
+defender segment enters the cover square's interior. Because that segment ends inside the
+defender's square and the two squares are orthogonally adjacent, entering the cover
+interior is exactly crossing the side they share. The consequence, which the spec leaves
+open: a perfectly diagonal shot that touches the defender–cover corner without entering
+either square grants no cover (it enters neither the north nor the west cover interior).
+This matches the ruling that a sightline grazing a wall corner still sees through — one
+geometry, one boundary convention, no epsilon to disagree about across machines. If
+playtests find corner-hugging too easy to shoot around, the lever is the same one flagged
+for line of sight: make a touched corner count as crossing. `range <= 1` (melee) ignores
+cover per spec, and a flat 50% applies regardless of how many cover squares a defender
+hugs — the reduction is a boolean, not a stack.
