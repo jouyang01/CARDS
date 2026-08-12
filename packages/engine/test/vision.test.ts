@@ -105,9 +105,10 @@ describe('hasLineOfSight — geometry', () => {
     expect(hasLineOfSight(bothCorners, { x: 0, y: 0 }, { x: 2, y: 2 })).toBe(true);
   });
 
-  it('a wall the line clips only at an edge does not block', () => {
-    // Horizontal sight along row 2 with a wall on row 1: the line runs through
-    // the centres of row 2 and never enters row 1.
+  it('a wall on the neighbouring row never blocks a straight sightline', () => {
+    // Centres sit at odd coordinates and square edges at even ones, so a
+    // sightline can never run *along* an edge: the corner graze above is the
+    // only boundary case the geometry can produce.
     const board = buildBoard(makeMap(['.....', '.###.', '.....']));
     expect(hasLineOfSight(board, { x: 0, y: 2 }, { x: 4, y: 2 })).toBe(true);
   });
@@ -130,42 +131,51 @@ describe('hasLineOfSight — geometry', () => {
 });
 
 describe('hasLineOfSight — symmetry', () => {
-  const symmetricOver = (map: MapDef): void => {
+  interface Tally {
+    clear: number;
+    blocked: number;
+    asymmetric: number;
+  }
+
+  const sweep = (map: MapDef, probes?: readonly Vec2[]): Tally => {
     const board = buildBoard(map);
-    for (let ay = 0; ay < map.height; ay++) {
-      for (let ax = 0; ax < map.width; ax++) {
-        for (let by = 0; by < map.height; by++) {
-          for (let bx = 0; bx < map.width; bx++) {
-            const a: Vec2 = { x: ax, y: ay };
-            const b: Vec2 = { x: bx, y: by };
-            if (hasLineOfSight(board, a, b) !== hasLineOfSight(board, b, a)) {
-              throw new Error(`asymmetric LoS between ${ax},${ay} and ${bx},${by}`);
-            }
-          }
-        }
+    const squares =
+      probes ??
+      Array.from({ length: map.width * map.height }, (_, i) => ({
+        x: i % map.width,
+        y: Math.floor(i / map.width),
+      }));
+    const tally: Tally = { clear: 0, blocked: 0, asymmetric: 0 };
+    for (const a of squares) {
+      for (const b of squares) {
+        const ab = hasLineOfSight(board, a, b);
+        if (ab !== hasLineOfSight(board, b, a)) tally.asymmetric++;
+        if (ab) tally.clear++;
+        else tally.blocked++;
       }
     }
+    return tally;
   };
 
   it('is mutual for every pair of squares on a cluttered board', () => {
-    expect(() =>
-      symmetricOver(
-        makeMap([
-          '..#....',
-          '.#..o..',
-          '....#..',
-          '#..b..#',
-          '..#....',
-          '.o...#.',
-          '....#..',
-        ]),
-      ),
-    ).not.toThrow();
+    const tally = sweep(
+      makeMap([
+        '..#....',
+        '.#..o..',
+        '....#..',
+        '#..b..#',
+        '..#....',
+        '.o...#.',
+        '....#..',
+      ]),
+    );
+    expect(tally.asymmetric).toBe(0);
+    // Anchor both outcomes: a constant-true or constant-false LoS is symmetric
+    // too, and would otherwise sail through this sweep.
+    expect(tally).toMatchObject({ clear: 1403, blocked: 998 });
   });
 
   it('is mutual across the shipped Duel Arena', () => {
-    const map = duelArena as unknown as MapDef;
-    const board = buildBoard(map);
     const probes: Vec2[] = [
       { x: 1, y: 7 },
       { x: 13, y: 7 },
@@ -176,11 +186,9 @@ describe('hasLineOfSight — symmetry', () => {
       { x: 4, y: 3 },
       { x: 10, y: 11 },
     ];
-    for (const a of probes) {
-      for (const b of probes) {
-        expect(hasLineOfSight(board, a, b)).toBe(hasLineOfSight(board, b, a));
-      }
-    }
+    const tally = sweep(duelArena as unknown as MapDef, probes);
+    expect(tally.asymmetric).toBe(0);
+    expect(tally).toMatchObject({ clear: 28, blocked: 36 });
   });
 
   it('the central walls break the spawn-to-spawn sightline', () => {
@@ -225,10 +233,12 @@ describe('buildVision — brush patches', () => {
   });
 
   it('numbers patches in row-major order, so the index is reproducible', () => {
-    const build = (): (number | undefined)[] => [...buildVision(buildBoard(twoPatchMap())).brushPatch];
-    expect(brushPatchAt(buildVision(buildBoard(twoPatchMap())), { x: 1, y: 1 })).toBe(0);
-    expect(brushPatchAt(buildVision(buildBoard(twoPatchMap())), { x: 5, y: 1 })).toBe(1);
-    expect(build()).toEqual(build());
+    // Both patches must sit on different rows *and* in reversed column order,
+    // or a column-major scan would produce the same numbering and this would
+    // assert nothing.
+    const vision = buildVision(buildBoard(makeMap(['.....b', 'b.....'])));
+    expect(brushPatchAt(vision, { x: 5, y: 0 })).toBe(0);
+    expect(brushPatchAt(vision, { x: 0, y: 1 })).toBe(1);
   });
 });
 
@@ -294,11 +304,28 @@ describe('canSee — brush concealment', () => {
     expect(canSee(vision, inBrush, watcher)).toBe(true);
   });
 
-  it('adjacency defeats brush', () => {
+  it('adjacency defeats brush, and stops dead at Chebyshev 1', () => {
     const vision = buildVision(buildBoard(twoPatchMap()));
+    const inBrush = hider({ x: 5, y: 1 });
     // Orthogonally and diagonally adjacent both count.
-    expect(canSee(vision, seer({ x: 4, y: 1 }), hider({ x: 5, y: 1 }))).toBe(true);
-    expect(canSee(vision, seer({ x: 4, y: 0 }), hider({ x: 5, y: 1 }))).toBe(true);
+    expect(canSee(vision, seer({ x: 4, y: 1 }), inBrush)).toBe(true);
+    expect(canSee(vision, seer({ x: 4, y: 0 }), inBrush)).toBe(true);
+    // One square further out and the exception is gone. Without this the
+    // adjacency radius is unpinned and any distance ≥1 would satisfy the suite.
+    expect(chebyshev({ x: 3, y: 1 }, inBrush.pos)).toBe(2);
+    expect(canSee(vision, seer({ x: 3, y: 1 }), inBrush)).toBe(false);
+    expect(canSee(vision, seer({ x: 3, y: 0 }), inBrush)).toBe(false);
+  });
+
+  it('adjacency is measured to the hidden unit, not to its brush patch', () => {
+    const vision = buildVision(buildBoard(twoPatchMap()));
+    // (4,0) touches patch square (5,1) but is three squares from the unit at
+    // the far end of the same patch — standing beside the thicket is not the
+    // same as standing beside whoever is in it.
+    const farEnd = hider({ x: 7, y: 1 });
+    expect(inSameBrushPatch(vision, { x: 5, y: 1 }, farEnd.pos)).toBe(true);
+    expect(chebyshev({ x: 4, y: 0 }, farEnd.pos)).toBe(3);
+    expect(canSee(vision, seer({ x: 4, y: 0 }), farEnd)).toBe(false);
   });
 
   it('sharing the patch defeats brush, even far apart inside it', () => {
@@ -366,7 +393,7 @@ describe('canSee — Stealth and Reveal', () => {
 });
 
 describe('visibleEnemies', () => {
-  it('returns only visible enemies, in state order', () => {
+  it('drops allies and concealed enemies', () => {
     const vision = buildVision(buildBoard(twoPatchMap()));
     const watcher = seer({ x: 2, y: 0 });
     const near = makeUnit('near', 1, { x: 4, y: 0 });
@@ -374,6 +401,18 @@ describe('visibleEnemies', () => {
     const ally = makeUnit('ally', 0, { x: 0, y: 2 });
     const state = makeState([watcher, near, inBrush, ally]);
     expect(visibleEnemies(vision, state, watcher).map((u) => u.unitId)).toEqual(['near']);
+  });
+
+  it('preserves state.units order rather than any incidental sort', () => {
+    const vision = buildVision(buildBoard(openMap(9)));
+    const watcher = seer({ x: 0, y: 0 });
+    // Reverse-alphabetical on purpose: a sorted implementation would flip these.
+    const state = makeState([
+      watcher,
+      makeUnit('zeta', 1, { x: 1, y: 0 }),
+      makeUnit('alpha', 1, { x: 2, y: 0 }),
+    ]);
+    expect(visibleEnemies(vision, state, watcher).map((u) => u.unitId)).toEqual(['zeta', 'alpha']);
   });
 });
 
@@ -396,5 +435,20 @@ describe('visibleSquares', () => {
   it('defaults to VISION_RANGE', () => {
     const board = buildBoard(openMap(15));
     expect(visibleSquares(board, { x: 7, y: 7 })).toHaveLength((2 * VISION_RANGE + 1) ** 2);
+  });
+
+  it('returns squares in row-major order (a rendering and hashing contract)', () => {
+    const board = buildBoard(openMap(3));
+    expect(visibleSquares(board, { x: 1, y: 1 }, 1).map((p) => `${p.x},${p.y}`)).toEqual([
+      '0,0',
+      '1,0',
+      '2,0',
+      '0,1',
+      '1,1',
+      '2,1',
+      '0,2',
+      '1,2',
+      '2,2',
+    ]);
   });
 });

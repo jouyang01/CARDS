@@ -12,7 +12,8 @@
  *   which is a separate question answered by `isConcealedFrom`;
  * - sight reaches `VISION_RANGE` squares, measured as Chebyshev distance;
  * - a unit in brush is hidden from enemies that are neither standing in the
- *   same brush patch nor adjacent to it;
+ *   same brush patch nor adjacent to *the unit itself* (standing beside the
+ *   thicket is not the same as standing beside whoever is in it);
  * - Stealth hides a unit anywhere; Reveal defeats both brush and Stealth.
  *
  * GAME_SPEC §3 "vision is mutual" is implemented at the range + line-of-sight
@@ -211,6 +212,11 @@ export function isAdjacent(a: Vec2, b: Vec2): boolean {
  * or walls — `canSee` composes the three. Precedence, highest first:
  *
  * 1. **Reveal** beats everything (GAME_SPEC §6: "visible through brush/stealth").
+ *    Note that it *masks* Stealth rather than ending it: GAME_SPEC §6 also says
+ *    Stealth is "broken by attacking or taking damage", so whichever code
+ *    applies those (BACKLOG item 6) must clear the Stealth status itself, not
+ *    lean on the Reveal it grants — otherwise a unit that attacks reappears
+ *    stealthed the moment Reveal expires. Called out in docs/DECISIONS.md.
  * 2. **Stealth** hides the unit anywhere, including in the open. The brush
  *    adjacency exception does *not* apply to it — GAME_SPEC ties adjacency to
  *    brush specifically, so standing next to a stealthed unit does not find
