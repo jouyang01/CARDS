@@ -99,3 +99,135 @@ describe('A0: damage events carry their source', () => {
     expect(state.kills).toEqual([0, 0]);
   });
 });
+
+/**
+ * A0-heal — the same attribution, widened to `heal` and `statusApplied`. Without
+ * it a support's whole contribution is anonymous in the log: you can read that
+ * Lumen gained 30 shield, but not that Aegis gave it to them. Purely additive —
+ * the last test pins that no outcome moved.
+ */
+
+const support: CharacterDef = {
+  id: 'support-char', name: 'Support', archetype: 'support', maxHp: 100,
+  abilities: [
+    ability({ id: 'mend', shape: 'circle', range: 6, radius: 1, energyGain: 8, effects: [{ kind: 'heal', amount: 20 }] }),
+    ability({ id: 'aegis', shape: 'circle', range: 6, radius: 1, energyGain: 8, effects: [{ kind: 'shield', amount: 30, duration: 2 }] }),
+    ability({ id: 'brace', phase: 'prep', shape: 'self', range: 0, energyGain: 5, effects: [{ kind: 'shield', amount: 15, duration: 1 }, { kind: 'heal', amount: 10 }] }),
+    ability({ id: 'hex', shape: 'circle', range: 6, radius: 1, energyGain: 8, effects: [{ kind: 'slow', duration: 2 }] }),
+    ability({ id: 'snare', phase: 'prep', shape: 'square', range: 4, energyGain: 5, effects: [{ kind: 'trap', amount: 10 }, { kind: 'root', duration: 1 }] }),
+  ],
+  ultimate: ability({ id: 'sup-ult', shape: 'circle', range: 8, radius: 2, effects: [{ kind: 'heal', amount: 40 }] }),
+};
+const bothRoster: Roster = { 'test-char': char, 'support-char': support };
+const runBoth = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
+  resolveTurn(s, OPEN(), [{ team: 0 as TeamId, units: u0 }, { team: 1 as TeamId, units: u1 }], bothRoster);
+const supportUnit = (unitId: string, owner: TeamId, pos: { x: number; y: number }, over: Partial<GameState['units'][number]> = {}) =>
+  ({ ...makeUnit(unitId, owner, pos, over), characterId: 'support-char' });
+const heals = (events: TurnEvent[]) => events.filter((e) => e.type === 'heal') as Extract<TurnEvent, { type: 'heal' }>[];
+const statuses = (events: TurnEvent[]) => events.filter((e) => e.type === 'statusApplied') as Extract<TurnEvent, { type: 'statusApplied' }>[];
+
+describe('A0-heal: heal and statusApplied events carry their source', () => {
+  it('a heal on an ALLY names the healer, not the healed — the whole point', () => {
+    const medic = supportUnit('medic', 0, { x: 4, y: 4 });
+    const hurt = supportUnit('hurt', 0, { x: 5, y: 4 }, { hp: 40 });
+    const { events } = runBoth(makeState([hurt, medic, makeUnit('e', 1, { x: 0, y: 0 })]), [
+      { unitId: 'medic', ability: { abilityId: 'mend', target: [{ x: 5, y: 4 }] } },
+    ], []);
+    const onAlly = heals(events).find((h) => h.unitId === 'hurt');
+    expect(onAlly).toMatchObject({ unitId: 'hurt', amount: 20, sourceUnitId: 'medic', abilityId: 'mend' });
+  });
+
+  it('an ALLY shield names the caster — "Aegis shielded Lumen for 30" is now expressible', () => {
+    const caster = supportUnit('aegis', 0, { x: 4, y: 4 });
+    const ally = supportUnit('lumen', 0, { x: 5, y: 4 });
+    const { events } = runBoth(makeState([ally, caster, makeUnit('e', 1, { x: 0, y: 0 })]), [
+      { unitId: 'aegis', ability: { abilityId: 'aegis', target: [{ x: 5, y: 4 }] } },
+    ], []);
+    const shield = statuses(events).find((s) => s.unitId === 'lumen' && s.status === 'shield');
+    expect(shield).toMatchObject({ unitId: 'lumen', status: 'shield', amount: 30, sourceUnitId: 'aegis', abilityId: 'aegis' });
+  });
+
+  it('a SELF-cast names the caster as its own source, so consumers need no special case', () => {
+    const u = supportUnit('u', 0, { x: 4, y: 4 }, { hp: 50 });
+    const { events } = runBoth(makeState([u, makeUnit('e', 1, { x: 0, y: 0 })]), [
+      { unitId: 'u', ability: { abilityId: 'brace', target: [{ x: 4, y: 4 }] } },
+    ], []);
+    expect(heals(events)[0]).toMatchObject({ unitId: 'u', sourceUnitId: 'u', abilityId: 'brace' });
+    expect(statuses(events).find((s) => s.status === 'shield')).toMatchObject({ unitId: 'u', sourceUnitId: 'u', abilityId: 'brace' });
+  });
+
+  it('a DEBUFF names the attacker and the ability that applied it', () => {
+    const caster = supportUnit('caster', 0, { x: 4, y: 4 });
+    const victim = makeUnit('victim', 1, { x: 6, y: 4 });
+    const { events } = runBoth(makeState([caster, victim]), [
+      { unitId: 'caster', ability: { abilityId: 'hex', target: [{ x: 6, y: 4 }] } },
+    ], []);
+    const slow = statuses(events).find((s) => s.unitId === 'victim' && s.status === 'slow');
+    expect(slow).toMatchObject({ sourceUnitId: 'caster', abilityId: 'hex' });
+  });
+
+  it("a TRAP's rider credits the unit that placed it and the placing ability", () => {
+    const placer = supportUnit('placer', 0, { x: 0, y: 4 });
+    const walker = makeUnit('walker', 1, { x: 3, y: 4 });
+    const t1 = runBoth(makeState([placer, walker]), [{ unitId: 'placer', ability: { abilityId: 'snare', target: [{ x: 2, y: 4 }] } }], []);
+    const t2 = runBoth(t1.state, [], [{ unitId: 'walker', movePath: [{ x: 2, y: 4 }] }]);
+    const root = statuses(t2.events).find((s) => s.unitId === 'walker' && s.status === 'root');
+    expect(root).toMatchObject({ sourceUnitId: 'placer', abilityId: 'snare' });
+  });
+
+  it('the reveal a damaging attack inflicts on YOU names the attack that did it', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 4 });
+    const e = makeUnit('e', 1, { x: 3, y: 4 });
+    const { events } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'shoot', target: [{ x: 8, y: 4 }] } }], []);
+    const reveal = statuses(events).find((s) => s.unitId === 'u' && s.status === 'reveal');
+    expect(reveal).toMatchObject({ sourceUnitId: 'u', abilityId: 'shoot' });
+  });
+
+  it('a DELAYED detonation credits its original caster on riders too', () => {
+    // `nade` only damages, so borrow the support's slow via a fresh delayed def.
+    const bomber = supportUnit('bomber', 0, { x: 0, y: 4 });
+    const victim = makeUnit('victim', 1, { x: 4, y: 4 });
+    const delayedRoster: Roster = {
+      'test-char': char,
+      'support-char': { ...support, abilities: [...support.abilities, ability({ id: 'timer', shape: 'circle', range: 6, radius: 1, delayTurns: 1, effects: [{ kind: 'slow', duration: 2 }] })] },
+    };
+    const go = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
+      resolveTurn(s, OPEN(), [{ team: 0 as TeamId, units: u0 }, { team: 1 as TeamId, units: u1 }], delayedRoster);
+    const t1 = go(makeState([bomber, victim]), [{ unitId: 'bomber', ability: { abilityId: 'timer', target: [{ x: 4, y: 4 }] } }], []);
+    const t2 = go(t1.state, [], []);
+    const slow = statuses(t2.events).find((s) => s.unitId === 'victim' && s.status === 'slow');
+    expect(slow).toMatchObject({ sourceUnitId: 'bomber', abilityId: 'timer' });
+  });
+
+  it('EVERY heal and statusApplied in a busy turn carries both fields — no gaps', () => {
+    const medic = supportUnit('medic', 0, { x: 4, y: 4 });
+    const hurt = supportUnit('hurt', 0, { x: 5, y: 4 }, { hp: 40 });
+    const shooter = makeUnit('shooter', 0, { x: 0, y: 6 });
+    const enemy = makeUnit('enemy', 1, { x: 3, y: 6 });
+    const hexer = supportUnit('hexer', 1, { x: 6, y: 6 });
+    const { events } = runBoth(makeState([hurt, medic, shooter, enemy, hexer]), [
+      { unitId: 'medic', ability: { abilityId: 'mend', target: [{ x: 5, y: 4 }] } },
+      { unitId: 'shooter', ability: { abilityId: 'shoot', target: [{ x: 8, y: 6 }] } },
+    ], [
+      { unitId: 'hexer', ability: { abilityId: 'hex', target: [{ x: 3, y: 6 }] } },
+    ]);
+    const attributed = [...heals(events), ...statuses(events)];
+    expect(heals(events).length).toBeGreaterThan(0); // a benefit...
+    expect(statuses(events).length).toBeGreaterThan(1); // ...a debuff, and a reveal
+    for (const e of attributed) {
+      expect(e.sourceUnitId, JSON.stringify(e)).toBeTruthy();
+      expect(e.abilityId, JSON.stringify(e)).toBeTruthy();
+    }
+  });
+
+  it('is purely additive — HP, shields and kills are untouched', () => {
+    const medic = supportUnit('medic', 0, { x: 4, y: 4 });
+    const hurt = supportUnit('hurt', 0, { x: 5, y: 4 }, { hp: 40 });
+    const { state } = runBoth(makeState([hurt, medic, makeUnit('e', 1, { x: 0, y: 0 })]), [
+      { unitId: 'medic', ability: { abilityId: 'mend', target: [{ x: 5, y: 4 }] } },
+    ], []);
+    expect(state.units.find((u) => u.unitId === 'hurt')!.hp).toBe(60);
+    expect(state.units.find((u) => u.unitId === 'medic')!.hp).toBe(100); // radius caught the caster too, already full
+    expect(state.kills).toEqual([0, 0]);
+  });
+});

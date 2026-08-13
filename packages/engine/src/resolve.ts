@@ -251,6 +251,22 @@ function killUnit(draft: GameState, victim: UnitState, killer: TeamId, events: T
   events.push({ type: 'death', unitId: victim.unitId, killer });
 }
 
+/**
+ * Who caused an effect: the acting unit and the ability that did it. `damage`
+ * has carried this since A0; A0-heal extends it to `heal` and `statusApplied`,
+ * so a benefit has an author exactly as a hit does and the combat log can name
+ * both ends ("Aegis shielded Lumen for 30").
+ *
+ * A self-cast names the caster as its own source — that is not a degenerate
+ * case, it is the true answer, and it keeps every consumer on one shape.
+ */
+interface Source {
+  unitId: string;
+  abilityId: string;
+}
+
+const sourceOf = (unit: UnitState, abilityId: string): Source => ({ unitId: unit.unitId, abilityId });
+
 // ── Traps ───────────────────────────────────────────────────────────────────
 
 /**
@@ -272,7 +288,9 @@ function triggerTrapsOnEntry(draft: GameState, unit: UnitState, events: TurnEven
     for (const e of trap.onTrigger) {
       if (isStatusKind(e.kind)) {
         applyStatus(unit, e.kind, e.duration ?? 1);
-        events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1 });
+        // A trap's rider credits whoever placed it and the placing ability —
+        // the same attribution its damage already carries.
+        events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1, sourceUnitId: trap.ownerUnitId, abilityId: trap.abilityId });
       }
     }
     if (res.died) {
@@ -405,26 +423,31 @@ function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: Turn
     if (trapEffect !== undefined) {
       placeTraps(draft, plan.unit, a, trapEffect, events);
     } else {
-      applySelfEffects(draft, plan.unit, a.def.effects, events);
+      applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
     }
     grantUseEnergy(plan.unit, a.def, false, events);
   }
 }
 
-/** Apply a self-targeted ability's effects to its caster (shields, heals, buffs, decoy). */
-function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly AbilityEffect[], events: TurnEvent[]): void {
+/**
+ * Apply a beneficial ability's effects to a recipient (shields, heals, buffs,
+ * decoy). `source` is who caused them: the caster themself for a self-cast, or
+ * the caster of the AoE that reached an ally. The recipient is `unit`, which is
+ * why the two are separate arguments — a support ability's log line needs both.
+ */
+function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly AbilityEffect[], source: Source, events: TurnEvent[]): void {
   for (const e of effects) {
     if (e.kind === 'heal') {
       const healed = applyHeal(unit, e.amount ?? 0);
-      if (healed > 0) events.push({ type: 'heal', unitId: unit.unitId, amount: healed });
+      if (healed > 0) events.push({ type: 'heal', unitId: unit.unitId, amount: healed, sourceUnitId: source.unitId, abilityId: source.abilityId });
     } else if (e.kind === 'shield') {
       applyStatus(unit, 'shield', e.duration ?? 1, e.amount ?? 0);
-      events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'shield', duration: e.duration ?? 1, amount: e.amount ?? 0 });
+      events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'shield', duration: e.duration ?? 1, amount: e.amount ?? 0, sourceUnitId: source.unitId, abilityId: source.abilityId });
     } else if (e.kind === 'decoy') {
       spawnDecoy(draft, unit, events); // R2: a static fake at the caster's square
     } else if (isStatusKind(e.kind)) {
       applyStatus(unit, e.kind, e.duration ?? 1);
-      events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1 });
+      events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1, sourceUnitId: source.unitId, abilityId: source.abilityId });
     }
   }
 }
@@ -547,12 +570,12 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     if (dmg !== undefined) destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
 
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
-    applySelfEffects(draft, plan.unit, a.def.effects, events);
+    applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
     if (hitEnemy) {
       removeStatus(plan.unit, 'stealth');
       applyStatus(plan.unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
-      events.push({ type: 'statusApplied', unitId: plan.unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS });
+      events.push({ type: 'statusApplied', unitId: plan.unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
     }
     if (!vecEq(plan.unit.pos, origin)) repositioned.push(plan.unit);
   }
@@ -640,8 +663,11 @@ function runBlast(
   events.push({ type: 'phaseStart', phase: 'blast' });
 
   const hits: Hit[] = [];
-  const debuffs: { victim: UnitState; effect: AbilityEffect }[] = [];
-  const benefits: { target: UnitState; effect: AbilityEffect }[] = [];
+  // Debuffs and benefits carry their source alongside the effect (A0-heal), so
+  // the `statusApplied`/`heal` they eventually emit can name who did it — the
+  // gather step is the only place that still knows.
+  const debuffs: { victim: UnitState; effect: AbilityEffect; source: Source }[] = [];
+  const benefits: { target: UnitState; effect: AbilityEffect; source: Source }[] = [];
   const displacers: { effects: readonly AbilityEffect[]; victim: UnitState; source: Vec2; attackerId: string }[] = [];
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
@@ -683,10 +709,10 @@ function runBlast(
           if (enemy) hitEnemy = true;
           if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw: e.amount ?? 0, range: a.def.range });
           else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });
-          else debuffs.push({ victim: target, effect: e }); // weaken/slow/root/reveal
+          else debuffs.push({ victim: target, effect: e, source: sourceOf(plan.unit, a.def.id) }); // weaken/slow/root/reveal
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
           if (enemy) continue; // beneficial effects never touch enemies
-          benefits.push({ target, effect: e });
+          benefits.push({ target, effect: e, source: sourceOf(plan.unit, a.def.id) });
         }
       }
     }
@@ -700,7 +726,9 @@ function runBlast(
 
   // Apply all damage. Deaths happen here but every hit was gathered first, so a
   // unit that dies still dealt its damage (edge-cases: mutual damage).
-  const dealtDamage = new Set<string>();
+  // Keyed by attacker, valued by the ability that landed — the reveal below is a
+  // consequence of a specific attack, and A0-heal makes the log say which.
+  const dealtDamage = new Map<string, string>();
   for (const hit of hits) {
     if (!hit.victim.alive) continue;
     const final =
@@ -708,20 +736,20 @@ function runBlast(
     const res = applyDamage(hit.victim, final);
     events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: hit.attacker.unitId, abilityId: hit.abilityId });
     removeStatus(hit.victim, 'stealth'); // taking damage breaks Stealth
-    if (!hit.delayed) dealtDamage.add(hit.attacker.unitId);
+    if (!hit.delayed) dealtDamage.set(hit.attacker.unitId, hit.abilityId);
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
 
   // Non-displacement debuffs on surviving enemies.
-  for (const { victim, effect } of debuffs) {
+  for (const { victim, effect, source } of debuffs) {
     if (!victim.alive) continue;
     applyStatus(victim, effect.kind, effect.duration ?? 1);
-    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1 });
+    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, sourceUnitId: source.unitId, abilityId: source.abilityId });
   }
 
   // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
-  for (const { target, effect } of benefits) {
-    if (target.alive) applySelfEffects(draft, target, [effect], events);
+  for (const { target, effect, source } of benefits) {
+    if (target.alive) applySelfEffects(draft, target, [effect], source, events);
   }
 
   // Queue displacement against survivors, to resolve at end of Blast (item 8).
@@ -731,10 +759,11 @@ function runBlast(
 
   // A *damaging* attack reveals you and breaks your own Stealth (GAME_SPEC §6).
   for (const unit of draft.units) {
-    if (!dealtDamage.has(unit.unitId)) continue;
+    const abilityId = dealtDamage.get(unit.unitId);
+    if (abilityId === undefined) continue;
     removeStatus(unit, 'stealth');
     applyStatus(unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
-    events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS });
+    events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS, sourceUnitId: unit.unitId, abilityId });
   }
 }
 
@@ -750,8 +779,8 @@ function detonateDelayedBlasts(
   draft: GameState,
   roster: Roster,
   hits: Hit[],
-  debuffs: { victim: UnitState; effect: AbilityEffect }[],
-  benefits: { target: UnitState; effect: AbilityEffect }[],
+  debuffs: { victim: UnitState; effect: AbilityEffect; source: Source }[],
+  benefits: { target: UnitState; effect: AbilityEffect; source: Source }[],
   events: TurnEvent[],
 ): void {
   const due = draft.delayed.filter((d) => d.turnsRemaining <= 0 && d.phase === 'blast');
@@ -777,9 +806,9 @@ function detonateDelayedBlasts(
         if (HARMFUL_KINDS.has(e.kind)) {
           if (enemy) hitEnemy = true; // energy stays enemy-only
           if (e.kind === 'damage') hits.push({ attacker: caster, victim: target, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
-          else if (isStatusKind(e.kind)) debuffs.push({ victim: target, effect: e });
+          else if (isStatusKind(e.kind)) debuffs.push({ victim: target, effect: e, source: sourceOf(caster, def.id) });
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
-          if (!enemy) benefits.push({ target, effect: e });
+          if (!enemy) benefits.push({ target, effect: e, source: sourceOf(caster, def.id) });
         }
       }
     }

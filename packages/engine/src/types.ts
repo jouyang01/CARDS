@@ -261,10 +261,14 @@ export type TurnEvent =
   // frame" camera) reads these instead. Trap damage credits the trap's owner and
   // the ability that placed it; a delayed detonation credits its original caster.
   | { type: 'damage'; unitId: string; amount: number; absorbed: number; sourceUnitId: string; abilityId: string }
-  | { type: 'heal'; unitId: string; amount: number }
+  // Healing and statuses carry their source too (A0-heal), so the combat log can
+  // say "Aegis shielded Lumen for 30" rather than "Lumen gained 30 shield" — a
+  // benefit has an author exactly as a hit does. Self-cast effects name the unit
+  // itself; a trap's rider credits the unit that placed it and the placing ability.
+  | { type: 'heal'; unitId: string; amount: number; sourceUnitId: string; abilityId: string }
   // `amount` carries the shield pool when `status === 'shield'` (undefined otherwise),
   // so the client can track shields from the log (edge-cases "Rendering contract").
-  | { type: 'statusApplied'; unitId: string; status: EffectKind; duration: number; amount?: number }
+  | { type: 'statusApplied'; unitId: string; status: EffectKind; duration: number; amount?: number; sourceUnitId: string; abilityId: string }
   | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
