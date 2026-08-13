@@ -3,6 +3,8 @@ import { buildBoard, createMatch, expandShape, type CharacterDef, type MapDef } 
 import {
   abilityOptions,
   abilityPreview,
+  abilityTooltip,
+  effectLabel,
   emptyDraft,
   movePreview,
   pathValid,
@@ -111,5 +113,30 @@ describe('a player controlling two characters produces two orders (item 18 AC)',
     expect(orders.map((o) => o.unitId)).toEqual(['A', 'B']);
     expect(orders[0]!.ability?.abilityId).toBe('rail_shot');
     expect(orders[1]!.sprint).toBe(true);
+  });
+});
+
+describe('ability tooltips read straight off the AbilityDef (TT1)', () => {
+  it('formats an effect as kind, amount and duration', () => {
+    expect(effectLabel({ kind: 'damage', amount: 26 })).toBe('damage 26');
+    expect(effectLabel({ kind: 'shield', amount: 30, duration: 2 })).toBe('shield 30 (2t)');
+    expect(effectLabel({ kind: 'teleport' })).toBe('teleport');
+  });
+
+  it("shows Vex's Rail Shot data from the character JSON", () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const lines = abilityTooltip(rail);
+    expect(lines[0]).toBe(`${rail.name} — ${rail.phase} · ${rail.shape}`);
+    expect(lines).toContain(`range ${rail.range}`);
+    expect(lines.some((l) => l.includes(`cooldown ${rail.cooldown}`) && l.includes(`energy +${rail.energyGain}`))).toBe(true);
+    expect(lines).toContain(rail.effects.map(effectLabel).join(', '));
+    expect(lines).toContain(rail.description);
+  });
+
+  it("surfaces a grenade's radius and delay", () => {
+    const nade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    const lines = abilityTooltip(nade).join('\n');
+    if (nade.radius !== undefined) expect(lines).toContain(`radius ${nade.radius}`);
+    if (nade.delayTurns !== undefined) expect(lines).toContain(`delay ${nade.delayTurns}t`);
   });
 });

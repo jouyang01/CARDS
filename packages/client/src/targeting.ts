@@ -20,6 +20,7 @@ import {
   reachableSquares,
   validateMovePath,
   type AbilityDef,
+  type AbilityEffect,
   type Board,
   type CharacterDef,
   type GameState,
@@ -68,6 +69,30 @@ export function abilityOptions(unit: UnitState, character: CharacterDef): Abilit
       return { def, isUlt, available: true, cooldown: 0 };
     });
   return rows;
+}
+
+/** One effect rendered as `kind amount (durationt)`, e.g. `damage 26`, `shield 30 (2t)`. */
+export function effectLabel(e: AbilityEffect): string {
+  const amount = e.amount !== undefined ? ` ${e.amount}` : '';
+  const duration = e.duration !== undefined ? ` (${e.duration}t)` : '';
+  return `${e.kind}${amount}${duration}`;
+}
+
+/**
+ * Tooltip lines for an ability, read straight off its `AbilityDef` (TT1) — no
+ * game logic, just a formatting of the character JSON the hover panel prints.
+ */
+export function abilityTooltip(def: AbilityDef): string[] {
+  const lines = [`${def.name} — ${def.phase} · ${def.shape}`];
+  const reach = [`range ${def.range}`];
+  if (def.radius !== undefined) reach.push(`radius ${def.radius}`);
+  lines.push(reach.join(' · '));
+  const econ = [`cooldown ${def.cooldown}`, `energy +${def.energyGain}`];
+  if (def.delayTurns !== undefined) econ.push(`delay ${def.delayTurns}t`);
+  lines.push(econ.join(' · '));
+  if (def.effects.length > 0) lines.push(def.effects.map(effectLabel).join(', '));
+  lines.push(def.description);
+  return lines;
 }
 
 /** Is `sprint` currently selectable? Only when no ability is chosen (GAME_SPEC §2). */

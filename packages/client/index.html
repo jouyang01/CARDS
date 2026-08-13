@@ -43,6 +43,10 @@
       button:disabled { opacity: 0.4; cursor: not-allowed; }
       button.sel { border-color: var(--aim); color: var(--aim); }
       button.primary { background: var(--reach); color: #fff; border-color: var(--reach); font-weight: 600; }
+      .tooltip { position: fixed; z-index: 10; max-width: 280px; background: var(--panel);
+        color: var(--text); border: 1px solid var(--grid-line); border-radius: 6px;
+        padding: 8px 10px; font-size: 12px; line-height: 1.5; white-space: pre-line;
+        box-shadow: 0 4px 16px rgb(0 0 0 / 0.5); pointer-events: none; }
       footer { font-size: 12px; opacity: 0.5; }
     </style>
   </head>
