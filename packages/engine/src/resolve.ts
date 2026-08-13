@@ -20,7 +20,19 @@
  * and trap triggers (9) attach at the marked seams and grow in their own commits.
  */
 
-import { type Board, buildBoard, chebyshev, terrainAt, vecEq, vecKey } from './board.js';
+import {
+  type Board,
+  blocksMovement,
+  buildBoard,
+  chebyshev,
+  diagonalCornerBlocked,
+  inBounds,
+  isAdjacentStep,
+  isDiagonalStep,
+  terrainAt,
+  vecEq,
+  vecKey,
+} from './board.js';
 import {
   applyDamage,
   applyHeal,
@@ -182,16 +194,18 @@ function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonl
       return target !== undefined && !vecEq(unit.pos, target);
     }
     case 'path': {
-      // A dash path: orthogonal in-bounds steps within range, no wall/cover.
-      // Occupancy is not checked here — a charge stops at the first enemy during
-      // Dash execution (BACKLOG item 7).
+      // A dash/charge path: adjacent in-bounds steps within range, no wall/cover.
+      // Steps may be orthogonal OR diagonal (MV4), matching 8-direction movement;
+      // a diagonal may not cut a wall/cover corner (same rule as `validateMovePath`).
+      // Range is a step count (unchanged); occupancy is not checked here — a charge
+      // passes through and rests on the furthest free square (MV1).
       if (aim.length === 0 || aim.length > def.range) return false;
       let prev = unit.pos;
       for (const p of aim) {
-        if (Math.abs(p.x - prev.x) + Math.abs(p.y - prev.y) !== 1) return false;
-        const t = board.terrain[p.y * board.width + p.x];
-        if (p.x < 0 || p.y < 0 || p.x >= board.width || p.y >= board.height) return false;
-        if (t === 'wall' || t === 'cover') return false;
+        if (!inBounds(board, p)) return false;
+        if (!isAdjacentStep(prev, p)) return false;
+        if (blocksMovement(board, p)) return false;
+        if (isDiagonalStep(prev, p) && diagonalCornerBlocked(board, prev, p.x - prev.x, p.y - prev.y)) return false;
         prev = p;
       }
       return true;

@@ -448,3 +448,59 @@ touches the held charge-combat ENGINE ASK and is left for a Designer ruling.
 - **Carried forward:** MV2 AR-wiki verification still pending (egress blocked); playback
   shield during-turn vs post-tick (S1); decoy (D1), duplicate picks, `combat_roll`
   path-vs-teleport, cover-vs-Might, Support kit, roster-v1 §9 — all still blocked on rulings.
+
+## Move-and-shoot + diagonal charges — MS1, MV4 (Builder, 2026-08-18)
+
+**(MS1) Move and shoot in one turn (client UI).** The engine and `toUnitOrders` already
+emitted a non-dash `ability` + a 4-square `movePath` together; only the hot-seat flow forced
+exclusivity. `app.ts`: `selectAbility` keeps the drawn move for a non-dash ability (still
+drops it for a dash — the dash *is* the move — and clears sprint); `selectMove` keeps a
+non-dash ability when drawing a normal move, while Sprint (move-only, 8) and a dash both stay
+exclusive with an ability. The preview paints move reachability + drawn path *under* the
+ability's affected squares so both show at once; a dash shows no separate move preview. The
+Move row surfaces the live budget from `movementBudget(unit, sprint)` (4 with an ability, 8
+sprinting, 0 rooted, Haste/Slow-adjusted) and Sprint is disabled while an ability is
+selected. Engine untouched. Tests (`targeting.test.ts`): a draft with both a non-dash ability
+and a move round-trips to a `UnitOrders` carrying both (sprint dropped); the ability-turn
+move previews at the 4-budget, a strict subset of the 8-sprint set.
+
+**(MV4) Diagonal charge paths.** `aimIsLegal`'s `path` case accepted only orthogonal steps
+while Move went 8-directional (MV3). It now accepts orthogonal OR diagonal adjacent steps
+with the same corner-cut rule as `validateMovePath` (a diagonal may not cut a wall/cover
+corner). Range stays a step count; charge cost / first-enemy behavior unchanged — only path
+geometry widened (independent of the charge-*damage* Designer ASK). `walkCharge` and the
+`direction8` knockback were already direction-agnostic. Tests (`dash.test.ts`): a diagonal
+charge validates, passes through the crossed enemy, and rests beyond (its 1-square knockback
+onto the charger nets zero per the MV1-fix interim); a diagonal charge that would cut a wall
+corner is rejected and the unit holds.
+
+**Skipped this session (optional/deferred), with reasons:**
+- **CL1 (AR clash co-occupancy)** — the underlying rule is **PROPOSED, not RULED**, in
+  edge-cases ("align only if playtests want it"). Golden rule: never implement an unlisted/
+  non-final ruling. Needs the Analyzer to promote it PROPOSED→RULED first.
+- **CL2 (vector-sum displacement)** — deferred + underspecified (no tie-break/order spec),
+  and its one concrete benefit (the amount-1 Ram Charge net-zero) is owned by the bundled
+  charge-combat Designer ASK. Note: in practice CL2 would *not* change the Ram Charge case
+  (a single displacement summed is itself); it only matters for two concurrent displacements
+  on one victim, which is rare in v1.
+- **E2 (cover corner convention)** — already **ruled acceptable** as-is; no change required.
+
+## Open Questions for the Analyzer — 2026-08-18 (MS1/MV4 batch)
+
+- **MS1 has no DOM-level test (flag).** The move-and-shoot *flow* lives in `app.ts`, which is
+  a DOM closure with no unit-test harness; coverage is at the pure boundary (`toUnitOrders`
+  round-trip + `movePreview` budget). If you want the `selectAbility`/`selectMove` toggle
+  logic itself tested, it needs a small pure extraction (e.g. a `nextDraft(action, draft)`
+  reducer) — say the word and I'll refactor `app.ts` for testability next session.
+- **CL1 needs promotion to build.** Confirm whether AR clash pass-through co-occupancy is
+  wanted for v1; if so, promote the edge-cases entry from PROPOSED to RULED with the exact
+  tie-break (both-passing continue / one-ending-wins / both-ending-both-stop) and I'll
+  implement `stepMovers` + tests. Until then it stays skipped.
+- **CL2 scope, if taken.** If you want vector-sum displacement, specify the summation for a
+  victim under ≥2 concurrent knockbacks/pulls (component sum then single walk? clamp order?)
+  so it stays deterministic. Reminder it does not resolve the amount-1 Ram Charge case (single
+  displacement) — that's still the Designer charge-combat ASK.
+- **Carried / still Designer-blocked:** charge damage targeting + amount-1 knockback resolution
+  (bundled), decoy (D1), duplicate picks, `combat_roll` path-vs-teleport, cover-vs-Might,
+  Support kit, roster-v1 §9. MV2 AR-wiki verification and the S1 playback-shield question
+  were closed in the 2026-08-18 review.

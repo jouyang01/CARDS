@@ -111,15 +111,21 @@ export function startHotSeat(
     // Highlight the unit being ordered.
     paintOverlay(svg, [step.unit.pos], cssVar('--select'), 0.5);
 
-    // Previews.
+    // Previews (MS1: a non-dash ability and a Move coexist). Paint the move
+    // reachability + drawn path first, then the ability's affected squares on
+    // top. A dash *is* the movement, so it shows no separate move preview; its
+    // move budget is the ability-turn 4 (Haste/Slow-adjusted, 0 if Rooted) —
+    // `movePreview` reads that straight off `movementBudget(unit, sprint=false)`.
     const ability = draftAbility(character, draft);
-    if (ability !== undefined) {
-      paintOverlay(svg, abilityPreview(map, step.unit, ability, draft.aim), cssVar('--aim'), 0.5);
-    } else if (draft.sprint || mode === 'move') {
+    const isDash = ability?.phase === 'dash';
+    if (!isDash && (draft.sprint || mode === 'move' || draft.movePath.length > 0)) {
       const { stops, through } = movePreview(map, state, step.unit, draft.sprint);
       paintOverlay(svg, stops, cssVar('--reach'), 0.28);
       paintOverlay(svg, through, cssVar('--reach'), 0.12);
       paintOverlay(svg, draft.movePath, cssVar('--aim'), 0.5);
+    }
+    if (ability !== undefined) {
+      paintOverlay(svg, abilityPreview(map, step.unit, ability, draft.aim), cssVar('--aim'), 0.5);
     }
 
     svg.style.cursor = 'crosshair';
@@ -153,7 +159,10 @@ export function startHotSeat(
       abilityRow.appendChild(b);
     }
 
-    const moveRow = row('Move: ');
+    // Live move budget: 4 with an ability, 8 sprinting, 0 rooted (Haste/Slow
+    // adjusted) — read straight off the engine so the UI never guesses (MS1).
+    const budget = movementBudget(step.unit, draft.sprint);
+    const moveRow = row(`Move (${budget}): `);
     const moveBtn = document.createElement('button');
     moveBtn.textContent = 'Draw move';
     moveBtn.className = mode === 'move' && !draft.sprint ? 'sel' : '';
@@ -161,6 +170,7 @@ export function startHotSeat(
     const sprintBtn = document.createElement('button');
     sprintBtn.textContent = 'Sprint';
     sprintBtn.className = draft.sprint ? 'sel' : '';
+    sprintBtn.disabled = draft.abilityId !== undefined; // Sprint is move-only (GAME_SPEC §2)
     sprintBtn.onclick = () => selectMove(true);
     const holdBtn = document.createElement('button');
     holdBtn.textContent = 'Hold / clear';
@@ -185,10 +195,12 @@ export function startHotSeat(
     if (step === undefined) return;
     const draft = drafts.get(step.unit.unitId)!;
     draft.abilityId = abilityId;
-    draft.sprint = false;
+    draft.sprint = false; // Sprint is move-only; choosing an ability clears it.
     draft.aim = [];
-    draft.movePath = [];
     const ability = draftAbility(characterFor(step.unit), draft);
+    // A dash *is* the unit's movement, so it drops any separately-drawn move
+    // (MS1). A non-dash ability keeps the move — the player can move AND shoot.
+    if (ability?.phase === 'dash') draft.movePath = [];
     mode = ability && ability.shape !== 'self' ? 'aim' : 'idle';
     if (ability && ability.shape === 'self') draft.aim = [{ ...step.unit.pos }];
     render();
@@ -198,8 +210,14 @@ export function startHotSeat(
     const step = currentStep();
     if (step === undefined) return;
     const draft = drafts.get(step.unit.unitId)!;
-    draft.abilityId = undefined;
-    draft.aim = [];
+    const ability = draftAbility(characterFor(step.unit), draft);
+    // Sprint is move-only (8 squares) and clears any ability. "Draw move" keeps a
+    // non-dash ability so it can coexist with a 4-square move (MS1); a dash owns
+    // the move, so drawing a separate move replaces the dash.
+    if (sprint || ability === undefined || ability.phase === 'dash') {
+      draft.abilityId = undefined;
+      draft.aim = [];
+    }
     draft.sprint = sprint;
     draft.movePath = [];
     mode = 'move';

@@ -167,3 +167,33 @@ describe('teleport-strike ultimate', () => {
     expect(unit(state, 'u').energy).toBe(5); // ult reset to 0, then +5 passive
   });
 });
+
+describe('MV4: diagonal charge paths', () => {
+  it('a diagonal charge validates, passes through, and strikes the crossed enemy', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const e = makeUnit('e', 1, { x: 2, y: 2 });
+    const { state } = run(
+      makeState([u, e]),
+      [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }] } }],
+      [],
+    );
+    expect(unit(state, 'u').pos).toEqual({ x: 3, y: 3 }); // charged diagonally through e to the far side
+    expect(unit(state, 'e').hp).toBe(85); // 15 charge damage on the crossed enemy
+    expect(unit(state, 'e').pos).toEqual({ x: 2, y: 2 }); // 1-square knockback onto the charger nets zero (MV1-fix interim)
+  });
+
+  it('a diagonal charge that cuts a wall corner is rejected (the ability is dropped, unit holds)', () => {
+    // Wall at (1,0) is a flank of the (0,0)→(1,1) diagonal → corner-cut illegal.
+    const map = makeMap(['.#.......', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '.........']);
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const e = makeUnit('e', 1, { x: 5, y: 5 });
+    const { state } = run(
+      makeState([u, e]),
+      [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 1 }, { x: 2, y: 2 }] } }],
+      [],
+      map,
+    );
+    expect(unit(state, 'u').pos).toEqual({ x: 0, y: 0 }); // illegal charge dropped → no dash
+    expect(unit(state, 'e').hp).toBe(100); // never struck
+  });
+});
