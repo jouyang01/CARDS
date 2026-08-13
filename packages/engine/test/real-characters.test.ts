@@ -64,15 +64,19 @@ describe("Vex's frag grenade (delayTurns: 1)", () => {
 });
 
 describe("Bastion's kit through the pipeline", () => {
-  it('Ram Charge hits, damages and knocks the first enemy back', () => {
+  it('Ram Charge passes through and strikes the first enemy (MV1)', () => {
+    // Post-MV1 the charge crosses Vex and rests on the far side. Vex still takes
+    // the charge damage; its knockback here is blocked because Bastion landed on
+    // the push destination — a charge-combat interaction the Designer must rule
+    // on (edge-cases "AR movement model" ENGINE ASK).
     const b = spawnUnit(BASTION, 'bastion-0', 0, { x: 2, y: 7 });
     const v = spawnUnit(VEX, 'vex-0', 1, { x: 5, y: 7 });
     const { state } = resolveTurn(makeState([b, v]), OPEN(), [
       { team: 0, units: [{ unitId: 'bastion-0', ability: { abilityId: 'ram_charge', target: [{ x: 3, y: 7 }, { x: 4, y: 7 }, { x: 5, y: 7 }, { x: 6, y: 7 }] } }] },
       { team: 1, units: [] },
     ], roster);
+    expect(unit(state, 'bastion-0').pos).toEqual({ x: 6, y: 7 }); // charged through Vex to the far side
     expect(unit(state, 'vex-0').hp).toBe(80); // 15 charge damage off Vex's 95
-    expect(unit(state, 'vex-0').pos).toEqual({ x: 6, y: 7 }); // knocked back one square
   });
 
   it('Bulwark shield in Prep soaks a Blast the same turn', () => {

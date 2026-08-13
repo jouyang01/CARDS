@@ -398,6 +398,10 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     markAbilityUsed(plan.unit, a, events);
 
     // Move: a `path` charge walks until blocked; anything else teleports.
+    // Capture the origin: a charge now passes THROUGH its target (MV1), so
+    // knockback is measured from where the charge began (push along the charge),
+    // not the post-pass-through position — combat semantics stay as today.
+    const origin: Vec2 = { x: plan.unit.pos.x, y: plan.unit.pos.y };
     let charged: UnitState | undefined;
     if (a.def.shape === 'path') charged = walkCharge(draft, plan.unit, a.aim, events);
     else teleport(draft, board, plan.unit, a.aim[0], events);
@@ -413,14 +417,15 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
             ? [charged]
             : []
           : draft.units.filter((u) => u.owner !== plan.unit.owner && u.alive && chebyshev(plan.unit.pos, u.pos) === 1);
+      const source = a.def.shape === 'path' ? origin : plan.unit.pos;
       for (const victim of victims) {
-        const behindCover = isBehindCover(board, plan.unit.pos, victim.pos, a.def.range);
+        const behindCover = isBehindCover(board, source, victim.pos, a.def.range);
         const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
         events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed });
         removeStatus(victim, 'stealth');
         hitEnemy = true;
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
-        else collectDisplacement(pending, a.def.effects, victim, plan.unit.pos);
+        else collectDisplacement(pending, a.def.effects, victim, source);
       }
     }
 
@@ -435,20 +440,37 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
   }
 }
 
-/** Walk a charge along its path, stopping before the first unit; returns the
- * enemy it ran into (the one it stopped in front of), if any. */
+/**
+ * Walk a charge along its path (MV1 / edge-cases "AR movement model"): it passes
+ * *through* any character — ally or enemy — but may not *end* on an occupied
+ * square, so it rests on the furthest path square that is free (or holds if none
+ * is). Walls/cover never appear in the path (validated). Returns the first enemy
+ * it crossed — damage targeting is unchanged (still the first enemy; the
+ * first/all/destination question is an ENGINE ASK held for the Designer).
+ */
 function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState | undefined {
+  const occupiedAt = (p: Vec2) => draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
+  // Furthest square the charger may rest on (last free square in the path).
+  let restIndex = -1;
+  for (let i = 0; i < path.length; i++) if (!occupiedAt(path[i]!)) restIndex = i;
+
+  // The first enemy anywhere on the path — crossed while passing through, or run
+  // into at the (occupied) destination the charge cannot enter. Damage target.
+  let firstEnemy: UnitState | undefined;
   for (const step of path) {
-    const occupant = draft.units.find((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, step));
-    if (occupant !== undefined) {
-      return occupant.owner !== unit.owner ? occupant : undefined; // stop before it
-    }
+    const enemy = draft.units.find((u) => u.alive && u.owner !== unit.owner && vecEq(u.pos, step));
+    if (enemy !== undefined) { firstEnemy = enemy; break; }
+  }
+
+  // Move square-by-square to the rest square, triggering traps on each entry.
+  for (let i = 0; i <= restIndex; i++) {
+    const step = path[i]!;
     const from = unit.pos;
     unit.pos = { x: step.x, y: step.y };
     events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-    if (triggerTrapsOnEntry(draft, unit, events)) return undefined; // died mid-charge
+    if (triggerTrapsOnEntry(draft, unit, events)) return firstEnemy; // died mid-charge
   }
-  return undefined;
+  return firstEnemy;
 }
 
 /** Teleport to `dest` if it is an open, unoccupied square (walls may be crossed). */

@@ -80,7 +80,7 @@ describe('the signature test: dash immunity to Blast aimed at the vacated square
 });
 
 describe('charge dashes', () => {
-  it('runs in a line, stops in front of the first enemy and damages it', () => {
+  it('passes through the first enemy and rests on the far side, still striking it (MV1)', () => {
     const u = makeUnit('u', 0, { x: 0, y: 0 });
     const e = makeUnit('e', 1, { x: 3, y: 0 });
     const { state } = run(
@@ -88,8 +88,8 @@ describe('charge dashes', () => {
       [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }] } }],
       [],
     );
-    expect(unit(state, 'u').pos).toEqual({ x: 2, y: 0 }); // stopped before the enemy at (3,0)
-    expect(unit(state, 'e').hp).toBe(85); // 15 charge damage
+    expect(unit(state, 'u').pos).toEqual({ x: 4, y: 0 }); // charged through the enemy to the last free square
+    expect(unit(state, 'e').hp).toBe(85); // still the first enemy struck: 15 charge damage
     expect(unit(state, 'u').energy).toBe(13); // 8 on hit + 5 passive
   });
 
@@ -98,6 +98,32 @@ describe('charge dashes', () => {
     const { state } = run(makeState([u, makeUnit('e', 1, { x: 8, y: 8 })]), [{ unitId: 'u', ability: { abilityId: 'roll', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }], []);
     expect(unit(state, 'u').pos).toEqual({ x: 3, y: 0 });
     expect(unit(state, 'u').energy).toBe(9); // 4 utility + 5 passive
+  });
+});
+
+describe('MV1: dashes pass through characters', () => {
+  it('a dash over an ally no longer halts — it rests beyond', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const ally = makeUnit('ally', 0, { x: 2, y: 0 }); // teammate mid-path
+    const { state } = run(makeState([u, ally, makeUnit('e', 1, { x: 8, y: 8 })]), [{ unitId: 'u', ability: { abilityId: 'roll', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }], []);
+    expect(unit(state, 'u').pos).toEqual({ x: 3, y: 0 }); // charged through the ally
+    expect(unit(state, 'ally').pos).toEqual({ x: 2, y: 0 }); // ally undisturbed
+    expect(unit(state, 'ally').hp).toBe(100); // no friendly fire
+  });
+
+  it('a charge whose destination is occupied stops on the last free square', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const ally = makeUnit('ally', 0, { x: 2, y: 0 }); // sits on the charge destination
+    const { state } = run(makeState([u, ally, makeUnit('e', 1, { x: 8, y: 8 })]), [{ unitId: 'u', ability: { abilityId: 'roll', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }] } }], []);
+    expect(unit(state, 'u').pos).toEqual({ x: 1, y: 0 }); // last free square before the occupied destination
+  });
+
+  it('a charge crosses a mid-path enemy, continues past it, and strikes it', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const e = makeUnit('e', 1, { x: 2, y: 0 }); // mid-path enemy
+    const { state } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }], []);
+    expect(unit(state, 'u').pos).toEqual({ x: 3, y: 0 }); // continued past the crossed enemy
+    expect(unit(state, 'e').hp).toBe(85); // first enemy crossed still takes the charge damage
   });
 });
 
