@@ -14,6 +14,7 @@ const char: CharacterDef = {
     ability({ id: 'quake', effects: [{ kind: 'slow', duration: 2 }, { kind: 'knockback', amount: 2 }] }),
     ability({ id: 'mend', effects: [{ kind: 'heal', amount: 20 }] }),
     ability({ id: 'rally', effects: [{ kind: 'might', duration: 2 }] }),
+    ability({ id: 'timer', delayTurns: 1, effects: [{ kind: 'damage', amount: 20 }, { kind: 'slow', duration: 2 }] }),
   ],
   ultimate: ability({ id: 'ult', shape: 'self', range: 0, effects: [{ kind: 'shield', amount: 1, duration: 1 }] }),
 };
@@ -93,5 +94,49 @@ describe('FF1: friendly fire — harmful hits everyone, beneficial stays own-tea
     const { state } = run(makeState([caster, enemy]), [{ unitId: 'A1', ability: { abilityId: 'rally', target: [{ x: 5, y: 5 }] } }], []);
     expect(unit(state, 'A1').statuses.some((s) => s.kind === 'might')).toBe(true); // self buffed
     expect(unit(state, 'E').statuses.some((s) => s.kind === 'might')).toBe(false); // enemy not buffed
+  });
+});
+
+describe('FF1-delayed: a detonation catches everyone standing in it', () => {
+  /** Arm a delayed blast on turn 1, then let turn 2 detonate it. */
+  const armThenDetonate = (units: GameState['units'], at: { x: number; y: number }) => {
+    const t1 = run(makeState(units), [{ unitId: 'A1', ability: { abilityId: 'timer', target: [at] } }], []);
+    expect(t1.state.delayed).toHaveLength(1); // armed, not yet fired
+    return run(t1.state, [], []);
+  };
+
+  it('damages the ally standing in the locked area, not just the enemy', () => {
+    const caster = makeUnit('A1', 0, { x: 5, y: 5 });
+    const ally = makeUnit('A2', 0, { x: 8, y: 5 });
+    const enemy = makeUnit('E', 1, { x: 9, y: 5 });
+    const t2 = armThenDetonate([caster, ally, enemy], { x: 9, y: 5 });
+    expect(unit(t2.state, 'A2').hp).toBe(80); // a grenade does not check tags
+    expect(unit(t2.state, 'E').hp).toBe(80);
+  });
+
+  it('harmful riders land on the ally too', () => {
+    const caster = makeUnit('A1', 0, { x: 5, y: 5 });
+    const ally = makeUnit('A2', 0, { x: 8, y: 5 });
+    const t2 = armThenDetonate([caster, ally, makeUnit('E', 1, { x: 9, y: 5 })], { x: 9, y: 5 });
+    expect(unit(t2.state, 'A2').statuses.some((s) => s.kind === 'slow')).toBe(true);
+  });
+
+  it('an ally-only detonation grants the caster no energy', () => {
+    const cast = () => [makeUnit('A1', 0, { x: 5, y: 5 }), makeUnit('A2', 0, { x: 8, y: 5 }), makeUnit('E', 1, { x: 0, y: 10 })];
+    const onAlly = armThenDetonate(cast(), { x: 8, y: 5 });
+    expect(unit(onAlly.state, 'A2').hp).toBe(80); // the ally really was caught
+
+    // Control: detonate on empty ground, still within the ability's Manhattan
+    // range of the caster (MET1) so it actually arms. Energy must match.
+    const onNobody = armThenDetonate(cast(), { x: 5, y: 10 });
+    expect(unit(onAlly.state, 'A1').energy).toBe(unit(onNobody.state, 'A1').energy);
+  });
+
+  it('a friendly detonation kill scores for nobody', () => {
+    const caster = makeUnit('A1', 0, { x: 5, y: 5 });
+    const ally = makeUnit('A2', 0, { x: 8, y: 5 }, { hp: 5 });
+    const t2 = armThenDetonate([caster, ally, makeUnit('E', 1, { x: 0, y: 10 })], { x: 8, y: 5 });
+    expect(unit(t2.state, 'A2').alive).toBe(false);
+    expect(t2.state.kills).toEqual([0, 0]);
   });
 });

@@ -646,7 +646,7 @@ function runBlast(
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
   // their locked squares, folded into this turn's simultaneous damage.
-  detonateDelayedBlasts(draft, roster, hits, debuffs, events);
+  detonateDelayedBlasts(draft, roster, hits, debuffs, benefits, events);
 
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
@@ -751,6 +751,7 @@ function detonateDelayedBlasts(
   roster: Roster,
   hits: Hit[],
   debuffs: { victim: UnitState; effect: AbilityEffect }[],
+  benefits: { target: UnitState; effect: AbilityEffect }[],
   events: TurnEvent[],
 ): void {
   const due = draft.delayed.filter((d) => d.turnsRemaining <= 0 && d.phase === 'blast');
@@ -763,14 +764,23 @@ function detonateDelayedBlasts(
     const def = found.def;
     events.push({ type: 'abilityFired', unitId: caster.unitId, abilityId: def.id, area: d.area });
 
+    // Same polarity as the direct-Blast loop (FF1-delayed): a detonation is an
+    // aimed area, so harmful effects catch EVERY unit standing in it, ally or
+    // enemy — a grenade does not check tags on its way off. Beneficial effects
+    // still reach only the caster's own team.
     const area = new Set(d.area.map(vecKey));
     let hitEnemy = false;
-    for (const enemy of draft.units) {
-      if (enemy.owner === caster.owner || !enemy.alive || !area.has(vecKey(enemy.pos))) continue;
-      hitEnemy = true;
+    for (const target of draft.units) {
+      if (!target.alive || !area.has(vecKey(target.pos))) continue;
+      const enemy = target.owner !== caster.owner;
       for (const e of def.effects) {
-        if (e.kind === 'damage') hits.push({ attacker: caster, victim: enemy, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
-        else if (isStatusKind(e.kind)) debuffs.push({ victim: enemy, effect: e });
+        if (HARMFUL_KINDS.has(e.kind)) {
+          if (enemy) hitEnemy = true; // energy stays enemy-only
+          if (e.kind === 'damage') hits.push({ attacker: caster, victim: target, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
+          else if (isStatusKind(e.kind)) debuffs.push({ victim: target, effect: e });
+        } else if (BENEFICIAL_KINDS.has(e.kind)) {
+          if (!enemy) benefits.push({ target, effect: e });
+        }
       }
     }
     if (hitEnemy && caster.alive) {
