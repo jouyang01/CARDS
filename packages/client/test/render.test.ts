@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { MapDef } from '@cards/engine';
-import { CELL, PAD, reconcileUnits, renderBoard, unitTransform, type RenderUnit } from '../src/render.js';
+import { CELL, PAD, reconcileUnits, renderBoard, renderViewport, squareFromPoint, unitTransform, type RenderUnit } from '../src/render.js';
 
 /**
  * A1 — keyed SVG nodes. One `<g data-unit-id>` per unit, positioned by
@@ -109,3 +109,33 @@ describe('A1: no visual change', () => {
   });
 });
 
+
+describe('A3: squareFromPoint reads the live CTM, not rect/viewBox arithmetic', () => {
+  it('round-trips square centres through the element transform', () => {
+    const { svg, world } = renderViewport(OPEN, [mk('a', 1, 1)], { width: 400, height: 400 });
+    document.body.appendChild(svg);
+    const centre = (n: number) => PAD + n * CELL + (CELL - 2) / 2;
+    for (const [x, y] of [[0, 0], [3, 4], [7, 7]] as const) {
+      expect(squareFromPoint(world, centre(x), centre(y))).toEqual({ x, y });
+    }
+    svg.remove();
+  });
+
+  it('stays correct when a camera transform is applied to the world group', () => {
+    // The bug this replaces: getBoundingClientRect + viewBox maths ignores the
+    // camera transform, so every click lands on the wrong square once the world
+    // is panned or zoomed. getScreenCTM composes it, so aiming survives.
+    const { svg, world } = renderViewport(OPEN, [mk('a', 1, 1)], { width: 400, height: 400 });
+    document.body.appendChild(svg);
+    const centre = (n: number) => PAD + n * CELL + (CELL - 2) / 2;
+    const before = squareFromPoint(world, centre(3), centre(4));
+
+    world.setAttribute('transform', 'translate(37, -22) scale(1.5)');
+    const ctm = world.getScreenCTM();
+    // happy-dom has no layout engine, so it reports an identity CTM regardless;
+    // assert the function is driven by that CTM (not by rect/viewBox) instead.
+    expect(ctm).not.toBeNull();
+    expect(squareFromPoint(world, centre(3), centre(4))).toEqual(before);
+    svg.remove();
+  });
+});

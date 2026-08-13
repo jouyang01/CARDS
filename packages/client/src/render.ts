@@ -54,7 +54,7 @@ function toRenderUnit(u: UnitState): RenderUnit {
   return { unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp, energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(), shield: shieldAmount(u) };
 }
 
-function paint(svg: SVGSVGElement, squares: readonly Vec2[], color: string, inset = 0): void {
+function paint(svg: SVGElement, squares: readonly Vec2[], color: string, inset = 0): void {
   for (const p of squares) {
     svg.appendChild(el('rect', {
       x: PAD + p.x * CELL + inset, y: PAD + p.y * CELL + inset,
@@ -63,7 +63,7 @@ function paint(svg: SVGSVGElement, squares: readonly Vec2[], color: string, inse
   }
 }
 
-function renderTerrain(svg: SVGSVGElement, map: MapDef): void {
+function renderTerrain(svg: SVGElement, map: MapDef): void {
   for (let y = 0; y < map.height; y++) {
     for (let x = 0; x < map.width; x++) {
       svg.appendChild(el('rect', { x: PAD + x * CELL, y: PAD + y * CELL, width: CELL - 2, height: CELL - 2, rx: 4, fill: cssVar('--open') }));
@@ -75,7 +75,7 @@ function renderTerrain(svg: SVGSVGElement, map: MapDef): void {
 }
 
 /** A small labelled bar; `frac` is clamped to [0,1]. */
-function bar(svg: SVGSVGElement, x: number, y: number, w: number, h: number, frac: number, color: string): void {
+function bar(svg: SVGElement, x: number, y: number, w: number, h: number, frac: number, color: string): void {
   svg.appendChild(el('rect', { x, y, width: w, height: h, rx: 1, fill: cssVar('--bar-bg') }));
   const filled = Math.max(0, Math.min(1, frac)) * w;
   if (filled > 0) svg.appendChild(el('rect', { x, y, width: filled, height: h, rx: 1, fill: color }));
@@ -202,7 +202,7 @@ export function mountState(container: Element, map: MapDef, state: GameState): v
 }
 
 /** Translucent overlay squares (previews, reachable tiles) appended onto an SVG. */
-export function paintOverlay(svg: SVGSVGElement, squares: readonly Vec2[], color: string, opacity = 0.4): void {
+export function paintOverlay(svg: SVGElement, squares: readonly Vec2[], color: string, opacity = 0.4): void {
   for (const p of squares) {
     svg.appendChild(el('rect', {
       x: PAD + p.x * CELL, y: PAD + p.y * CELL, width: CELL - 2, height: CELL - 2, rx: 4,
@@ -211,12 +211,47 @@ export function paintOverlay(svg: SVGSVGElement, squares: readonly Vec2[], color
   }
 }
 
-/** The grid square under a client-space point on `svg` (for click-to-aim). */
-export function squareFromPoint(svg: SVGSVGElement, clientX: number, clientY: number): Vec2 | undefined {
-  const rect = svg.getBoundingClientRect();
-  const scaleX = svg.viewBox.baseVal.width / rect.width || 1;
-  const scaleY = svg.viewBox.baseVal.height / rect.height || 1;
-  const x = Math.floor(((clientX - rect.left) * scaleX - PAD) / CELL);
-  const y = Math.floor(((clientY - rect.top) * scaleY - PAD) / CELL);
-  return { x, y };
+/**
+ * The grid square under a client-space point (for click-to-aim).
+ *
+ * Uses the element's live screen CTM rather than `getBoundingClientRect` +
+ * viewBox arithmetic: once a camera transform is on the world group, the manual
+ * version silently returns the wrong square, because the rect/viewBox ratio
+ * knows nothing about that transform. `getScreenCTM()` accounts for every
+ * transform between the screen and the element, so aiming stays correct at any
+ * pan or zoom. Pass the world group when a camera is in play (A3).
+ */
+export function squareFromPoint(el: SVGGraphicsElement, clientX: number, clientY: number): Vec2 | undefined {
+  const ctm = el.getScreenCTM();
+  if (ctm === null) return undefined;
+  const local = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+  return { x: Math.floor((local.x - PAD) / CELL), y: Math.floor((local.y - PAD) / CELL) };
+}
+
+// ── Camera-ready board (A3) ─────────────────────────────────────────────────
+
+/** The `<g class="world">` a camera transform is applied to, if present. */
+export const worldOf = (svg: SVGSVGElement): SVGGElement | null => svg.querySelector('g.world');
+
+/**
+ * A board whose content lives in one `<g class="world">` with the `viewBox` sized
+ * to a VIEWPORT rather than the whole board, so the camera can pan/zoom the
+ * world group without touching the viewBox. Returns the svg and its world group.
+ */
+export function renderViewport(map: MapDef, units: readonly RenderUnit[], viewport: { width: number; height: number }): {
+  svg: SVGSVGElement;
+  world: SVGGElement;
+} {
+  const svg = el('svg', {
+    width: viewport.width, height: viewport.height,
+    viewBox: `0 0 ${viewport.width} ${viewport.height}`,
+  });
+  const world = el('g', { class: 'world' });
+  // transform-origin 0 0 so a camera scale is measured from the board's corner,
+  // matching the pure framing maths in camera.ts.
+  world.style.transformOrigin = '0 0';
+  svg.appendChild(world);
+  renderTerrain(world, map);
+  reconcileUnits(world, units);
+  return { svg, world };
 }
