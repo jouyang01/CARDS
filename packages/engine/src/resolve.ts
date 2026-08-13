@@ -35,7 +35,7 @@ import {
   ULT_COST,
 } from './constants.js';
 import { getFormat } from './formats.js';
-import { movementBudget, validateMovePath } from './movement.js';
+import { movementBudget, pathWithinBudget, validateMovePath } from './movement.js';
 import { aimInRange, direction8, expandShape } from './shapes.js';
 import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import type {
@@ -679,7 +679,9 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
     if (displaced.has(plan.unit.unitId)) continue; // knocked back/pulled → loses Move
     if (hasStatus(plan.unit, 'root')) continue; // rooted (incl. in Blast) loses Move
     const budget = movementBudget(plan.unit, plan.sprint);
-    const path = plan.movePath.slice(0, budget);
+    // Re-clamp by *cost* (a Blast-phase Slow may have shrunk the budget since the
+    // path was validated in Prep); diagonals cost 1/2/1/2… (MV3).
+    const path = pathWithinBudget(plan.movePath, plan.unit.pos, budget);
     if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false });
   }
   if (movers.length === 0) return;

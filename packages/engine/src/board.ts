@@ -38,13 +38,12 @@ export const chebyshev = (a: Vec2, b: Vec2): number =>
   Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
 /**
- * The only legal movement steps: four orthogonal directions.
+ * The four orthogonal directions.
  *
- * Movement is strictly orthogonal (GAME_SPEC §3), so diagonal corner-cutting
- * past a wall or cover square is structurally impossible — a unit must walk
- * around the corner and pay for both steps.
+ * Movement is 8-directional (GAME_SPEC §3, MV3), but *vision* and *cover*
+ * adjacency stay orthogonal, so this set remains the basis for those queries.
  *
- * Fixed order (north, east, south, west) so BFS expansion is deterministic.
+ * Fixed order (north, east, south, west) so expansion is deterministic.
  */
 export const ORTHOGONAL_STEPS: readonly Vec2[] = [
   { x: 0, y: -1 },
@@ -53,8 +52,56 @@ export const ORTHOGONAL_STEPS: readonly Vec2[] = [
   { x: -1, y: 0 },
 ];
 
+/**
+ * The four diagonal directions, clockwise from north-east.
+ */
+export const DIAGONAL_STEPS: readonly Vec2[] = [
+  { x: 1, y: -1 }, // NE
+  { x: 1, y: 1 }, // SE
+  { x: -1, y: 1 }, // SW
+  { x: -1, y: -1 }, // NW
+];
+
+/**
+ * The eight movement steps: four orthogonal, four diagonal, in a fixed clockwise
+ * order (N, NE, E, SE, S, SW, W, NW) so the movement search expands
+ * deterministically. Movement is 8-directional (GAME_SPEC §3, MV3); every second
+ * diagonal step costs 2 (see `movement.ts`). Corner-cutting past a solid is
+ * governed by `diagonalCornerBlocked`.
+ */
+export const MOVE_STEPS: readonly Vec2[] = [
+  { x: 0, y: -1 }, // N
+  { x: 1, y: -1 }, // NE
+  { x: 1, y: 0 }, // E
+  { x: 1, y: 1 }, // SE
+  { x: 0, y: 1 }, // S
+  { x: -1, y: 1 }, // SW
+  { x: -1, y: 0 }, // W
+  { x: -1, y: -1 }, // NW
+];
+
 /** True when `b` is exactly one orthogonal step from `a`. */
 export const isOrthogonalStep = (a: Vec2, b: Vec2): boolean => manhattan(a, b) === 1;
+
+/** True when `b` is exactly one step — orthogonal or diagonal — from `a`. */
+export const isAdjacentStep = (a: Vec2, b: Vec2): boolean => chebyshev(a, b) === 1;
+
+/** True when the step from `a` to `b` is a single diagonal (both axes move). */
+export const isDiagonalStep = (a: Vec2, b: Vec2): boolean =>
+  Math.abs(a.x - b.x) === 1 && Math.abs(a.y - b.y) === 1;
+
+/**
+ * A diagonal step may not cut the corner of a solid: it is blocked when either
+ * of the two squares it passes between — the orthogonal neighbours shared by the
+ * origin and destination — is a wall or cover (GAME_SPEC §3, edge-cases MV3).
+ * Only terrain blocks a corner; units never do (they are walk-through anyway).
+ */
+export function diagonalCornerBlocked(board: Board, from: Vec2, dx: number, dy: number): boolean {
+  return (
+    blocksMovement(board, { x: from.x + dx, y: from.y }) ||
+    blocksMovement(board, { x: from.x, y: from.y + dy })
+  );
+}
 
 // ── Board construction & queries ────────────────────────────────────────────
 

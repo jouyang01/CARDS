@@ -383,3 +383,68 @@ orders→merge→resolve→playback view equals the engine board. **Also:** upda
 - **Carried Designer/blocked items unchanged:** decoy (D1), duplicate picks, `combat_roll`
   path-vs-teleport, cover-vs-Might, Support kit, roster-v1 §9 ENGINE ASKs — do NOT build
   without a ruling.
+
+## Movement batch — MV1-fix, MV3 (Builder, 2026-08-17)
+
+**(MV1-fix) Displacement ignores the displacing attacker's own body.** Per the edge-cases
+ruling, a charge that passed *through* its victim and settled beyond it "isn't a wall — it
+just passed through," so the victim's knockback must not treat the charger's landing square
+as an obstacle. `Displacement` now carries `attackerId` (threaded from both the dash and
+blast call sites); `applyDisplacements` excludes that unit from the mid-path blocker so the
+victim may *cross* the square the charger settled on. **Judgment call (co-occupancy
+invariant wins).** The literal "ignore the body" fix co-occupies for an amount-1 knockback
+that lands exactly on the charger (Bastion's Ram Charge: victim (5,7) knocked 1 east onto
+the charger's (6,7)). Golden-rule #1's "no two units at rest on one square" is
+non-negotiable, so the victim may cross the charger but never *end* on it: when its furthest
+reachable square is the charger's own, it stops one short. Consequence: the amount-1
+Ram-Charge case still shows no *net* displacement (documented, not silently dropped) — the
+general amount≥2 case now displaces correctly (new `ram` fixture in `dash.test.ts` proves
+the victim crosses the charger to the free square beyond). Fully landing an amount-1 victim
+beyond the charger needs the Designer's charge-combat ruling or vector-sum displacement (CL2).
+
+**(MV3) 8-direction movement with the AR cost model.** Supersedes the 2026-08-11
+orthogonal-only ruling and the old GAME_SPEC §3 wording (both updated). `board.ts` adds
+`MOVE_STEPS` (8 dirs, fixed clockwise order), `DIAGONAL_STEPS`, `isAdjacentStep`,
+`isDiagonalStep`, and `diagonalCornerBlocked`; `ORTHOGONAL_STEPS` stays as the basis for
+*vision* and *cover* adjacency (unchanged — vision is still Chebyshev, cover still
+orthogonal). Cost model: orthogonal = 1; the k-th diagonal along a path costs 2 when k is
+even, else 1 ("every second diagonal costs 2"). `reachableSquares` is now a shortest-cost
+search (Dijkstra over a small integer bucket queue) whose state is `(square, parity of
+diagonals used)` — parity is the only history the next diagonal's cost depends on, so the
+state space stays finite, integer, and deterministic (no floats; the "~1.5" is realised as
+the 1/2 alternation). Within each cost bucket, parity 0 (cheap-next-diagonal) is finalised
+first so per-square `from` links form a coherent min-cost tree and `reconstructPath` yields
+a legal path of exactly the reported cost (locked by the agreement test). Corner-cut
+default: a diagonal is illegal if *either* orthogonally-adjacent square it passes between is
+wall/cover (units never block a corner). `validateMovePath` accepts diagonals, computes cost
+with the parity model, and gained `notAdjacent`/`cornerBlocked` error codes (renamed from
+`notOrthogonal`). `runMove` re-clamps a planned path by *cost* (new `pathWithinBudget`) so a
+Blast-phase Slow shortens diagonal paths correctly. `stepMovers` is untouched (already
+direction-agnostic; contested-square + 2-cycle no-swap invariants hold for diagonal steps
+too). **Scope note:** dash *charge* paths (`shape: "path"`, `aimIsLegal`) stay orthogonal
+this session — the diagonal model is Move-phase movement; extending charges to diagonals
+touches the held charge-combat ENGINE ASK and is left for a Designer ruling.
+
+## Open Questions for the Analyzer — 2026-08-17 (movement batch)
+
+- **MV1-fix residual (amount-1 charge knockback → Designer).** A charge whose knockback
+  distance equals its overshoot lands the victim exactly on the charger's square; the
+  co-occupancy invariant forces "no net displacement" there (Ram Charge). Ruling wanted:
+  should such a victim (a) stay (current), (b) be carried *through* the charger to the far
+  side (amplifies knockback by the overshoot), or (c) swap with the charger? This is the
+  same ENGINE ASK as charge damage targeting — bundle the ruling. Files: `resolve.applyDisplacements`,
+  `dash.test.ts` (`ram`/`charge` fixtures), `real-characters.test.ts` (Ram Charge).
+- **MV3 corner-cut default — confirm against AR.** Adopted "illegal if either flank is a
+  solid" (terrain only; units never block a corner). The edge-cases ruling flagged this as
+  an AR detail to confirm. If AR permits single-flank corner-cuts (or blocks on units too),
+  say so and I'll adjust `diagonalCornerBlocked` + tests.
+- **MV3 dash charges stay orthogonal (flag).** Move-phase movement is now 8-directional but
+  charge paths are still orthogonal-only (`aimIsLegal` `path` case). If charges should also
+  go diagonal, that rides on the charge-combat ruling above; confirm intent.
+- **Diagonal X-crossing during simultaneous Move (noted).** Two units swapping *diagonally*
+  through a shared corner (A (0,0)→(1,1), B (1,0)→(0,1)) is currently allowed (pass-through
+  model; only the orthogonal 2-cycle edge-swap is blocked). Confirm that's the intended AR
+  behaviour, or extend the no-swap check to diagonal crossings. Files: `resolve.stepMovers`.
+- **Carried forward:** MV2 AR-wiki verification still pending (egress blocked); playback
+  shield during-turn vs post-tick (S1); decoy (D1), duplicate picks, `combat_roll`
+  path-vs-teleport, cover-vs-Might, Support kit, roster-v1 §9 — all still blocked on rulings.

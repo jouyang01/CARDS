@@ -84,11 +84,16 @@ Every turn = **Decision Phase** then **Resolution**.
 - Grid map, default arena **15×15**. Squares are either open, **wall** (blocks
   movement and line of sight), **cover** (blocks movement, does NOT block LoS,
   grants damage reduction — see below), or **brush** (concealment).
-- **Movement:** up to **4 squares** if an ability was also used this turn; up to
-  **8 squares** when sprinting (no ability). Orthogonal steps; no diagonal corner
-  cutting through walls/cover. Characters cannot enter or pass through enemy
-  characters' squares, walls, or cover; ally pass-through is ruled in edge-cases
-  (allies may be moved through but never ended on).
+- **Movement:** a **4-square budget** if an ability was also used this turn; an
+  **8-square budget** when sprinting (no ability). Movement is **8-directional**:
+  orthogonal steps cost 1; diagonal steps cost 1, 2, 1, 2… — every *second*
+  diagonal along a path costs 2 (so one diagonal lets you reach 5 squares instead
+  of 4, or 9 instead of 8). A diagonal may **not** cut the corner of a wall or
+  cover square (it is blocked if either orthogonally-adjacent square it passes
+  between is solid). Walls and cover block entry and pass-through; any
+  **character — ally or enemy — may be moved *through* but never *ended* on**
+  (edge-cases "AR movement model"). Reachability is a shortest-cost search whose
+  state tracks the parity of diagonals used, kept integer and deterministic.
 - **Vision:** characters see **6 squares** (Chebyshev distance), blocked by walls.
   Vision is mutual, and **shared within a team**: any square seen by a living team
   character is visible to every player on that team. A character standing in brush is hidden from enemies outside
