@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBoard, chebyshev } from '../src/board.js';
+import { buildBoard, manhattan } from '../src/board.js';
 import {
   brushPatchAt,
   buildVision,
@@ -245,15 +245,14 @@ describe('buildVision — brush patches', () => {
 describe('canSee — range and line of sight', () => {
   const open = buildVision(buildBoard(openMap(15)));
 
-  it('reaches exactly VISION_RANGE squares, measured Chebyshev', () => {
+  it('reaches exactly VISION_RANGE squares, measured MANHATTAN (MET1)', () => {
     const a = seer({ x: 0, y: 0 });
     expect(VISION_RANGE).toBe(6);
-    // A diagonal at Chebyshev 6 is *further* in Manhattan terms than a
-    // straight line at 7, and only the diagonal is visible.
-    expect(canSee(open, a, hider({ x: 6, y: 6 }))).toBe(true);
-    expect(canSee(open, a, hider({ x: 6, y: 0 }))).toBe(true);
+    expect(canSee(open, a, hider({ x: 6, y: 0 }))).toBe(true); // straight out, exactly 6
+    expect(canSee(open, a, hider({ x: 3, y: 3 }))).toBe(true); // 3+3 = 6
     expect(canSee(open, a, hider({ x: 7, y: 0 }))).toBe(false);
-    expect(canSee(open, a, hider({ x: 7, y: 7 }))).toBe(false);
+    // The far diagonal the old Chebyshev radius included is distance 12 now.
+    expect(canSee(open, a, hider({ x: 6, y: 6 }))).toBe(false);
   });
 
   it('is mutual: a wall hides each unit from the other equally', () => {
@@ -304,17 +303,17 @@ describe('canSee — brush concealment', () => {
     expect(canSee(vision, inBrush, watcher)).toBe(true);
   });
 
-  it('adjacency defeats brush, and stops dead at Chebyshev 1', () => {
+  it('adjacency defeats brush, and stops dead at MANHATTAN 1 (MET1)', () => {
     const vision = buildVision(buildBoard(twoPatchMap()));
     const inBrush = hider({ x: 5, y: 1 });
-    // Orthogonally and diagonally adjacent both count.
+    // Only the four ORTHOGONAL neighbours count now: a diagonal neighbour is
+    // distance 2, so standing corner-to-corner no longer reveals a hidden unit.
     expect(canSee(vision, seer({ x: 4, y: 1 }), inBrush)).toBe(true);
-    expect(canSee(vision, seer({ x: 4, y: 0 }), inBrush)).toBe(true);
+    expect(canSee(vision, seer({ x: 4, y: 0 }), inBrush)).toBe(false); // was true pre-MET1
     // One square further out and the exception is gone. Without this the
     // adjacency radius is unpinned and any distance ≥1 would satisfy the suite.
-    expect(chebyshev({ x: 3, y: 1 }, inBrush.pos)).toBe(2);
+    expect(manhattan({ x: 3, y: 1 }, inBrush.pos)).toBe(2);
     expect(canSee(vision, seer({ x: 3, y: 1 }), inBrush)).toBe(false);
-    expect(canSee(vision, seer({ x: 3, y: 0 }), inBrush)).toBe(false);
   });
 
   it('adjacency is measured to the hidden unit, not to its brush patch', () => {
@@ -324,7 +323,7 @@ describe('canSee — brush concealment', () => {
     // same as standing beside whoever is in it.
     const farEnd = hider({ x: 7, y: 1 });
     expect(inSameBrushPatch(vision, { x: 5, y: 1 }, farEnd.pos)).toBe(true);
-    expect(chebyshev({ x: 4, y: 0 }, farEnd.pos)).toBe(3);
+    expect(manhattan({ x: 4, y: 0 }, farEnd.pos)).toBe(4);
     expect(canSee(vision, seer({ x: 4, y: 0 }), farEnd)).toBe(false);
   });
 
@@ -332,7 +331,7 @@ describe('canSee — brush concealment', () => {
     const vision = buildVision(buildBoard(oneStripMap()));
     const a = seer({ x: 1, y: 1 });
     const b = hider({ x: 7, y: 1 });
-    expect(chebyshev(a.pos, b.pos)).toBe(6);
+    expect(manhattan(a.pos, b.pos)).toBe(6);
     expect(canSee(vision, a, b)).toBe(true);
   });
 
@@ -361,8 +360,11 @@ describe('canSee — Stealth and Reveal', () => {
   });
 
   it('Stealth is not broken by adjacency (documented ruling)', () => {
-    const stealthed = withStatuses(hider({ x: 1, y: 1 }), status('stealth', 2));
-    expect(chebyshev(watcher.pos, stealthed.pos)).toBe(1);
+    // Orthogonally adjacent, so this is genuinely adjacent under MET1's
+    // Manhattan-≤1 rule (the old diagonal neighbour is now distance 2 and would
+    // no longer exercise the exception at all).
+    const stealthed = withStatuses(hider({ x: 1, y: 0 }), status('stealth', 2));
+    expect(manhattan(watcher.pos, stealthed.pos)).toBe(1);
     expect(canSee(open, watcher, stealthed)).toBe(false);
   });
 
@@ -417,11 +419,11 @@ describe('visibleEnemies', () => {
 });
 
 describe('visibleSquares', () => {
-  it('covers the Chebyshev square around the viewer, clipped to the board', () => {
+  it('covers the MANHATTAN diamond around the viewer, clipped to the board (MET1)', () => {
     const board = buildBoard(openMap(15));
-    expect(visibleSquares(board, { x: 7, y: 7 }, 2)).toHaveLength(25);
-    // Cornered: a quarter of the box, clipped by the board edges.
-    expect(visibleSquares(board, { x: 0, y: 0 }, 2)).toHaveLength(9);
+    expect(visibleSquares(board, { x: 7, y: 7 }, 2)).toHaveLength(13); // diamond, not the 25-square box
+    // Cornered: the quarter of the diamond that stays on the board.
+    expect(visibleSquares(board, { x: 0, y: 0 }, 2)).toHaveLength(6);
   });
 
   it('includes the viewer and the walls it can see, but not what they hide', () => {
@@ -434,21 +436,20 @@ describe('visibleSquares', () => {
 
   it('defaults to VISION_RANGE', () => {
     const board = buildBoard(openMap(15));
-    expect(visibleSquares(board, { x: 7, y: 7 })).toHaveLength((2 * VISION_RANGE + 1) ** 2);
+    // The Manhattan diamond of radius r holds 2r(r+1)+1 squares (MET1).
+    expect(visibleSquares(board, { x: 7, y: 7 })).toHaveLength(2 * VISION_RANGE * (VISION_RANGE + 1) + 1);
   });
 
   it('returns squares in row-major order (a rendering and hashing contract)', () => {
     const board = buildBoard(openMap(3));
+    // The radius-1 Manhattan diamond, scanned row by row (MET1: the corners of
+    // the old 3x3 box are distance 2 and no longer included).
     expect(visibleSquares(board, { x: 1, y: 1 }, 1).map((p) => `${p.x},${p.y}`)).toEqual([
-      '0,0',
       '1,0',
-      '2,0',
       '0,1',
       '1,1',
       '2,1',
-      '0,2',
       '1,2',
-      '2,2',
     ]);
   });
 });

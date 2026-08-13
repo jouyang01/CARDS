@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildBoard, createMatch, expandShape, type CharacterDef, type MapDef } from '@cards/engine';
+import { buildBoard, createMatch, expandShape, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
 import {
   abilityOptions,
   abilityPreview,
   abilityTooltip,
+  dragToAimStep,
+  isRotatable,
   effectLabel,
   emptyDraft,
   movePreview,
@@ -208,5 +210,60 @@ describe('ability tooltips read straight off the AbilityDef (TT1)', () => {
     const lines = abilityTooltip(nade).join('\n');
     if (nade.radius !== undefined) expect(lines).toContain(`radius ${nade.radius}`);
     if (nade.delayTurns !== undefined) expect(lines).toContain(`delay ${nade.delayTurns}t`);
+  });
+});
+
+describe('AIM2: free-rotation aiming reaches the engine as an integer step', () => {
+  const rail = () => VEX.abilities.find((a) => a.id === 'rail_shot')!;
+
+  it('a drag becomes a quantized step using the engine’s own projection', () => {
+    // No trig on the client either: the same integer projection both sides.
+    expect(dragToAimStep({ x: 1, y: 7 }, { x: 9, y: 7 })).toBe(vectorToStep(8, 0));
+    expect(dragToAimStep({ x: 1, y: 7 }, { x: 1, y: 1 })).toBe(vectorToStep(0, -6));
+    expect(dragToAimStep({ x: 1, y: 7 }, { x: 1, y: 7 })).toBe(0); // no drag, no direction
+  });
+
+  it('only rotatable shapes carry the step into the order', () => {
+    expect(isRotatable(rail())).toBe(true);
+    expect(isRotatable(VEX.abilities.find((a) => a.id === 'frag_grenade')!)).toBe(false); // circle
+
+    const aimed = { ...emptyDraft('vex-t0-0'), abilityId: 'rail_shot', aim: [], aimStep: 40 };
+    expect(toUnitOrders(VEX, aimed).ability?.aimStep).toBe(40);
+
+    const circle = { ...emptyDraft('vex-t0-0'), abilityId: 'frag_grenade', aim: [{ x: 4, y: 7 }], aimStep: 40 };
+    expect(toUnitOrders(VEX, circle).ability?.aimStep).toBeUndefined();
+  });
+
+  it('an illegal step is never sent to the engine', () => {
+    for (const bad of [-1, 256, 1.5]) {
+      const draft = { ...emptyDraft('vex-t0-0'), abilityId: 'rail_shot', aim: [], aimStep: bad };
+      expect(toUnitOrders(VEX, draft).ability?.aimStep, `step ${bad}`).toBeUndefined();
+    }
+  });
+
+  it('the preview is exactly what the engine will hit, at any rotation', () => {
+    const s = state();
+    const u = vexUnit(s);
+    for (const step of [0, 16, 32, 64, 130, 200]) {
+      const preview = abilityPreview(OPEN, u, rail(), [], step);
+      expect(preview).toEqual(expandShape(buildBoard(OPEN), rail(), u.pos, [], step));
+      expect(preview.length, `step ${step}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('a rotated preview differs from the compass-snapped one', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const east = abilityPreview(OPEN, u, rail(), [], 0);
+    const tilted = abilityPreview(OPEN, u, rail(), [], 16);
+    expect(tilted).not.toEqual(east);
+  });
+
+  it('without a step, click-to-aim previews are unchanged', () => {
+    const s = state();
+    const u = vexUnit(s);
+    expect(abilityPreview(OPEN, u, rail(), [{ x: 14, y: 7 }])).toEqual(
+      [2, 3, 4, 5, 6, 7, 8, 9].map((x) => ({ x, y: 7 })),
+    );
   });
 });

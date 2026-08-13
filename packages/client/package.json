@@ -11,10 +11,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cards/engine": "*"
+    "@cards/engine": "*",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/three": "^0.185.4",
     "happy-dom": "^20.11.2",
     "typescript": "^5.5.4",
     "vite": "^5.4.19",

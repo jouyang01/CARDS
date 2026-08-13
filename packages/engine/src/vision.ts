@@ -10,7 +10,7 @@
  *   you can see and shoot over it);
  * - **brush** does not block the line — it conceals whoever stands *in* it,
  *   which is a separate question answered by `isConcealedFrom`;
- * - sight reaches `VISION_RANGE` squares, measured as Chebyshev distance;
+ * - sight reaches `VISION_RANGE` squares, measured as MANHATTAN distance (MET1);
  * - a unit in brush is hidden from enemies that are neither standing in the
  *   same brush patch nor adjacent to *the unit itself* (standing beside the
  *   thicket is not the same as standing beside whoever is in it);
@@ -26,7 +26,7 @@
 
 import {
   type Board,
-  chebyshev,
+  distance,
   inBounds,
   ORTHOGONAL_STEPS,
   terrainAt,
@@ -198,9 +198,14 @@ export function inSameBrushPatch(vision: Vision, a: Vec2, b: Vec2): boolean {
 
 // ── Concealment ─────────────────────────────────────────────────────────────
 
-/** Adjacency for perception is Chebyshev — the eight surrounding squares. */
+/**
+ * Adjacency for perception is MANHATTAN-<=1 — the four orthogonal neighbours
+ * (MET1, owner directive 2026-08-21). It used to be the eight surrounding
+ * squares; under a Manhattan world a diagonal neighbour is distance 2, so
+ * standing corner-to-corner with a hidden unit no longer reveals it.
+ */
 export function isAdjacent(a: Vec2, b: Vec2): boolean {
-  return !vecEq(a, b) && chebyshev(a, b) <= 1;
+  return !vecEq(a, b) && distance(a, b) <= 1;
 }
 
 /**
@@ -245,7 +250,7 @@ export function isConcealedFrom(vision: Vision, target: UnitState, observerPos: 
 export function canSee(vision: Vision, observer: UnitState, target: UnitState): boolean {
   if (!observer.alive || !target.alive) return false;
   if (observer.owner === target.owner) return true;
-  if (chebyshev(observer.pos, target.pos) > VISION_RANGE) return false;
+  if (distance(observer.pos, target.pos) > VISION_RANGE) return false; // Manhattan radius (MET1)
   if (!hasLineOfSight(vision.board, observer.pos, target.pos)) return false;
   return !isConcealedFrom(vision, target, observer.pos);
 }
@@ -323,7 +328,7 @@ export function visibleSquares(board: Board, from: Vec2, range: number = VISION_
     for (let x = from.x - range; x <= from.x + range; x++) {
       const p: Vec2 = { x, y };
       if (!inBounds(board, p)) continue;
-      if (chebyshev(from, p) > range) continue;
+      if (distance(from, p) > range) continue; // Manhattan radius (MET1)
       if (!hasLineOfSight(board, from, p)) continue;
       out.push(p);
     }

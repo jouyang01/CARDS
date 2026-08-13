@@ -217,6 +217,14 @@ export interface AbilityOrder {
   abilityId: string;
   /** Meaning depends on shape: aimed square, direction endpoint, or path. */
   target: Vec2[];
+  /**
+   * Free-rotation aim for `line`/`cone` (AIM2): a QUANTIZED INTEGER direction in
+   * [0, AIM_STEPS), never a float or a radian — the client does the mouse→step
+   * conversion, and the engine's resolution path stays trig-free and identical
+   * on every machine. Absent = derive the direction from `target`, i.e. the
+   * original click-to-aim behaviour. Ignored by other shapes.
+   */
+  aimStep?: number;
 }
 
 export interface UnitOrders {

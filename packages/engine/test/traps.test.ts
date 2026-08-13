@@ -68,7 +68,8 @@ describe('trap triggers on entry, any phase', () => {
   it('dash-through: a blink onto the trap triggers it', () => {
     const u = makeUnit('u', 0, { x: 8, y: 8 });
     const e = makeUnit('e', 1, { x: 0, y: 0 });
-    const { state } = run(makeState([u, e], { traps: [trapAt(3, 3, 0)] }), [], [{ unitId: 'e', ability: { abilityId: 'blink', target: [{ x: 3, y: 3 }] } }]);
+    // (2,2) is Manhattan 4 from (0,0) — exactly the blink's range under MET1.
+    const { state } = run(makeState([u, e], { traps: [trapAt(2, 2, 0)] }), [], [{ unitId: 'e', ability: { abilityId: 'blink', target: [{ x: 2, y: 2 }] } }]);
     expect(unit(state, 'e').hp).toBe(80);
     expect(state.traps).toHaveLength(0);
   });

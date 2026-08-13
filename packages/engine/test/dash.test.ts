@@ -176,10 +176,12 @@ describe('MV1: dashes pass through characters', () => {
 
 describe('teleport-strike ultimate', () => {
   it('appears at the aimed square, strikes adjacent enemies, and goes Untargetable', () => {
+    // Landing square is Manhattan 7 from the caster — exactly the ult's range
+    // under MET1 (it used to be reachable at Chebyshev 5 / Manhattan 9).
     const u = makeUnit('u', 0, { x: 0, y: 0 }, { energy: 100 });
-    const e = makeUnit('e', 1, { x: 5, y: 5 });
-    const { state } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'shadowstep', target: [{ x: 4, y: 5 }] } }], []);
-    expect(unit(state, 'u').pos).toEqual({ x: 4, y: 5 });
+    const e = makeUnit('e', 1, { x: 4, y: 4 });
+    const { state } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'shadowstep', target: [{ x: 3, y: 4 }] } }], []);
+    expect(unit(state, 'u').pos).toEqual({ x: 3, y: 4 });
     expect(unit(state, 'e').hp).toBe(60); // struck for 40 from the adjacent landing
     expect(unit(state, 'u').statuses.find((s) => s.kind === 'untargetable')?.remaining).toBe(1); // dur 2, ticked to 1
     expect(unit(state, 'u').energy).toBe(5); // ult reset to 0, then +5 passive
@@ -231,16 +233,28 @@ describe('R1b: chargeHits "all" sweeps every crossed enemy', () => {
 
 describe('MV4: diagonal charge paths', () => {
   it('a diagonal charge validates, passes through, and strikes the crossed enemy', () => {
+    // Each diagonal step costs 2 (MET1), so a range-4 charge affords exactly two.
     const u = makeUnit('u', 0, { x: 0, y: 0 });
-    const e = makeUnit('e', 1, { x: 2, y: 2 });
+    const e = makeUnit('e', 1, { x: 1, y: 1 });
     const { state } = run(
       makeState([u, e]),
+      [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 1 }, { x: 2, y: 2 }] } }],
+      [],
+    );
+    expect(unit(state, 'u').pos).toEqual({ x: 2, y: 2 }); // charged diagonally through e to the far side
+    expect(unit(state, 'e').hp).toBe(85); // 15 charge damage on the crossed enemy
+    expect(unit(state, 'e').pos).toEqual({ x: 3, y: 3 }); // knocked diagonally, carried past the charger (R1c)
+  });
+
+  it('a diagonal charge longer than its cost budget is rejected (MET1)', () => {
+    // Three diagonals cost 6 — over a range-4 charge, even though it is only 3 tiles.
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const { state } = run(
+      makeState([u, makeUnit('e', 1, { x: 8, y: 8 })]),
       [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }] } }],
       [],
     );
-    expect(unit(state, 'u').pos).toEqual({ x: 3, y: 3 }); // charged diagonally through e to the far side
-    expect(unit(state, 'e').hp).toBe(85); // 15 charge damage on the crossed enemy
-    expect(unit(state, 'e').pos).toEqual({ x: 4, y: 4 }); // knocked diagonally, carried past the charger (R1c)
+    expect(unit(state, 'u').pos).toEqual({ x: 0, y: 0 }); // illegal aim dropped, unit holds
   });
 
   it('a diagonal charge that cuts a wall corner is rejected (the ability is dropped, unit holds)', () => {

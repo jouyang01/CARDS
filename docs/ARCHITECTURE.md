@@ -3,9 +3,13 @@
 ## Direction (v1 → later)
 
 Cards is a simultaneous-turn PvP tactics duel (1v1 now; 2v2/3v3 later — never hardcode
-single-unit assumptions). One character controlled per player in v1 (two later). 2D SVG
-visuals now; the engine emits an event log so a 3D renderer can be swapped in later
-without touching game logic. Every layer below is built to that shape: the engine takes
+single-unit assumptions). One character controlled per player in v1 (two later). The board
+is drawn by an **orthographic 3D renderer** (Three.js — `renderer3d.ts`, RND1), which makes
+the projection a runtime parameter: top-down (pitch 90°) and isometric (35.264°) are the
+same camera at two angles. The engine emits an event log, so the renderer is swappable
+without touching game logic — `choreograph`, `playback`, `hotseat` and `targeting` are all
+renderer-agnostic and were reused verbatim across the SVG→3D swap. **Client dependencies
+are allowed; the engine stays dependency-free.** Every layer below is built to that shape: the engine takes
 **unit lists, not single-unit fields**, and the client is a pure consumer of the
 `TurnEvent[]` log, never a re-implementation of game rules.
 

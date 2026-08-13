@@ -8,12 +8,12 @@
  * - up to MOVE_RANGE budget with an ability, SPRINT_RANGE when sprinting;
  * - Haste +50% / Slow −50% of the base budget, round down;
  * - Root forbids Move-phase movement entirely (it does not cancel a dash);
- * - **8-direction movement (MV3):** orthogonal steps cost 1; diagonal steps cost
- *   1, 2, 1, 2… — every *second* diagonal along a path costs 2 (AR cost model).
- *   A diagonal may not cut the corner of a wall/cover square. The reachable set
- *   is a shortest-cost search whose state carries the parity of diagonals used
- *   so far (the only bit that decides the next diagonal's cost) — integer and
- *   deterministic, no floats;
+ * - **Manhattan movement (MET1):** the move set stays 8-directional (MV3), but an
+ *   orthogonal step costs 1 and **every diagonal costs 2** — so a diagonal is
+ *   never a shortcut, only a convenience, and a diagonally adjacent tile is
+ *   distance 2. A diagonal may not cut the corner of a wall/cover square. Cost
+ *   no longer depends on path history, so reachability is a plain integer
+ *   Dijkstra (MV3's parity state is superseded);
  * - walls and cover block entry and pass-through; any other living unit is
  *   walk-through but not a legal *endpoint* (MV2, edge-cases "AR movement model").
  *
@@ -107,24 +107,27 @@ export interface ReachableSquare {
 }
 
 /**
- * Cost of a diagonal step given how many diagonals were already taken along the
- * path. AR model: the 1st, 3rd, 5th… diagonal costs 1; the 2nd, 4th, 6th… costs
- * 2. So the cost depends only on `priorDiagonals % 2` — the search's parity bit.
+ * Cost of one step under the Manhattan metric (MET1): an orthogonal step costs
+ * 1, a diagonal costs **2** — a diagonal is exactly two orthogonal steps' worth
+ * of ground, which is what makes a diagonally adjacent tile distance 2.
+ *
+ * Diagonals remain *legal* (the 8-direction move set from MV3 stands); they are
+ * simply never cheaper than going around, so this is a convenience, not a
+ * shortcut. MV3's 1/2-alternation parity cost is superseded.
  */
-const diagonalStepCost = (priorDiagonals: number): number => (priorDiagonals % 2 === 0 ? 1 : 2);
+export const stepCost = (dx: number, dy: number): number => (dx !== 0 && dy !== 0 ? 2 : 1);
 
 /**
- * Reachability from a unit's current square under the 8-direction cost model
- * (MV3). A shortest-cost search (Dijkstra with a small integer bucket queue)
- * over states `(square, parity-of-diagonals-used)`; parity is the only history
- * the next diagonal's cost depends on, so it keeps the state space finite and
- * the result deterministic.
+ * Reachability from a unit's current square under the Manhattan cost model.
  *
- * Returns one entry per reachable square (excluding the origin), in ascending
- * cost order. `from` links form a coherent min-cost tree: within each cost
- * bucket the cheap-next-diagonal parity (0) is finalised first, so following
- * `from` back from any square yields a legal path of exactly that `cost` — see
- * `reconstructPath`.
+ * With every diagonal a flat 2, cost no longer depends on the path's history,
+ * so MV3's `(square, parity)` search state collapses to plain `square` and this
+ * is an ordinary Dijkstra over an integer bucket queue. Expansion follows the
+ * fixed `MOVE_STEPS` order, so the result is deterministic.
+ *
+ * Returns one entry per reachable square (excluding the origin) in ascending
+ * cost order; `from` links form a min-cost tree, so walking them back from any
+ * square yields a legal path of exactly that `cost` — see `reconstructPath`.
  */
 export function reachableSquares(
   board: Board,
@@ -136,50 +139,40 @@ export function reachableSquares(
   if (budget <= 0 || !inBounds(board, unit.pos)) return results;
 
   const occupied = occupiedByOthers(state, unit);
-  const stateKey = (p: Vec2, parity: number): string => `${p.x},${p.y},${parity}`;
-  const dist = new Map<string, number>([[stateKey(unit.pos, 0), 0]]);
-  const from = new Map<string, Vec2>(); // state → predecessor square
+  const dist = new Map<string, number>([[vecKey(unit.pos), 0]]);
+  const from = new Map<string, Vec2>(); // square → predecessor on its min-cost path
 
-  // Bucket queue: buckets[cost][parity] preserves ascending-cost order, then
-  // parity 0 before 1, then insertion order (fixed MOVE_STEPS expansion).
-  const buckets: { pos: Vec2; parity: number }[][][] = [];
-  const enqueue = (p: Vec2, parity: number, cost: number): void => {
-    (buckets[cost] ??= [[], []])[parity]!.push({ pos: p, parity });
+  const buckets: Vec2[][] = [];
+  const enqueue = (p: Vec2, cost: number): void => {
+    (buckets[cost] ??= []).push(p);
   };
-  enqueue(unit.pos, 0, 0);
+  enqueue(unit.pos, 0);
 
   const recorded = new Set<string>([vecKey(unit.pos)]); // origin excluded from output
 
   for (let cost = 0; cost <= budget; cost++) {
-    const bucket = buckets[cost];
-    if (bucket === undefined) continue;
-    for (let parity = 0; parity <= 1; parity++) {
-      for (const node of bucket[parity]!) {
-        const key = stateKey(node.pos, node.parity);
-        if (dist.get(key) !== cost) continue; // a cheaper relaxation superseded this entry
+    for (const node of buckets[cost] ?? []) {
+      const key = vecKey(node);
+      if (dist.get(key) !== cost) continue; // a cheaper relaxation superseded this entry
 
-        // First finalisation of a non-origin square = its minimum cost.
-        const sk = vecKey(node.pos);
-        if (!recorded.has(sk)) {
-          recorded.add(sk);
-          results.push({ pos: node.pos, cost, from: from.get(key), canStop: !occupied.has(sk) });
-        }
+      // First finalisation of a non-origin square = its minimum cost.
+      if (!recorded.has(key)) {
+        recorded.add(key);
+        results.push({ pos: node, cost, from: from.get(key), canStop: !occupied.has(key) });
+      }
 
-        for (const d of MOVE_STEPS) {
-          const np: Vec2 = { x: node.pos.x + d.x, y: node.pos.y + d.y };
-          if (blocksMovement(board, np)) continue; // walls/cover/edge block entry
-          const diagonal = d.x !== 0 && d.y !== 0;
-          if (diagonal && diagonalCornerBlocked(board, node.pos, d.x, d.y)) continue;
-          const nc = cost + (diagonal ? diagonalStepCost(node.parity) : 1);
-          if (nc > budget) continue;
-          const nparity = diagonal ? node.parity ^ 1 : node.parity;
-          const nkey = stateKey(np, nparity);
-          const prior = dist.get(nkey);
-          if (prior === undefined || nc < prior) {
-            dist.set(nkey, nc);
-            from.set(nkey, node.pos);
-            enqueue(np, nparity, nc);
-          }
+      for (const d of MOVE_STEPS) {
+        const np: Vec2 = { x: node.x + d.x, y: node.y + d.y };
+        if (blocksMovement(board, np)) continue; // walls/cover/edge block entry
+        if (d.x !== 0 && d.y !== 0 && diagonalCornerBlocked(board, node, d.x, d.y)) continue;
+        const nc = cost + stepCost(d.x, d.y);
+        if (nc > budget) continue;
+        const nkey = vecKey(np);
+        const prior = dist.get(nkey);
+        if (prior === undefined || nc < prior) {
+          dist.set(nkey, nc);
+          from.set(nkey, node);
+          enqueue(np, nc);
         }
       }
     }
@@ -235,9 +228,8 @@ export type MovePathCheck = { valid: true; cost: number } | { valid: false; erro
  * unit's budget. An empty path is "hold position" and is always valid.
  *
  * Each entry in `path` is a square the unit steps onto, in order; the unit's
- * current square is not included. Steps may be orthogonal or diagonal (MV3);
- * a diagonal may not cut a wall/cover corner, and every second diagonal along
- * the path costs 2 budget instead of 1.
+ * current square is not included. Steps may be orthogonal or diagonal; a
+ * diagonal may not cut a wall/cover corner and costs 2 budget (MET1).
  */
 export function validateMovePath(
   board: Board,
@@ -254,7 +246,6 @@ export function validateMovePath(
   const occupied = occupiedByOthers(state, unit);
   const last = path.length - 1;
   let prev = unit.pos;
-  let diagonals = 0;
   let cost = 0;
   for (const [i, p] of path.entries()) {
     if (!inBounds(board, p)) return { valid: false, error: { code: 'outOfBounds', index: i } };
@@ -265,15 +256,10 @@ export function validateMovePath(
         error: { code: 'blockedTerrain', index: i, terrain: terrainAt(board, p) as TerrainKind },
       };
     }
-    if (isDiagonalStep(prev, p)) {
-      if (diagonalCornerBlocked(board, prev, p.x - prev.x, p.y - prev.y)) {
-        return { valid: false, error: { code: 'cornerBlocked', index: i } };
-      }
-      diagonals += 1;
-      cost += diagonalStepCost(diagonals - 1); // every 2nd diagonal costs 2
-    } else {
-      cost += 1;
+    if (isDiagonalStep(prev, p) && diagonalCornerBlocked(board, prev, p.x - prev.x, p.y - prev.y)) {
+      return { valid: false, error: { code: 'cornerBlocked', index: i } };
     }
+    cost += stepCost(p.x - prev.x, p.y - prev.y); // a diagonal costs 2 (MET1)
     if (cost > budget) return { valid: false, error: { code: 'exceedsBudget', budget, cost } };
     // Any unit — ally or enemy — may be passed through, but the path may not
     // *end* on an occupied square (MV2, edge-cases "AR movement model").
@@ -286,22 +272,16 @@ export function validateMovePath(
 }
 
 /**
- * The longest prefix of `path` whose cumulative movement cost fits `budget`,
- * under the MV3 diagonal cost model. Used to re-clamp a planned path at Move
- * time when a Blast-phase Slow shrank the budget after the path was validated.
+ * The longest prefix of `path` whose cumulative movement cost fits `budget`
+ * (Manhattan cost, MET1). Used to re-clamp a planned path at Move time when a
+ * Blast-phase Slow shrank the budget after the path was validated.
  */
 export function pathWithinBudget(path: readonly Vec2[], origin: Vec2, budget: number): Vec2[] {
   const out: Vec2[] = [];
   let prev = origin;
-  let diagonals = 0;
   let cost = 0;
   for (const p of path) {
-    if (isDiagonalStep(prev, p)) {
-      diagonals += 1;
-      cost += diagonalStepCost(diagonals - 1);
-    } else {
-      cost += 1;
-    }
+    cost += stepCost(p.x - prev.x, p.y - prev.y);
     if (cost > budget) break;
     out.push(p);
     prev = p;

@@ -189,8 +189,11 @@ describe('expandShape', () => {
 });
 
 describe('aimInRange', () => {
-  it('measures Chebyshev distance', () => {
-    expect(aimInRange({ x: 0, y: 0 }, { x: 4, y: 4 }, 4)).toBe(true);
+  it('measures MANHATTAN distance to the aimed square (MET1)', () => {
+    expect(aimInRange({ x: 0, y: 0 }, { x: 4, y: 0 }, 4)).toBe(true); // straight out
+    expect(aimInRange({ x: 0, y: 0 }, { x: 2, y: 2 }, 4)).toBe(true); // 2+2 = 4
     expect(aimInRange({ x: 0, y: 0 }, { x: 5, y: 0 }, 4)).toBe(false);
+    // The diagonal corner the old Chebyshev metric allowed is now distance 8.
+    expect(aimInRange({ x: 0, y: 0 }, { x: 4, y: 4 }, 4)).toBe(false);
   });
 });

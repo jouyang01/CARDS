@@ -38,6 +38,18 @@ export const chebyshev = (a: Vec2, b: Vec2): number =>
   Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
 /**
+ * **The** distance metric (MET1, 2026-08-20): Manhattan, as in Atlas Reactor.
+ * Range, movement and vision are all counted orthogonally, so a diagonally
+ * adjacent tile is distance **2** — which is also why a diagonal step costs 2.
+ *
+ * Use this rather than `manhattan` directly at call sites that mean "how far
+ * apart are these, in game terms": the indirection is what makes the metric one
+ * decision instead of a dozen. `chebyshev` survives only where a rule genuinely
+ * means "the 8 surrounding squares" (nothing in the current ruleset does).
+ */
+export const distance = manhattan;
+
+/**
  * The four orthogonal directions.
  *
  * Movement is 8-directional (GAME_SPEC §3, MV3), but *vision* and *cover*

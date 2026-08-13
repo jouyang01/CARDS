@@ -23,27 +23,60 @@ const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
   resolveTurn(s, OPEN(), [{ team: 0, units: u0 }, { team: 1, units: u1 }], roster);
 const unit = (s: GameState, id: string) => s.units.find((u) => u.unitId === id)!;
 
-describe('ally-aware AoE effects (no friendly fire)', () => {
-  it('one AoE covering ally + enemy damages only the enemy and heals only the ally', () => {
+describe('FF1: friendly fire — harmful hits everyone, beneficial stays own-team', () => {
+  it('one AoE covering ally + enemy DAMAGES BOTH, and heals only the ally', () => {
     const caster = makeUnit('A1', 0, { x: 5, y: 5 });
     const ally = makeUnit('A2', 0, { x: 6, y: 5 }, { hp: 50 });
     const enemy = makeUnit('E', 1, { x: 4, y: 5 });
     const { state } = run(makeState([caster, ally, enemy]), [{ unitId: 'A1', ability: { abilityId: 'nova', target: [{ x: 5, y: 5 }] } }], []);
     expect(unit(state, 'E').hp).toBe(80); // enemy took 20 damage, no heal
-    expect(unit(state, 'A2').hp).toBe(65); // ally healed 15, no damage
-    expect(unit(state, 'A1').hp).toBe(100); // caster (ally) heal capped at full
+    // The ally is now hit by the same AoE: 50 - 20 damage + 15 heal = 45.
+    expect(unit(state, 'A2').hp).toBe(45);
+    expect(unit(state, 'A1').hp).toBe(95); // the caster splashes itself too: 100 - 20 damage + 15 heal
     expect(unit(state, 'A1').energy).toBe(13); // hit an enemy → 8 on hit + 5 passive
   });
 
-  it('harmful statuses and displacement skip allies, land on enemies', () => {
+  it('harmful riders ride along onto allies too — slow and knockback', () => {
     const caster = makeUnit('A1', 0, { x: 5, y: 5 });
     const ally = makeUnit('A2', 0, { x: 5, y: 6 });
     const enemy = makeUnit('E', 1, { x: 5, y: 4 });
     const { state, events } = run(makeState([caster, ally, enemy]), [{ unitId: 'A1', ability: { abilityId: 'quake', target: [{ x: 5, y: 5 }] } }], []);
-    expect(unit(state, 'A2').statuses.some((s) => s.kind === 'slow')).toBe(false); // ally not slowed
-    expect(unit(state, 'A2').pos).toEqual({ x: 5, y: 6 }); // ally not knocked
-    expect(unit(state, 'E').statuses.some((s) => s.kind === 'slow')).toBe(true); // enemy slowed
-    expect(events.some((e) => e.type === 'displaced' && e.unitId === 'E')).toBe(true); // enemy knocked
+    expect(unit(state, 'A2').statuses.some((s) => s.kind === 'slow')).toBe(true); // ally slowed now
+    expect(events.some((e) => e.type === 'displaced' && e.unitId === 'A2')).toBe(true); // and knocked
+    expect(unit(state, 'E').statuses.some((s) => s.kind === 'slow')).toBe(true); // enemy still slowed
+    expect(events.some((e) => e.type === 'displaced' && e.unitId === 'E')).toBe(true);
+  });
+
+  it('an ally-only hit grants NO energy — same as hitting nobody', () => {
+    const caster = makeUnit('A1', 0, { x: 5, y: 5 });
+    const ally = makeUnit('A2', 0, { x: 6, y: 5 });
+    const farEnemy = makeUnit('E', 1, { x: 0, y: 10 });
+    const splash = run(makeState([caster, ally, farEnemy]), [{ unitId: 'A1', ability: { abilityId: 'quake', target: [{ x: 5, y: 5 }] } }], []);
+    expect(unit(splash.state, 'A2').statuses.some((s) => s.kind === 'slow')).toBe(true); // the ally WAS hit
+
+    // Control: the same ability aimed at empty ground. Energy must match.
+    const whiff = run(makeState([caster, ally, farEnemy]), [{ unitId: 'A1', ability: { abilityId: 'quake', target: [{ x: 9, y: 9 }] } }], []);
+    expect(unit(splash.state, 'A1').energy).toBe(unit(whiff.state, 'A1').energy);
+    expect(unit(splash.state, 'A1').energy).toBe(5); // passive only
+  });
+
+  it('a FRIENDLY KILL moves no team tally, but the ally still dies and respawns', () => {
+    const caster = makeUnit('A1', 0, { x: 5, y: 5 });
+    const ally = makeUnit('A2', 0, { x: 6, y: 5 }, { hp: 5 }); // dies to the 20 damage
+    const enemy = makeUnit('E', 1, { x: 0, y: 10 });
+    const { state, events } = run(makeState([caster, ally, enemy]), [{ unitId: 'A1', ability: { abilityId: 'nova', target: [{ x: 6, y: 5 }] } }], []);
+    expect(unit(state, 'A2').alive).toBe(false);
+    expect(unit(state, 'A2').respawnIn).toBeGreaterThan(0); // respawns normally
+    expect(state.kills).toEqual([0, 0]); // nobody scores — no farming your own ally
+    expect(events.some((e) => e.type === 'death' && e.unitId === 'A2')).toBe(true);
+  });
+
+  it('an enemy kill still scores normally', () => {
+    const caster = makeUnit('A1', 0, { x: 5, y: 5 });
+    const enemy = makeUnit('E', 1, { x: 6, y: 5 }, { hp: 5 });
+    const { state } = run(makeState([caster, enemy]), [{ unitId: 'A1', ability: { abilityId: 'nova', target: [{ x: 6, y: 5 }] } }], []);
+    expect(unit(state, 'E').alive).toBe(false);
+    expect(state.kills).toEqual([1, 0]);
   });
 
   it('a heal-only AoE grants energy on use even with no enemy in the area', () => {

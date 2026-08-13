@@ -16,9 +16,11 @@ import {
   buildBoard,
   expandShape,
   findAbility,
+  isAimStep,
   movementBudget,
   reachableSquares,
   validateMovePath,
+  vectorToStep,
   type AbilityDef,
   type AbilityEffect,
   type Board,
@@ -42,6 +44,12 @@ export interface OrderDraft {
   abilityId?: string;
   /** Aim squares for the ability (meaning depends on its shape). */
   aim: Vec2[];
+  /**
+   * Free-rotation direction for `line`/`cone` (AIM2): the quantized integer step
+   * a drag produced. The client owns the pointer maths; the engine only ever
+   * sees this integer. Absent for click-to-aim and for other shapes.
+   */
+  aimStep?: number;
   /** Sprint = move-only, longer range. Ignored once an ability is chosen. */
   sprint: boolean;
   /** Move-phase path; coexists with a non-dash ability, dropped for a dash. */
@@ -100,6 +108,19 @@ export function abilityTooltip(def: AbilityDef): string[] {
   return lines;
 }
 
+/** Shapes that can be freely rotated by a drag (AIM2). */
+export const isRotatable = (ability: AbilityDef): boolean => ability.shape === 'line' || ability.shape === 'cone';
+
+/**
+ * Turn a pointer drag (in board squares, or any consistent units) into the
+ * quantized aim step the engine consumes. The conversion is the engine's own
+ * integer projection, so the client and engine can never disagree about which
+ * direction a drag meant — and the client needs no trig either (AIM2).
+ */
+export function dragToAimStep(from: Vec2, to: Vec2): number {
+  return vectorToStep(to.x - from.x, to.y - from.y);
+}
+
 /** Is `sprint` currently selectable? Only when no ability is chosen (GAME_SPEC §2). */
 export function sprintAllowed(draft: OrderDraft): boolean {
   return draft.abilityId === undefined;
@@ -112,7 +133,7 @@ export function draftAbility(character: CharacterDef, draft: OrderDraft): Abilit
 }
 
 /** Is an ability's aim geometrically legal (mirrors the engine's `aimIsLegal`)? */
-export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec2[]): boolean {
+export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number): boolean {
   const target = aim[0];
   switch (ability.shape) {
     case 'self':
@@ -122,6 +143,8 @@ export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec
       return target !== undefined && aimInRange(unit.pos, target, ability.range);
     case 'line':
     case 'cone':
+      // A quantized step is a direction on its own — no target square needed (AIM2).
+      if (isAimStep(aimStep)) return true;
       return target !== undefined && !(target.x === unit.pos.x && target.y === unit.pos.y);
     case 'path':
       return aim.length > 0 && aim.length <= ability.range;
@@ -133,9 +156,11 @@ export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec
  * hit (`expandShape`). Empty when the aim is not yet legal, so the UI shows a
  * preview only for a valid aim.
  */
-export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef, aim: readonly Vec2[]): Vec2[] {
-  if (!aimLegal(unit, ability, aim)) return [];
-  return expandShape(buildBoard(map), ability, unit.pos, aim);
+export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number): Vec2[] {
+  if (!aimLegal(unit, ability, aim, aimStep)) return [];
+  // Same call the engine makes, same step — so the preview is exactly the tile
+  // set that will be hit, rotation included.
+  return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
 }
 
 export interface MovePreview {
@@ -175,6 +200,9 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
   const order: UnitOrders = { unitId: draft.unitId };
   if (ability !== undefined) {
     order.ability = { abilityId: ability.id, target: draft.aim.map((p) => ({ x: p.x, y: p.y })) };
+    // Only directional shapes rotate; sending a step for a circle would be noise
+    // the engine ignores anyway (AIM2).
+    if (isRotatable(ability) && isAimStep(draft.aimStep)) order.ability.aimStep = draft.aimStep;
     if (ability.phase !== 'dash' && draft.movePath.length > 0) order.movePath = draft.movePath.map((p) => ({ x: p.x, y: p.y }));
     return order; // sprint dropped: an ability is in play
   }
