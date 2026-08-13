@@ -30,7 +30,12 @@ import {
   type Vec2,
 } from '@cards/engine';
 
-/** A character's selection in progress. `abilityId` and `sprint` are exclusive. */
+/**
+ * A character's selection in progress. A non-dash `abilityId` and a `movePath`
+ * may coexist — move *and* shoot in one turn (MS1). `sprint` is exclusive with
+ * an ability (it is move-only), and a dash ability owns the move (no separate
+ * `movePath`).
+ */
 export interface OrderDraft {
   unitId: string;
   /** Chosen ability (its ult included), or undefined for none. */
@@ -39,7 +44,7 @@ export interface OrderDraft {
   aim: Vec2[];
   /** Sprint = move-only, longer range. Ignored once an ability is chosen. */
   sprint: boolean;
-  /** Move-phase path (dropped when the chosen ability is a dash). */
+  /** Move-phase path; coexists with a non-dash ability, dropped for a dash. */
   movePath: Vec2[];
 }
 
