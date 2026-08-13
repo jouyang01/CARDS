@@ -591,3 +591,72 @@ Blast, to honor "any damage."
   the M2 hot-seat paints a neutral ghost marker for both sides. Deferred to M3 (item 21).
 - **Carried / still Designer-blocked:** charge damage targeting beyond R1a/R1b (bundled),
   duplicate picks + cover-vs-Might + Support anti-stall are M3/playtest, not engine.
+
+## Animation · Camera batch — A0, M2, D1-dash, A1, A2, A3 (Builder, 2026-08-20)
+
+**(A0) Damage attribution.** `damage` gained `sourceUnitId` + `abilityId`, threaded through
+all four damage paths. `TrapState` gained `ownerUnitId`/`abilityId` so a trap credits the
+*unit* that placed it (it previously stored only the team). Delayed detonations credit the
+original caster. Purely additive; no outcome change.
+
+**(M2) Range cap.** `MAX_ABILITY_RANGE = 8` in `constants.ts`; `validateAbility` gained an
+`isUltimate` flag (default **false**, so the cap is the safe default) passed only at the
+character's `ultimate` call site. No shipped range changed.
+
+**(D1-dash) Dash destroys a decoy.** `runDash` calls `destroyDecoysUnderEnemies` after the
+phase resolves, passing **only units whose position actually changed** (compared against the
+origin already captured for knockback). **Judgment call:** the ruling says a *voluntary*
+reposition destroys; scoping to units that truly travelled keeps the knockback exclusion
+honest even in the obscure case of a fizzled teleport by a unit parked on a decoy by an
+earlier turn's knockback.
+
+**(A1) Keyed nodes.** One `<g data-unit-id>` per unit, positioned by `transform`, with a
+fixed child structure updated by attribute so both the group *and its children* survive a
+frame. Children draw in local coordinates matching the previous absolute offsets exactly —
+no visual change. Added **happy-dom** as a client devDependency: the AC requires asserting
+real DOM node identity and the client's vitest environment was node-only.
+
+**(A2) `choreograph()`.** Pure `TurnEvent[] → Cue[]`. Prep/Blast sequential (actors in the
+log's emission order, disjoint ranges), Dash/Move simultaneous (shared start; a unit's own
+steps still sequential). Deaths defer to the end of their phase; Blast displacements share
+one beat after every ability cue. Impacts bind to their shooter via `sourceUnitId`, never
+adjacency. One timing constant (`BEAT`); tests assert ordering/concurrency only.
+**Scope call:** cues are emitted for the events A3 actually ships (phase, ability, move,
+displace, impact, death, respawn, decoy). `heal`/`statusApplied`/energy events deliberately
+get **no cue** — unlike `damage` they carry no source, so they cannot be placed against the
+right actor in Blast (where all `abilityFired` precede all effects). `applyEvent` still folds
+them into state; only their *animation* is absent. See OQ below.
+
+**(A3) Cues played + camera.** `turn-player.ts` (state; skip == watch by construction),
+`stage.ts` (the only renderer-specific file), `camera.ts` (pure framing). `squareFromPoint`
+now uses `getScreenCTM().inverse()` + `DOMPoint` — the required fix, since the old
+rect/viewBox maths returns wrong squares under any camera transform. Verified in a real
+browser: phases advance, skip lands in the next decision phase, camera pans/zooms, no errors.
+**Deviation from the spec, flagged:** the spec asks for HP bars/labels kept OUT of
+`<g class="world">` so they do not scale with zoom, but it also forbids a rAF loop for the
+camera. Those conflict: with the camera as a WAAPI animation the scale interpolates
+continuously, and repositioning an outside-world overlay each frame requires exactly the rAF
+loop the spec rules out. I kept bars inside the world (they scale mildly, consistent with the
+accepted "tracking shot with mild zoom" tradeoff) rather than invent a third approach.
+
+## Open Questions for the Analyzer — 2026-08-20 (animation batch)
+
+- **HP bars scale with zoom (A3 spec conflict — needs a ruling).** "Bars outside `g.world`"
+  and "camera via WAAPI, no rAF loop" cannot both hold; I kept bars in-world. Options if the
+  scaling reads badly at playtest: (a) accept it, (b) counter-scale bars per cue with a
+  discrete WAAPI animation, (c) allow a rAF loop for the overlay only. Files: `render.ts`
+  (`buildUnitNode`), `stage.ts`, `camera.ts`.
+- **`heal`/`statusApplied` have no source (A0 follow-up?).** They are unanimated for the
+  reason above. If shield/heal flourishes are wanted, they need the A0 treatment
+  (`sourceUnitId`/`abilityId` on those events); it is the same small, additive change. Files:
+  `types.ts`, `resolve.ts` (`applySelfEffects`, the Blast benefits loop), `choreograph.ts`.
+- **`MS_PER_BEAT` = 420 is a placeholder.** Pacing was explicitly deferred to playtest; it is
+  one constant in `stage.ts`. Tune it there, not in the choreographer.
+- **Decoys still have no keyed node.** They render as overlay rects, so they cannot tween or
+  fade; the `decoy` cue exists and is unconsumed. Fine for v1, worth an item if the reveal
+  should animate. Files: `stage.ts` (`paintDecoys`).
+- **M1 and Thorn-dash are Designer/data items — NOT built this session**, per the role
+  boundary (Builder does not write `data/`). Both are unblocked and waiting on the Designer;
+  the M2 range cap that M1's geometry depends on has landed.
+- **Carried:** CL1/CL2/E2 deferred; A4 blocked on the 2D-vs-3D decision (A1–A3 are
+  renderer-agnostic — only `stage.ts` is renderer-specific, which keeps that door open).
