@@ -63,7 +63,7 @@ mark it `ENGINE ASK` — don't assume.
 ## Commands
 
 - `npm install` — install everything (npm workspaces)
-- `npm test` — engine test suite (Vitest)
+- `npm test` — engine + client test suites (Vitest, both workspaces)
 - `npm run dev` — client dev server
 - `npm run build` — production client build
 - `npm run typecheck` — TypeScript across workspaces
