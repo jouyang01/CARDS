@@ -436,6 +436,8 @@ export function startHotSeat(
     const finish = (): void => {
       phaseLabel.style.display = 'none';
       renderer.setSpotlight(null);
+      renderer.focusOn([]); // skipping must return the camera too, not leave it mid-push
+
       renderer.highlight('aim', [], AIM);
       renderer.highlight('select', [], IMPACT);
       renderer.show(viewUnits(player.view), viewDecoys(player.view));
@@ -525,7 +527,10 @@ export function startHotSeat(
 
   function renderGameOver(): void {
     renderer.show(stateUnits(), []);
-    renderer.render();
+    for (const layer of ['reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    renderer.drawPath([], MOVE_LINE, false);
+    renderer.setSpotlight(null);
+    renderer.fitBoard();
     ui.controls.replaceChildren();
     ui.status.textContent = state.status === 'draw'
       ? 'Double KO — the match is a draw.'
