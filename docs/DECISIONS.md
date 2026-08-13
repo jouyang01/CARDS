@@ -383,3 +383,34 @@ orders→merge→resolve→playback view equals the engine board. **Also:** upda
 - **Carried Designer/blocked items unchanged:** decoy (D1), duplicate picks, `combat_roll`
   path-vs-teleport, cover-vs-Might, Support kit, roster-v1 §9 ENGINE ASKs — do NOT build
   without a ruling.
+
+## 2026-08-13 — Atlas Reactor source research collected (Designer)
+
+**New doc: `docs/design/atlas-reactor-reference.md`.** Non-normative research reference on
+Atlas Reactor's character skills, map design, and gameplay, gathered to guide Cards'
+scaffolding. `GAME_SPEC.md` still wins on every disagreement; the reference only catalogues
+what AR did, what we already inherit, and where we diverge (§7). Judgment call on sourcing:
+the fan wiki is egress-blocked from this environment, so wiki content was read through
+search-result extracts and every claim in the doc is either corroborated across two or more
+sources or explicitly marked unverifiable. Structural rules (phase order, action economy,
+energy cap, role split, cover 50%, power-up types) are corroborated; **per-ability damage,
+cooldown, and HP numbers are not** and must never be used as balance targets — the doc says
+so at the top and the numbers are labelled illustrative.
+
+**Partially answers the standing "MV2 AR-wiki verification" question.** Corroborated from
+multiple sources: 4 squares with an ability / 8 sprinting; *most* dashes forbid a Move-phase
+move, with per-kit exceptions that explicitly allow it; displacement resolves at the end of
+Blast and cancels the victim's Move; **ground dashes trigger traps and are stopped by walls,
+airborne dashes do neither**; traps never trigger on the owner's team. Our current model
+matches on every point except the ground/airborne split, which AR carries as a per-ability
+property — proposed as a data-only `airborne` flag in the reference's §8 candidate list, not
+implemented. The move-through-characters timing detail MV2 originally wanted (whether AR
+resolves pass-through by simultaneous step or by path validation) is still **not** verifiable
+from public sources; keep the current ruling and stop waiting on the wiki for it.
+
+**Flagged for the Analyzer, not implemented:** §8 lists seven candidates in value-per-risk
+order — `free: true` ability flag, `airborne: true` dash flag, map power-up pads, two maps
+built to the §5.3 checklist, catalysts, chase orders, and bounce shots. **Flagged for the
+human/playtest:** Cards hides *position* (6-square vision + brush) where AR hid only
+*intent*; the reference recommends keeping it for 2v2 but treating vision as a per-format
+tunable and testing a full-visibility variant before touching any damage numbers.
