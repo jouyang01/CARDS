@@ -6,11 +6,10 @@
  * deltas; it never recomputes an outcome. A 3D renderer drops in behind the same
  * `applyEvent` stream.
  *
- * Known event-schema gaps (report, don't recompute): `statusApplied` carries no
- * shield `amount`, and there is no event for an ultimate's energy reset — so
- * shield pools and post-ult energy cannot be reconstructed from the log alone.
- * Positions, HP, alive/dead and kills are fully reproducible and are what
- * "reproduces the engine's final board" means here.
+ * The schema is complete for the HUD (S1, edge-cases "Rendering contract"):
+ * `statusApplied` carries the shield pool as `amount`, `damage` carries the shield
+ * `absorbed`, and `energySpent` mirrors `energyGained` — so positions, HP, alive/dead,
+ * kills, shields and energy are all reproducible from the log alone, no recomputation.
  */
 
 import { PHASES, type GameState, type Phase, type TurnEvent, type Vec2 } from '@cards/engine';
@@ -23,6 +22,8 @@ export interface ViewUnit {
   maxHp: number;
   energy: number;
   alive: boolean;
+  /** Remaining shield pool, tracked from statusApplied(shield).amount − damage.absorbed. */
+  shield: number;
 }
 
 export interface ViewState {
@@ -36,7 +37,8 @@ export interface ViewState {
 export function initView(state: GameState): ViewState {
   const units = new Map<string, ViewUnit>();
   for (const u of state.units) {
-    units.set(u.unitId, { unitId: u.unitId, owner: u.owner, pos: { ...u.pos }, hp: u.hp, maxHp: u.maxHp, energy: u.energy, alive: u.alive });
+    const shield = u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
+    units.set(u.unitId, { unitId: u.unitId, owner: u.owner, pos: { ...u.pos }, hp: u.hp, maxHp: u.maxHp, energy: u.energy, alive: u.alive, shield });
   }
   return { units, kills: [state.kills[0], state.kills[1]], status: state.status, winner: state.winner };
 }
@@ -52,7 +54,20 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
     }
     case 'damage': {
       const u = view.units.get(event.unitId);
-      if (u) u.hp = Math.max(0, u.hp - event.amount);
+      if (u) {
+        u.shield = Math.max(0, u.shield - event.absorbed);
+        u.hp = Math.max(0, u.hp - event.amount);
+      }
+      break;
+    }
+    case 'statusApplied': {
+      const u = view.units.get(event.unitId);
+      if (u && event.status === 'shield' && event.amount !== undefined) u.shield = event.amount;
+      break;
+    }
+    case 'energySpent': {
+      const u = view.units.get(event.unitId);
+      if (u) u.energy = Math.max(0, u.energy - event.amount);
       break;
     }
     case 'heal': {
@@ -67,13 +82,13 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
     }
     case 'death': {
       const u = view.units.get(event.unitId);
-      if (u) { u.alive = false; u.hp = 0; }
+      if (u) { u.alive = false; u.hp = 0; u.shield = 0; }
       view.kills[event.killer] += 1;
       break;
     }
     case 'respawn': {
       const u = view.units.get(event.unitId);
-      if (u) { u.alive = true; u.hp = u.maxHp; u.pos = { ...event.pos }; }
+      if (u) { u.alive = true; u.hp = u.maxHp; u.shield = 0; u.pos = { ...event.pos }; }
       break;
     }
     case 'gameEnd': {
@@ -81,8 +96,8 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
       if (event.result === 'win') view.winner = event.winner;
       break;
     }
-    // phaseStart / abilityFired / statusApplied / trapPlaced / trapTriggered:
-    // no board delta (HUD/animation cues only).
+    // phaseStart / abilityFired / trapPlaced / trapTriggered: no board delta
+    // (non-shield statusApplied included — HUD/animation cues only).
     default:
       break;
   }

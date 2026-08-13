@@ -304,9 +304,13 @@ function applyDisplacements(
 
 // ── Prep ────────────────────────────────────────────────────────────────────
 
-/** Mark an ability as used: spend ult energy and start its cooldown. */
-function markAbilityUsed(unit: UnitState, planned: PlannedAbility): void {
-  if (planned.isUlt) unit.energy = 0;
+/** Mark an ability as used: spend ult energy (emitting `energySpent`) and start cooldown. */
+function markAbilityUsed(unit: UnitState, planned: PlannedAbility, events: TurnEvent[]): void {
+  if (planned.isUlt && unit.energy > 0) {
+    const spent = unit.energy;
+    unit.energy = 0;
+    events.push({ type: 'energySpent', unitId: unit.unitId, amount: spent });
+  }
   if (planned.def.cooldown > 0) unit.cooldowns[planned.def.id] = planned.def.cooldown;
 }
 
@@ -322,7 +326,7 @@ function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: Turn
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'prep' || !plan.unit.alive) continue;
     events.push({ type: 'abilityFired', unitId: plan.unit.unitId, abilityId: a.def.id, area: a.area });
-    markAbilityUsed(plan.unit, a);
+    markAbilityUsed(plan.unit, a, events);
 
     const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
     if (trapEffect !== undefined) {
@@ -342,7 +346,7 @@ function applySelfEffects(unit: UnitState, effects: readonly AbilityEffect[], ev
       if (healed > 0) events.push({ type: 'heal', unitId: unit.unitId, amount: healed });
     } else if (e.kind === 'shield') {
       applyStatus(unit, 'shield', e.duration ?? 1, e.amount ?? 0);
-      events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'shield', duration: e.duration ?? 1 });
+      events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'shield', duration: e.duration ?? 1, amount: e.amount ?? 0 });
     } else if (e.kind === 'decoy') {
       // Decoy is an OPEN ruling (edge-cases.md) — not implemented in v1.
       continue;
@@ -391,7 +395,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'dash' || !plan.unit.alive) continue;
     events.push({ type: 'abilityFired', unitId: plan.unit.unitId, abilityId: a.def.id, area: a.area });
-    markAbilityUsed(plan.unit, a);
+    markAbilityUsed(plan.unit, a, events);
 
     // Move: a `path` charge walks until blocked; anything else teleports.
     let charged: UnitState | undefined;
@@ -496,7 +500,7 @@ function runBlast(
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'blast' || !plan.unit.alive) continue;
     events.push({ type: 'abilityFired', unitId: plan.unit.unitId, abilityId: a.def.id, area: a.area });
-    markAbilityUsed(plan.unit, a);
+    markAbilityUsed(plan.unit, a, events);
 
     // A delayed ability (e.g. a grenade) is armed now and detonates on a later
     // turn at these locked squares (GAME_SPEC §2); no immediate effect.

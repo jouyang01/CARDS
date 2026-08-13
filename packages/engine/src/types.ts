@@ -222,7 +222,9 @@ export type TurnEvent =
   | { type: 'abilityFired'; unitId: string; abilityId: string; area: Vec2[] }
   | { type: 'damage'; unitId: string; amount: number; absorbed: number }
   | { type: 'heal'; unitId: string; amount: number }
-  | { type: 'statusApplied'; unitId: string; status: EffectKind; duration: number }
+  // `amount` carries the shield pool when `status === 'shield'` (undefined otherwise),
+  // so the client can track shields from the log (edge-cases "Rendering contract").
+  | { type: 'statusApplied'; unitId: string; status: EffectKind; duration: number; amount?: number }
   | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
@@ -230,6 +232,9 @@ export type TurnEvent =
   | { type: 'death'; unitId: string; killer: TeamId }
   | { type: 'respawn'; unitId: string; pos: Vec2 }
   | { type: 'energyGained'; unitId: string; amount: number }
+  // Energy removed by an ability (the ultimate's reset-to-0); delta-based like
+  // energyGained so the client does `energy -= amount` (edge-cases "Rendering contract").
+  | { type: 'energySpent'; unitId: string; amount: number }
   | { type: 'gameEnd'; result: 'win' | 'draw'; winner?: TeamId };
 
 export interface TurnResult {
