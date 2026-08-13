@@ -24,10 +24,12 @@ import {
   type UnitState,
   type Vec2,
 } from '@cards/engine';
-import { cssVar, paintOverlay, renderBoard, renderState, squareFromPoint, type RenderUnit } from './render.js';
+import { CELL, PAD, cssVar, paintOverlay, renderState, squareFromPoint } from './render.js';
+import { createStage, type Stage } from './stage.js';
+import { createTurnPlayer } from './turn-player.js';
 import { abilityOptions, abilityPreview, abilityTooltip, draftAbility, emptyDraft, movePreview, nextDraft, toUnitOrders, type OrderDraft } from './targeting.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
-import { applyEvent, initView, segmentByPhase, type ViewState } from './playback.js';
+import { type ViewState } from './playback.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -41,8 +43,6 @@ interface Step {
 }
 
 type Mode = 'idle' | 'aim' | 'move';
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export function startHotSeat(
   ui: HotSeatUI,
@@ -59,6 +59,13 @@ export function startHotSeat(
   let stepIdx = 0;
   let drafts = new Map<string, OrderDraft>();
   let mode: Mode = 'idle';
+  let autoCamera = true;
+
+  /** The playback viewport: the board area we pan/zoom the world group within. */
+  const viewport = () => ({
+    width: Math.min(map.width * CELL + PAD * 2, 900),
+    height: Math.min(map.height * CELL + PAD * 2, 620),
+  });
 
   // Ability hover tooltip (TT1) — one reused element, positioned by the button.
   const tooltip = document.createElement('div');
@@ -217,9 +224,9 @@ export function startHotSeat(
   }
 
   function onBoardClick(evt: MouseEvent): void {
-    const svg = ui.board.querySelector('svg');
+    const svg = ui.board.querySelector<SVGSVGElement>('svg');
     if (!svg) return;
-    const sq = squareFromPoint(svg as unknown as SVGSVGElement, evt.clientX, evt.clientY);
+    const sq = squareFromPoint(svg, evt.clientX, evt.clientY);
     if (!sq) return;
     const step = currentStep();
     if (step === undefined) return;
@@ -266,32 +273,68 @@ export function startHotSeat(
     const prev = state;
     const result = resolveTurn(prev, map, mergeSeatOrders(seats, ordersBySeat), roster);
 
-    // Play back phase by phase from the event log.
-    const view = initView(prev);
-    for (const segment of segmentByPhase(result.events)) {
-      for (const e of segment.events) applyEvent(view, e);
-      renderView(view);
-      ui.status.textContent = `Turn ${prev.turn} · resolving — ${segment.phase.toUpperCase()}`;
-      ui.controls.replaceChildren();
-      await sleep(650);
+    // Playback: the player owns state (its fold IS the board, so skipping and
+    // watching agree by construction); the stage only decorates it with cues.
+    const player = createTurnPlayer(prev, result.events);
+    const stage = createStage(ui.board, map, viewport());
+    stage.show(player.view);
+    stage.setAutoCamera(autoCamera);
+
+    let skipped = false;
+    renderPlaybackControls(stage, () => {
+      skipped = true;
+      player.skip();
+      stage.finishAll();
+      stage.show(player.view);
+    });
+
+    // Turn progression is driven here, NOT by animation completion — once M3
+    // owns the decision clock, awaiting the animation would be the wrong master.
+    for (let step = player.advancePhase(); step !== undefined; step = player.advancePhase()) {
+      ui.status.textContent = `Turn ${prev.turn} · resolving — ${step.phase.toUpperCase()}`;
+      if (skipped) continue; // state is already folded; just drain the phases
+      await stage.play(step.cues, player.view);
     }
+    stage.show(player.view);
 
     state = result.state;
     if (state.status !== 'active') return renderGameOver();
     beginTurn();
   }
 
-  function renderView(view: ViewState): void {
-    const units: RenderUnit[] = [...view.units.values()].map((v) => ({
-      owner: v.owner, pos: v.pos, hp: v.hp, maxHp: v.maxHp, energy: v.energy, alive: v.alive,
-      label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
-    }));
-    const svg = renderBoard(map, units);
-    // Decoys (D1): a ghost marker on each live decoy square. Hot-seat shows both
-    // sides; team-scoped "enemy sees it as Wisp" is a fog concern for M3.
-    const decoys = [...view.decoys.values()];
-    if (decoys.length > 0) paintOverlay(svg, decoys.map((d) => d.pos), cssVar('--spawn1'), 0.35);
-    ui.board.replaceChildren(svg);
+  /** Speed, skip and camera-mode controls shown during resolution. */
+  function renderPlaybackControls(stage: Stage, onSkip: () => void): void {
+    ui.controls.replaceChildren();
+    const row = document.createElement('div');
+    row.className = 'control-row';
+
+    for (const rate of [0.5, 1, 2]) {
+      const b = document.createElement('button');
+      b.textContent = `${rate}×`;
+      b.className = rate === 1 ? 'sel' : '';
+      b.onclick = () => {
+        stage.setRate(rate);
+        for (const other of row.querySelectorAll('button')) other.classList.remove('sel');
+        b.classList.add('sel');
+      };
+      row.appendChild(b);
+    }
+
+    const cam = document.createElement('button');
+    cam.textContent = autoCamera ? 'Auto camera' : 'Free camera';
+    cam.onclick = () => {
+      autoCamera = !autoCamera;
+      stage.setAutoCamera(autoCamera);
+      cam.textContent = autoCamera ? 'Auto camera' : 'Free camera';
+    };
+
+    const skip = document.createElement('button');
+    skip.textContent = 'Skip ⏭';
+    skip.className = 'primary';
+    skip.onclick = onSkip;
+
+    row.append(cam, skip);
+    ui.controls.appendChild(row);
   }
 
   function renderGameOver(): void {

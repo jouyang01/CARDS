@@ -161,6 +161,9 @@ export interface UnitState {
 export interface TrapState {
   id: string;
   owner: TeamId;
+  /** The unit that placed it, and the ability that did — damage attribution (A0). */
+  ownerUnitId: string;
+  abilityId: string;
   pos: Vec2;
   damage: number;
   /** Applied to whoever triggers it. */
@@ -244,7 +247,12 @@ export interface PlayerOrders {
 export type TurnEvent =
   | { type: 'phaseStart'; phase: Phase }
   | { type: 'abilityFired'; unitId: string; abilityId: string; area: Vec2[] }
-  | { type: 'damage'; unitId: string; amount: number; absorbed: number }
+  // `sourceUnitId`/`abilityId` attribute the hit to whoever caused it (A0). Blast
+  // emits every `abilityFired` before any `damage`, so log adjacency cannot say
+  // which ability landed a hit — presentation (sequential Blast, "shooter in
+  // frame" camera) reads these instead. Trap damage credits the trap's owner and
+  // the ability that placed it; a delayed detonation credits its original caster.
+  | { type: 'damage'; unitId: string; amount: number; absorbed: number; sourceUnitId: string; abilityId: string }
   | { type: 'heal'; unitId: string; amount: number }
   // `amount` carries the shield pool when `status === 'shield'` (undefined otherwise),
   // so the client can track shields from the log (edge-cases "Rendering contract").

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateCharacter, validateMap } from '../src/validate.js';
 import { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from '../src/resolve.js';
+import { MAX_ABILITY_RANGE } from '../src/constants.js';
 import { EFFECT_KINDS, type CharacterDef, type MapDef } from '../src/types.js';
 
 import vex from '../../../data/characters/vex.json';
@@ -87,6 +88,32 @@ describe('validators catch bad content', () => {
     const line = c.abilities.find((a) => a.shape === 'line')!;
     (line as { chargeHits?: string }).chargeHits = 'all';
     expect(validateCharacter(c).some((e) => e.includes('only valid on a "path"'))).toBe(true);
+  });
+});
+
+describe('non-ultimate range is capped at 8 (M2)', () => {
+  it('rejects a non-ultimate ability above the cap but exempts the ultimate', () => {
+    const over = structuredClone(vex) as unknown as CharacterDef;
+    over.abilities[0]!.range = MAX_ABILITY_RANGE + 1;
+    expect(validateCharacter(over).some((e) => e.includes('non-ultimate range must be'))).toBe(true);
+
+    // Lance of Dawn is range 99 by design — the shipped roster must stay valid.
+    expect((vex as unknown as CharacterDef).ultimate.range).toBeGreaterThan(MAX_ABILITY_RANGE);
+    expect(validateCharacter(vex as unknown as CharacterDef)).toEqual([]);
+  });
+
+  it('accepts a non-ultimate exactly at the cap (Rail Shot stays 8)', () => {
+    const at = structuredClone(vex) as unknown as CharacterDef;
+    at.abilities[0]!.range = MAX_ABILITY_RANGE;
+    expect(validateCharacter(at)).toEqual([]);
+  });
+
+  it('every shipped non-ultimate ability is within the cap', () => {
+    for (const c of characters) {
+      for (const a of c.abilities) {
+        expect(a.range, `${c.id}.${a.id} range`).toBeLessThanOrEqual(MAX_ABILITY_RANGE);
+      }
+    }
   });
 });
 

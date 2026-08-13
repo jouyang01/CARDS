@@ -3,6 +3,12 @@
 export const MOVE_RANGE = 4;
 export const SPRINT_RANGE = 8;
 export const VISION_RANGE = 6;
+/**
+ * Range ceiling for non-ultimate abilities (M2). Map spawn separation is sized
+ * against max turn-1 threat (move + ability range), so raising an ability past
+ * this would silently reintroduce the turn-1 spawn hit. Ultimates are exempt.
+ */
+export const MAX_ABILITY_RANGE = 8;
 /** Percent damage reduction behind cover (applied round-down). */
 export const COVER_REDUCTION_PCT = 50;
 export const PASSIVE_ENERGY = 5;
