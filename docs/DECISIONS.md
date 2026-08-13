@@ -660,3 +660,72 @@ accepted "tracking shot with mild zoom" tradeoff) rather than invent a third app
   the M2 range cap that M1's geometry depends on has landed.
 - **Carried:** CL1/CL2/E2 deferred; A4 blocked on the 2D-vs-3D decision (A1–A3 are
   renderer-agnostic — only `stage.ts` is renderer-specific, which keeps that door open).
+
+## Metric · friendly fire · aiming · renderer batch — MET1, FF1, AIM2(+AIM1), RND1 (Builder, 2026-08-21)
+
+**(MET1) Manhattan everywhere.** `board.ts` exports `distance` (= manhattan) as THE metric so
+the choice is one decision, not a dozen call sites. Every diagonal costs a flat 2, so cost no
+longer depends on path history and MV3's `(square, parity)` search collapses to a plain
+integer Dijkstra. Move-4 = the 41-tile diamond, sprint-8 = 145, matching the AC. Vision is a
+Manhattan radius and the brush/stealth exception narrowed to the 4 orthogonal neighbours. A
+charge path spends `range` as a movement **cost** budget, so a range-4 charge affords two
+diagonal steps. GAME_SPEC §3 rewritten. **Judgment call, flagged:** the teleport-strike's
+"every enemy Chebyshev-adjacent to the landing" was LEFT Chebyshev — MET1 explicitly named
+vision and movement and did not name it, and narrowing it to 4 neighbours would rebalance
+Wisp's ult. Marked in the code.
+
+**(FF1) Friendly fire on.** The harmful row stopped filtering by team; beneficial still
+own-team. Energy stays enemy-only, a friendly kill moves no tally (`killUnit` skips when
+killer team == victim team), traps stay team-safe. A teleport-strike now catches adjacent
+allies (a directly-aimed area). **Judgment call, flagged:** a *charge* still selects victims
+from enemies only — "the first enemy crossed" is R1a's selection rule, not an area filter,
+and FF1 did not re-rule it. Changing it would silently re-rule R1a/R1b.
+
+**(AIM2) Free rotation via a quantized integer step.** `AbilityOrder.aimStep` in [0,256).
+**Design choice worth keeping:** the quantization is onto a **diamond** (|x|+|y| = 64), not a
+circle — so `stepToVector` AND its inverse `vectorToStep` are both pure integer. That removes
+trig from the *client* too: a drag is converted with the engine's own projection, so the two
+can never disagree about which direction a drag meant. (The ruling only required the engine
+be trig-free; this is strictly stronger and cheaper than a committed 256-entry table.)
+Directional range = tile count along the axis, so rotation never changes reach; coverage is
+centre-in/binary. Cardinal aims reproduce pre-AIM2 output exactly and stepless orders keep
+click-to-aim, so nothing existing changed shape. Standing AIM2-guard test added.
+
+**(AIM1) Deferred deliberately, not dropped.** AIM1 is the move path drawn as a stroked
+polyline + endpoint marker — a purely renderer-specific visual. RND1 replaced the renderer in
+this same session, so building it in SVG first would have been thrown away. The move path
+renders (as highlighted tiles) and the data is all there; the polyline styling belongs in the
+A3 re-spec's renderer pass. **Flagged below.**
+
+**(RND1) Orthographic renderer.** Three.js `OrthographicCamera`; projection is a runtime
+parameter (top-down 90 / isometric 35.264). `squareFromPoint` is now a ray/plane
+intersection. Scene objects keyed by `unitId` (A1's principle in 3D). The renderer-agnostic
+layer was reused verbatim — only the SVG-node and SVG-camera tests were deleted, because
+their substrate is gone. Bundle 556 kB / 145 kB gz. **Verification note for the reviewer:**
+`gl.readPixels` and `drawImage` off the WebGL canvas both return all-black false negatives
+(the drawing buffer is not preserved); only a composited screenshot proves the scene renders.
+
+## Open Questions for the Analyzer — 2026-08-21 (metric/FF/aim/renderer batch)
+
+- **Teleport-strike adjacency stayed Chebyshev (MET1).** Wisp's Shadowstep still hits the 8
+  surrounding squares while everything else is Manhattan. Confirm that's intended, or rule it
+  to Manhattan-≤1 (4 neighbours) — it is a one-line change plus a Wisp rebalance question.
+  `resolve.runDash`, `dash.test.ts`.
+- **Does friendly fire extend to a CHARGE's target selection (FF1)?** A charge still strikes
+  "the first **enemy** crossed". Under FF1 should it strike the first **unit** crossed (and
+  what does `chargeHits: "all"` then mean — all units, or all enemies)? This re-rules
+  R1a/R1b, so I did not assume. `resolve.runDash`, `walkCharge`.
+- **AIM1's polyline visual is unbuilt** (see above). Fold it into the A3 re-spec's renderer
+  pass, or schedule it as its own item now that the renderer exists. `renderer3d.ts`.
+- **Cone widening under free rotation — playtest question.** A rotated cone uses the axis walk
+  plus its perpendicular, which is faithful but can look slightly ragged at shallow angles
+  (integer tiles approximating a rotated wedge). Worth a look at playtest; the alternative
+  (a true half-plane test with a wider half-width) changes coverage counts.
+- **Bundle is 145 kB gzipped** now that three.js is in. No budget is defined in CI — if one
+  matters for Pages, say the number and I will code-split the renderer.
+- **A1/A2/A3 re-spec is now unblocked** (RND1 landed). `choreograph` needs no change; the
+  A3 work is re-targeting cue playback and the camera onto the renderer, plus the owner's
+  amendments (corner phase label, spotlight-dim on Prep/Dash/Blast only, billboarded bars).
+  Playback currently steps phase-by-phase with a plain pause — correct but untweened.
+- **Designer/data items untouched** (M1, M1-4v4, Thorn-dash) — role boundary; all three are
+  unblocked and waiting on the Designer.
