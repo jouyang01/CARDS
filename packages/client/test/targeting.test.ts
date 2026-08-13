@@ -44,8 +44,9 @@ describe('move legality reuses the engine', () => {
   it('rejects an illegal path and accepts a legal one via validateMovePath', () => {
     const s = state();
     const u = vexUnit(s);
-    expect(pathValid(OPEN, s, u, [{ x: 2, y: 2 }], false)).toBe(false); // diagonal jump
+    expect(pathValid(OPEN, s, u, [{ x: 2, y: 2 }], false)).toBe(false); // non-adjacent jump
     expect(pathValid(OPEN, s, u, [{ x: 2, y: 7 }, { x: 3, y: 7 }], false)).toBe(true);
+    expect(pathValid(OPEN, s, u, [{ x: 2, y: 6 }], false)).toBe(true); // a legal single diagonal (MV3)
   });
 
   it('splits reachable squares into stops and walk-through', () => {
