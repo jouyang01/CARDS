@@ -7,6 +7,7 @@ import {
   effectLabel,
   emptyDraft,
   movePreview,
+  nextDraft,
   pathValid,
   sprintAllowed,
   toUnitOrders,
@@ -106,6 +107,50 @@ describe('move-and-shoot: a non-dash ability and a Move coexist (MS1)', () => {
     const sprintTurn = movePreview(OPEN, s, u, true).stops; // 8-square budget
     expect(abilityTurn.length).toBeGreaterThan(0);
     expect(abilityTurn.length).toBeLessThan(sprintTurn.length);
+  });
+});
+
+describe('nextDraft reducer drives the move/shoot toggle (MS1-test)', () => {
+  const base = () => ({ ...emptyDraft('u'), movePath: [{ x: 1, y: 0 }, { x: 2, y: 0 }] });
+
+  it('a non-dash ability keeps a drawn move (move AND shoot); a dash drops it', () => {
+    const shoot = nextDraft(base(), { type: 'selectAbility', abilityId: 'rail_shot', isDash: false }, false);
+    expect(shoot.abilityId).toBe('rail_shot');
+    expect(shoot.movePath).toHaveLength(2); // move survives
+    expect(shoot.sprint).toBe(false);
+
+    const dash = nextDraft(base(), { type: 'selectAbility', abilityId: 'combat_roll', isDash: true }, false);
+    expect(dash.abilityId).toBe('combat_roll');
+    expect(dash.movePath).toEqual([]); // dash owns the move
+  });
+
+  it('selectMove keeps a non-dash ability but replaces a dash or empty', () => {
+    const withShot = { ...emptyDraft('u'), abilityId: 'rail_shot', aim: [{ x: 5, y: 0 }] };
+    const kept = nextDraft(withShot, { type: 'selectMove' }, false);
+    expect(kept.abilityId).toBe('rail_shot'); // move + shoot coexist
+    expect(kept.movePath).toEqual([]);
+
+    const withDash = { ...emptyDraft('u'), abilityId: 'combat_roll', aim: [{ x: 1, y: 0 }] };
+    const replaced = nextDraft(withDash, { type: 'selectMove' }, true);
+    expect(replaced.abilityId).toBeUndefined(); // a dash is replaced by a plain move
+    expect(replaced.aim).toEqual([]);
+  });
+
+  it('sprint is move-only and clears any ability; clear resets to empty', () => {
+    const withShot = { ...emptyDraft('u'), abilityId: 'rail_shot', movePath: [{ x: 1, y: 0 }] };
+    const sprinted = nextDraft(withShot, { type: 'selectSprint' }, false);
+    expect(sprinted.abilityId).toBeUndefined();
+    expect(sprinted.sprint).toBe(true);
+
+    const cleared = nextDraft(sprinted, { type: 'clear' }, false);
+    expect(cleared).toEqual(emptyDraft('u'));
+  });
+
+  it('does not mutate the input draft (pure)', () => {
+    const input = base();
+    nextDraft(input, { type: 'selectSprint' }, false);
+    expect(input.movePath).toHaveLength(2); // untouched
+    expect(input.sprint).toBe(false);
   });
 });
 

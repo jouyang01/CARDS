@@ -183,6 +183,37 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
   return order;
 }
 
+/**
+ * The order UI's draft toggle (MS1), as a pure reducer so the mutual-exclusivity
+ * is testable without the DOM. A non-dash ability and a move coexist; Sprint and
+ * a dash are each exclusive with an ability. `currentIsDash` is whether the
+ * draft's *existing* ability is a dash (so `selectMove` knows to replace it).
+ */
+export type DraftAction =
+  | { type: 'selectAbility'; abilityId: string; isDash: boolean }
+  | { type: 'selectMove' }
+  | { type: 'selectSprint' }
+  | { type: 'clear' };
+
+export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash: boolean): OrderDraft {
+  switch (action.type) {
+    case 'selectAbility':
+      // Choosing an ability clears sprint and re-aims; a dash owns the movement
+      // so it drops any drawn move, a non-dash ability keeps it (move AND shoot).
+      return { ...draft, abilityId: action.abilityId, sprint: false, aim: [], movePath: action.isDash ? [] : draft.movePath };
+    case 'selectMove':
+      // "Draw move" keeps a non-dash ability; a dash (or no ability) is replaced.
+      return draft.abilityId !== undefined && !currentIsDash
+        ? { ...draft, sprint: false, movePath: [] }
+        : { ...draft, abilityId: undefined, aim: [], sprint: false, movePath: [] };
+    case 'selectSprint':
+      // Sprint is move-only (8) and clears any ability.
+      return { ...draft, abilityId: undefined, aim: [], sprint: true, movePath: [] };
+    case 'clear':
+      return emptyDraft(draft.unitId);
+  }
+}
+
 /** Convenience: build `UnitOrders` for every character a player controls. */
 export function toUnitOrdersFor(
   characters: ReadonlyMap<string, CharacterDef>,
