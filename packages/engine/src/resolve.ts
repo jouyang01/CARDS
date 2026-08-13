@@ -48,7 +48,7 @@ import {
 } from './constants.js';
 import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, stepCost, validateMovePath } from './movement.js';
-import { aimInRange, direction8, expandShape } from './shapes.js';
+import { aimInRange, direction8, expandShape, isAimStep } from './shapes.js';
 import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import type {
   AbilityDef,
@@ -167,8 +167,12 @@ function planUnit(
     const aim = order.ability.target ?? [];
     const onCooldown = (unit.cooldowns[def.id] ?? 0) > 0;
     const canAfford = !isUlt || unit.energy >= ULT_COST;
-    if (!onCooldown && canAfford && aimIsLegal(board, unit, def, aim)) {
-      ability = { def, aim, area: expandShape(board, def, unit.pos, aim), isUlt };
+    const aimStep = order.ability.aimStep;
+    // An out-of-range aim step is rejected like any other illegal component:
+    // the ability is dropped, deterministically, never thrown on (AIM2).
+    const stepLegal = aimStep === undefined || isAimStep(aimStep);
+    if (!onCooldown && canAfford && stepLegal && aimIsLegal(board, unit, def, aim, aimStep)) {
+      ability = { def, aim, area: expandShape(board, def, unit.pos, aim, aimStep), isUlt };
     }
   }
 
@@ -188,7 +192,7 @@ function planUnit(
 }
 
 /** Is an ability's aim geometrically legal for its shape and range? */
-function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonly Vec2[]): boolean {
+function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonly Vec2[], aimStep?: number): boolean {
   switch (def.shape) {
     case 'self':
       return true;
@@ -199,6 +203,9 @@ function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonl
     }
     case 'line':
     case 'cone': {
+      // A quantized step is a direction in its own right, so it needs no target
+      // square; without one, the aim must still point somewhere (AIM2).
+      if (isAimStep(aimStep)) return true;
       const target = aim[0];
       return target !== undefined && !vecEq(unit.pos, target);
     }
