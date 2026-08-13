@@ -448,3 +448,40 @@ touches the held charge-combat ENGINE ASK and is left for a Designer ruling.
 - **Carried forward:** MV2 AR-wiki verification still pending (egress blocked); playback
   shield during-turn vs post-tick (S1); decoy (D1), duplicate picks, `combat_roll`
   path-vs-teleport, cover-vs-Might, Support kit, roster-v1 §9 — all still blocked on rulings.
+
+## 2026-08-13 — The seven blocked Designer items, ruled (Designer)
+
+All seven cross-role items carried in BACKLOG's "Blocked — needs a Designer ruling"
+section since 2026-08-12 are now resolved in `docs/design/rulings-v1-blockers.md`,
+written as blocks the Analyzer can lift into `edge-cases.md`. Summary of the calls and
+why. **(1) A damaging charge hits the first enemy its path crosses** — not the
+destination, not everyone — which confirms the shipped `walkCharge` behaviour rather than
+changing it; breadth becomes a data knob instead of a rule, via an optional
+`chargeHits: "first" | "all"` field (default `"first"`) so Kestrel's Tempest Run can sweep
+without every charge doing so. Golden rule #2: a knob on an existing mechanic belongs in
+data. **(2) Displacement skips the displacing attacker's square** rather than stopping
+short of it, superseding the net-zero interim: the charger was already ruled transparent
+to the victim's displacement *path*, so making it transparent to the *landing* is the
+completion of that rule, not a new one. Swap was rejected for moving the victim backwards
+along the knockback vector. **(3) The decoy is a static fake unit destroyed by any damage**,
+living outside `state.units` in its own list so no existing phase loop, vision union or
+win check needs an "is this real?" guard; it grants no energy and blocks nothing, because
+its payoff is informational. **(4) Duplicate picks: unique within a team, mirrors legal
+across teams** — intra-team stacking is the degenerate case (double-Support stall) and
+cross-team mirrors cost nothing. **(5) `combat_roll` needed no data change at all**: the
+engine already branches on `shape`, so `shape` is the authority for *how* a reposition
+happens and the `teleport` effect only declares *that* the caster repositions. Deleting
+the effect would have produced content that fails `validateAbility`'s non-empty-effects
+check and silently cost the ability its energy-on-use — the contradiction was in the
+reading, not the data. Wall-crossing stays Wisp's identity plus the supports' escape
+budget; Firepower repositions stay grounded. **(6) Cover-vs-Might composition is confirmed
+as shipped** (outgoing → cover → shields → HP): the alternative differs by at most one
+point (Lance of Dawn with Might into cover: 28 vs 27) and no balance goal justifies the
+churn. **(7) Support kits are unblocked** — both capabilities they waited on (effect
+polarity, energy-on-use for beneficial abilities) shipped in the 2026-08-15 teams build,
+and the original "healing an ally is meaningless in 1v1" deferral (2026-08-11) expired
+when 2v2 became the default format. Reconciling roster-v1 §9 against what shipped closed
+both of its ENGINE ASKs as superseded — the engine's `teleport`-as-neutral and
+"any beneficial effect pays on use" readings are better than my drafts — and surfaced one
+real gap: `untargetable` was missing from the effect-polarity table and is ruled
+**beneficial**, making the table total over `EFFECT_KINDS`.
