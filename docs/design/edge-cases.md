@@ -73,10 +73,12 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   numbers under this metric) and **M1's map spec is unchanged** (spawn separation 13 / max
   turn-1 threat 12 are measured head-on along a row, where Manhattan and Chebyshev agree).
   The corner-cut and X-crossing rulings below **survive** (they are occupancy rules, metric-
-  independent). **Open sub-question (flag, do not assume):** vision range is currently
-  Chebyshev (`VISION_RANGE` 6) and brush adjacency is Chebyshev — MET1's FILES list does not
-  include `vision.ts`, so **vision stays Chebyshev unless the owner directs otherwise**;
-  raise it, don't silently convert. Determinism is unaffected (Manhattan is pure integer).
+  independent). **Vision is Manhattan too (owner directive 2026-08-21):** `VISION_RANGE`
+  becomes a Manhattan radius, and the brush/stealth perception-adjacency exception moves from
+  Chebyshev-≤1 (the 8 surrounding squares) to **Manhattan-≤1 (the 4 orthogonal neighbours)**
+  — so `vision.ts` (`canSee` range check, `isAdjacent`) is in scope for MET1. Cover stays
+  orthogonally-adjacent (already Manhattan-shaped). Determinism is unaffected (Manhattan is
+  pure integer).
 - **SUPERSEDED (cost model only) — Diagonal movement, AR 1/2-alternation cost (MV3,
   2026-08-17; superseded by MET1 2026-08-20).** The engine went 8-direction (`MOVE_STEPS`),
   which stands; but the "k-th diagonal costs 2 when k even, else 1" parity cost is replaced
@@ -249,23 +251,33 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **RULED — Kill credit is team-level.** A kill increments the killing unit's team
   tally. Traps and delayed abilities credit their caster's team even if the caster
   has since died.
-- **RULED — No friendly fire, with a fixed effect polarity (implemented + confirmed
-  2026-08-15, item 14).** In an aimed area, **harmful** effects apply only to enemies and
-  **beneficial** effects only to the caster's own team (caster included if in-area);
-  a team's traps never trigger for that team. Free-aim is unchanged — the area is the
-  area; allegiance only filters who each effect touches. Energy-on-hit still requires ≥1
-  *enemy* struck. The polarity, confirmed:
-  - **Harmful (enemies only):** `damage`, `weaken`, `slow`, `root`, `knockback`, `pull`,
-    **`reveal`** (exposing a unit is hostile).
-  - **Beneficial (own team only):** `heal`, `shield`, `might`, `haste`, `energized`,
-    `unstoppable`, `stealth` (concealing a unit is friendly), **`untargetable`** (R7,
-    2026-08-19 — self-applied on Wisp's ult today; closes the one hole so the table is
-    **total** over `EFFECT_KINDS`).
+- **RULED — Friendly fire is ON: harmful effects hit ALL units in-area; beneficial stay
+  own-team (owner directive 2026-08-21; REVERSES the 2026-08-15 "no friendly fire" ruling;
+  backlog FF1).** *"friendly fire should be possible, allies can hit allies with damage."*
+  So in an aimed area:
+  - **Harmful effects apply to every unit in the area — ally OR enemy** (no team filter):
+    `damage`, `weaken`, `slow`, `root`, `knockback`, `pull`. Stand your ally in your own AoE
+    and you hit them. *(Default reading: the harmful **riders** ride along with the damage —
+    Chain Hook damaging an ally also pulls it. **Flag:** narrow to damage-only if the owner
+    prefers.)* `reveal` on an ally is harmless-but-legal (it does nothing useful to a unit
+    your team already sees).
+  - **Beneficial effects still apply to the caster's own team only** (`heal`, `shield`,
+    `might`, `haste`, `energized`, `unstoppable`, `stealth`, `untargetable`) — friendly fire
+    means your *attacks* endanger allies; it does **not** mean you heal/buff enemies. *(Flag:
+    make beneficial symmetric-to-all only on a new owner decision.)*
   - **Neutral (self/placement, unfiltered):** `teleport`, `decoy`, `trap`.
-  Content guardrail (R7, optional): a test asserting every `EFFECT_KIND` appears in exactly
-  one polarity row. Also confirmed (R7): trap sibling effects apply to the **triggering
-  unit at trigger time**; dash rider effects apply to the **caster at the destination** —
-  both match shipped behavior.
+  - **Energy is unchanged — granted only on hitting ≥1 ENEMY.** Splashing an ally pays
+    nothing; an ability that hits only allies grants no energy (like hitting nobody).
+  - **A friendly kill scores NO kill for any team** — the ally dies and respawns normally
+    (a pure tempo loss), but neither team's kill tally moves. This avoids the exploit of
+    farming your own respawning ally for wins. Needs a "no-credit" path in `killUnit`.
+  - **Traps stay team-safe by default** (a team's trap does not trigger for its own units) —
+    friendly fire is about directly-aimed attacks, not placed hazards; a self-team minefield
+    wiping your own team is a bigger swing than intended. **Flag:** extend friendly fire to
+    traps only on a new owner decision.
+  The polarity **table itself is unchanged** (still total over `EFFECT_KINDS`, R7) — what
+  changed is that the *harmful* row no longer filters by team. The R7 confirmations (trap
+  riders → triggering unit; dash riders → caster at destination) still hold.
 - **RULED — Beneficial abilities pay `energyGain` on use (confirms Builder OQ,
   2026-08-15).** An ability carrying any beneficial effect banks its energy on use, like
   self/utility abilities — support kits build charge by healing/shielding allies, not only

@@ -38,22 +38,25 @@ regardless of when AIM2 lands.
 
 ## Next batch — engine (in order)
 
-### MET1. Distance metric → Manhattan (ENGINE) — UNBLOCKED (do first; supersedes MV3 cost/MV4)
-**Addresses Dev Note: "We want to mimic the manhattan-distance system of AR."** Ruled in
-edge-cases. *AC: `board.ts` distance fn is Manhattan; `shapes.aimInRange` for `circle`/`square`
-uses Manhattan; movement reachability uses Manhattan cost where **a diagonal step is legal but
-costs 2**; the 4/8 budgets are unchanged; reachable-area tests updated (move 4 → 41 tiles,
-sprint 8 → 145); MV4 diagonal charge steps also cost 2; the determinism harness still passes.*
+### MET1. Distance metric → Manhattan, including vision (ENGINE) — UNBLOCKED (do first; supersedes MV3 cost/MV4)
+**Addresses Dev Notes: "We want to mimic the manhattan-distance system of AR."** + **"Vision is
+manhattan too."** Ruled in edge-cases. *AC: `board.ts` distance fn is Manhattan;
+`shapes.aimInRange` for `circle`/`square` uses Manhattan; movement reachability uses Manhattan
+cost where **a diagonal step is legal but costs 2**; **vision range (`VISION_RANGE`) is a
+Manhattan radius and the brush/stealth perception-adjacency exception becomes Manhattan-≤1 (4
+orthogonal neighbours, not the 8 surrounding)**; the 4/8 budgets are unchanged; reachable-area
+tests updated (move 4 → 41 tiles, sprint 8 → 145); MV4 diagonal charge steps also cost 2; the
+determinism harness still passes.*
 
 **Spec Notes.** Files: `board.ts` (distance), `shapes.ts` (`aimInRange`, `direction8`,
 `lineSquares`), `movement.ts` (`reachableSquares`/`reconstructPath` — the parity-state search
-collapses to a plain Manhattan cost search; charge paths), `validate.ts`, **every movement +
-dash test**. **Mark superseded, don't delete:** the MV3 1/2-alternation cost and the diagonal
-corner rule's *cost* framing — the corner-cut rule (illegal if either flank is solid) and the
-X-crossing/2-cycle rules **survive** (occupancy, metric-independent). **Flag, do not assume:**
-`vision.ts` (Chebyshev range + brush adjacency) is NOT in the owner's FILES list — **leave
-vision Chebyshev** unless the owner directs otherwise; raise it. Update GAME_SPEC §3 to the
-Manhattan model (record in DECISIONS). Out of scope: AIM2 (next).
+collapses to a plain Manhattan cost search; charge paths), **`vision.ts` (`canSee` range check
++ `isAdjacent` for the brush exception → Manhattan)**, `validate.ts`, **every movement + dash +
+vision test**. **Mark superseded, don't delete:** the MV3 1/2-alternation cost — the corner-cut
+rule (illegal if either flank is solid) and the X-crossing/2-cycle rules **survive**
+(occupancy, metric-independent). Cover adjacency is already orthogonal (unchanged). Update
+GAME_SPEC §3 to the Manhattan model (record in DECISIONS). Out of scope: AIM2 (next); friendly
+fire (FF1, independent).
 
 ### AIM2 (+AIM1). Free-rotation aiming with partial-tile coverage (ENGINE + CLIENT) — BLOCKED BY MET1
 **Addresses Dev Notes:** *"Attacking commands should not always be a full square. You should be
@@ -79,7 +82,26 @@ the client does mouse→step trig, presentation only), shapes tests + the cross-
 `Math.cos/sin/atan2/tan`. Fold AIM1 in — do not ship it separately (same targeting surface).
 Gotcha: reconcile with MET1's range definition (directional shapes = tile count along axis).
 
-## Data / Designer (parallel — unaffected by MET1/AIM2)
+### FF1. Friendly fire — harmful effects hit all units in-area (ENGINE) — UNBLOCKED (independent, parallel)
+**Addresses Dev Note: "friendly fire should be possible, allies can hit allies with damage."**
+Reverses the "no friendly fire" ruling; ruled in edge-cases (FF1). Independent of MET1/AIM2
+(different file). *AC: an aimed AoE covering an ally and an enemy **damages both** (and applies
+harmful riders — knockback/pull/slow/root/weaken — to both); **beneficial** effects still apply
+to own-team only; energy is still granted only on hitting ≥1 **enemy** (ally-only hits pay
+nothing); a **friendly kill** kills+respawns the ally but moves **no team's kill tally**; a
+team's **traps stay team-safe**; tests cover ally-damaged, ally-only-hit grants no energy, and
+friendly-kill scores nobody.*
+
+**Spec Notes.** Files: `resolve.ts` (the Blast polarity loop — drop the `if (!enemy) continue`
+for `HARMFUL_KINDS`; keep the beneficial `if (enemy) continue`; keep `hitEnemy` gated on a real
+enemy so energy stays enemy-only), the dash-strike and trap paths (harmful there already targets
+enemies — extend the *directly-aimed* harmful to allies too, but **leave trap triggering
+team-safe**), `killUnit` (add a no-credit path when killer-team == victim-team; do not increment
+`draft.kills`), `ally-effects.test.ts`. **Two flags to confirm with the owner, don't block:**
+(1) harmful **riders** ride along with friendly-fire damage (default yes); (2) traps stay
+team-safe (default yes). Out of scope: making beneficial effects hit enemies (not requested).
+
+## Data / Designer (parallel — unaffected by MET1/AIM2/FF1)
 
 ### M1. Map redesign (DESIGNER, data-only) — UNBLOCKED
 **(A) Spawn separation ≥ 13** (turn-1 spawn hits impossible, turn-2 engagement reliable); target
