@@ -514,13 +514,10 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     if (a.def.shape === 'path') crossed = walkCharge(draft, plan.unit, a.aim, events);
     else teleport(draft, board, plan.unit, a.aim[0], events);
 
-    // Damage: a charge hits the enemies it crossed — the first only (R1a, default)
-    // or every one (R1b, `chargeHits: "all"`, e.g. Tempest Run); a teleport-strike
-    // hits everyone adjacent to where it landed, ALLIES INCLUDED (FF1: a directly
-    // aimed area does not filter by team). The charge's "first enemy crossed" is
-    // R1a's *selection* rule, not an area filter, and FF1 did not re-rule it, so
-    // a charge still picks its victims from enemies only — flagged for the
-    // Analyzer (DECISIONS 2026-08-21).
+    // Damage: a charge hits the UNITS it crossed — the first only (R1a's shape,
+    // now "first unit" under FF1-charge) or every one (`chargeHits: "all"`, e.g.
+    // Tempest Run); a teleport-strike hits everyone adjacent to where it landed.
+    // Both include allies: a directly aimed attack does not filter by team (FF1).
     const dmg = a.def.effects.find((e) => e.kind === 'damage');
     let hitEnemy = false;
     if (dmg !== undefined) {
@@ -571,8 +568,9 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
  * Walk a charge along its path (MV1 / edge-cases "AR movement model"): it passes
  * *through* any character — ally or enemy — but may not *end* on an occupied
  * square, so it rests on the furthest path square that is free (or holds if none
- * is). Walls/cover never appear in the path (validated). Returns every enemy
- * whose square lies on the path, in path order; the caller applies `chargeHits`.
+ * is). Walls/cover never appear in the path (validated). Returns every UNIT whose
+ * square lies on the path, in path order — allies included (FF1-charge) — and the
+ * caller applies `chargeHits` to take the first or all of them.
  */
 function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState[] {
   const occupiedAt = (p: Vec2) => draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
@@ -585,8 +583,11 @@ function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], ev
   // caller selects the first (R1a) or all of them (R1b).
   const crossed: UnitState[] = [];
   for (const step of path) {
-    const enemy = draft.units.find((u) => u.alive && u.owner !== unit.owner && vecEq(u.pos, step));
-    if (enemy !== undefined) crossed.push(enemy);
+    // Every UNIT on the path, ally or enemy (FF1-charge): a charge is a directly
+    // aimed attack, so it hits whoever is standing in it. The caller's
+    // `chargeHits` then takes the first or all of them.
+    const hit = draft.units.find((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, step));
+    if (hit !== undefined) crossed.push(hit);
   }
 
   // Move square-by-square to the rest square, triggering traps on each entry.

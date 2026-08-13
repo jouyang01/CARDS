@@ -272,3 +272,55 @@ describe('MV4: diagonal charge paths', () => {
     expect(unit(state, 'e').hp).toBe(100); // never struck
   });
 });
+
+describe('FF1-charge: a charge strikes the first UNIT crossed, ally or enemy', () => {
+  it('ramming through an ally damages the ally (it is in the way)', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const ally = makeUnit('ally', 0, { x: 2, y: 0 }); // same team, standing in the lane
+    const enemy = makeUnit('e', 1, { x: 3, y: 0 }); // further along
+    const { state } = run(
+      makeState([u, ally, enemy]),
+      [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }] } }],
+      [],
+    );
+    expect(unit(state, 'ally').hp).toBe(85); // the FIRST unit crossed takes it, teammate or not
+    expect(unit(state, 'e').hp).toBe(100); // "first", so the enemy behind is untouched
+  });
+
+  it('a charge that hits only allies grants no energy — same as hitting nobody', () => {
+    const line = () => [makeUnit('u', 0, { x: 0, y: 0 }), makeUnit('ally', 0, { x: 2, y: 0 }), makeUnit('e', 1, { x: 8, y: 8 })];
+    const hitAlly = run(makeState(line()), [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }], []);
+    expect(unit(hitAlly.state, 'ally').hp).toBe(85); // the ally really was struck
+
+    // Control: same charge down an empty lane. Energy must match exactly.
+    const whiff = run(makeState(line()), [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }] } }], []);
+    expect(unit(hitAlly.state, 'u').energy).toBe(unit(whiff.state, 'u').energy);
+    expect(unit(hitAlly.state, 'u').energy).toBe(5); // passive only
+  });
+
+  it('chargeHits "all" sweeps allies and enemies alike, energy once for the enemy', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const ally = makeUnit('ally', 0, { x: 2, y: 0 });
+    const enemy = makeUnit('e', 1, { x: 3, y: 0 });
+    const { state } = run(
+      makeState([u, ally, enemy]),
+      [{ unitId: 'u', ability: { abilityId: 'sweep', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }] } }],
+      [],
+    );
+    expect(unit(state, 'ally').hp).toBe(85);
+    expect(unit(state, 'e').hp).toBe(85);
+    expect(unit(state, 'u').energy).toBe(13); // 8 on-hit once (an enemy was among them) + 5 passive
+  });
+
+  it('a friendly charge kill scores for nobody', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const ally = makeUnit('ally', 0, { x: 2, y: 0 }, { hp: 5 }); // dies to the 15
+    const { state } = run(
+      makeState([u, ally, makeUnit('e', 1, { x: 8, y: 8 })]),
+      [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }],
+      [],
+    );
+    expect(unit(state, 'ally').alive).toBe(false);
+    expect(state.kills).toEqual([0, 0]);
+  });
+});
