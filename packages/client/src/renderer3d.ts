@@ -74,6 +74,15 @@ const AUTO_ZOOM_FLOOR = 0.85;
 /** Alpha applied to everything outside a spotlight. */
 const DIM_ALPHA = 0.22;
 
+/**
+ * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
+ * covered tile always reads on top of the envelope that contains it.
+ */
+export type HighlightLayer = 'range' | 'reach' | 'aim' | 'select';
+
+/** Height above the ground plane per layer, so they never z-fight. */
+const LAYER_LIFT: Record<HighlightLayer, number> = { range: 0.006, reach: 0.010, aim: 0.016, select: 0.022 };
+
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
   unitId: string;
@@ -90,8 +99,13 @@ export interface RenderUnit {
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
   show(units: readonly RenderUnit[], decoys?: readonly Vec2[]): void;
-  /** Highlight squares (previews, reachability, ability areas). */
-  highlight(layer: 'reach' | 'aim' | 'select', squares: readonly Vec2[], color: number, opacity?: number): void;
+  /**
+   * Highlight squares. Layers stack bottom-up in the order listed here:
+   * `range` is the hover envelope (UI1 — where an ability *could* go), `reach`
+   * the move envelope, `aim` the tiles an aim actually covers, `select` the
+   * current unit and impact flashes.
+   */
+  highlight(layer: HighlightLayer, squares: readonly Vec2[], color: number, opacity?: number): void;
   /** The board square under a client-space point, via a ray/plane intersection. */
   squareFromPoint(clientX: number, clientY: number): Vec2 | undefined;
   /** Switch projection at runtime — the whole reason for an orthographic camera. */
@@ -506,7 +520,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           new MeshLambertMaterial({ color, transparent: true, opacity }),
         );
         tile.rotation.x = -Math.PI / 2;
-        tile.position.copy(toWorld(map, p)).setY(0.01 + (layer === 'aim' ? 0.01 : 0));
+        tile.position.copy(toWorld(map, p)).setY(LAYER_LIFT[layer]);
         g.add(tile);
       }
     },

@@ -19,6 +19,7 @@ import {
   isAimStep,
   movementBudget,
   reachableSquares,
+  reconstructPath,
   validateMovePath,
   vectorToStep,
   type AbilityDef,
@@ -163,6 +164,46 @@ export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef
   return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
 }
 
+/**
+ * The **effective-range envelope**: every square this ability could be aimed at
+ * or reach, before you have aimed it (UI1).
+ *
+ * This is a different question from `abilityPreview`, which answers "what does
+ * *this* aim cover". A player deciding whether an ability is worth selecting
+ * needs the first question answered on hover — "can I even reach them?" — and
+ * the shape's footprint tells them nothing about that.
+ *
+ * The rules are the engine's own, not a client approximation:
+ * - `path` (dashes/charges) — `range` is a **movement-cost budget** (MET1), so
+ *   the envelope is `reachableSquares`, walls and units accounted for.
+ * - everything else — `range` is a Manhattan radius, so the envelope is the
+ *   diamond `aimInRange` accepts. Wall squares stay in: the engine lets you aim
+ *   at one (a circle centred on a wall still catches its neighbours), and an
+ *   envelope that quietly disagreed with legality would be a lie.
+ * - `self` — the caster's own square, which is exactly where it lands.
+ */
+export function rangeEnvelope(map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef): Vec2[] {
+  if (ability.shape === 'self') return [{ ...unit.pos }];
+  if (ability.shape === 'path') {
+    const board = buildBoard(map);
+    return reachableSquares(board, state, unit, ability.range).map((s) => ({ ...s.pos }));
+  }
+  const out: Vec2[] = [];
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      const p = { x, y };
+      if (aimInRange(unit.pos, p, ability.range)) out.push(p);
+    }
+  }
+  return out;
+}
+
+/** The move/sprint equivalent of `rangeEnvelope` — where this unit could go. */
+export function moveEnvelope(map: MapDef, state: GameState, unit: UnitState, sprint: boolean): Vec2[] {
+  const { stops, through } = movePreview(map, state, unit, sprint);
+  return [...stops, ...through];
+}
+
 export interface MovePreview {
   /** Legal destinations (BFS squares the unit may stop on). */
   stops: Vec2[];
@@ -183,6 +224,46 @@ export function movePreview(map: MapDef, state: GameState, unit: UnitState, spri
   const through: Vec2[] = [];
   for (const s of squares) (s.canStop ? stops : through).push(s.pos);
   return { stops, through };
+}
+
+/** A legal path from `unit` to `target` within `budget` movement cost, or []. */
+export function pathTo(map: MapDef, state: GameState, unit: UnitState, target: Vec2, budget: number): Vec2[] {
+  const board = buildBoard(map);
+  return reconstructPath(reachableSquares(board, state, unit, budget), unit.pos, target) ?? [];
+}
+
+/**
+ * Resolve "the player pointed at this square" into the aim an order carries —
+ * the single place that decision is made, so hover-preview and click-to-commit
+ * can never disagree about what a square means for a given shape (UI1).
+ *
+ * `line`/`cone` become a quantized direction (AIM2) with no target square;
+ * `path` becomes a walked route; everything else is just the square.
+ */
+export function aimFor(
+  map: MapDef,
+  state: GameState,
+  unit: UnitState,
+  ability: AbilityDef,
+  target: Vec2,
+): { aim: Vec2[]; aimStep?: number } {
+  switch (ability.shape) {
+    case 'self':
+      return { aim: [{ ...unit.pos }] };
+    case 'line':
+    case 'cone':
+      return { aim: [], aimStep: dragToAimStep(unit.pos, target) };
+    case 'path':
+      return { aim: pathTo(map, state, unit, target, ability.range) };
+    case 'circle':
+    case 'square':
+      return { aim: [{ ...target }] };
+  }
+}
+
+/** Does this draft carry an actual order, or is the character holding? */
+export function draftHasOrder(draft: OrderDraft): boolean {
+  return draft.abilityId !== undefined || draft.sprint || draft.movePath.length > 0;
 }
 
 /** Is a drawn move path legal right now (delegates to the engine)? */

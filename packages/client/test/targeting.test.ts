@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { buildBoard, createMatch, expandShape, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
+import { aimInRange, buildBoard, createMatch, expandShape, reachableSquares, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
 import {
   abilityOptions,
   abilityPreview,
   abilityTooltip,
+  aimFor,
   dragToAimStep,
+  draftHasOrder,
   isRotatable,
   effectLabel,
   emptyDraft,
+  moveEnvelope,
   movePreview,
   nextDraft,
   pathValid,
+  rangeEnvelope,
   sprintAllowed,
   toUnitOrders,
   toUnitOrdersFor,
@@ -298,5 +302,120 @@ describe('BRUSH1: the client offers brush squares as move and dash destinations'
     const u = s.units.find((x) => x.characterId === 'vex')!;
     const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!; // path dash
     expect(abilityPreview(BRUSHY, u, roll, [{ x: 2, y: 7 }]).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * UI1 — the effective-range **envelope** and the single aim resolver.
+ *
+ * The envelope answers a question the footprint cannot: "can I even reach
+ * them?". A player asks that *before* selecting an ability, so it has to be
+ * derivable from the ability alone, with no aim yet chosen.
+ */
+describe('UI1: rangeEnvelope is where an ability COULD go', () => {
+  it('a circle/square envelope is the engine’s own Manhattan diamond', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!; // circle range 6
+    const env = rangeEnvelope(OPEN, s, u, grenade);
+    // Every square in the envelope is legal to aim at, and every legal square is
+    // in the envelope — the two must agree or the preview is lying.
+    for (const p of env) expect(aimInRange(u.pos, p, grenade.range), `${p.x},${p.y}`).toBe(true);
+    let legal = 0;
+    for (let y = 0; y < OPEN.height; y++) {
+      for (let x = 0; x < OPEN.width; x++) if (aimInRange(u.pos, { x, y }, grenade.range)) legal++;
+    }
+    expect(env).toHaveLength(legal);
+  });
+
+  it('is wider than the tiles the ability actually covers — that is the point', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!; // line, range 8
+    const env = rangeEnvelope(OPEN, s, u, rail);
+    const covered = abilityPreview(OPEN, u, rail, [{ x: 14, y: 7 }]);
+    expect(env.length).toBeGreaterThan(covered.length);
+  });
+
+  it('a PATH ability measures its range as a movement budget, not a diamond', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!; // path, dash
+    const env = rangeEnvelope(OPEN, s, u, roll);
+    const reach = reachableSquares(buildBoard(OPEN), s, u, roll.range).map((r) => r.pos);
+    expect(env).toEqual(reach);
+    // A dash may not walk through a wall, so its envelope is not a plain diamond.
+    for (const p of env) expect(Math.abs(p.x - u.pos.x) + Math.abs(p.y - u.pos.y)).toBeLessThanOrEqual(roll.range);
+  });
+
+  it('a SELF ability’s envelope is the caster’s own square, which is where it lands', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const selfish = { ...VEX.abilities[0]!, shape: 'self' as const, range: 0 };
+    expect(rangeEnvelope(OPEN, s, u, selfish)).toEqual([{ x: u.pos.x, y: u.pos.y }]);
+  });
+
+  it('the move envelope is exactly the move preview’s stops plus walk-throughs', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const { stops, through } = movePreview(OPEN, s, u, false);
+    expect(moveEnvelope(OPEN, s, u, false)).toEqual([...stops, ...through]);
+    // Sprinting reaches strictly further.
+    expect(moveEnvelope(OPEN, s, u, true).length).toBeGreaterThan(moveEnvelope(OPEN, s, u, false).length);
+  });
+});
+
+describe('UI1: aimFor is the one place a pointed-at square becomes an aim', () => {
+  const s = state();
+  const u = vexUnit(s);
+
+  it('a line/cone becomes a quantized DIRECTION with no target square', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const got = aimFor(OPEN, s, u, rail, { x: 9, y: 7 });
+    expect(got.aim).toEqual([]);
+    expect(got.aimStep).toBe(vectorToStep(9 - u.pos.x, 7 - u.pos.y));
+  });
+
+  it('a circle becomes that square, and carries no direction', () => {
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    expect(aimFor(OPEN, s, u, grenade, { x: 4, y: 7 })).toEqual({ aim: [{ x: 4, y: 7 }] });
+  });
+
+  it('a path becomes a walked route ending on the pointed-at square', () => {
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!;
+    const target = { x: u.pos.x + 2, y: u.pos.y };
+    const got = aimFor(OPEN, s, u, roll, target);
+    expect(got.aim.length).toBeGreaterThan(0);
+    expect(got.aim[got.aim.length - 1]).toEqual(target);
+  });
+
+  it('a self ability ignores the pointer and aims at the caster', () => {
+    const selfish = { ...VEX.abilities[0]!, shape: 'self' as const, range: 0 };
+    expect(aimFor(OPEN, s, u, selfish, { x: 12, y: 2 })).toEqual({ aim: [{ x: u.pos.x, y: u.pos.y }] });
+  });
+
+  it('hover and click agree by construction: the same square gives the same aim', () => {
+    // The commit/preview split (UI1) is only safe because both call this.
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const target = { x: 5, y: 11 };
+    expect(aimFor(OPEN, s, u, rail, target)).toEqual(aimFor(OPEN, s, u, rail, target));
+    const previewed = aimFor(OPEN, s, u, rail, target);
+    expect(abilityPreview(OPEN, u, rail, previewed.aim, previewed.aimStep))
+      .toEqual(expandShape(buildBoard(OPEN), rail, u.pos, previewed.aim, previewed.aimStep));
+  });
+
+  it('an unreachable path target yields an empty aim rather than an illegal one', () => {
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!;
+    expect(aimFor(OPEN, s, u, roll, { x: 14, y: 14 }).aim).toEqual([]);
+  });
+});
+
+describe('UI1: draftHasOrder marks a character as having committed something', () => {
+  it('is false for a blank draft and true once anything is chosen', () => {
+    const blank = emptyDraft('u');
+    expect(draftHasOrder(blank)).toBe(false);
+    expect(draftHasOrder({ ...blank, abilityId: 'rail_shot' })).toBe(true);
+    expect(draftHasOrder({ ...blank, sprint: true })).toBe(true);
+    expect(draftHasOrder({ ...blank, movePath: [{ x: 1, y: 1 }] })).toBe(true);
   });
 });

@@ -12,10 +12,7 @@
 import {
   createMatch,
   movementBudget,
-  reachableSquares,
-  reconstructPath,
   resolveTurn,
-  buildBoard,
   type AbilityDef,
   type CharacterDef,
   type FormatId,
@@ -35,12 +32,14 @@ import {
   abilityOptions,
   abilityPreview,
   abilityTooltip,
-  dragToAimStep,
+  aimFor,
   draftAbility,
+  draftHasOrder,
   emptyDraft,
-  isRotatable,
-  movePreview,
+  moveEnvelope,
   nextDraft,
+  pathTo,
+  rangeEnvelope,
   toUnitOrders,
   type OrderDraft,
 } from './targeting.js';
@@ -53,18 +52,35 @@ export interface HotSeatUI {
   controls: HTMLElement;
 }
 
-interface Step {
-  seat: Seat;
-  unit: UnitState;
-}
-
+/**
+ * What a board click will do. `idle` means the click does nothing — an ability
+ * or Draw-move must be chosen first, which is the "click the skill to set the
+ * mode" half of the owner's note (UI1).
+ */
 type Mode = 'idle' | 'aim' | 'move';
+
+/**
+ * Purely presentational pointer state (UI1). **Nothing here is ever written into
+ * a draft.** Hover shows you what an action *would* do; only a click commits it.
+ * Keeping the two apart is what lets the range envelope, the live cone and the
+ * committed order all render at once without one overwriting another.
+ */
+interface Hover {
+  /** An ability control is under the pointer — paint its range envelope. */
+  abilityId?: string;
+  /** A move control is under the pointer — paint where the unit could walk. */
+  move?: 'move' | 'sprint';
+  /** The board square under the pointer, while a mode is armed. */
+  square?: Vec2;
+}
 
 const PALETTE = {
   open: 0x20242f, wall: 0x4a5065, cover: 0x6b5b3e, brush: 0x2e4632,
   team0: 0x4f8cff, team1: 0xff6b5e, background: 0x12141a,
 };
 const REACH = 0x4f8cff;
+/** The hover range envelope (UI1) — dimmer than anything committed. */
+const RANGE = 0x8fb6ff;
 const AIM = 0xff9a3e;
 const SELECT = 0xf0f0f0;
 const IMPACT = 0xffd166;
@@ -91,10 +107,17 @@ export function startHotSeat(
   let state = createMatch(map, format, teams);
   const seats = deriveSeats(state, playersPerTeam);
 
-  let steps: Step[] = [];
-  let stepIdx = 0;
+  // UI1's Lock-In ruling: a seat's characters are all orderable at once and the
+  // player switches between them freely; **Lock In locks the selected character
+  // only, and committing an action never ends the turn.** The old model walked
+  // one character at a time and made "lock" mean "next", which is why choosing
+  // an action felt like spending your turn.
+  let seatIdx = 0;
+  let selectedUnitId: string | undefined;
+  let locked = new Set<string>();
   let drafts = new Map<string, OrderDraft>();
   let mode: Mode = 'idle';
+  let hover: Hover = {};
   let projection: ProjectionName = 'isometric';
 
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
@@ -139,7 +162,20 @@ export function startHotSeat(
 
   const characterFor = (u: UnitState): CharacterDef => roster[u.characterId]!;
   const unitById = (uid: string) => state.units.find((u) => u.unitId === uid);
-  const currentStep = () => steps[stepIdx];
+  const currentSeat = (): Seat | undefined => seats[seatIdx];
+  /** The living characters the seat on the clock controls, in seat order. */
+  const seatRoster = (): UnitState[] =>
+    (currentSeat()?.unitIds ?? []).map(unitById).filter((u): u is UnitState => u !== undefined && u.alive);
+  const selectedUnit = (): UnitState | undefined =>
+    selectedUnitId === undefined ? undefined : unitById(selectedUnitId);
+  const draftFor = (unit: UnitState): OrderDraft => {
+    const existing = drafts.get(unit.unitId);
+    if (existing !== undefined) return existing;
+    const fresh = emptyDraft(unit.unitId);
+    drafts.set(unit.unitId, fresh);
+    return fresh;
+  };
+  const clearHover = (): void => { hover = {}; };
 
   const stateUnits = (): RenderUnit[] => state.units.map((u) => ({
     unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
@@ -158,23 +194,39 @@ export function startHotSeat(
 
   function beginTurn(): void {
     drafts = new Map();
-    steps = seats.flatMap((seat) =>
-      seat.unitIds
-        .map((uid) => state.units.find((u) => u.unitId === uid))
-        .filter((u): u is UnitState => u !== undefined && u.alive)
-        .map((unit) => ({ seat, unit })),
-    );
-    stepIdx = 0;
-    if (steps.length === 0) return void resolveAndPlay(); // nobody alive to order
-    startStep();
+    locked = new Set();
+    seatIdx = 0;
+    openSeat();
   }
 
-  function startStep(): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    drafts.set(step.unit.unitId, emptyDraft(step.unit.unitId));
+  /** Put the next seat with living characters on the clock, or resolve. */
+  function openSeat(): void {
+    while (seatIdx < seats.length && seatRoster().length === 0) seatIdx += 1;
+    const roster = seatRoster();
+    if (roster.length === 0) return void resolveAndPlay(); // nobody left to order
+    for (const unit of roster) draftFor(unit); // every character is orderable at once
+    selectUnit(roster[0]!.unitId);
+  }
+
+  function selectUnit(unitId: string): void {
+    selectedUnitId = unitId;
     mode = 'idle';
+    clearHover();
     render();
+  }
+
+  /**
+   * Lock In (UI1): commit the *selected* character and hand the seat its next
+   * unlocked one. Only when every character the seat controls is locked does the
+   * clock move on — and only when every seat is done does the turn resolve.
+   */
+  function lockSelected(): void {
+    if (selectedUnitId === undefined) return;
+    locked.add(selectedUnitId);
+    const next = seatRoster().find((u) => !locked.has(u.unitId));
+    if (next !== undefined) return selectUnit(next.unitId);
+    seatIdx += 1;
+    openSeat();
   }
 
   // ── Rendering ──────────────────────────────────────────────────────────────
@@ -186,31 +238,49 @@ export function startHotSeat(
    * pointer and kill hover tooltips.
    */
   function renderPreviews(): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
-    const character = characterFor(step.unit);
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const draft = draftFor(unit);
+    const character = characterFor(unit);
 
     renderer.show(stateUnits(), state.decoys.map((d) => d.pos));
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
     renderer.focusOn([]); // ease back out to the whole board after a resolution
-    renderer.highlight('select', [step.unit.pos], SELECT, 0.5);
+    renderer.highlight('select', [unit.pos], SELECT, 0.5);
 
-    // Previews (MS1: a non-dash ability and a Move coexist). A dash *is* the
-    // movement, so it shows no separate move preview; the budget comes straight
-    // from the engine (4 with an ability, 8 sprinting, 0 rooted).
-    const ability = draftAbility(character, draft);
-    const isDash = ability?.phase === 'dash';
-    if (!isDash && (draft.sprint || mode === 'move' || draft.movePath.length > 0)) {
-      const { stops, through } = movePreview(map, state, step.unit, draft.sprint);
-      renderer.highlight('reach', [...stops, ...through], REACH, 0.22);
-    } else {
-      renderer.highlight('reach', [], REACH);
-    }
+    const chosen = draftAbility(character, draft);
+    const isDash = chosen?.phase === 'dash';
+
+    // ── Layer: the effective-range ENVELOPE (UI1) ────────────────────────────
+    // Where an action *could* go, which is a different question from what a
+    // given aim covers — and the one a player asks before selecting anything.
+    // Hovering a control answers it without touching the draft.
+    const hovered = hover.abilityId !== undefined ? findOnCharacter(character, hover.abilityId) : undefined;
+    const envelopeAbility = hovered ?? (hover.move === undefined ? chosen : undefined);
+    renderer.highlight(
+      'range',
+      envelopeAbility !== undefined ? rangeEnvelope(map, state, unit, envelopeAbility) : [],
+      RANGE,
+      0.16,
+    );
+
+    // ── Layer: the MOVE envelope ─────────────────────────────────────────────
+    // A dash *is* the movement, so it shows no separate move preview; the budget
+    // comes straight from the engine (4 with an ability, 8 sprinting, 0 rooted).
+    const sprinting = hover.move === 'sprint' || (hover.move === undefined && draft.sprint);
+    const showMove = hover.move !== undefined
+      || (!isDash && (draft.sprint || mode === 'move' || draft.movePath.length > 0));
+    renderer.highlight('reach', showMove ? moveEnvelope(map, state, unit, sprinting) : [], REACH, 0.22);
+
+    // ── Layer: the tiles an aim actually covers ──────────────────────────────
+    // While the pointer is over the board with a mode armed, this previews the
+    // HOVERED aim; otherwise it shows what has been committed. Same `aimFor`
+    // either way, so the preview and the commit can never disagree.
+    const preview = previewAim(unit, chosen, draft);
     renderer.highlight(
       'aim',
-      ability !== undefined ? abilityPreview(map, step.unit, ability, draft.aim, draft.aimStep) : [],
+      chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [],
       AIM,
       0.5,
     );
@@ -218,27 +288,53 @@ export function startHotSeat(
     // AIM1: the drawn move is a LINE from the unit through its path, with an
     // endpoint marker. Shaded reachability says where you *could* go; only a
     // line says which way you actually chose and in what order.
+    const line = previewMovePath(unit, draft);
     renderer.drawPath(
-      draft.movePath.length > 0 ? [step.unit.pos, ...draft.movePath] : [],
+      line.length > 0 ? [unit.pos, ...line] : [],
       draft.sprint ? SPRINT_LINE : MOVE_LINE,
       draft.sprint, // sprint is the dashed one, so the two read apart at a glance
     );
   }
 
-  function render(): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
-    const character = characterFor(step.unit);
-
-    renderPreviews();
-    renderControls(step, draft, character);
-    ui.status.textContent =
-      `Turn ${state.turn} · ${teamName(step.seat.team)} · seat ${step.seat.seatId} — order ${character.name}` +
-      ` (${stepIdx + 1}/${steps.length})`;
+  /** An ability (ult included) on a character by id — hover works off ids. */
+  function findOnCharacter(character: CharacterDef, abilityId: string): AbilityDef | undefined {
+    return [...character.abilities, character.ultimate].find((a) => a.id === abilityId);
   }
 
-  function renderControls(step: Step, draft: OrderDraft, character: CharacterDef): void {
+  /**
+   * The aim to PAINT right now: the hovered square's aim while the pointer is
+   * over the board in aim mode, else whatever the draft has committed. Hover
+   * never writes to the draft — that is the whole commit/preview split (UI1).
+   */
+  function previewAim(unit: UnitState, ability: AbilityDef | undefined, draft: OrderDraft): { aim: Vec2[]; aimStep?: number } {
+    if (ability !== undefined && mode === 'aim' && hover.square !== undefined) {
+      return aimFor(map, state, unit, ability, hover.square);
+    }
+    return { aim: draft.aim, aimStep: draft.aimStep };
+  }
+
+  /** Likewise for the drawn move: hovered route while drawing, else committed. */
+  function previewMovePath(unit: UnitState, draft: OrderDraft): Vec2[] {
+    if (mode === 'move' && hover.square !== undefined) {
+      return pathTo(map, state, unit, hover.square, movementBudget(unit, draft.sprint));
+    }
+    return draft.movePath;
+  }
+
+  function render(): void {
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    renderPreviews();
+    renderControls(unit, draftFor(unit), characterFor(unit));
+    const seat = currentSeat();
+    const roster = seatRoster();
+    const done = roster.filter((u) => locked.has(u.unitId)).length;
+    ui.status.textContent =
+      `Turn ${state.turn} · ${teamName(seat?.team ?? 0)} · seat ${seat?.seatId ?? '?'}` +
+      ` — ${characterFor(unit).name} (${done}/${roster.length} locked)`;
+  }
+
+  function renderControls(unit: UnitState, draft: OrderDraft, character: CharacterDef): void {
     ui.controls.replaceChildren();
     const row = (label: string) => {
       const d = document.createElement('div');
@@ -248,19 +344,37 @@ export function startHotSeat(
       return d;
     };
 
+    // The seat's characters. A player switches between them freely; Lock In
+    // locks only the selected one (UI1's ruling).
+    const roster = seatRoster();
+    if (roster.length > 1) {
+      const who = row('Character: ');
+      for (const u of roster) {
+        const b = document.createElement('button');
+        const isLocked = locked.has(u.unitId);
+        b.textContent = `${characterFor(u).name}${isLocked ? ' ✓' : draftHasOrder(draftFor(u)) ? ' •' : ''}`;
+        b.className = u.unitId === unit.unitId ? 'sel' : '';
+        b.disabled = isLocked;
+        b.onclick = () => selectUnit(u.unitId);
+        who.appendChild(b);
+      }
+    }
+
     const abilityRow = row('Ability: ');
-    for (const opt of abilityOptions(step.unit, character)) {
+    for (const opt of abilityOptions(unit, character)) {
       const b = document.createElement('button');
       b.textContent = `${opt.def.name}${opt.isUlt ? ' ★' : ''}` + (opt.available ? '' : ` (${opt.reason})`);
       b.disabled = !opt.available;
       b.className = draft.abilityId === opt.def.id ? 'sel' : '';
       b.onclick = () => selectAbility(opt.def.id);
-      b.addEventListener('mouseenter', () => showTip(b, opt.def)); // TT1
-      b.addEventListener('mouseleave', hideTip);
+      // UI1: hovering a control paints its effective range and nothing else —
+      // no draft is touched, and mouse-out puts the board back.
+      b.addEventListener('mouseenter', () => { showTip(b, opt.def); hover = { abilityId: opt.def.id }; renderPreviews(); });
+      b.addEventListener('mouseleave', () => { hideTip(); clearHover(); renderPreviews(); });
       abilityRow.appendChild(b);
     }
 
-    const budget = movementBudget(step.unit, draft.sprint);
+    const budget = movementBudget(unit, draft.sprint);
     const moveRow = row(`Move (${budget}): `);
     const moveBtn = document.createElement('button');
     moveBtn.textContent = 'Draw move';
@@ -271,9 +385,13 @@ export function startHotSeat(
     sprintBtn.className = draft.sprint ? 'sel' : '';
     sprintBtn.disabled = draft.abilityId !== undefined; // Sprint is move-only (GAME_SPEC §2)
     sprintBtn.onclick = () => selectMove(true);
+    for (const [btn, kind] of [[moveBtn, 'move'], [sprintBtn, 'sprint']] as const) {
+      btn.addEventListener('mouseenter', () => { hover = { move: kind }; renderPreviews(); });
+      btn.addEventListener('mouseleave', () => { clearHover(); renderPreviews(); });
+    }
     const holdBtn = document.createElement('button');
     holdBtn.textContent = 'Hold / clear';
-    holdBtn.onclick = () => { drafts.set(step.unit.unitId, emptyDraft(step.unit.unitId)); mode = 'idle'; render(); };
+    holdBtn.onclick = () => { drafts.set(unit.unitId, emptyDraft(unit.unitId)); mode = 'idle'; clearHover(); render(); };
     moveRow.append(moveBtn, sprintBtn, holdBtn);
 
     const viewRow = row('View: ');
@@ -305,13 +423,14 @@ export function startHotSeat(
 
     const lockRow = row('');
     const lock = document.createElement('button');
-    lock.textContent = stepIdx + 1 < steps.length ? 'Lock character ▸' : 'Lock & resolve turn ⚔';
+    const last = seatIdx === seats.length - 1 && roster.every((u) => u.unitId === unit.unitId || locked.has(u.unitId));
+    lock.textContent = last ? 'Lock In & resolve ⚔' : 'Lock In ▸';
     lock.className = 'primary';
-    lock.onclick = lockStep;
+    lock.onclick = lockSelected;
     lockRow.appendChild(lock);
 
     const bars = row('');
-    bars.textContent = `HP ${step.unit.hp}/${step.unit.maxHp} · Energy ${step.unit.energy}/100`;
+    bars.textContent = `HP ${unit.hp}/${unit.maxHp} · Energy ${unit.energy}/100`;
   }
 
   // ── Selection ────────────────────────────────────────────────────────────────
@@ -320,93 +439,83 @@ export function startHotSeat(
     draftAbility(character, draft)?.phase === 'dash';
 
   function selectAbility(abilityId: string): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    const character = characterFor(step.unit);
-    const chosen = draftAbility(character, { ...drafts.get(step.unit.unitId)!, abilityId });
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const character = characterFor(unit);
+    const prev = draftFor(unit);
+    const chosen = draftAbility(character, { ...prev, abilityId });
     const isDash = chosen?.phase === 'dash';
-    const draft = nextDraft(drafts.get(step.unit.unitId)!, { type: 'selectAbility', abilityId, isDash }, isDash);
-    if (chosen && chosen.shape === 'self') draft.aim = [{ ...step.unit.pos }];
+    // Choosing another ability before Lock In simply replaces the last one
+    // (UI1) — `nextDraft` owns the exclusivity rules (sprint, dash-owns-move).
+    const draft = nextDraft(prev, { type: 'selectAbility', abilityId, isDash }, isDash);
+    if (chosen && chosen.shape === 'self') draft.aim = [{ ...unit.pos }];
     draft.aimStep = undefined;
-    drafts.set(step.unit.unitId, draft);
+    drafts.set(unit.unitId, draft);
+    // A self-cast has nowhere to point, so it is committed by selecting it;
+    // everything else arms aim mode and waits for the confirming board click.
     mode = chosen && chosen.shape !== 'self' ? 'aim' : 'idle';
+    clearHover();
     render();
   }
 
   function selectMove(sprint: boolean): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    const prev = drafts.get(step.unit.unitId)!;
-    const wasDash = currentIsDash(prev, characterFor(step.unit));
-    drafts.set(step.unit.unitId, nextDraft(prev, { type: sprint ? 'selectSprint' : 'selectMove' }, wasDash));
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const prev = draftFor(unit);
+    const wasDash = currentIsDash(prev, characterFor(unit));
+    drafts.set(unit.unitId, nextDraft(prev, { type: sprint ? 'selectSprint' : 'selectMove' }, wasDash));
     mode = 'move';
+    clearHover();
     render();
   }
 
+  /**
+   * A board click CONFIRMS the armed action (UI1) — it does not end the turn.
+   * The committed aim stays painted until the player replaces it or locks in.
+   */
   function onBoardClick(evt: MouseEvent): void {
     const sq = renderer.squareFromPoint(evt.clientX, evt.clientY);
     if (!sq) return;
-    const step = currentStep();
-    if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const draft = draftFor(unit);
 
     if (mode === 'aim') {
-      const ability = draftAbility(characterFor(step.unit), draft);
-      if (!ability) return;
-      if (isRotatable(ability)) {
-        // AIM2: a line/cone is aimed by DIRECTION. The pointer becomes a
-        // quantized integer step — the only thing the engine ever sees — so the
-        // shape rotates freely instead of snapping to a compass point.
-        draft.aimStep = dragToAimStep(step.unit.pos, sq);
-        draft.aim = [];
-      } else {
-        draft.aim = ability.shape === 'path' ? reachPath(step.unit, sq, ability.range) : [sq];
-        draft.aimStep = undefined;
-      }
+      const ability = draftAbility(characterFor(unit), draft);
+      if (ability === undefined) return;
+      // Exactly the aim the hover was already painting — one resolver, so what
+      // you saw is what you committed.
+      const { aim, aimStep } = aimFor(map, state, unit, ability, sq);
+      draft.aim = aim;
+      draft.aimStep = aimStep;
       render();
     } else if (mode === 'move' || draft.sprint) {
-      draft.movePath = reachPath(step.unit, sq, movementBudget(step.unit, draft.sprint));
+      draft.movePath = pathTo(map, state, unit, sq, movementBudget(unit, draft.sprint));
       render();
     }
   }
 
   /**
-   * AIM2-UX: a line/cone aims by DIRECTION, so it follows the pointer instead of
-   * waiting for a click. The covered tiles update live from `expandShape` at the
-   * quantized step — the very tiles the engine will hit — and the click that
-   * follows just commits whatever is already on screen. Click-to-aim shapes
-   * (circle/square/path) are untouched: there is no direction to preview.
+   * Board hover (UI1): while a mode is armed, the pointer's square previews the
+   * action live — the cone/line rotates with the mouse (the old AIM2-UX), a
+   * circle follows it, a drawn route re-routes. **The draft is not touched**;
+   * `renderPreviews` reads `hover.square` and paints from that instead.
    */
   function onBoardHover(evt: MouseEvent): void {
-    if (mode !== 'aim') return;
-    const step = currentStep();
-    if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
-    const ability = draftAbility(characterFor(step.unit), draft);
-    if (ability === undefined || !isRotatable(ability)) return;
+    if (mode === 'idle') return;
+    if (selectedUnit() === undefined) return;
     const sq = renderer.squareFromPoint(evt.clientX, evt.clientY);
-    if (!sq) return;
-    const aimStep = dragToAimStep(step.unit.pos, sq);
-    if (aimStep === draft.aimStep) return; // same quantized direction: nothing moved
-    draft.aimStep = aimStep;
-    draft.aim = [];
+    if (sq === undefined) {
+      if (hover.square === undefined) return;
+      clearHover();
+      return renderPreviews();
+    }
+    if (hover.square !== undefined && hover.square.x === sq.x && hover.square.y === sq.y) return;
+    hover = { square: sq };
     renderPreviews();
   }
 
-  /** A legal path from the unit to `target` within `budget`, or []. */
-  function reachPath(unit: UnitState, target: Vec2, budget: number): Vec2[] {
-    const board = buildBoard(map);
-    const squares = reachableSquares(board, state, unit, budget);
-    return reconstructPath(squares, unit.pos, target) ?? [];
-  }
-
   // ── Turn resolution + playback ───────────────────────────────────────────────
-
-  function lockStep(): void {
-    stepIdx += 1;
-    if (stepIdx >= steps.length) void resolveAndPlay();
-    else startStep();
-  }
 
   async function resolveAndPlay(): Promise<void> {
     const ordersBySeat = new Map<string, UnitOrders[]>();
