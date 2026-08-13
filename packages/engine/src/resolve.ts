@@ -236,7 +236,11 @@ function killUnit(draft: GameState, victim: UnitState, killer: TeamId, events: T
   victim.hp = 0;
   victim.statuses = [];
   victim.respawnIn = RESPAWN_TURNS;
-  draft.kills[killer] += 1;
+  // A FRIENDLY kill scores for nobody (FF1): the ally dies and respawns as a
+  // pure tempo loss, but no tally moves — otherwise a team could farm its own
+  // respawning ally for the win. The death event still fires so the client
+  // shows it.
+  if (killer !== victim.owner) draft.kills[killer] += 1;
   events.push({ type: 'death', unitId: victim.unitId, killer });
 }
 
@@ -505,7 +509,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
 
     // Damage: a charge hits the enemies it crossed — the first only (R1a, default)
     // or every one (R1b, `chargeHits: "all"`, e.g. Tempest Run); a teleport-strike
-    // hits enemies adjacent to where it landed.
+    // hits everyone adjacent to where it landed, ALLIES INCLUDED (FF1: a directly
+    // aimed area does not filter by team). The charge's "first enemy crossed" is
+    // R1a's *selection* rule, not an area filter, and FF1 did not re-rule it, so
+    // a charge still picks its victims from enemies only — flagged for the
+    // Analyzer (DECISIONS 2026-08-21).
     const dmg = a.def.effects.find((e) => e.kind === 'damage');
     let hitEnemy = false;
     if (dmg !== undefined) {
@@ -514,19 +522,18 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
           ? a.def.chargeHits === 'all'
             ? crossed
             : crossed.slice(0, 1)
-          // A teleport-strike hits every enemy CHEBYSHEV-adjacent to the landing
-          // (edge-cases "Walked dash vs teleport"). Deliberately left Chebyshev by
-          // MET1: that ruling named vision and movement as switching to Manhattan
-          // and did not name this one, and narrowing it to 4 neighbours would
-          // rebalance Wisp's ult. Flagged for the Analyzer (DECISIONS 2026-08-21).
-          : draft.units.filter((u) => u.owner !== plan.unit.owner && u.alive && chebyshev(plan.unit.pos, u.pos) === 1);
+          // Adjacency here stays CHEBYSHEV (edge-cases "Walked dash vs teleport").
+          // Deliberately left by MET1: that ruling named vision and movement and
+          // did not name this one, and narrowing it to the 4 orthogonal
+          // neighbours would rebalance Wisp's ult. Also flagged for the Analyzer.
+          : draft.units.filter((u) => u.alive && u.unitId !== plan.unit.unitId && chebyshev(plan.unit.pos, u.pos) === 1);
       const source = a.def.shape === 'path' ? origin : plan.unit.pos;
       for (const victim of victims) {
         const behindCover = isBehindCover(board, source, victim.pos, a.def.range);
         const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
         events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
         removeStatus(victim, 'stealth');
-        hitEnemy = true;
+        if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
         else collectDisplacement(pending, a.def.effects, victim, source, plan.unit.unitId);
       }
@@ -653,8 +660,10 @@ function runBlast(
     }
 
     // Gather against post-Dash positions so mutual damage is simultaneous.
-    // Every unit in the area is considered; allegiance decides which effects
-    // apply (no friendly fire): harmful → enemies, beneficial → own team.
+    // FRIENDLY FIRE IS ON (FF1): harmful effects apply to EVERY unit in the area,
+    // ally or enemy — stand a teammate in your own AoE and you hit them, riders
+    // included. Beneficial effects still only reach your own team: friendly fire
+    // means your attacks endanger allies, not that you heal enemies.
     const area = new Set(a.area.map(vecKey));
     let hitEnemy = false;
     for (const target of draft.units) {
@@ -662,8 +671,8 @@ function runBlast(
       const enemy = target.owner !== plan.unit.owner;
       for (const e of a.def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
-          if (!enemy) continue; // harmful effects never touch allies
-          hitEnemy = true;
+          // Energy stays enemy-only, so splashing an ally pays nothing.
+          if (enemy) hitEnemy = true;
           if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw: e.amount ?? 0, range: a.def.range });
           else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });
           else debuffs.push({ victim: target, effect: e }); // weaken/slow/root/reveal
