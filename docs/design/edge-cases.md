@@ -4,6 +4,15 @@ Part of the spec. Status: **RULED** (implement as stated) or **PROPOSED** (imple
 as stated, but flag in playtests) or **OPEN** (needs a ruling before implementing).
 The Analyzer grows this file every review; the Builder must not invent unlisted rulings.
 
+> **⚠ Pending merge — `docs/design/rulings-v1-blockers.md` (Designer, 2026-08-13).** The
+> seven items carried in BACKLOG's "Blocked — needs a Designer ruling" section (charge
+> combat + the amount-1 knockback case, decoy D1, duplicate picks, `combat_roll`,
+> cover-vs-Might, the Support kit, roster §9) are **now ruled** in that file, written as
+> blocks to be lifted into this one. Until the Analyzer folds them in, read the two files
+> together: where they overlap, **rulings-v1-blockers.md is newer and wins** — it
+> supersedes the interim "amount-1 charge knockback stays put" ruling below and closes the
+> OPEN decoy and duplicate-picks entries.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character

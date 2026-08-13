@@ -270,8 +270,23 @@ Fortress Protocol (prep, 50 shield + Unstoppable + Might, 2 turns).
 - **Anti-stack rule:** double-Support (Lumen + Thorn) is expected to be a stall
   comp; the 12-turn kill-leader limit is the systemic counter. Verify in playtest
   that turn-12 forces action rather than rewarding double-stall mirrors.
+  **Re-scoped 2026-08-13:** this was sized against the old 1v1 numbers. The default
+  format is now 2v2 at 4 kills / 16 turns (4v4: 5 / 20) — a longer clock, which is
+  friendlier to stall than what I sized against. See `rulings-v1-blockers.md` §R6:
+  the priority playtest is Lumen + Thorn versus double-Firepower at 2v2, and the
+  lever if it fails is the per-format turn limit, not the Support kits.
 
-## 9. ENGINE ASKs and proposed rulings (Builder: do not implement without these)
+## 9. ENGINE ASKs and proposed rulings — **ALL CLOSED 2026-08-13**
+
+> **Status: this section is history.** Every item below was resolved in
+> `docs/design/rulings-v1-blockers.md` §R7 — items 1 and 2 were **superseded** by what
+> the 2026-08-15 teams build actually shipped (effect polarity; energy-on-use for
+> beneficial abilities), items 3 and 4 are **confirmed** as shipped behavior, item 5 is
+> unchanged, and item 6 (decoy) is **ruled** in §R2 of that file. One real gap surfaced
+> in the reconciliation — `untargetable` was missing from the shipped polarity table and
+> is now ruled **beneficial**. The text is kept as written for provenance; read §R7 for
+> the current state. Kestrel's `tempest_run` also carries a `chargeHits: "all"` field
+> proposed in §R1b and not yet implemented — the engine ignores it until then.
 
 1. **`ENGINE ASK` — Effect target affinity.** When an ability's area contains both
    allies and enemies, effects apply by affinity: *beneficial* kinds (`heal,
