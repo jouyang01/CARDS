@@ -251,7 +251,7 @@ function triggerTrapsOnEntry(draft: GameState, unit: UnitState, events: TurnEven
     draft.traps = draft.traps.filter((t) => t.id !== trap.id); // consumed
     events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
     const res = applyDamage(unit, trap.damage);
-    events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed });
+    events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: trap.ownerUnitId, abilityId: trap.abilityId });
     removeStatus(unit, 'stealth'); // taking damage breaks Stealth
     for (const e of trap.onTrigger) {
       if (isStatusKind(e.kind)) {
@@ -459,6 +459,8 @@ function placeTraps(
     const trap: TrapState = {
       id: `trap-${owner.unitId}-t${draft.turn}-${i}`,
       owner: owner.owner,
+      ownerUnitId: owner.unitId,
+      abilityId: planned.def.id,
       pos: { x: pos.x, y: pos.y },
       damage: trapEffect.amount ?? 0,
       onTrigger,
@@ -511,7 +513,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       for (const victim of victims) {
         const behindCover = isBehindCover(board, source, victim.pos, a.def.range);
         const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
-        events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed });
+        events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
         removeStatus(victim, 'stealth');
         hitEnemy = true;
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
@@ -584,6 +586,8 @@ function teleport(draft: GameState, board: Board, unit: UnitState, dest: Vec2 | 
 interface Hit {
   attacker: UnitState;
   victim: UnitState;
+  /** The ability that caused it — carried onto the `damage` event (A0). */
+  abilityId: string;
   raw: number;
   range: number;
   /** Pre-computed damage, bypassing Might/Weaken and cover (delayed detonations). */
@@ -642,7 +646,7 @@ function runBlast(
         if (HARMFUL_KINDS.has(e.kind)) {
           if (!enemy) continue; // harmful effects never touch allies
           hitEnemy = true;
-          if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, raw: e.amount ?? 0, range: a.def.range });
+          if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw: e.amount ?? 0, range: a.def.range });
           else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });
           else debuffs.push({ victim: target, effect: e }); // weaken/slow/root/reveal
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
@@ -667,7 +671,7 @@ function runBlast(
     const final =
       hit.fixedDamage ?? computeDamage(hit.raw, hit.attacker, isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range));
     const res = applyDamage(hit.victim, final);
-    events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed });
+    events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: hit.attacker.unitId, abilityId: hit.abilityId });
     removeStatus(hit.victim, 'stealth'); // taking damage breaks Stealth
     if (!hit.delayed) dealtDamage.add(hit.attacker.unitId);
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
@@ -730,7 +734,7 @@ function detonateDelayedBlasts(
       if (enemy.owner === caster.owner || !enemy.alive || !area.has(vecKey(enemy.pos))) continue;
       hitEnemy = true;
       for (const e of def.effects) {
-        if (e.kind === 'damage') hits.push({ attacker: caster, victim: enemy, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
+        if (e.kind === 'damage') hits.push({ attacker: caster, victim: enemy, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
         else if (isStatusKind(e.kind)) debuffs.push({ victim: enemy, effect: e });
       }
     }
