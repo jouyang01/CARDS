@@ -283,7 +283,7 @@ export function startHotSeat(
 
   function renderView(view: ViewState): void {
     const units: RenderUnit[] = [...view.units.values()].map((v) => ({
-      owner: v.owner, pos: v.pos, hp: v.hp, maxHp: v.maxHp, energy: v.energy, alive: v.alive,
+      unitId: v.unitId, owner: v.owner, pos: v.pos, hp: v.hp, maxHp: v.maxHp, energy: v.energy, alive: v.alive,
       label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
     }));
     const svg = renderBoard(map, units);

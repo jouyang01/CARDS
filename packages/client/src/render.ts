@@ -38,6 +38,8 @@ export function shieldAmount(unit: UnitState): number {
 
 /** The minimum a unit needs to draw (team, position, bars) — from state or a view. */
 export interface RenderUnit {
+  /** Identity for keyed reconciliation (A1) — one persistent `<g>` per unit. */
+  unitId: string;
   owner: TeamId;
   pos: Vec2;
   hp: number;
@@ -49,7 +51,7 @@ export interface RenderUnit {
 }
 
 function toRenderUnit(u: UnitState): RenderUnit {
-  return { owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp, energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(), shield: shieldAmount(u) };
+  return { unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp, energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(), shield: shieldAmount(u) };
 }
 
 function paint(svg: SVGSVGElement, squares: readonly Vec2[], color: string, inset = 0): void {
@@ -79,38 +81,110 @@ function bar(svg: SVGSVGElement, x: number, y: number, w: number, h: number, fra
   if (filled > 0) svg.appendChild(el('rect', { x, y, width: filled, height: h, rx: 1, fill: color }));
 }
 
-function renderUnit(svg: SVGSVGElement, unit: RenderUnit): void {
-  const teamColor = cssVar(unit.owner === 0 ? '--team0' : '--team1');
-  const cxx = cx(unit.pos.x);
-  const cyy = cy(unit.pos.y);
+// ── Keyed unit nodes (A1) ───────────────────────────────────────────────────
+//
+// Each unit is ONE `<g data-unit-id>` positioned by `transform`, holding a fixed
+// child structure. Renders reconcile that node (update attributes) instead of
+// rebuilding it, so a node — and any animation running on it — survives a frame.
+// That persistence is the substrate A3's tweening needs; `replaceChildren` on a
+// freshly built SVG can never tween because no node outlives the frame.
+//
+// Children are drawn in LOCAL coordinates, origin = the cell's top-left corner,
+// so moving a unit is a transform change and nothing else.
 
-  svg.appendChild(el('circle', {
-    cx: cxx, cy: cyy, r: CELL / 3,
-    fill: unit.alive ? teamColor : 'none',
-    stroke: teamColor, 'stroke-width': 2, opacity: unit.alive ? 1 : 0.35,
+/** The `transform` that places a unit's group on its square. */
+export const unitTransform = (pos: Vec2): string => `translate(${PAD + pos.x * CELL}, ${PAD + pos.y * CELL})`;
+
+const BAR_W = CELL - 8;
+const BAR_X = 3;
+const HP_Y = -6;
+const SHIELD_Y = -10;
+const ENERGY_Y = CELL - 2;
+
+/** Build the fixed child structure once; `updateUnitNode` then only sets attributes. */
+function buildUnitNode(unitId: string): SVGGElement {
+  const g = el('g', { 'data-unit-id': unitId });
+  g.appendChild(el('circle', { class: 'body', cx: (CELL - 2) / 2, cy: (CELL - 2) / 2, r: CELL / 3, 'stroke-width': 2 }));
+  g.appendChild(el('text', {
+    class: 'label', x: (CELL - 2) / 2, y: (CELL - 2) / 2 + 4, 'text-anchor': 'middle',
+    'font-size': 11, 'font-family': 'system-ui, sans-serif',
   }));
-  svg.appendChild(el('text', {
-    x: cxx, y: cyy + 4, 'text-anchor': 'middle', 'font-size': 11, 'font-family': 'system-ui, sans-serif',
-    fill: cssVar('--bar-bg'), opacity: unit.alive ? 1 : 0.4,
-  })).textContent = unit.label;
-
-  if (!unit.alive) return;
-
-  const bw = CELL - 8;
-  const bx = PAD + unit.pos.x * CELL + 3;
-  const topY = PAD + unit.pos.y * CELL - 6;
-  bar(svg, bx, topY, bw, 3, unit.hp / unit.maxHp, cssVar('--hp'));
-  if ((unit.shield ?? 0) > 0) bar(svg, bx, topY - 4, bw, 3, (unit.shield ?? 0) / unit.maxHp, cssVar('--shield'));
-  bar(svg, bx, PAD + unit.pos.y * CELL + CELL - 2, bw, 3, unit.energy / ULT_COST, cssVar('--energy'));
+  // Bars: each is a background + a fill rect, always present so the structure is
+  // stable; an absent shield is expressed as zero width, never a removed node.
+  for (const [cls, y] of [['hp', HP_Y], ['shield', SHIELD_Y], ['energy', ENERGY_Y]] as const) {
+    const group = el('g', { class: `bar-${cls}` });
+    group.appendChild(el('rect', { class: 'bg', x: BAR_X, y, width: BAR_W, height: 3, rx: 1 }));
+    group.appendChild(el('rect', { class: 'fill', x: BAR_X, y, width: 0, height: 3, rx: 1 }));
+    g.appendChild(group);
+  }
+  return g;
 }
 
-/** Build a fresh SVG for `map` with the given units drawn on top of terrain. */
+/** Point an existing unit node at `unit`'s current values. No nodes are replaced. */
+function updateUnitNode(g: SVGGElement, unit: RenderUnit): void {
+  const teamColor = cssVar(unit.owner === 0 ? '--team0' : '--team1');
+  g.setAttribute('transform', unitTransform(unit.pos));
+
+  const body = g.querySelector('.body')!;
+  body.setAttribute('fill', unit.alive ? teamColor : 'none');
+  body.setAttribute('stroke', teamColor);
+  body.setAttribute('opacity', String(unit.alive ? 1 : 0.35));
+
+  const label = g.querySelector('.label')!;
+  label.setAttribute('fill', cssVar('--bar-bg'));
+  label.setAttribute('opacity', String(unit.alive ? 1 : 0.4));
+  label.textContent = unit.label;
+
+  // Dead units show no bars (matching the pre-A1 early return).
+  const frac = (n: number) => Math.max(0, Math.min(1, n));
+  const setBar = (cls: string, value: number, color: string, visible: boolean): void => {
+    const group = g.querySelector(`.bar-${cls}`)!;
+    group.setAttribute('opacity', visible ? '1' : '0');
+    group.querySelector('.bg')!.setAttribute('fill', cssVar('--bar-bg'));
+    const fill = group.querySelector('.fill')!;
+    fill.setAttribute('width', String(frac(value) * BAR_W));
+    fill.setAttribute('fill', color);
+  };
+  setBar('hp', unit.hp / unit.maxHp, cssVar('--hp'), unit.alive);
+  setBar('shield', (unit.shield ?? 0) / unit.maxHp, cssVar('--shield'), unit.alive && (unit.shield ?? 0) > 0);
+  setBar('energy', unit.energy / ULT_COST, cssVar('--energy'), unit.alive);
+}
+
+/**
+ * Reconcile `units` into `layer`: reuse the `<g data-unit-id>` for a unit that is
+ * already there, create one for a newcomer, drop nodes for units that are gone.
+ * Returns the node per unitId so a caller (A3) can animate them.
+ */
+export function reconcileUnits(layer: SVGElement, units: readonly RenderUnit[]): Map<string, SVGGElement> {
+  const existing = new Map<string, SVGGElement>();
+  for (const node of layer.querySelectorAll('g[data-unit-id]')) {
+    existing.set(node.getAttribute('data-unit-id')!, node as SVGGElement);
+  }
+  const live = new Map<string, SVGGElement>();
+  for (const unit of units) {
+    let g = existing.get(unit.unitId);
+    if (g === undefined) {
+      g = buildUnitNode(unit.unitId);
+      layer.appendChild(g);
+    }
+    updateUnitNode(g, unit);
+    live.set(unit.unitId, g);
+  }
+  for (const [unitId, node] of existing) if (!live.has(unitId)) node.remove();
+  return live;
+}
+
+/**
+ * Build a fresh SVG for `map` with the given units drawn on top of terrain.
+ * Build-fresh semantics are kept for the Decision screen, but the units go
+ * through the same keyed path as playback, so both look identical (A1).
+ */
 export function renderBoard(map: MapDef, units: readonly RenderUnit[]): SVGSVGElement {
   const width = map.width * CELL + PAD * 2;
   const height = map.height * CELL + PAD * 2;
   const svg = el('svg', { width, height, viewBox: `0 0 ${width} ${height}` });
   renderTerrain(svg, map);
-  for (const u of units) renderUnit(svg, u);
+  reconcileUnits(svg, units);
   return svg;
 }
 
