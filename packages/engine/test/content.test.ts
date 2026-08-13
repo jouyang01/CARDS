@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateCharacter, validateMap } from '../src/validate.js';
-import type { CharacterDef, MapDef } from '../src/types.js';
+import { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from '../src/resolve.js';
+import { EFFECT_KINDS, type CharacterDef, type MapDef } from '../src/types.js';
 
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
@@ -86,5 +87,18 @@ describe('validators catch bad content', () => {
     const line = c.abilities.find((a) => a.shape === 'line')!;
     (line as { chargeHits?: string }).chargeHits = 'all';
     expect(validateCharacter(c).some((e) => e.includes('only valid on a "path"'))).toBe(true);
+  });
+});
+
+describe('effect polarity table is total (R7)', () => {
+  it('every EFFECT_KIND appears in exactly one polarity row', () => {
+    for (const kind of EFFECT_KINDS) {
+      const rows = [HARMFUL_KINDS, BENEFICIAL_KINDS, NEUTRAL_KINDS].filter((s) => s.has(kind)).length;
+      expect(rows, `${kind} must be in exactly one polarity row`).toBe(1);
+    }
+  });
+
+  it('the three rows cover EFFECT_KINDS with no extras', () => {
+    expect(HARMFUL_KINDS.size + BENEFICIAL_KINDS.size + NEUTRAL_KINDS.size).toBe(EFFECT_KINDS.length);
   });
 });

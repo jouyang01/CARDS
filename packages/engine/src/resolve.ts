@@ -106,7 +106,11 @@ interface UnitPlan {
  * own team. teleport/decoy/trap are neither — they are self/placement effects
  * handled by their own phase, not filtered by area allegiance.
  */
-const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+// Effect polarity (edge-cases: no-friendly-fire + R7). The three sets partition
+// EFFECT_KINDS exactly — every kind sits in one row, so the table is total (a
+// content guardrail test asserts it). Harmful → enemies only; beneficial → own
+// team only; neutral → self/placement, unfiltered by area allegiance.
+export const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'damage',
   'weaken',
   'slow',
@@ -115,7 +119,7 @@ const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'pull',
   'reveal',
 ]);
-const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'heal',
   'shield',
   'might',
@@ -123,15 +127,19 @@ const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'energized',
   'unstoppable',
   'stealth',
+  'untargetable', // R7 (2026-08-19): concealing/protecting a unit is friendly
+]);
+export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+  'teleport',
+  'decoy',
+  'trap',
 ]);
 
 /** Does using this ability grant its energy even without hitting an enemy? */
 function isSelfOrUtility(def: AbilityDef): boolean {
   return (
     def.shape === 'self' ||
-    def.effects.some(
-      (e) => e.kind === 'teleport' || e.kind === 'trap' || e.kind === 'decoy' || BENEFICIAL_KINDS.has(e.kind),
-    )
+    def.effects.some((e) => NEUTRAL_KINDS.has(e.kind) || BENEFICIAL_KINDS.has(e.kind))
   );
 }
 

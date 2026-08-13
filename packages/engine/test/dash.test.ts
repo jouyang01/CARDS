@@ -186,6 +186,23 @@ describe('teleport-strike ultimate', () => {
   });
 });
 
+describe('R4: shape decides wall-crossing — a "path" dash is walked, never teleported', () => {
+  it('a square teleport crosses a wall but a path dash carrying a teleport effect does not', () => {
+    // Wall at (1,0). A square teleport ignores it; a path dash (even with a
+    // teleport *effect*) must step onto (1,0), which is illegal, so it is dropped.
+    const wall = makeMap(['.#.......', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '.........']);
+    const far = () => makeUnit('e', 1, { x: 8, y: 8 });
+
+    const tp = run(makeState([makeUnit('u', 0, { x: 0, y: 0 }), far()]),
+      [{ unitId: 'u', ability: { abilityId: 'blink', target: [{ x: 2, y: 0 }] } }], [], wall);
+    expect(unit(tp.state, 'u').pos).toEqual({ x: 2, y: 0 }); // teleport crossed the wall
+
+    const walked = run(makeState([makeUnit('u', 0, { x: 0, y: 0 }), far()]),
+      [{ unitId: 'u', ability: { abilityId: 'roll', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }] } }], [], wall);
+    expect(unit(walked.state, 'u').pos).toEqual({ x: 0, y: 0 }); // path blocked by the wall → held, never crossed
+  });
+});
+
 describe('R1b: chargeHits "all" sweeps every crossed enemy', () => {
   it('an "all" charge damages two lined-up enemies; "first" only the first', () => {
     const line = () => [makeUnit('u', 0, { x: 0, y: 0 }), makeUnit('e1', 1, { x: 2, y: 0 }), makeUnit('e2', 1, { x: 3, y: 0 })];
