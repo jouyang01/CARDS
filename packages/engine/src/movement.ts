@@ -70,27 +70,16 @@ export function isPassable(board: Board, occupied: ReadonlySet<string>, p: Vec2)
 }
 
 /**
- * Living enemies of `mover` — they block both entry and pass-through
- * (edge-cases "Pass-through"). Excludes the mover and the dead.
+ * Squares held by any living unit other than `mover`. Under the Atlas Reactor
+ * movement model (MV2, edge-cases "AR movement model"), a unit — ally OR enemy —
+ * may be moved *through* but never *ended* on; only walls/cover/edge block a
+ * path outright. So this is the set of walk-through-not-endpoint squares.
  */
-export function enemyOccupied(state: GameState, mover: UnitState): Set<string> {
+export function occupiedByOthers(state: GameState, mover: UnitState): Set<string> {
   const out = new Set<string>();
   for (const u of state.units) {
     if (!u.alive || u.unitId === mover.unitId) continue;
-    if (u.owner !== mover.owner) out.add(vecKey(u.pos));
-  }
-  return out;
-}
-
-/**
- * Living allies of `mover` — a unit may move/dash *through* an ally but may not
- * *end* on it (edge-cases "Ally pass-through", 2v2 default). Excludes the mover.
- */
-export function allyOccupied(state: GameState, mover: UnitState): Set<string> {
-  const out = new Set<string>();
-  for (const u of state.units) {
-    if (!u.alive || u.unitId === mover.unitId) continue;
-    if (u.owner === mover.owner) out.add(vecKey(u.pos));
+    out.add(vecKey(u.pos));
   }
   return out;
 }
@@ -127,8 +116,7 @@ export function reachableSquares(
   const results: ReachableSquare[] = [];
   if (budget <= 0 || !inBounds(board, unit.pos)) return results;
 
-  const enemies = enemyOccupied(state, unit);
-  const allies = allyOccupied(state, unit);
+  const occupied = occupiedByOthers(state, unit);
   const seen = new Set<string>([vecKey(unit.pos)]);
   let frontier: ReachableSquare[] = [{ pos: unit.pos, cost: 0, canStop: true }];
 
@@ -140,11 +128,11 @@ export function reachableSquares(
         const p: Vec2 = { x: cur.pos.x + d.x, y: cur.pos.y + d.y };
         const k = vecKey(p);
         if (seen.has(k)) continue;
-        // Walls, cover, the map edge and enemies block traversal; allies do not.
-        if (blocksMovement(board, p) || enemies.has(k)) continue;
+        // Only walls, cover and the map edge block traversal (MV2) — units of
+        // either team are walked through but are not legal stopping points.
+        if (blocksMovement(board, p)) continue;
         seen.add(k);
-        // An ally square is walked through but is not a legal stopping point.
-        const square: ReachableSquare = { pos: p, cost: cur.cost + 1, from: cur.pos, canStop: !allies.has(k) };
+        const square: ReachableSquare = { pos: p, cost: cur.cost + 1, from: cur.pos, canStop: !occupied.has(k) };
         results.push(square);
         next.push(square);
       }
@@ -221,8 +209,7 @@ export function validateMovePath(
     return { valid: false, error: { code: 'exceedsBudget', budget, cost: path.length } };
   }
 
-  const enemies = enemyOccupied(state, unit);
-  const allies = allyOccupied(state, unit);
+  const occupied = occupiedByOthers(state, unit);
   const last = path.length - 1;
   let prev = unit.pos;
   for (const [i, p] of path.entries()) {
@@ -236,10 +223,9 @@ export function validateMovePath(
         error: { code: 'blockedTerrain', index: i, terrain: terrainAt(board, p) as TerrainKind },
       };
     }
-    const k = vecKey(p);
-    // Enemies block every square; an ally blocks only as a *destination*
-    // (edge-cases: allies may be passed through but never ended on).
-    if (enemies.has(k) || (allies.has(k) && i === last)) {
+    // Any unit — ally or enemy — may be passed through, but the path may not
+    // *end* on an occupied square (MV2, edge-cases "AR movement model").
+    if (occupied.has(vecKey(p)) && i === last) {
       return { valid: false, error: { code: 'occupied', index: i } };
     }
     prev = p;
