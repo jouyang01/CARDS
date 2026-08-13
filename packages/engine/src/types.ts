@@ -88,6 +88,13 @@ export interface AbilityDef {
   energyGain: number;
   /** Resolves this many turns later, at the originally aimed squares. */
   delayTurns?: number;
+  /**
+   * For a damaging `path` dash only: which crossed enemies its effects hit.
+   * `"first"` (default/absent) = the first enemy whose square it crosses (R1a);
+   * `"all"` = every enemy crossed (R1b, e.g. Kestrel's Tempest Run). Rejected on
+   * any non-`path` shape (validate.ts).
+   */
+  chargeHits?: 'first' | 'all';
   effects: AbilityEffect[];
   description: string;
 }

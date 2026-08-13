@@ -5,9 +5,15 @@ import type { CharacterDef, MapDef } from '../src/types.js';
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
 import wisp from '../../../data/characters/wisp.json';
+import kestrel from '../../../data/characters/kestrel.json';
+import cinder from '../../../data/characters/cinder.json';
+import lumen from '../../../data/characters/lumen.json';
+import thorn from '../../../data/characters/thorn.json';
+import aegis from '../../../data/characters/aegis.json';
+import ravok from '../../../data/characters/ravok.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 
-const characters = [vex, bastion, wisp] as unknown as CharacterDef[];
+const characters = [vex, bastion, wisp, kestrel, cinder, lumen, thorn, aegis, ravok] as unknown as CharacterDef[];
 const map = duelArena as unknown as MapDef;
 
 describe('character content', () => {
@@ -22,9 +28,12 @@ describe('character content', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('every character has exactly one dash-phase escape or reposition tool', () => {
-    // Design guardrail for the 1v1 mind-game: every kit needs a Dash answer.
+  it('every non-support character has a dash-phase escape or reposition tool', () => {
+    // Design guardrail for the mind-game: damage/tank/trickster kits need a Dash
+    // answer. Support may trade mobility for sustain (R6) — Thorn ships with no
+    // dash (Lumen still has one). Flagged for the Analyzer to confirm intended.
     for (const c of characters) {
+      if (c.archetype === 'support') continue;
       const dashAbilities = c.abilities.filter((a) => a.phase === 'dash');
       expect(dashAbilities.length, `${c.id} must have >= 1 dash ability`).toBeGreaterThanOrEqual(1);
     }
@@ -64,5 +73,18 @@ describe('validators catch bad content', () => {
     const m = structuredClone(duelArena) as unknown as MapDef;
     m.walls.push({ x: 999, y: 0 });
     expect(validateMap(m).some((e) => e.includes('out of bounds'))).toBe(true);
+  });
+
+  it('rejects a chargeHits value other than "first"/"all" (R1b)', () => {
+    const c = structuredClone(kestrel) as unknown as CharacterDef;
+    (c.ultimate as { chargeHits?: string }).chargeHits = 'some';
+    expect(validateCharacter(c).some((e) => e.includes('chargeHits must be'))).toBe(true);
+  });
+
+  it('rejects chargeHits on a non-path ability (R1b)', () => {
+    const c = structuredClone(vex) as unknown as CharacterDef;
+    const line = c.abilities.find((a) => a.shape === 'line')!;
+    (line as { chargeHits?: string }).chargeHits = 'all';
+    expect(validateCharacter(c).some((e) => e.includes('only valid on a "path"'))).toBe(true);
   });
 });

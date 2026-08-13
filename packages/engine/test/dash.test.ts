@@ -24,6 +24,7 @@ const char: CharacterDef = {
     ability({ id: 'blink', shape: 'square', range: 4, energyGain: 4, effects: [{ kind: 'teleport' }] }),
     ability({ id: 'charge', shape: 'path', range: 4, energyGain: 8, effects: [{ kind: 'damage', amount: 15 }, { kind: 'knockback', amount: 1 }] }),
     ability({ id: 'ram', shape: 'path', range: 3, energyGain: 8, effects: [{ kind: 'damage', amount: 15 }, { kind: 'knockback', amount: 2 }] }),
+    ability({ id: 'sweep', shape: 'path', range: 4, energyGain: 8, chargeHits: 'all', effects: [{ kind: 'damage', amount: 15 }] }),
     ability({ id: 'shoot', phase: 'blast', shape: 'line', range: 8, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }] }),
     ability({ id: 'roll', shape: 'path', range: 3, energyGain: 4, effects: [{ kind: 'teleport' }] }),
   ],
@@ -182,6 +183,32 @@ describe('teleport-strike ultimate', () => {
     expect(unit(state, 'e').hp).toBe(60); // struck for 40 from the adjacent landing
     expect(unit(state, 'u').statuses.find((s) => s.kind === 'untargetable')?.remaining).toBe(1); // dur 2, ticked to 1
     expect(unit(state, 'u').energy).toBe(5); // ult reset to 0, then +5 passive
+  });
+});
+
+describe('R1b: chargeHits "all" sweeps every crossed enemy', () => {
+  it('an "all" charge damages two lined-up enemies; "first" only the first', () => {
+    const line = () => [makeUnit('u', 0, { x: 0, y: 0 }), makeUnit('e1', 1, { x: 2, y: 0 }), makeUnit('e2', 1, { x: 3, y: 0 })];
+    const target = [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }];
+
+    const all = run(makeState(line()), [{ unitId: 'u', ability: { abilityId: 'sweep', target } }], []);
+    expect(unit(all.state, 'e1').hp).toBe(85); // both crossed enemies struck
+    expect(unit(all.state, 'e2').hp).toBe(85);
+    expect(unit(all.state, 'u').pos).toEqual({ x: 4, y: 0 }); // rests beyond both
+
+    const first = run(makeState(line()), [{ unitId: 'u', ability: { abilityId: 'charge', target } }], []);
+    expect(unit(first.state, 'e1').hp).toBe(85); // only the first crossed enemy
+    expect(unit(first.state, 'e2').hp).toBe(100);
+  });
+
+  it('energy is still granted once per use, not per enemy', () => {
+    const units = [makeUnit('u', 0, { x: 0, y: 0 }), makeUnit('e1', 1, { x: 2, y: 0 }), makeUnit('e2', 1, { x: 3, y: 0 })];
+    const { state } = run(
+      makeState(units),
+      [{ unitId: 'u', ability: { abilityId: 'sweep', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }] } }],
+      [],
+    );
+    expect(unit(state, 'u').energy).toBe(13); // 8 on-hit (once) + 5 passive — not 8 per enemy
   });
 });
 
