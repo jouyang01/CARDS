@@ -9,7 +9,7 @@ import type { GameState, Vec2 } from '../src/types.js';
 const OPEN = (n: number) => makeMap(Array.from({ length: n }, () => '.'.repeat(n)));
 const unit = (s: GameState, id: string) => s.units.find((u) => u.unitId === id)!;
 
-describe('ally pass-through (movement)', () => {
+describe('movement pass-through (MV2 — AR model)', () => {
   //  0123456
   // 1 mover u at 0; ally a at 1
   const board = () => buildBoard(makeMap(['#######', '.......', '#######']));
@@ -26,12 +26,22 @@ describe('ally pass-through (movement)', () => {
     expect(check).toEqual({ valid: false, error: { code: 'occupied', index: 0 } });
   });
 
-  it('an enemy still blocks pass-through entirely', () => {
+  it('an enemy is now walk-through too (MV2): a path may cross it, not end on it', () => {
     const enemy = makeUnit('e', 1, { x: 1, y: 1 });
-    const check = validateMovePath(board(), makeState([mover, enemy]), mover, [{ x: 1, y: 1 }, { x: 2, y: 1 }]);
-    expect(check).toEqual({ valid: false, error: { code: 'occupied', index: 0 } });
-    // and reachability cannot get past the enemy (here it boxes the mover in)
-    expect(reachableSquares(board(), makeState([mover, enemy]), mover, 4).filter((s) => s.canStop)).toEqual([]);
+    // Crossing the enemy is legal…
+    expect(validateMovePath(board(), makeState([mover, enemy]), mover, [{ x: 1, y: 1 }, { x: 2, y: 1 }])).toEqual({ valid: true, cost: 2 });
+    // …ending on it is not.
+    expect(validateMovePath(board(), makeState([mover, enemy]), mover, [{ x: 1, y: 1 }])).toEqual({ valid: false, error: { code: 'occupied', index: 0 } });
+    // reachability now gets past the enemy (that square just isn't a legal stop)
+    const out = reachableSquares(board(), makeState([mover, enemy]), mover, 4);
+    expect(out.filter((s) => s.canStop).map((s) => `${s.pos.x},${s.pos.y}`).sort()).toEqual(['2,1', '3,1', '4,1']);
+  });
+
+  it('only walls/cover/edge block a path outright', () => {
+    // mover boxed by walls above/below; a wall at the far end still blocks.
+    const walled = () => buildBoard(makeMap(['#######', '....#..', '#######']));
+    const m = makeUnit('u', 0, { x: 0, y: 1 });
+    expect(reachableSquares(walled(), makeState([m]), m, 8).filter((s) => s.canStop).map((s) => `${s.pos.x},${s.pos.y}`).sort()).toEqual(['1,1', '2,1', '3,1']);
   });
 });
 

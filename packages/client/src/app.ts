@@ -14,6 +14,7 @@ import {
   reachableSquares,
   reconstructPath,
   resolveTurn,
+  type AbilityDef,
   type CharacterDef,
   type FormatId,
   type GameState,
@@ -24,7 +25,7 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { cssVar, paintOverlay, renderBoard, renderState, squareFromPoint, type RenderUnit } from './render.js';
-import { abilityOptions, abilityPreview, draftAbility, emptyDraft, movePreview, toUnitOrders, type OrderDraft } from './targeting.js';
+import { abilityOptions, abilityPreview, abilityTooltip, draftAbility, emptyDraft, movePreview, toUnitOrders, type OrderDraft } from './targeting.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { applyEvent, initView, segmentByPhase, type ViewState } from './playback.js';
 
@@ -58,6 +59,20 @@ export function startHotSeat(
   let stepIdx = 0;
   let drafts = new Map<string, OrderDraft>();
   let mode: Mode = 'idle';
+
+  // Ability hover tooltip (TT1) — one reused element, positioned by the button.
+  const tooltip = document.createElement('div');
+  tooltip.className = 'tooltip';
+  tooltip.style.display = 'none';
+  document.body.appendChild(tooltip);
+  const showTip = (target: HTMLElement, def: AbilityDef): void => {
+    tooltip.textContent = abilityTooltip(def).join('\n');
+    const r = target.getBoundingClientRect();
+    tooltip.style.left = `${Math.round(r.left)}px`;
+    tooltip.style.top = `${Math.round(r.bottom + 6)}px`;
+    tooltip.style.display = 'block';
+  };
+  const hideTip = (): void => { tooltip.style.display = 'none'; };
 
   const characterFor = (u: UnitState): CharacterDef => roster[u.characterId]!;
   const unitById = (uid: string) => state.units.find((u) => u.unitId === uid);
@@ -133,6 +148,8 @@ export function startHotSeat(
       b.disabled = !opt.available;
       b.className = draft.abilityId === opt.def.id ? 'sel' : '';
       b.onclick = () => selectAbility(opt.def.id);
+      b.addEventListener('mouseenter', () => showTip(b, opt.def)); // TT1
+      b.addEventListener('mouseleave', hideTip);
       abilityRow.appendChild(b);
     }
 
@@ -257,7 +274,7 @@ export function startHotSeat(
   function renderView(view: ViewState): void {
     const units: RenderUnit[] = [...view.units.values()].map((v) => ({
       owner: v.owner, pos: v.pos, hp: v.hp, maxHp: v.maxHp, energy: v.energy, alive: v.alive,
-      label: (v.unitId[0] ?? '?').toUpperCase(),
+      label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
     }));
     ui.board.replaceChildren(renderBoard(map, units));
   }

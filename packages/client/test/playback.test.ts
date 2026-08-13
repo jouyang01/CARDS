@@ -11,10 +11,10 @@ const char: CharacterDef = {
   abilities: [
     ability({ id: 'shoot', shape: 'line', range: 8, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }] }),
     ability({ id: 'nova', shape: 'circle', range: 6, radius: 2, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }, { kind: 'heal', amount: 15 }] }),
-    ability({ id: 'a3', shape: 'self', range: 0, effects: [{ kind: 'might', duration: 1 }] }),
+    ability({ id: 'guard', phase: 'prep', shape: 'self', range: 0, effects: [{ kind: 'shield', amount: 30, duration: 2 }] }),
     ability({ id: 'a4', shape: 'self', range: 0, effects: [{ kind: 'might', duration: 1 }] }),
   ],
-  ultimate: ability({ id: 'ult', shape: 'self', range: 0, effects: [{ kind: 'shield', amount: 1, duration: 1 }] }),
+  ultimate: ability({ id: 'ult', shape: 'square', range: 8, effects: [{ kind: 'damage', amount: 10 }] }),
 };
 const roster: Roster = { 'test-char': char };
 
@@ -78,5 +78,33 @@ describe('a team AoE shows enemy damage and ally heal from one abilityFired', ()
     const after = blast.slice(fired);
     expect(after.some((e) => e.type === 'damage' && e.unitId === 'E')).toBe(true);
     expect(after.some((e) => e.type === 'heal' && e.unitId === 'A2')).toBe(true);
+  });
+});
+
+describe('S1: playback reconstructs shields and post-ult energy from the log', () => {
+  const shieldPool = (u: GameState['units'][number]) => u.statuses.filter((s) => s.kind === 'shield').reduce((n, s) => n + (s.amount ?? 0), 0);
+
+  it('tracks a shield pool applied in Prep and partially absorbed in Blast', () => {
+    const a = mkUnit('a', 0, 3, 5);
+    const e = mkUnit('e', 1, 3, 8);
+    const { state, events } = run(
+      mkState([a, e]),
+      [{ unitId: 'a', ability: { abilityId: 'guard', target: [] } }], // 30 shield (dur 2)
+      [{ unitId: 'e', ability: { abilityId: 'shoot', target: [{ x: 3, y: 0 }] } }], // 20 into a
+    );
+    const view = playEvents(mkState([a, e]), events);
+    expect(view.units.get('a')!.shield).toBe(10); // 30 applied − 20 absorbed
+    expect(view.units.get('a')!.shield).toBe(shieldPool(state.units.find((u) => u.unitId === 'a')!)); // matches engine pool
+    expect(view.units.get('a')!.hp).toBe(100); // damage fully soaked
+  });
+
+  it('applies energySpent so post-ultimate energy matches the engine', () => {
+    const a = mkUnit('a', 0, 3, 5, { energy: 100 });
+    const e = mkUnit('e', 1, 3, 6);
+    const { state, events } = run(mkState([a, e]), [{ unitId: 'a', ability: { abilityId: 'ult', target: [{ x: 3, y: 6 }] } }], []);
+    expect(events.some((ev) => ev.type === 'energySpent' && ev.unitId === 'a')).toBe(true);
+    const view = playEvents(mkState([a, e]), events);
+    expect(view.units.get('a')!.energy).toBe(state.units.find((u) => u.unitId === 'a')!.energy); // 100 spent → 0, +5 passive = 5
+    expect(view.units.get('a')!.energy).toBe(5);
   });
 });

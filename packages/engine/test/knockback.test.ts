@@ -89,8 +89,8 @@ describe('knockback', () => {
     expect(events.some((ev) => ev.type === 'displaced')).toBe(false);
   });
 
-  it('both units can be displaced in the same turn (simultaneous)', () => {
-    // Two chargers run at each other head-on; each knocks the other back.
+  it('two chargers pass through each other, both dealing their charge damage (MV1)', () => {
+    // Head-on charges no longer stop in front of one another — they cross.
     const u = makeUnit('u', 0, { x: 2, y: 4 });
     const e = makeUnit('e', 1, { x: 5, y: 4 });
     const { state } = run(
@@ -98,10 +98,9 @@ describe('knockback', () => {
       [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 3, y: 4 }, { x: 4, y: 4 }, { x: 5, y: 4 }] } }],
       [{ unitId: 'e', ability: { abilityId: 'charge', target: [{ x: 4, y: 4 }, { x: 3, y: 4 }, { x: 2, y: 4 }] } }],
     );
-    // Both take 15 charge damage and get shoved apart.
-    expect(unit(state, 'u').hp).toBe(85);
+    expect(unit(state, 'u').hp).toBe(85); // mutual 15 charge damage
     expect(unit(state, 'e').hp).toBe(85);
-    // Displaced apart: u pushed west of its charge end, e pushed east of its charge end.
-    expect(unit(state, 'u').pos.x).toBeLessThan(unit(state, 'e').pos.x);
+    expect(unit(state, 'u').alive && unit(state, 'e').alive).toBe(true);
+    expect(unit(state, 'u').pos.x).toBeGreaterThan(unit(state, 'e').pos.x); // they crossed
   });
 });

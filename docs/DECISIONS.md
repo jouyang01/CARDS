@@ -330,3 +330,56 @@ touched this session.
 - **Designer follow-ups still open** (unchanged): decoy (D1), `combat_roll`
   path-vs-teleport, cover-vs-Might, duplicate-pick rule, and the roster-v1 §9 ENGINE ASKs
   (effect target affinity; energy on ally-benefit) — do NOT implement in v1 without a ruling.
+
+## 2026-08-17 — Rendering schema + AR movement + tooltips (Builder, S1/MV1/MV2/TT1/C1)
+
+**(S1) Event schema completed for the HUD.** `statusApplied` gained an optional `amount`
+(the shield pool when `status==='shield'`); a new delta-based `energySpent` event fires
+when an ability removes energy (the ult reset). `playback.ts` tracks a shield pool
+(`statusApplied.amount` − `damage.absorbed`) and applies `energySpent` (`energy -= amount`).
+Note: playback folds *deltas* and does not tick status durations (no expiry event), so a
+duration-1 shield shows its full pool during that turn's playback; the next turn's
+`initView` reflects the ticked-off pool. That's correct for an animation view — flagged
+below in case an explicit expiry event is wanted.
+**(MV1) Charges pass through characters.** `walkCharge` passes through any unit and rests
+on the furthest free path square (occupied destination → last free square before it;
+teleport still fizzles). Damage target is unchanged (first enemy crossed or run into).
+Knockback is measured from the charge **origin** (not the post-pass-through position) so it
+still pushes along the charge — keeping combat semantics as today. **Side effect flagged
+for the Designer:** a damaging charge now overshoots its target, so its knockback can be
+blocked by the charger's own landing square (Ram Charge: Vex is struck but not displaced).
+This is the held ENGINE ASK (charge damage/knockback with pass-through: first/all/dest?).
+**(MV2) Movement follows the AR model.** `enemyOccupied`/`allyOccupied` → one
+`occupiedByOthers`; the planner (`reachableSquares`/`validateMovePath`) treats *every*
+occupied square as walk-through but not a legal endpoint; only walls/cover/edge block a
+path. `stepMovers` is unchanged (already team-agnostic; same-step contested + 2-cycle
+no-swap invariants hold). As before, planning over-promises vs. resolution when a *crossed*
+unit stays put — `stepMovers` halts a mover before a stationary occupant rather than
+co-occupying (deterministic). Kept PROPOSED in edge-cases pending AR-wiki verification
+(egress was blocked again this session).
+**(TT1)** Pure `abilityTooltip(def)`/`effectLabel` read straight off `AbilityDef`; the
+shell shows it on hover. **(C1)** Added a headless end-to-end hot-seat smoke test (no DOM):
+orders→merge→resolve→playback view equals the engine board. **Also:** updated `CLAUDE.md`'s
+`npm test` line to "engine + client test suites" (the Analyzer routed this one-liner to me).
+
+## Open Questions for the Analyzer — 2026-08-17
+
+- **MV1 charge combat (held ENGINE ASK → Designer).** Pass-through makes a damaging charge
+  overshoot; its knockback can then be blocked by the charger's own landing (Ram Charge no
+  longer displaces its target). Need the ruling: does a charge hit first/all/destination,
+  and how should knockback resolve when the charger ends past the target? See
+  `resolve.walkCharge`/`runDash`, `dash.test.ts`, `real-characters.test.ts` (Ram Charge test).
+- **MV2 AR-wiki verification still pending.** `atlas-reactor.fandom.com/wiki/Movement` was
+  egress-blocked again — confirm move-through timing / terrain / range details and then
+  promote the edge-cases ruling from PROPOSED to RULED (or correct it). Files: `movement.ts`,
+  `resolve.stepMovers`.
+- **Playback shield during-turn vs post-tick (S1).** The view shows a shield's full pool
+  during its turn (no status-expiry event in the log). Confirm that's acceptable for the
+  animation, or add a `statusExpired`/tick event if the HUD should match the post-tick pool
+  at end of turn. `types.ts` TurnEvent, `playback.ts`.
+- **Review-branch branch protection (relaying the Analyzer's flag 2).** If protection is now
+  enforced on `code-review-h3mwjs`, the Analyzer will switch to docs-only commits on a fresh
+  branch — no Builder action, noted here for the record.
+- **Carried Designer/blocked items unchanged:** decoy (D1), duplicate picks, `combat_roll`
+  path-vs-teleport, cover-vs-Might, Support kit, roster-v1 §9 ENGINE ASKs — do NOT build
+  without a ruling.

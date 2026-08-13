@@ -232,6 +232,22 @@ describe('energy and cooldowns', () => {
     expect(state.units.find((x) => x.unitId === 'u')!.energy).toBe(5); // reset to 0, then +5 passive
   });
 
+  it('S1: using the ultimate emits an energySpent event for the amount reset', () => {
+    const u = makeUnit('u', 0, { x: 3, y: 3 }, { energy: 100 });
+    const e = makeUnit('e', 1, { x: 3, y: 5 });
+    const { events } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'ultnuke', target: [{ x: 3, y: 5 }] } }], []);
+    expect(events.some((ev) => ev.type === 'energySpent' && ev.unitId === 'u' && ev.amount === 100)).toBe(true);
+  });
+
+  it('S1: a shield statusApplied carries the shield pool as amount', () => {
+    const u = makeUnit('u', 0, { x: 3, y: 3 });
+    const e = makeUnit('e', 1, { x: 7, y: 7 });
+    const { events } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'guard', target: [] } }], []);
+    const shieldEvt = events.find((ev) => ev.type === 'statusApplied' && ev.status === 'shield');
+    expect(shieldEvt).toBeDefined();
+    expect((shieldEvt as { amount?: number }).amount).toBe(20);
+  });
+
   it('the ultimate is rejected below 100 energy', () => {
     const u = makeUnit('u', 0, { x: 3, y: 3 }, { energy: 50 });
     const e = makeUnit('e', 1, { x: 3, y: 5 });

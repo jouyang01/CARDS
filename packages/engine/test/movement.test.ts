@@ -208,20 +208,16 @@ describe('units block each other', () => {
   const corridor = () => buildBoard(makeMap(['#######', '.......', '#######']));
   const mover = makeUnit('u', 0, { x: 0, y: 1 });
 
-  it('an enemy blocks entry and pass-through', () => {
-    const enemy = makeUnit('e', 1, { x: 2, y: 1 });
-    const out = reachableSquares(corridor(), makeState([mover, enemy]), mover, 4);
-    expect(keys(out)).toEqual(['1,1']);
-  });
-
-  it('an ally may be passed through but not stopped on (edge-cases: ally pass-through)', () => {
-    const ally = makeUnit('a', 0, { x: 2, y: 1 });
-    const out = reachableSquares(corridor(), makeState([mover, ally]), mover, 4);
-    // BFS reaches past the ally; the ally square itself is not a legal stop.
-    expect(keys(out)).toEqual(['1,1', '2,1', '3,1', '4,1']);
-    const stoppable = out.filter((s) => s.canStop).map((s) => `${s.pos.x},${s.pos.y}`).sort();
-    expect(stoppable).toEqual(['1,1', '3,1', '4,1']);
-    expect(out.find((s) => s.pos.x === 2 && s.pos.y === 1)!.canStop).toBe(false);
+  it('any unit — ally or enemy — may be passed through but not stopped on (MV2)', () => {
+    for (const owner of [0, 1] as const) {
+      const other = makeUnit('o', owner, { x: 2, y: 1 });
+      const out = reachableSquares(corridor(), makeState([mover, other]), mover, 4);
+      // BFS reaches past the unit; that square itself is not a legal stop.
+      expect(keys(out)).toEqual(['1,1', '2,1', '3,1', '4,1']);
+      const stoppable = out.filter((s) => s.canStop).map((s) => `${s.pos.x},${s.pos.y}`).sort();
+      expect(stoppable).toEqual(['1,1', '3,1', '4,1']);
+      expect(out.find((s) => s.pos.x === 2 && s.pos.y === 1)!.canStop).toBe(false);
+    }
   });
 
   it('a dead unit blocks nothing', () => {
@@ -374,7 +370,9 @@ describe('reachability and path validation agree', () => {
     const out = reachableSquares(board, state, unit, movementBudget(unit, true));
 
     expect(out.length).toBeGreaterThan(20);
-    for (const square of out) {
+    for (const square of out.filter((s) => s.canStop)) {
+      // A legal endpoint (canStop) must have a valid reconstructed path — which
+      // may pass *through* the enemy square (MV2), just not end on it.
       const path = reconstructPath(out, unit.pos, square.pos);
       expect(path, `no path to ${vecKey(square.pos)}`).not.toBeNull();
       expect(path).toHaveLength(square.cost);
