@@ -30,18 +30,18 @@
       "description": "Plants a hidden snare. Triggers on entry in any phase: 12 damage and Root for a turn. A rooted victim loses their Move — and stands in Barbed Sling range."
     },
     {
-      "id": "lashing_vine",
-      "name": "Lashing Vine",
-      "phase": "blast",
-      "shape": "line",
-      "range": 5,
+      "id": "bramble_stride",
+      "name": "Bramble Stride",
+      "phase": "dash",
+      "shape": "path",
+      "range": 3,
       "cooldown": 3,
-      "energyGain": 8,
+      "energyGain": 5,
       "effects": [
-        { "kind": "damage", "amount": 8 },
-        { "kind": "pull", "amount": 2 }
+        { "kind": "damage", "amount": 10 },
+        { "kind": "root", "duration": 1 }
       ],
-      "description": "A vine drags the first enemy in a line 2 squares toward Thorn, cancelling their Move. Low damage on purpose: its job is dragging enemies into Snare Blooms."
+      "description": "Thorn surges through the undergrowth up to 3 squares; the first unit crossed takes 10 damage and is Rooted for a turn. The escape that still leaves someone stuck to the floor."
     },
     {
       "id": "verdant_veil",
