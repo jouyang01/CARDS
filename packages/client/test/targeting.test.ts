@@ -85,6 +85,30 @@ describe('dash ability is the movement (no separate move path)', () => {
   });
 });
 
+describe('move-and-shoot: a non-dash ability and a Move coexist (MS1)', () => {
+  it('round-trips a draft carrying BOTH a non-dash ability and a move path', () => {
+    const draft = {
+      ...emptyDraft('vex-t0-0'),
+      abilityId: 'rail_shot', // blast line — not a dash
+      aim: [{ x: 14, y: 7 }],
+      movePath: [{ x: 2, y: 7 }, { x: 3, y: 7 }],
+    };
+    const order = toUnitOrders(VEX, draft);
+    expect(order.ability?.abilityId).toBe('rail_shot');
+    expect(order.movePath).toEqual([{ x: 2, y: 7 }, { x: 3, y: 7 }]); // move survives alongside the shot
+    expect(order.sprint).toBeUndefined(); // sprint stays dropped when an ability is in play
+  });
+
+  it('previews an ability-turn move at the 4-budget — smaller than the 8-sprint set', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const abilityTurn = movePreview(OPEN, s, u, false).stops; // sprint=false → 4-square budget
+    const sprintTurn = movePreview(OPEN, s, u, true).stops; // 8-square budget
+    expect(abilityTurn.length).toBeGreaterThan(0);
+    expect(abilityTurn.length).toBeLessThan(sprintTurn.length);
+  });
+});
+
 describe('ability availability from unit state', () => {
   it('flags cooldown and ult-energy gating', () => {
     const u = vexUnit();
