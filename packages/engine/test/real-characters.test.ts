@@ -22,9 +22,9 @@ const phaseOrder = (events: TurnEvent[]) => events.filter((e) => e.type === 'pha
 describe('loading real characters', () => {
   it('createInitialState places each character at its spawn with full HP', () => {
     const state = createInitialState(ARENA, VEX, BASTION);
-    expect(unit(state, 'vex-0').pos).toEqual({ x: 1, y: 7 });
+    expect(unit(state, 'vex-0').pos).toEqual({ x: 2, y: 6 });
     expect(unit(state, 'vex-0').hp).toBe(95);
-    expect(unit(state, 'bastion-0').pos).toEqual({ x: 13, y: 7 });
+    expect(unit(state, 'bastion-0').pos).toEqual({ x: 15, y: 6 });
     expect(unit(state, 'bastion-0').hp).toBe(130);
   });
 });

@@ -71,7 +71,7 @@ character carries exactly one theme name; no two characters share one.
 | **Anchor** (control) | Frontline | Shields, hooks, corners the enemy | Bastion |
 | **Berserker** (sustain brawler) | Frontline | Self-heals through aggression, AoE disruption | Ravok |
 | **Mender** (pure healer) | Support | Direct heals, big defensive ult, weaken poke | Lumen |
-| **Warden** (trap support) | Support | Rooting traps + a pull that drags enemies into them | Thorn |
+| **Warden** (trap support) | Support | Rooting traps, plus a dash that roots what it runs through | Thorn |
 | **Amplifier** (Firepower/Support hybrid) | Firepower-leaning | Buffs damage instead of healing it back | Cinder |
 | **Bodyguard** (Frontline/Support hybrid) | Frontline-leaning | Mid pool, shares shields, peels with slows | Aegis |
 
@@ -192,15 +192,25 @@ Fortress Protocol (prep, 50 shield + Unstoppable + Might, 2 turns).
 - **S1 — Snare Bloom** (prep square range 4, trap: 12 + Root 1 on trigger, cd 2,
   e5). Hidden, triggers on entry in any phase. A rooted victim loses their Move
   and stands in Barbed Sling range.
-- **S2 — Lashing Vine** (blast line 5, 8 + pull 2, cd 3, e8). Low damage on
-  purpose: its job is dragging enemies **into Snare Blooms** or out of position
-  in 2v2. Pull cancels the victim's Move (spec).
+- **S2 — Bramble Stride** (dash path 3, 10 + Root 1 to the first unit crossed,
+  cd 3, e5). *Replaced Lashing Vine 2026-08-13 (backlog Thorn-dash).* Thorn was
+  the only kit in the roster with no Dash-phase ability — a gap the edge-cases
+  ruling says to fix, not to exempt. The dash keeps the Warden identity by
+  landing control rather than displacement: the escape still leaves someone stuck
+  to the floor, in Barbed Sling range, exactly like a Snare Bloom does.
 - **S3 — Verdant Veil** (prep circle range 5 r1, heal 20, cd 2, e6). Smaller than
   Lumen's — Thorn's defense budget is partly spent on control.
 - **Ult — Overgrowth** (prep circle range 5 r2, heal 30 allies / Root 1 + Weaken 1
   enemies). The board itself takes a side for a turn.
 - **Wins by:** owning ground. Every trap square is a square the opponent must
-  respect; the pull makes "safe" squares a lie.
+  respect; Bramble Stride adds a root you can *bring* to them.
+- **What the swap cost:** the pull was the "drag them onto your own trap" combo —
+  the flashiest thing Thorn did. Removing it was the right cut anyway: it was the
+  only removable slot (the auto, the trap and the heal are all load-bearing — the
+  heal is required by the Support 1v1 self-applicability rule), and it freed
+  Thorn's displacement budget entirely, which now belongs to Bastion and Ravok
+  alone (§4). **If playtest misses the combo**, the lever is giving Snare Bloom a
+  second charge or widening its radius — not restoring the pull.
 - **Loses to:** Unstoppable (Bastion ult walks through everything Thorn does),
   patient long-range play that never enters trap range.
 
@@ -261,8 +271,11 @@ Fortress Protocol (prep, 50 shield + Unstoppable + Might, 2 turns).
 
 - **Aegis + any Firepower** — the template comp: Intercept + Barrier Pulse turn a
   95 HP carry into a 130 HP problem.
-- **Thorn + Bastion** — displacement stacking: hook + vine drag enemies across
-  trap squares; nobody gets to use their Move phase.
+- **Thorn + Bastion** — Move-phase denial: Bastion's hook drags a victim across
+  Thorn's trap squares, and Bramble Stride roots whoever survives. Between
+  displacement, roots and traps, nobody on the other team gets to walk.
+  *(Updated 2026-08-13: Thorn's own pull became a dash — the displacement half of
+  this pairing is now entirely Bastion's.)*
 - **Cinder + Ravok** — Stoke the Flame's Might/Energized on a Berserker who's
   already healing through damage; fastest ult clocks in the game.
 - **Lumen + Wisp** — Sanctuary insurance on an all-in assassin; Weaken covers the

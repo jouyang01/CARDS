@@ -798,3 +798,44 @@ renderer, not to raise the constant — the error message says so.
   Playwright as a devDependency and a CI job; say the word.
 - **Designer/data items untouched** (M1, M1-4v4, Thorn-dash) — role boundary; all three remain
   unblocked and waiting on the Designer.
+
+## 2026-08-13 — Maps M1 / M1-4v4 and Thorn's dash (Designer)
+
+The three unblocked Designer/data items, built and verified against the real engine
+validators. Full rationale in `docs/design/maps-v1.md`; kit change in `roster-v1.md`.
+
+**(1) Spawn separation is a two-sided constraint, so both maps use exactly 13.** The floor
+is max turn-1 threat (4 move + Vex's 8-range Rail Shot = 12, ultimates excluded because
+they are energy-gated and cannot fire on turn 1); the ceiling is a range-2 Frontline's
+turn-2 reach (sprint 8, then 4 + 2 = 14). 13 satisfies both with one square to spare, which
+is why "just make the map bigger" is wrong and why **iron-basin keeps separation 13 despite
+being a much larger board** — 4v4 gets more lanes, not more distance.
+
+**(2) Wall versus cover is a functional split, not decoration.** Only walls block line of
+sight, and only cover grants the directional 50% reduction. So the sightline-breaker pillars
+that hide each spawn row are **walls**, and the central strongpoint they flank is **cover** —
+making the central room defensible (its occupants get cover north and south) without making
+it blind (they can still shoot along their own row). My first draft used cover for both and
+lost the head-on sightline break; the existing vision test caught it, which is the argument
+for the test having existed. Every spawn row on both maps is now wall-broken, and rows 5/9 on
+duel-arena are left as deliberately open sniper alleys with nothing spawning on them.
+
+**(3) Thorn lost the pull, not the heal.** The dash had to displace one of four abilities.
+The auto, the trap (the Warden identity) and the heal (required by the Support 1v1
+self-applicability rule — an ult-only heal does not satisfy it) are all load-bearing, so
+**Lashing Vine was the only removable slot**. Bramble Stride (dash path 3, 10 damage + Root 1
+to the first unit crossed) keeps the theme by landing *control* where the vine landed
+*displacement*: the escape still leaves someone stuck to the floor in Barbed Sling range.
+Side effect worth noting — the roster's displacement budget now belongs to Bastion and Ravok
+alone, which is cleaner than it was. It uses only already-implemented effect kinds on an
+existing dash pattern (Bullrush with root in place of knockback), so it is data-only as the
+backlog specified.
+
+**(4) Role-boundary note.** The map redesign made four hard-coded test assertions stale
+(`board.test.ts` dimensions/probes, `real-characters.test.ts` spawn coordinates,
+`vision.test.ts` sweep tally and spawn-to-spawn sightline). Golden rule #6 and the standing
+session workflow both require a green suite before pushing, so I re-pointed those coordinates
+— mechanical updates only, no new coverage and no logic change. The **new** tests the backlog
+assigns (the roster-derived turn-1-threat guard, wiring `iron-basin` into `content.test.ts`,
+and tightening the dash guardrail to all archetypes now that Thorn has one) are left to the
+Builder, with the verified snippets in `maps-v1.md` §6.

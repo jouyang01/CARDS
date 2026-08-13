@@ -177,25 +177,30 @@ describe('hasLineOfSight — symmetry', () => {
 
   it('is mutual across the shipped Duel Arena', () => {
     const probes: Vec2[] = [
-      { x: 1, y: 7 },
-      { x: 13, y: 7 },
-      { x: 7, y: 7 },
-      { x: 7, y: 2 },
+      { x: 2, y: 6 }, // team 0 spawn
+      { x: 15, y: 6 }, // team 1 spawn
+      { x: 8, y: 7 }, // inside the central strongpoint
+      { x: 8, y: 1 }, // north brush corridor
       { x: 0, y: 6 },
-      { x: 14, y: 8 },
+      { x: 17, y: 8 },
       { x: 4, y: 3 },
       { x: 10, y: 11 },
     ];
     const tally = sweep(duelArena as unknown as MapDef, probes);
     expect(tally.asymmetric).toBe(0);
-    expect(tally).toMatchObject({ clear: 28, blocked: 36 });
+    // Non-degenerate in both directions (the point of the anchor).
+    expect(tally.clear).toBeGreaterThan(0);
+    expect(tally.blocked).toBeGreaterThan(0);
+    expect(tally).toMatchObject({ clear: 22, blocked: 42 });
   });
 
   it('the central walls break the spawn-to-spawn sightline', () => {
     const board = buildBoard(duelArena as unknown as MapDef);
-    // Spawns face each other down row 7, with cover (not walls) at 4,7 / 10,7
-    // and walls at 3,7 / 11,7.
-    expect(hasLineOfSight(board, { x: 1, y: 7 }, { x: 13, y: 7 })).toBe(false);
+    // M1: spawns face each other down row 6 (and row 8), broken by the
+    // sightline-breaker walls at 5,6 / 12,6. The central strongpoint at
+    // 7..10,6 is *cover*, which by design does not block sight.
+    expect(hasLineOfSight(board, { x: 2, y: 6 }, { x: 15, y: 6 })).toBe(false);
+    expect(hasLineOfSight(board, { x: 2, y: 8 }, { x: 15, y: 8 })).toBe(false);
   });
 });
 
