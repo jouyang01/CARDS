@@ -24,8 +24,8 @@ import {
   type Board,
   blocksMovement,
   buildBoard,
-  chebyshev,
   diagonalCornerBlocked,
+  distance,
   inBounds,
   isAdjacentStep,
   isDiagonalStep,
@@ -514,13 +514,10 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     if (a.def.shape === 'path') crossed = walkCharge(draft, plan.unit, a.aim, events);
     else teleport(draft, board, plan.unit, a.aim[0], events);
 
-    // Damage: a charge hits the enemies it crossed — the first only (R1a, default)
-    // or every one (R1b, `chargeHits: "all"`, e.g. Tempest Run); a teleport-strike
-    // hits everyone adjacent to where it landed, ALLIES INCLUDED (FF1: a directly
-    // aimed area does not filter by team). The charge's "first enemy crossed" is
-    // R1a's *selection* rule, not an area filter, and FF1 did not re-rule it, so
-    // a charge still picks its victims from enemies only — flagged for the
-    // Analyzer (DECISIONS 2026-08-21).
+    // Damage: a charge hits the UNITS it crossed — the first only (R1a's shape,
+    // now "first unit" under FF1-charge) or every one (`chargeHits: "all"`, e.g.
+    // Tempest Run); a teleport-strike hits everyone adjacent to where it landed.
+    // Both include allies: a directly aimed attack does not filter by team (FF1).
     const dmg = a.def.effects.find((e) => e.kind === 'damage');
     let hitEnemy = false;
     if (dmg !== undefined) {
@@ -529,11 +526,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
           ? a.def.chargeHits === 'all'
             ? crossed
             : crossed.slice(0, 1)
-          // Adjacency here stays CHEBYSHEV (edge-cases "Walked dash vs teleport").
-          // Deliberately left by MET1: that ruling named vision and movement and
-          // did not name this one, and narrowing it to the 4 orthogonal
-          // neighbours would rebalance Wisp's ult. Also flagged for the Analyzer.
-          : draft.units.filter((u) => u.alive && u.unitId !== plan.unit.unitId && chebyshev(plan.unit.pos, u.pos) === 1);
+          // Adjacency is MANHATTAN-1 — the 4 orthogonal neighbours (MET1-tp).
+          // It used to be the 8 surrounding squares; under a Manhattan world a
+          // diagonal neighbour is distance 2, so a teleport-strike no longer
+          // catches the corners. (Wisp rebalance is a Designer/playtest call.)
+          : draft.units.filter((u) => u.alive && u.unitId !== plan.unit.unitId && distance(plan.unit.pos, u.pos) === 1);
       const source = a.def.shape === 'path' ? origin : plan.unit.pos;
       for (const victim of victims) {
         const behindCover = isBehindCover(board, source, victim.pos, a.def.range);
@@ -571,8 +568,9 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
  * Walk a charge along its path (MV1 / edge-cases "AR movement model"): it passes
  * *through* any character — ally or enemy — but may not *end* on an occupied
  * square, so it rests on the furthest path square that is free (or holds if none
- * is). Walls/cover never appear in the path (validated). Returns every enemy
- * whose square lies on the path, in path order; the caller applies `chargeHits`.
+ * is). Walls/cover never appear in the path (validated). Returns every UNIT whose
+ * square lies on the path, in path order — allies included (FF1-charge) — and the
+ * caller applies `chargeHits` to take the first or all of them.
  */
 function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState[] {
   const occupiedAt = (p: Vec2) => draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
@@ -585,8 +583,11 @@ function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], ev
   // caller selects the first (R1a) or all of them (R1b).
   const crossed: UnitState[] = [];
   for (const step of path) {
-    const enemy = draft.units.find((u) => u.alive && u.owner !== unit.owner && vecEq(u.pos, step));
-    if (enemy !== undefined) crossed.push(enemy);
+    // Every UNIT on the path, ally or enemy (FF1-charge): a charge is a directly
+    // aimed attack, so it hits whoever is standing in it. The caller's
+    // `chargeHits` then takes the first or all of them.
+    const hit = draft.units.find((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, step));
+    if (hit !== undefined) crossed.push(hit);
   }
 
   // Move square-by-square to the rest square, triggering traps on each entry.
@@ -645,7 +646,7 @@ function runBlast(
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
   // their locked squares, folded into this turn's simultaneous damage.
-  detonateDelayedBlasts(draft, roster, hits, debuffs, events);
+  detonateDelayedBlasts(draft, roster, hits, debuffs, benefits, events);
 
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
@@ -750,6 +751,7 @@ function detonateDelayedBlasts(
   roster: Roster,
   hits: Hit[],
   debuffs: { victim: UnitState; effect: AbilityEffect }[],
+  benefits: { target: UnitState; effect: AbilityEffect }[],
   events: TurnEvent[],
 ): void {
   const due = draft.delayed.filter((d) => d.turnsRemaining <= 0 && d.phase === 'blast');
@@ -762,14 +764,23 @@ function detonateDelayedBlasts(
     const def = found.def;
     events.push({ type: 'abilityFired', unitId: caster.unitId, abilityId: def.id, area: d.area });
 
+    // Same polarity as the direct-Blast loop (FF1-delayed): a detonation is an
+    // aimed area, so harmful effects catch EVERY unit standing in it, ally or
+    // enemy — a grenade does not check tags on its way off. Beneficial effects
+    // still reach only the caster's own team.
     const area = new Set(d.area.map(vecKey));
     let hitEnemy = false;
-    for (const enemy of draft.units) {
-      if (enemy.owner === caster.owner || !enemy.alive || !area.has(vecKey(enemy.pos))) continue;
-      hitEnemy = true;
+    for (const target of draft.units) {
+      if (!target.alive || !area.has(vecKey(target.pos))) continue;
+      const enemy = target.owner !== caster.owner;
       for (const e of def.effects) {
-        if (e.kind === 'damage') hits.push({ attacker: caster, victim: enemy, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
-        else if (isStatusKind(e.kind)) debuffs.push({ victim: enemy, effect: e });
+        if (HARMFUL_KINDS.has(e.kind)) {
+          if (enemy) hitEnemy = true; // energy stays enemy-only
+          if (e.kind === 'damage') hits.push({ attacker: caster, victim: target, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
+          else if (isStatusKind(e.kind)) debuffs.push({ victim: target, effect: e });
+        } else if (BENEFICIAL_KINDS.has(e.kind)) {
+          if (!enemy) benefits.push({ target, effect: e });
+        }
       }
     }
     if (hitEnemy && caster.alive) {

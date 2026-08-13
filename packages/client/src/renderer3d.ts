@@ -20,10 +20,15 @@
 import {
   AmbientLight,
   BoxGeometry,
+  BufferGeometry,
   Color,
   DirectionalLight,
   Group,
+  Line,
+  LineBasicMaterial,
+  LineDashedMaterial,
   Mesh,
+  MeshBasicMaterial,
   MeshLambertMaterial,
   OrthographicCamera,
   PlaneGeometry,
@@ -35,6 +40,7 @@ import {
   type Material,
 } from 'three';
 import type { MapDef, Vec2 } from '@cards/engine';
+import { DEAD_ALPHA } from './animate.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -45,6 +51,28 @@ const COVER_HEIGHT = 0.45;
 /** The two shipped projections. Isometric is the true 35.264° arctan(1/√2). */
 export const PITCH = { top: 90, isometric: 35.264 } as const;
 export type ProjectionName = keyof typeof PITCH;
+
+/**
+ * How far a free orbit may tilt. Below ~8° the board is edge-on and unreadable;
+ * 90° is straight down, the top-down projection.
+ */
+export const PITCH_LIMITS = { min: 8, max: 90 } as const;
+/** Zoom bounds, in board squares of visible height. */
+export const SPAN_LIMITS = { min: 6, max: 60 } as const;
+/** Pointer travel (px) past which a drag is an orbit, not a click. */
+const DRAG_SLOP = 4;
+/** Degrees of yaw/pitch per pixel dragged. */
+const ORBIT_SENSITIVITY = 0.4;
+/** Board-height (in squares) at which billboarded bars are their design size. */
+const BAR_REF_SPAN = 14;
+/** How much of the remaining camera distance the auto-camera closes per frame. */
+const CAMERA_EASE = 0.14;
+/** Fraction of the way to the action the auto-camera pans (1 = centre on it). */
+const AUTO_PAN = 0.35;
+/** The auto-camera never zooms tighter than this fraction of the whole board. */
+const AUTO_ZOOM_FLOOR = 0.85;
+/** Alpha applied to everything outside a spotlight. */
+const DIM_ALPHA = 0.22;
 
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
@@ -74,6 +102,28 @@ export interface Renderer {
   fitBoard(): void;
   /** The live scene object for a unit, so an animator can drive it (A1 principle). */
   objectFor(unitId: string): Group | undefined;
+  /**
+   * Place a unit at an arbitrary *fractional* board position — the hook a tween
+   * drives between whole squares. `show()` snaps everything back to its square.
+   */
+  setUnitAt(unitId: string, x: number, y: number, lift?: number): void;
+  /** Fade a unit (deferred death visuals). 1 = solid. */
+  setUnitFade(unitId: string, alpha: number): void;
+  /**
+   * Spotlight: dim everything except these units. Used on Prep/Dash/Blast only —
+   * Move is simultaneous and dimming it would hide the whole point (owner).
+   */
+  setSpotlight(unitIds: readonly string[] | null): void;
+  /** Free-orbit on/off. When off, the auto-camera drives framing. */
+  setOrbitEnabled(on: boolean): void;
+  orbitEnabled(): boolean;
+  /** Keep a run of squares in frame (auto-camera). Empty = whole board. */
+  focusOn(squares: readonly Vec2[]): void;
+  /** A stroked path through tile centres plus an endpoint marker (AIM1). */
+  drawPath(squares: readonly Vec2[], color: number, dashed: boolean): void;
+  /** Start/stop the animation loop (orbit and tweens need continuous frames). */
+  start(): void;
+  stop(): void;
   resize(width: number, height: number): void;
   render(): void;
   dispose(): void;
@@ -156,18 +206,51 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   // ── Keyed unit objects (A1's principle, in 3D) ────────────────────────────
   const unitObjects = new Map<string, Group>();
 
+  /** Bars live in their own group so they can billboard and resist zoom. */
+  const buildBars = (): Group => {
+    const bars = new Group();
+    bars.name = 'bars';
+    bars.position.y = UNIT_HEIGHT + 0.28;
+    const bar = (name: string, y: number, color: number): void => {
+      const bg = new Mesh(new PlaneGeometry(0.8, 0.1), new MeshBasicMaterial({ color: 0x12141a }));
+      bg.position.set(0, y, 0);
+      const fill = new Mesh(new PlaneGeometry(0.8, 0.1), new MeshBasicMaterial({ color }));
+      fill.name = name;
+      fill.position.set(0, y, 0.001);
+      bars.add(bg, fill);
+    };
+    bar('hp', 0.12, 0x5ad17f);
+    bar('shield', 0.24, 0x62d0e0);
+    bar('energy', 0, 0xe0c04f);
+    return bars;
+  };
+
   const buildUnit = (unit: RenderUnit): Group => {
     const g = new Group();
     g.name = unit.unitId;
     const body = new Mesh(
       new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-      new MeshLambertMaterial({ color: unit.owner === 0 ? palette.team0 : palette.team1 }),
+      // Always `transparent`, even at full opacity: flipping the flag later
+      // needs a shader recompile (`needsUpdate`), and forgetting it makes every
+      // fade and dim silently do nothing. Paying for blending up front is the
+      // cheap, un-forgettable version.
+      new MeshLambertMaterial({ color: unit.owner === 0 ? palette.team0 : palette.team1, transparent: true }),
     );
     body.name = 'body';
     body.position.y = UNIT_HEIGHT / 2;
-    g.add(body);
+    g.add(body, buildBars());
     world.add(g);
     return g;
+  };
+
+  /** A bar's fill is scaled from its left edge, so width reads as a fraction. */
+  const setBar = (bars: Group, name: string, frac: number, visible: boolean): void => {
+    const fill = bars.getObjectByName(name);
+    if (!(fill instanceof Mesh)) return;
+    const f = Math.max(0, Math.min(1, frac));
+    fill.scale.x = Math.max(f, 0.0001);
+    fill.position.x = -0.4 + (0.8 * f) / 2; // keep the left edge pinned
+    fill.visible = visible && f > 0;
   };
 
   // ── Highlight layers ──────────────────────────────────────────────────────
@@ -185,17 +268,50 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   const disposeChildren = (g: Group): void => {
     for (const child of [...g.children]) {
       g.remove(child);
-      if (child instanceof Mesh) {
+      if (child instanceof Mesh || child instanceof Line) {
         child.geometry.dispose();
         (child.material as Material).dispose();
       }
     }
   };
 
+  // ── Unit opacity: three independent inputs, one result ────────────────────
+  // `base` is aliveness (set by show()), `fade` is the cue-driven deferred-death
+  // fade, `spotlight` is the phase dim. Keeping them separate is what lets a
+  // unit be visibly dying and spotlit at the same time without either clobbering
+  // the other.
+  const baseAlpha = new Map<string, number>();
+  const fadeOf = new Map<string, number>();
+  let spotlight: Set<string> | null = null;
+
+  const refreshOpacity = (unitId: string): void => {
+    const g = unitObjects.get(unitId);
+    if (g === undefined) return;
+    const dimmed = spotlight !== null && !spotlight.has(unitId);
+    const alpha = (baseAlpha.get(unitId) ?? 1) * (fadeOf.get(unitId) ?? 1) * (dimmed ? DIM_ALPHA : 1);
+    const body = g.getObjectByName('body');
+    if (body instanceof Mesh) (body.material as MeshLambertMaterial).opacity = alpha;
+    const bars = g.getObjectByName('bars');
+    if (bars !== undefined) bars.visible = alpha > 0.5;
+  };
+  const refreshAllOpacity = (): void => { for (const id of unitObjects.keys()) refreshOpacity(id); };
+
   const raycaster = new Raycaster();
+  const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n));
+  const rad = (deg: number): number => (deg * Math.PI) / 180;
+
   let projection: ProjectionName = 'isometric';
+  // Pitch and yaw are the camera's real state; a projection is just a preset
+  // pitch. Once the orbit can move them, the two stop being the same thing.
+  let pitchDeg: number = PITCH.isometric;
+  let yawDeg = 0;
   let span = Math.max(map.width, map.height);
-  let centre: Vec2 = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
+  let centre = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
+  // Where the auto-camera is heading. The live camera eases toward it so the
+  // frame glides between actors instead of cutting.
+  let wantCentre = { ...centre };
+  let wantSpan = span;
+  let orbitOn = false;
   let width = 900;
   let height = 560;
 
@@ -209,25 +325,143 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     camera.bottom = -halfH;
 
     // Pitch is the whole projection story: 90° looks straight down, ~35.264°
-    // gives true isometric. Both are the same camera, so switching is a number.
-    const pitch = (PITCH[projection] * Math.PI) / 180;
+    // gives true isometric. Yaw swings that same camera around the board, so a
+    // free orbit is two more numbers, not a second camera path.
+    const pitch = rad(pitchDeg);
+    const yaw = rad(yawDeg);
     const target = toWorld(map, centre);
     const dist = 60;
+    const horizontal = Math.cos(pitch) * dist;
     camera.position.set(
-      target.x,
+      target.x + Math.sin(yaw) * horizontal,
       target.y + Math.sin(pitch) * dist,
-      target.z + Math.cos(pitch) * dist,
+      target.z + Math.cos(yaw) * horizontal,
     );
     camera.up.set(0, 1, 0);
     camera.lookAt(target);
     camera.updateProjectionMatrix();
   }
 
+  /** The span that frames the whole board at the current pitch. */
+  const boardSpan = (): number => {
+    // Depth foreshortens by sin(pitch) — at true isometric the board is only
+    // ~58% as tall on screen as it is deep, so framing by raw height would
+    // leave the board floating in a letterbox.
+    const projectedDepth = map.height * Math.sin(rad(pitchDeg));
+    return Math.max(projectedDepth, map.width / (width / height)) * 1.08;
+  };
+
+  /**
+   * Pull a camera centre back so the frame stays inside the board. Without this
+   * the auto-camera happily pans off the edge and shows a band of void next to
+   * half a board — which is worse than not following the action at all.
+   */
+  const clampToBoard = (c: { x: number; y: number }, spanValue: number): { x: number; y: number } => {
+    const halfW = (spanValue / 2) * (width / height);
+    // Depth is foreshortened on screen, so the visible run of *squares* along y
+    // is larger than the visible height by 1/sin(pitch).
+    const halfD = spanValue / 2 / Math.max(Math.sin(rad(pitchDeg)), 0.2);
+    const axis = (v: number, extent: number, half: number): number =>
+      extent <= half * 2 ? (extent - 1) / 2 : clamp(v, half - 0.5, extent - 0.5 - half);
+    return { x: axis(c.x, map.width, halfW), y: axis(c.y, map.height, halfD) };
+  };
+
+  /** Ease the live camera one frame toward the auto-camera's target. */
+  const stepCamera = (): void => {
+    if (orbitOn) return; // the player owns the camera; don't fight them
+    const dx = wantCentre.x - centre.x;
+    const dy = wantCentre.y - centre.y;
+    const ds = wantSpan - span;
+    if (Math.abs(dx) < 0.002 && Math.abs(dy) < 0.002 && Math.abs(ds) < 0.002) return;
+    centre = { x: centre.x + dx * CAMERA_EASE, y: centre.y + dy * CAMERA_EASE };
+    span += ds * CAMERA_EASE;
+    applyCamera();
+  };
+
+  /**
+   * Bars face the camera and hold a constant on-screen size. Under an
+   * orthographic camera the visible height IS `span`, so scaling by
+   * `span / BAR_REF_SPAN` exactly cancels zoom — a bar reads the same at any
+   * framing, which is the point of billboarding it.
+   */
+  const billboard = (): void => {
+    const scale = span / BAR_REF_SPAN;
+    for (const g of unitObjects.values()) {
+      const bars = g.getObjectByName('bars');
+      if (bars === undefined) continue;
+      bars.quaternion.copy(camera.quaternion);
+      bars.scale.setScalar(scale);
+    }
+  };
+
+  // ── Free-orbit input ──────────────────────────────────────────────────────
+  // Secondary buttons always orbit; the left button orbits only in free-orbit
+  // mode, so click-to-select never competes with a camera drag.
+  const canvas = renderer.domElement;
+  let dragging = false;
+  let dragged = 0;
+  let lastX = 0;
+  let lastY = 0;
+
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('pointerdown', (e) => {
+    const secondary = e.button === 1 || e.button === 2;
+    if (!secondary && !(orbitOn && e.button === 0)) return;
+    dragging = true;
+    dragged = 0;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    dragged += Math.abs(dx) + Math.abs(dy);
+    yawDeg = (yawDeg + dx * ORBIT_SENSITIVITY) % 360;
+    pitchDeg = clamp(pitchDeg - dy * ORBIT_SENSITIVITY, PITCH_LIMITS.min, PITCH_LIMITS.max);
+    applyCamera();
+  });
+  const endDrag = (e: PointerEvent): void => {
+    if (!dragging) return;
+    dragging = false;
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  // A drag that moved the camera must not also count as a click on a square.
+  // Capture phase on the canvas beats the app's listener on the container.
+  canvas.addEventListener('click', (e) => {
+    if (dragged > DRAG_SLOP) {
+      e.stopPropagation();
+      dragged = 0;
+    }
+  }, true);
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    span = clamp(span * (e.deltaY > 0 ? 1.1 : 1 / 1.1), SPAN_LIMITS.min, SPAN_LIMITS.max);
+    wantSpan = span;
+    applyCamera();
+  }, { passive: false });
+
+  let frameHandle: number | undefined;
+  const drawFrame = (): void => {
+    stepCamera();
+    billboard();
+    renderer.render(scene, camera);
+  };
+
   applyCamera();
   renderer.setSize(width, height);
 
   return {
     show(units, decoys = []) {
+      // `show()` is the snap-to-truth call: it places every unit on its whole
+      // square and drops any in-flight tween state. Cue-driven overrides
+      // (`setUnitAt`, `setUnitFade`) are applied *after* it, per frame.
+      fadeOf.clear();
       const live = new Set<string>();
       for (const unit of units) {
         let g = unitObjects.get(unit.unitId);
@@ -237,14 +471,16 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         }
         g.position.copy(toWorld(map, unit.pos));
         g.visible = true;
-        const body = g.getObjectByName('body');
-        if (body instanceof Mesh) {
-          // Dead units read as hollow/faded rather than vanishing, so a corpse
-          // still tells you where the fight happened.
-          const mat = body.material as MeshLambertMaterial;
-          mat.opacity = unit.alive ? 1 : 0.3;
-          mat.transparent = !unit.alive;
+        // Dead units read as hollow/faded rather than vanishing, so a corpse
+        // still tells you where the fight happened.
+        baseAlpha.set(unit.unitId, unit.alive ? 1 : DEAD_ALPHA);
+        const bars = g.getObjectByName('bars');
+        if (bars instanceof Group) {
+          setBar(bars, 'hp', unit.hp / Math.max(1, unit.maxHp), true);
+          setBar(bars, 'energy', unit.energy / 100, true);
+          setBar(bars, 'shield', (unit.shield ?? 0) / Math.max(1, unit.maxHp), (unit.shield ?? 0) > 0);
         }
+        refreshOpacity(unit.unitId);
         live.add(unit.unitId);
       }
       for (const [id, g] of unitObjects) if (!live.has(id)) g.visible = false;
@@ -295,28 +531,127 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
     setProjection(name) {
       projection = name;
+      // Picking a projection resets the orbit: the two presets are the reason
+      // the camera has a pitch at all, so choosing one means "put it back".
+      pitchDeg = PITCH[name];
+      yawDeg = 0;
       applyCamera();
     },
 
     lookAt(next, spanSquares) {
-      centre = next;
-      span = Math.max(spanSquares, 4);
+      centre = { x: next.x, y: next.y };
+      span = Math.max(spanSquares, SPAN_LIMITS.min);
+      wantCentre = { ...centre };
+      wantSpan = span;
       applyCamera();
     },
 
     fitBoard() {
       centre = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
-      // Depth foreshortens by sin(pitch) — at true isometric the board is only
-      // ~58% as tall on screen as it is deep, so framing by raw height would
-      // leave the board floating in a letterbox.
-      const pitch = (PITCH[projection] * Math.PI) / 180;
-      const projectedDepth = map.height * Math.sin(pitch);
-      const aspect = width / height;
-      span = Math.max(projectedDepth, map.width / aspect) * 1.08;
+      span = boardSpan();
+      wantCentre = { ...centre };
+      wantSpan = span;
       applyCamera();
     },
 
     objectFor: (unitId) => unitObjects.get(unitId),
+
+    setUnitAt(unitId, x, y, lift = 0) {
+      const g = unitObjects.get(unitId);
+      if (g === undefined) return;
+      // Fractional squares go through the same mapping whole ones do, so a tween
+      // can never drift away from where a click would land.
+      const w = squareToWorldXZ(map, { x, y });
+      g.position.set(w.x, lift, w.z);
+    },
+
+    setUnitFade(unitId, alpha) {
+      fadeOf.set(unitId, Math.max(0, Math.min(1, alpha)));
+      refreshOpacity(unitId);
+    },
+
+    setSpotlight(unitIds) {
+      spotlight = unitIds === null ? null : new Set(unitIds);
+      refreshAllOpacity();
+    },
+
+    setOrbitEnabled(on) {
+      orbitOn = on;
+    },
+
+    orbitEnabled: () => orbitOn,
+
+    focusOn(squares) {
+      if (orbitOn) return; // free-orbit mode: the auto-camera stands down
+      if (squares.length === 0) {
+        wantCentre = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
+        wantSpan = boardSpan();
+        return;
+      }
+      const xs = squares.map((s) => s.x);
+      const ys = squares.map((s) => s.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      // The auto-camera *leans* toward the action rather than snapping onto it:
+      // it takes half the pan and never zooms past AUTO_ZOOM_FLOOR of the board.
+      // A camera that reframes hard every actor is unreadable in a phase where
+      // four of them act in a row — you spend the turn re-finding the board.
+      const board = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
+      wantCentre = {
+        x: board.x + ((minX + maxX) / 2 - board.x) * AUTO_PAN,
+        y: board.y + ((minY + maxY) / 2 - board.y) * AUTO_PAN,
+      };
+      // Same foreshortening correction as fitBoard, plus padding so the action
+      // never sits against the edge — and never tighter than the board itself.
+      const depth = (maxY - minY + 1) * Math.sin(rad(pitchDeg));
+      const wide = (maxX - minX + 1) / (width / height);
+      const full = boardSpan();
+      wantSpan = clamp(Math.max(depth, wide) * 1.6 + 4, full * AUTO_ZOOM_FLOOR, full);
+      wantCentre = clampToBoard(wantCentre, wantSpan);
+    },
+
+    drawPath(squares, color, dashed) {
+      const g = layerGroup('path');
+      disposeChildren(g);
+      if (squares.length === 0) return;
+      // A drawn move is a LINE through tile centres, not a field of tiles: it
+      // says which way you go and in what order, which reachability shading
+      // cannot (AIM1). Sprint is the dashed one.
+      const points = squares.map((p) => toWorld(map, p).setY(0.08));
+      const line = new Line(
+        new BufferGeometry().setFromPoints(points),
+        dashed
+          ? new LineDashedMaterial({ color, dashSize: 0.3, gapSize: 0.2 })
+          : new LineBasicMaterial({ color }),
+      );
+      if (dashed) line.computeLineDistances();
+      g.add(line);
+
+      const last = squares[squares.length - 1]!;
+      const marker = new Mesh(
+        new PlaneGeometry(TILE * 0.4, TILE * 0.4),
+        new MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+      );
+      marker.rotation.x = -Math.PI / 2;
+      marker.rotation.z = Math.PI / 4; // a diamond, so the endpoint reads as an endpoint
+      marker.position.copy(toWorld(map, last)).setY(0.09);
+      g.add(marker);
+    },
+
+    start() {
+      if (frameHandle !== undefined) return;
+      const loop = (): void => {
+        frameHandle = globalThis.requestAnimationFrame(loop);
+        drawFrame();
+      };
+      frameHandle = globalThis.requestAnimationFrame(loop);
+    },
+
+    stop() {
+      if (frameHandle === undefined) return;
+      globalThis.cancelAnimationFrame(frameHandle);
+      frameHandle = undefined;
+    },
 
     resize(w, h) {
       width = w;
@@ -326,10 +661,12 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     },
 
     render() {
-      renderer.render(scene, camera);
+      drawFrame();
     },
 
     dispose() {
+      if (frameHandle !== undefined) globalThis.cancelAnimationFrame(frameHandle);
+      frameHandle = undefined;
       renderer.dispose();
     },
   };

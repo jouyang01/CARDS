@@ -267,3 +267,36 @@ describe('AIM2: free-rotation aiming reaches the engine as an integer step', () 
     );
   });
 });
+
+describe('BRUSH1: the client offers brush squares as move and dash destinations', () => {
+  //  A 15x15 open map with a brush patch beside Vex's spawn at (1,7).
+  const BRUSHY: MapDef = {
+    ...OPEN,
+    brush: [{ x: 2, y: 7 }, { x: 3, y: 7 }, { x: 2, y: 8 }],
+  };
+
+  it('brush tiles appear in the move preview as legal STOPS', () => {
+    const s = createMatch(BRUSHY, '1v1', [[VEX], [BASTION]]);
+    const u = s.units.find((x) => x.characterId === 'vex')!;
+    const { stops, through } = movePreview(BRUSHY, s, u, false);
+    const key = (p: { x: number; y: number }) => `${p.x},${p.y}`;
+    const stopKeys = stops.map(key);
+    for (const b of BRUSHY.brush) {
+      expect(stopKeys, `brush ${key(b)} must be a legal stop`).toContain(key(b));
+      expect(through.map(key)).not.toContain(key(b)); // not merely walk-through
+    }
+  });
+
+  it('a move path ending in brush validates', () => {
+    const s = createMatch(BRUSHY, '1v1', [[VEX], [BASTION]]);
+    const u = s.units.find((x) => x.characterId === 'vex')!;
+    expect(pathValid(BRUSHY, s, u, [{ x: 2, y: 7 }], false)).toBe(true);
+  });
+
+  it('a dash aimed into brush previews as a real target', () => {
+    const s = createMatch(BRUSHY, '1v1', [[VEX], [BASTION]]);
+    const u = s.units.find((x) => x.characterId === 'vex')!;
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!; // path dash
+    expect(abilityPreview(BRUSHY, u, roll, [{ x: 2, y: 7 }]).length).toBeGreaterThan(0);
+  });
+});

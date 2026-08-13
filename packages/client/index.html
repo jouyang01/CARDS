@@ -30,7 +30,13 @@
         font-family: system-ui, -apple-system, sans-serif; }
       #app { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; }
       h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: 0.5px; }
-      #board { background: var(--panel); border-radius: 8px; box-shadow: 0 4px 24px rgb(0 0 0 / 0.4); }
+      #board { position: relative; background: var(--panel); border-radius: 8px;
+        box-shadow: 0 4px 24px rgb(0 0 0 / 0.4); }
+      /* The phase label lives in a fixed corner and only changes its text, so
+         the eye never hunts for which phase is playing. */
+      .phase-label { position: absolute; top: 12px; left: 14px; pointer-events: none;
+        font-size: 15px; font-weight: 700; letter-spacing: 3px; color: var(--aim);
+        text-shadow: 0 2px 8px rgb(0 0 0 / 0.8); }
       #legend { display: flex; gap: 16px; font-size: 13px; opacity: 0.85; }
       .chip { display: inline-flex; align-items: center; gap: 6px; }
       .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }

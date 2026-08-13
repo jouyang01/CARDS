@@ -54,7 +54,7 @@ the room layer too.
 | Layer | Choice |
 |---|---|
 | Engine | TypeScript, zero runtime dependencies, Vitest |
-| Client | Vite + TypeScript, SVG rendering (no game framework) |
+| Client | Vite + TypeScript, **orthographic 3D rendering (Three.js)** — no game framework |
 | Server | Cloudflare Worker + one Durable Object per room, WebSockets (M3) |
 | Client hosting | GitHub Pages via GitHub Actions |
 | Fallback netcode | PeerJS (WebRTC) — only if Workers ever becomes unviable |
@@ -78,9 +78,20 @@ the room layer too.
 
 ## Rendering (client)
 
-- SVG grid; CSS classes for terrain; simple shapes/icons for characters.
+- **Orthographic 3D** (`renderer3d.ts`, Three.js `OrthographicCamera`): board, terrain
+  and characters are scene objects on a ground plane. An orthographic camera has no
+  perspective divide, so a tile is the same size wherever it sits — what a tactics
+  board wants — and the **projection is a runtime parameter**: top-down (pitch 90°) and
+  isometric (35.264°) are the same camera at two angles.
+- **Scene objects are keyed by `unitId`** and reconciled, never rebuilt, so an object
+  survives a frame and can be tweened.
+- Picking is a **ray/plane intersection** against the ground plane, so clicking stays
+  correct under any camera pan, zoom or orbit.
+- `renderer3d.ts` is the *only* renderer-specific module. `choreograph`, `playback`,
+  `hotseat`, `targeting` and `turn-player` are renderer-agnostic — they were reused
+  verbatim across the SVG→3D swap, which is the boundary working as designed.
 - Targeting UI draws ability shapes (line/cone/circle/path/square) as translucent
-  overlays during Decision; opponent sees nothing.
+  tile overlays during Decision, and a drawn move as a stroked line; opponent sees nothing.
 - Resolution playback: the engine returns an ordered **event log**
   (`TurnEvent[]` — ability fired, damage dealt, unit moved square-by-square, status
   applied, death, respawn...). The client animates events phase by phase. The event

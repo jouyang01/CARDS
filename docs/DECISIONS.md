@@ -729,3 +729,72 @@ their substrate is gone. Bundle 556 kB / 145 kB gz. **Verification note for the 
   Playback currently steps phase-by-phase with a plain pause — correct but untweened.
 - **Designer/data items untouched** (M1, M1-4v4, Thorn-dash) — role boundary; all three are
   unblocked and waiting on the Designer.
+
+## 2026-08-13 — readability batch (engine follow-ups, then the A3 re-spec)
+
+**(BRUSH1) No fix was needed on either side — coverage was.** The Dev Note "you should be able
+to dash into bushes" implied a bug. Probing found `blocksMovement(brush) = false` and brush
+squares already `canStop = true`, and the client offers them because both the move preview and
+dash targets come straight from `reachableSquares` with no terrain filter. So the ruling here is
+that brush was already legal end-to-end, and the right deliverable is regression coverage
+locking it (`brush.test.ts`, plus three client targeting tests) rather than a change. If the
+reported behaviour still reproduces in play, it is a picking/interaction problem, not a rules
+one — worth re-reporting with the square that refused.
+
+**(A3) A `Frame` carries presentation only, and that is what preserves skip == watch.**
+`sampleFrame(cues, t)` returns fractional positions, alpha, spotlight, lit area and impacts —
+and deliberately **no HP, no aliveness, no kills**. Those still come only from folding events
+through `applyEvent`. The invariant therefore needs no second code path to defend it: dropping
+every animated frame lands on the identical board, because nothing in the animation layer can
+reach the board. A test asserts the `Frame` key set to keep it that way.
+
+**(A3) Playback shows the phase's post-fold view, tweened backwards from the cues.** A phase is
+folded first, then animated, so HP and aliveness are final for the whole phase while positions
+come from the cue timeline. The alternative — folding at cue granularity — would have meant a
+second ordering of events beside `segmentByPhase`, i.e. a second place for skip and watch to
+disagree. The visible cost is that a bar drops at the top of the phase rather than on the hit;
+the deferred-death fade is what keeps a dying unit standing until it has fired.
+
+**(A3) The auto-camera leans, it does not lock on.** Framing hard on each actor makes a Blast
+with four shooters unreadable — you spend the phase re-finding the board. It takes 35% of the
+pan, never zooms tighter than 85% of the board, and clamps so the frame stays inside the board.
+The AC ("shooter ∪ ability area in frame") is satisfied by the clamp; the tight zoom was not
+required and read badly.
+
+**(A3) Free orbit binds to the secondary mouse buttons always, and the left button only in
+free-orbit mode.** Click-to-select and camera-drag would otherwise compete for the same gesture.
+A drag past a 4px slop swallows its own click in the capture phase, so an orbit never also
+selects a square.
+
+**(BUNDLE1) The budget fails CI rather than warning.** A warning printed by a job that passes
+is a warning nobody reads. 300 kB against today's 145 kB is ~2x headroom, which is what makes
+failing safe: you have to double the bundle to trip it, and the fix is to code-split the
+renderer, not to raise the constant — the error message says so.
+
+## Open Questions for the Analyzer — 2026-08-13 (readability batch)
+
+- **Playback pacing is now one number: `MS_PER_BEAT = 460` in `app.ts`.** Prep and Dash are one
+  beat each when nobody acts, Blast is one beat per actor. A four-shooter Blast is therefore
+  ~2.3s and a full turn ~4s. That felt right in a scripted run but has never been played. If
+  4v4 turns read as long, this is the single number to turn.
+- **Bars are billboarded but unlabelled.** There is no character name or HP number on the board
+  — only three bars (hp/shield/energy). Adding text means either a texture atlas or DOM
+  overlays tracked against the camera each frame; both are real work and neither is in an AC.
+  Say which you want before I build it.
+- **The spotlight dims to 22% and hides the dimmed unit's bars.** It reads clearly, but it does
+  mean you cannot watch an off-actor's HP during a sequential phase. If that matters at
+  playtest, the cheap fix is to keep bars visible while dimming the body.
+- **Free orbit persists across a projection change only until you press the projection button.**
+  Picking Isometric/Top-down resets pitch and yaw, on the reading that the two presets exist to
+  put the camera back. If players expect the projection button to keep their yaw, that is a
+  one-line change.
+- **`objectFor()` on the `Renderer` interface is now unused.** It was A1's hook for an external
+  animator; the animator ended up inside the renderer (`setUnitAt`/`setUnitFade`). Happy to
+  delete it, but it is the natural seam for A4's per-ability FX, so I left it.
+- **RND1 render verification is still deferred but is no longer un-doable here.** I verified
+  this batch with a scripted browser run and composited screenshots (spotlight dim, ability
+  area, move line, mouse-follow aim, orbit) — that is how the `transparent`/`needsUpdate` bug
+  was caught, which no unit test would have found. If you want it as a standing check, it needs
+  Playwright as a devDependency and a CI job; say the word.
+- **Designer/data items untouched** (M1, M1-4v4, Thorn-dash) — role boundary; all three remain
+  unblocked and waiting on the Designer.
