@@ -54,6 +54,7 @@ import type {
   AbilityDef,
   AbilityEffect,
   CharacterDef,
+  DecoyState,
   EffectKind,
   GameState,
   MapDef,
@@ -388,14 +389,14 @@ function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: Turn
     if (trapEffect !== undefined) {
       placeTraps(draft, plan.unit, a, trapEffect, events);
     } else {
-      applySelfEffects(plan.unit, a.def.effects, events);
+      applySelfEffects(draft, plan.unit, a.def.effects, events);
     }
     grantUseEnergy(plan.unit, a.def, false, events);
   }
 }
 
-/** Apply a self-targeted ability's effects to its caster (shields, heals, buffs). */
-function applySelfEffects(unit: UnitState, effects: readonly AbilityEffect[], events: TurnEvent[]): void {
+/** Apply a self-targeted ability's effects to its caster (shields, heals, buffs, decoy). */
+function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly AbilityEffect[], events: TurnEvent[]): void {
   for (const e of effects) {
     if (e.kind === 'heal') {
       const healed = applyHeal(unit, e.amount ?? 0);
@@ -404,13 +405,45 @@ function applySelfEffects(unit: UnitState, effects: readonly AbilityEffect[], ev
       applyStatus(unit, 'shield', e.duration ?? 1, e.amount ?? 0);
       events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'shield', duration: e.duration ?? 1, amount: e.amount ?? 0 });
     } else if (e.kind === 'decoy') {
-      // Decoy is an OPEN ruling (edge-cases.md) — not implemented in v1.
-      continue;
+      spawnDecoy(draft, unit, events); // R2: a static fake at the caster's square
     } else if (isStatusKind(e.kind)) {
       applyStatus(unit, e.kind, e.duration ?? 1);
       events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1 });
     }
   }
+}
+
+/**
+ * Spawn a Wisp decoy (edge-cases R2) at the caster's square. Kept out of
+ * `state.units`; expires at the end of the *next* turn (`castTurn + 1`) unless
+ * destroyed first. Deterministic id from caster + turn (one cast per unit/turn).
+ */
+function spawnDecoy(draft: GameState, caster: UnitState, events: TurnEvent[]): void {
+  const decoy: DecoyState = {
+    id: `decoy-${caster.unitId}-t${draft.turn}`,
+    teamId: caster.owner,
+    pos: { x: caster.pos.x, y: caster.pos.y },
+    expiresOnTurn: draft.turn + 1,
+  };
+  draft.decoys.push(decoy);
+  events.push({ type: 'decoySpawned', decoyId: decoy.id, pos: decoy.pos, teamId: decoy.teamId });
+}
+
+/**
+ * Destroy every enemy decoy whose square lies in `area` (R2: any damage destroys
+ * a decoy; damaging it grants no energy — the caller never counts it as an enemy
+ * hit). `attackerTeam` is the damaging unit's team; own-team decoys are untouched.
+ */
+function destroyDecoysInArea(draft: GameState, area: readonly Vec2[], attackerTeam: TeamId, events: TurnEvent[]): void {
+  if (draft.decoys.length === 0) return;
+  const areaKeys = new Set(area.map(vecKey));
+  draft.decoys = draft.decoys.filter((d) => {
+    if (d.teamId !== attackerTeam && areaKeys.has(vecKey(d.pos))) {
+      events.push({ type: 'decoyDestroyed', decoyId: d.id, pos: d.pos });
+      return false;
+    }
+    return true;
+  });
 }
 
 /** Place a hidden trap on each aimed square. Damage + non-trap effects fire on entry. */
@@ -486,8 +519,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       }
     }
 
+    // A decoy in a damaging dash's area/path is destroyed too (R2) — no energy.
+    if (dmg !== undefined) destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
+
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
-    applySelfEffects(plan.unit, a.def.effects, events);
+    applySelfEffects(draft, plan.unit, a.def.effects, events);
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
     if (hitEnemy) {
       removeStatus(plan.unit, 'stealth');
@@ -615,6 +651,11 @@ function runBlast(
         }
       }
     }
+    // A decoy in a damaging ability's area is destroyed (R2) — no energy, no
+    // riders; it never counts as an enemy hit, so `hitEnemy` stays units-only.
+    if (a.def.effects.some((e) => e.kind === 'damage')) {
+      destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
+    }
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
   }
 
@@ -641,7 +682,7 @@ function runBlast(
 
   // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
   for (const { target, effect } of benefits) {
-    if (target.alive) applySelfEffects(target, [effect], events);
+    if (target.alive) applySelfEffects(draft, target, [effect], events);
   }
 
   // Queue displacement against survivors, to resolve at end of Blast (item 8).
@@ -728,6 +769,22 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
   for (let step = 0; step < maxLen; step++) {
     stepMovers(draft, movers, step, events);
   }
+
+  // A decoy is destroyed by an enemy that *ends a move* on its square (R2).
+  destroyDecoysUnderEnemies(draft, movers.map((m) => m.unit), events);
+}
+
+/** Destroy any decoy an enemy of its team currently stands on (R2 move-onto). */
+function destroyDecoysUnderEnemies(draft: GameState, units: readonly UnitState[], events: TurnEvent[]): void {
+  if (draft.decoys.length === 0) return;
+  draft.decoys = draft.decoys.filter((d) => {
+    const enemyOnIt = units.some((u) => u.alive && u.owner !== d.teamId && vecEq(u.pos, d.pos));
+    if (enemyOnIt) {
+      events.push({ type: 'decoyDestroyed', decoyId: d.id, pos: d.pos });
+      return false;
+    }
+    return true;
+  });
 }
 
 /** Resolve one simultaneous step across all still-moving units. */
@@ -815,6 +872,16 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
   }
   // Delayed abilities count down (resolution attaches at BACKLOG item 12).
   for (const d of draft.delayed) d.turnsRemaining -= 1;
+
+  // Decoys expire at the end of their `expiresOnTurn` (cast turn + 1), unless
+  // already destroyed (R2). Turn has not yet advanced here, so compare directly.
+  draft.decoys = draft.decoys.filter((d) => {
+    if (draft.turn >= d.expiresOnTurn) {
+      events.push({ type: 'decoyDestroyed', decoyId: d.id, pos: d.pos });
+      return false;
+    }
+    return true;
+  });
 
   // Respawn: only units that were already dead at the start of this turn count a
   // turn down, so a unit that died THIS turn misses a full turn before returning.

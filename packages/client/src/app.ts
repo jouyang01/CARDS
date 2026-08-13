@@ -294,7 +294,12 @@ export function startHotSeat(
       owner: v.owner, pos: v.pos, hp: v.hp, maxHp: v.maxHp, energy: v.energy, alive: v.alive,
       label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
     }));
-    ui.board.replaceChildren(renderBoard(map, units));
+    const svg = renderBoard(map, units);
+    // Decoys (D1): a ghost marker on each live decoy square. Hot-seat shows both
+    // sides; team-scoped "enemy sees it as Wisp" is a fog concern for M3.
+    const decoys = [...view.decoys.values()];
+    if (decoys.length > 0) paintOverlay(svg, decoys.map((d) => d.pos), cssVar('--spawn1'), 0.35);
+    ui.board.replaceChildren(svg);
   }
 
   function renderGameOver(): void {

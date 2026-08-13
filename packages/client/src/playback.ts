@@ -26,8 +26,17 @@ export interface ViewUnit {
   shield: number;
 }
 
+/** A Wisp decoy in the view (rendered to the enemy team as Wisp — R2). */
+export interface ViewDecoy {
+  id: string;
+  teamId: 0 | 1;
+  pos: Vec2;
+}
+
 export interface ViewState {
   units: Map<string, ViewUnit>;
+  /** Live decoys, keyed by id — spawned/removed straight from the event log. */
+  decoys: Map<string, ViewDecoy>;
   kills: [number, number];
   status: GameState['status'];
   winner?: 0 | 1;
@@ -40,7 +49,9 @@ export function initView(state: GameState): ViewState {
     const shield = u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
     units.set(u.unitId, { unitId: u.unitId, owner: u.owner, pos: { ...u.pos }, hp: u.hp, maxHp: u.maxHp, energy: u.energy, alive: u.alive, shield });
   }
-  return { units, kills: [state.kills[0], state.kills[1]], status: state.status, winner: state.winner };
+  const decoys = new Map<string, ViewDecoy>();
+  for (const d of state.decoys) decoys.set(d.id, { id: d.id, teamId: d.teamId, pos: { ...d.pos } });
+  return { units, decoys, kills: [state.kills[0], state.kills[1]], status: state.status, winner: state.winner };
 }
 
 /** Apply one event's stated delta to the view. Never derives new game logic. */
@@ -89,6 +100,14 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
     case 'respawn': {
       const u = view.units.get(event.unitId);
       if (u) { u.alive = true; u.hp = u.maxHp; u.shield = 0; u.pos = { ...event.pos }; }
+      break;
+    }
+    case 'decoySpawned': {
+      view.decoys.set(event.decoyId, { id: event.decoyId, teamId: event.teamId, pos: { ...event.pos } });
+      break;
+    }
+    case 'decoyDestroyed': {
+      view.decoys.delete(event.decoyId);
       break;
     }
     case 'gameEnd': {
