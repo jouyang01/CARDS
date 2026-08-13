@@ -324,3 +324,29 @@ describe('FF1-charge: a charge strikes the first UNIT crossed, ally or enemy', (
     expect(state.kills).toEqual([0, 0]);
   });
 });
+
+describe('MET1-tp: a teleport-strike hits the 4 orthogonal neighbours only', () => {
+  it('strikes an orthogonal neighbour but spares the diagonal one', () => {
+    // Landing on (3,4): (4,4) is Manhattan 1, (4,5) is Manhattan 2 (it was
+    // Chebyshev 1 and would have been struck before MET1-tp).
+    const u = makeUnit('u', 0, { x: 0, y: 0 }, { energy: 100 });
+    const orth = makeUnit('orth', 1, { x: 4, y: 4 });
+    const diag = makeUnit('diag', 1, { x: 4, y: 5 });
+    const { state } = run(makeState([u, orth, diag]), [
+      { unitId: 'u', ability: { abilityId: 'shadowstep', target: [{ x: 3, y: 4 }] } },
+    ], []);
+    expect(unit(state, 'u').pos).toEqual({ x: 3, y: 4 });
+    expect(unit(state, 'orth').hp).toBe(60); // 40 strike damage
+    expect(unit(state, 'diag').hp).toBe(100); // the corner is distance 2 now
+  });
+
+  it('catches an adjacent ALLY too (FF1), without paying energy for it', () => {
+    const u = makeUnit('u', 0, { x: 0, y: 0 }, { energy: 100 });
+    const ally = makeUnit('ally', 0, { x: 4, y: 4 });
+    const { state } = run(makeState([u, ally, makeUnit('e', 1, { x: 8, y: 8 })]), [
+      { unitId: 'u', ability: { abilityId: 'shadowstep', target: [{ x: 3, y: 4 }] } },
+    ], []);
+    expect(unit(state, 'ally').hp).toBe(60); // a directly aimed area does not filter by team
+    expect(unit(state, 'u').energy).toBe(5); // ult reset to 0, +5 passive — no on-hit energy
+  });
+});

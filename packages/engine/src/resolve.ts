@@ -24,8 +24,8 @@ import {
   type Board,
   blocksMovement,
   buildBoard,
-  chebyshev,
   diagonalCornerBlocked,
+  distance,
   inBounds,
   isAdjacentStep,
   isDiagonalStep,
@@ -526,11 +526,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
           ? a.def.chargeHits === 'all'
             ? crossed
             : crossed.slice(0, 1)
-          // Adjacency here stays CHEBYSHEV (edge-cases "Walked dash vs teleport").
-          // Deliberately left by MET1: that ruling named vision and movement and
-          // did not name this one, and narrowing it to the 4 orthogonal
-          // neighbours would rebalance Wisp's ult. Also flagged for the Analyzer.
-          : draft.units.filter((u) => u.alive && u.unitId !== plan.unit.unitId && chebyshev(plan.unit.pos, u.pos) === 1);
+          // Adjacency is MANHATTAN-1 — the 4 orthogonal neighbours (MET1-tp).
+          // It used to be the 8 surrounding squares; under a Manhattan world a
+          // diagonal neighbour is distance 2, so a teleport-strike no longer
+          // catches the corners. (Wisp rebalance is a Designer/playtest call.)
+          : draft.units.filter((u) => u.alive && u.unitId !== plan.unit.unitId && distance(plan.unit.pos, u.pos) === 1);
       const source = a.def.shape === 'path' ? origin : plan.unit.pos;
       for (const victim of victims) {
         const behindCover = isBehindCover(board, source, victim.pos, a.def.range);
