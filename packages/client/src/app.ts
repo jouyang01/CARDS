@@ -25,7 +25,7 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { cssVar, paintOverlay, renderBoard, renderState, squareFromPoint, type RenderUnit } from './render.js';
-import { abilityOptions, abilityPreview, abilityTooltip, draftAbility, emptyDraft, movePreview, toUnitOrders, type OrderDraft } from './targeting.js';
+import { abilityOptions, abilityPreview, abilityTooltip, draftAbility, emptyDraft, movePreview, nextDraft, toUnitOrders, type OrderDraft } from './targeting.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { applyEvent, initView, segmentByPhase, type ViewState } from './playback.js';
 
@@ -190,36 +190,28 @@ export function startHotSeat(
 
   // ── Selection ────────────────────────────────────────────────────────────────
 
+  const currentIsDash = (draft: OrderDraft, character: CharacterDef): boolean =>
+    draftAbility(character, draft)?.phase === 'dash';
+
   function selectAbility(abilityId: string): void {
     const step = currentStep();
     if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
-    draft.abilityId = abilityId;
-    draft.sprint = false; // Sprint is move-only; choosing an ability clears it.
-    draft.aim = [];
-    const ability = draftAbility(characterFor(step.unit), draft);
-    // A dash *is* the unit's movement, so it drops any separately-drawn move
-    // (MS1). A non-dash ability keeps the move — the player can move AND shoot.
-    if (ability?.phase === 'dash') draft.movePath = [];
-    mode = ability && ability.shape !== 'self' ? 'aim' : 'idle';
-    if (ability && ability.shape === 'self') draft.aim = [{ ...step.unit.pos }];
+    const character = characterFor(step.unit);
+    const chosen = draftAbility(character, { ...drafts.get(step.unit.unitId)!, abilityId });
+    const isDash = chosen?.phase === 'dash';
+    const draft = nextDraft(drafts.get(step.unit.unitId)!, { type: 'selectAbility', abilityId, isDash }, isDash);
+    if (chosen && chosen.shape === 'self') draft.aim = [{ ...step.unit.pos }];
+    drafts.set(step.unit.unitId, draft);
+    mode = chosen && chosen.shape !== 'self' ? 'aim' : 'idle';
     render();
   }
 
   function selectMove(sprint: boolean): void {
     const step = currentStep();
     if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
-    const ability = draftAbility(characterFor(step.unit), draft);
-    // Sprint is move-only (8 squares) and clears any ability. "Draw move" keeps a
-    // non-dash ability so it can coexist with a 4-square move (MS1); a dash owns
-    // the move, so drawing a separate move replaces the dash.
-    if (sprint || ability === undefined || ability.phase === 'dash') {
-      draft.abilityId = undefined;
-      draft.aim = [];
-    }
-    draft.sprint = sprint;
-    draft.movePath = [];
+    const prev = drafts.get(step.unit.unitId)!;
+    const wasDash = currentIsDash(prev, characterFor(step.unit));
+    drafts.set(step.unit.unitId, nextDraft(prev, { type: sprint ? 'selectSprint' : 'selectMove' }, wasDash));
     mode = 'move';
     render();
   }
@@ -294,7 +286,12 @@ export function startHotSeat(
       owner: v.owner, pos: v.pos, hp: v.hp, maxHp: v.maxHp, energy: v.energy, alive: v.alive,
       label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
     }));
-    ui.board.replaceChildren(renderBoard(map, units));
+    const svg = renderBoard(map, units);
+    // Decoys (D1): a ghost marker on each live decoy square. Hot-seat shows both
+    // sides; team-scoped "enemy sees it as Wisp" is a fog concern for M3.
+    const decoys = [...view.decoys.values()];
+    if (decoys.length > 0) paintOverlay(svg, decoys.map((d) => d.pos), cssVar('--spawn1'), 0.35);
+    ui.board.replaceChildren(svg);
   }
 
   function renderGameOver(): void {

@@ -12,7 +12,7 @@ const char: CharacterDef = {
     ability({ id: 'shoot', shape: 'line', range: 8, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }] }),
     ability({ id: 'nova', shape: 'circle', range: 6, radius: 2, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }, { kind: 'heal', amount: 15 }] }),
     ability({ id: 'guard', phase: 'prep', shape: 'self', range: 0, effects: [{ kind: 'shield', amount: 30, duration: 2 }] }),
-    ability({ id: 'a4', shape: 'self', range: 0, effects: [{ kind: 'might', duration: 1 }] }),
+    ability({ id: 'veil', phase: 'prep', shape: 'self', range: 0, effects: [{ kind: 'decoy', duration: 1 }] }),
   ],
   ultimate: ability({ id: 'ult', shape: 'square', range: 8, effects: [{ kind: 'damage', amount: 10 }] }),
 };
@@ -22,7 +22,7 @@ function mkUnit(unitId: string, owner: 0 | 1, x: number, y: number, over: Partia
   return { unitId, characterId: 'test-char', owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], ...over };
 }
 function mkState(units: GameState['units'], over: Partial<GameState> = {}): GameState {
-  return { turn: 1, units, traps: [], delayed: [], kills: [0, 0], format: '1v1', status: 'active', suddenDeath: false, ...over };
+  return { turn: 1, units, traps: [], delayed: [], decoys: [], kills: [0, 0], format: '1v1', status: 'active', suddenDeath: false, ...over };
 }
 const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
   resolveTurn(s, OPEN, [{ team: 0, units: u0 }, { team: 1, units: u1 }], roster);
@@ -106,5 +106,30 @@ describe('S1: playback reconstructs shields and post-ult energy from the log', (
     const view = playEvents(mkState([a, e]), events);
     expect(view.units.get('a')!.energy).toBe(state.units.find((u) => u.unitId === 'a')!.energy); // 100 spent → 0, +5 passive = 5
     expect(view.units.get('a')!.energy).toBe(5);
+  });
+});
+
+describe('decoy events fold into the view (D1)', () => {
+  it('a spawned decoy appears in the view, keyed by id, matching the engine', () => {
+    const w = mkUnit('w', 0, 3, 5);
+    const { state, events } = run(mkState([w]), [{ unitId: 'w', ability: { abilityId: 'veil', target: [] } }], []);
+    expect(events.some((e) => e.type === 'decoySpawned')).toBe(true);
+    const view = playEvents(mkState([w]), events);
+    expect(view.decoys.size).toBe(1);
+    const d = [...view.decoys.values()][0]!;
+    expect(d).toMatchObject({ teamId: 0, pos: { x: 3, y: 5 } });
+    expect(view.decoys.has(state.decoys[0]!.id)).toBe(true);
+  });
+
+  it('a destroyed decoy is removed from the view', () => {
+    // Turn 1 spawns; turn 2 holds, so the decoy expires (decoyDestroyed) and the
+    // folded view drops it — the view tracks decoys from the log alone.
+    const w = mkUnit('w', 0, 3, 5);
+    const t1 = run(mkState([w]), [{ unitId: 'w', ability: { abilityId: 'veil', target: [] } }], []);
+    expect(playEvents(mkState([w]), t1.events).decoys.size).toBe(1);
+
+    const t2 = resolveTurn(t1.state, OPEN, [{ team: 0, units: [] }, { team: 1, units: [] }], roster);
+    expect(t2.events.some((e) => e.type === 'decoyDestroyed')).toBe(true);
+    expect(playEvents(t1.state, t2.events).decoys.size).toBe(0);
   });
 });

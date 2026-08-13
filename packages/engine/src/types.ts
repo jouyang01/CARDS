@@ -88,6 +88,13 @@ export interface AbilityDef {
   energyGain: number;
   /** Resolves this many turns later, at the originally aimed squares. */
   delayTurns?: number;
+  /**
+   * For a damaging `path` dash only: which crossed enemies its effects hit.
+   * `"first"` (default/absent) = the first enemy whose square it crosses (R1a);
+   * `"all"` = every enemy crossed (R1b, e.g. Kestrel's Tempest Run). Rejected on
+   * any non-`path` shape (validate.ts).
+   */
+  chargeHits?: 'first' | 'all';
   effects: AbilityEffect[];
   description: string;
 }
@@ -160,6 +167,21 @@ export interface TrapState {
   onTrigger: AbilityEffect[];
 }
 
+/**
+ * A Wisp decoy (edge-cases R2): a static fake unit kept *out* of `state.units`
+ * so no phase loop / vision union / spawn picker / win check needs an "is this
+ * real?" guard. It blocks nothing, triggers nothing, and dies to any damage or
+ * to an enemy ending a move on its square. Rendered to the enemy team as Wisp.
+ */
+export interface DecoyState {
+  id: string;
+  /** The owning (Wisp's) team. */
+  teamId: TeamId;
+  pos: Vec2;
+  /** Turn number at whose end it expires (matching the 1-turn Stealth). */
+  expiresOnTurn: number;
+}
+
 export interface PendingDelayedAbility {
   casterUnitId: string;
   abilityId: string;
@@ -174,6 +196,8 @@ export interface GameState {
   units: UnitState[];
   traps: TrapState[];
   delayed: PendingDelayedAbility[];
+  /** Wisp decoys (edge-cases R2), kept out of `units`. */
+  decoys: DecoyState[];
   /** Per-team kill tally, `kills[teamId]`. */
   kills: [number, number];
   /** Match format id (GAME_SPEC §1) — sets kill target and turn limit. */
@@ -229,6 +253,9 @@ export type TurnEvent =
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
   | { type: 'trapTriggered'; trapId: string; unitId: string }
+  // A decoy appears (rendered to the enemy team as Wisp) / is revealed & removed.
+  | { type: 'decoySpawned'; decoyId: string; pos: Vec2; teamId: TeamId }
+  | { type: 'decoyDestroyed'; decoyId: string; pos: Vec2 }
   | { type: 'death'; unitId: string; killer: TeamId }
   | { type: 'respawn'; unitId: string; pos: Vec2 }
   | { type: 'energyGained'; unitId: string; amount: number }

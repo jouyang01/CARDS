@@ -540,3 +540,54 @@ corner is rejected and the unit holds.
   (bundled), decoy (D1), duplicate picks, `combat_roll` path-vs-teleport, cover-vs-Might,
   Support kit, roster-v1 §9. MV2 AR-wiki verification and the S1 playback-shield question
   were closed in the 2026-08-18 review.
+
+## Designer-rulings engine batch — R1c, R1b, D1, R4/R7, MS1-test (Builder, 2026-08-19)
+
+**(R1c) Displacement carries the victim past the displacer.** `applyDisplacements` walks
+the line the nominal distance with the displacer's body transparent, then, if the victim
+rests on the displacer's own square, advances one more (repeating while still on it); if the
+square beyond is blocked it falls back to the last free square (net-zero). Supersedes the
+amount-1 "stays put" interim. Ram Charge now knocks Vex past Bastion; wall-blocked variant
+still nets zero.
+
+**(R1b) `chargeHits: "first" | "all"`.** Added to `AbilityDef` (+ validation: literal-only,
+`path`-shape-only). `walkCharge` returns all crossed enemies in path order; `runDash` applies
+effects to the first (default) or all (`"all"`, Kestrel Tempest Run). Energy stays
+once-per-use. `content.test.ts` now validates the full 9-char roster.
+
+**(R4/R7) Content guardrails.** R7: `untargetable` moved into the Beneficial polarity row,
+closing the hole so harmful/beneficial/neutral partition `EFFECT_KINDS` exactly; the three
+sets are exported and a test asserts totality. R4: a behavioral test proves `shape` (not a
+teleport *effect*) decides wall-crossing — a `path` dash is walked, a `square` teleport crosses.
+
+**(D1) Decoy entity.** `DecoyState {id, teamId, pos, expiresOnTurn}` on `GameState.decoys`,
+kept OUT of `units`. Spawns in Prep at the caster square; destroyed by any damaging ability
+whose area covers it (no energy, no riders), by an enemy ending a Move on it, or by expiry;
+blocks nothing, never a unit, no kill. `playback.ts` folds `decoySpawned`/`decoyDestroyed`;
+client paints a ghost marker. **Judgment calls (flagged below):** (a) expiry = `castTurn + 1`
+("end of next turn" per the explicit ruling; the "matching the 1-turn Stealth" parenthetical
+reads looser — a 1-turn status covers only its cast turn, so the decoy outlives the Stealth
+by one turn); (b) `decoyDestroyed` is emitted on *expiry* too, not just destruction, so the
+client has a single removal signal; (c) decoy destruction covers area/dash damage, not only
+Blast, to honor "any damage."
+
+**(MS1-test) Pure `nextDraft` reducer.** Extracted the ability/move/sprint toggle from
+`app.ts` into a tested pure reducer in `targeting.ts` (closes the MS1 DOM-untested flag).
+
+## Open Questions for the Analyzer — 2026-08-19 (rulings batch)
+
+- **Thorn (Support) has no dash — confirm intended.** Expanding `content.test.ts` to the full
+  roster exposed that Thorn is the only kit with no dash-phase ability (Lumen, also Support,
+  has one). I scoped the dash-answer guardrail to non-support archetypes rather than
+  rebalance content. Confirm Thorn is meant to be dash-less, or add a dash to `thorn.json`.
+- **Decoy lifetime wording (D1/R2).** Implemented expiry = end of `castTurn + 1` per the
+  explicit "end of the next turn," which outlives the accompanying 1-turn Stealth by a turn.
+  If you intended decoy = Stealth (cast turn only), say so and I'll set `expiresOnTurn = castTurn`
+  (the playtest lever you named). `resolve.spawnDecoy`, `decoy.test.ts`.
+- **Decoy destruction scope (D1).** I destroy a decoy on *Move-onto* (per the ruling) but not
+  on a *dash* ending on it or a *knockback* onto it (both are repositions, not "a move").
+  Confirm that's the intended reading, or widen the trigger. `resolve.destroyDecoysUnderEnemies`.
+- **Decoy fog rendering is M3.** "Enemy sees the decoy as Wisp" needs per-team hidden info;
+  the M2 hot-seat paints a neutral ghost marker for both sides. Deferred to M3 (item 21).
+- **Carried / still Designer-blocked:** charge damage targeting beyond R1a/R1b (bundled),
+  duplicate picks + cover-vs-Might + Support anti-stall are M3/playtest, not engine.

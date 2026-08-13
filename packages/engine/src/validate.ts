@@ -39,6 +39,12 @@ export function validateAbility(a: AbilityDef, path: string): string[] {
   if (a.delayTurns !== undefined && (!isInt(a.delayTurns) || a.delayTurns < 1)) {
     errs.push(`${path}: delayTurns must be an integer >= 1 when present`);
   }
+  if (a.chargeHits !== undefined) {
+    if (a.chargeHits !== 'first' && a.chargeHits !== 'all') {
+      errs.push(`${path}: chargeHits must be "first" or "all" when present`);
+    }
+    if (a.shape !== 'path') errs.push(`${path}: chargeHits is only valid on a "path" (charge) ability`);
+  }
   if (!Array.isArray(a.effects) || a.effects.length === 0) {
     errs.push(`${path}: must declare at least one effect`);
   } else {

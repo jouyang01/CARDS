@@ -54,6 +54,7 @@ import type {
   AbilityDef,
   AbilityEffect,
   CharacterDef,
+  DecoyState,
   EffectKind,
   GameState,
   MapDef,
@@ -106,7 +107,11 @@ interface UnitPlan {
  * own team. teleport/decoy/trap are neither — they are self/placement effects
  * handled by their own phase, not filtered by area allegiance.
  */
-const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+// Effect polarity (edge-cases: no-friendly-fire + R7). The three sets partition
+// EFFECT_KINDS exactly — every kind sits in one row, so the table is total (a
+// content guardrail test asserts it). Harmful → enemies only; beneficial → own
+// team only; neutral → self/placement, unfiltered by area allegiance.
+export const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'damage',
   'weaken',
   'slow',
@@ -115,7 +120,7 @@ const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'pull',
   'reveal',
 ]);
-const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'heal',
   'shield',
   'might',
@@ -123,15 +128,19 @@ const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'energized',
   'unstoppable',
   'stealth',
+  'untargetable', // R7 (2026-08-19): concealing/protecting a unit is friendly
+]);
+export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+  'teleport',
+  'decoy',
+  'trap',
 ]);
 
 /** Does using this ability grant its energy even without hitting an enemy? */
 function isSelfOrUtility(def: AbilityDef): boolean {
   return (
     def.shape === 'self' ||
-    def.effects.some(
-      (e) => e.kind === 'teleport' || e.kind === 'trap' || e.kind === 'decoy' || BENEFICIAL_KINDS.has(e.kind),
-    )
+    def.effects.some((e) => NEUTRAL_KINDS.has(e.kind) || BENEFICIAL_KINDS.has(e.kind))
   );
 }
 
@@ -306,25 +315,40 @@ function applyDisplacements(
     const dir = d.kind === 'knockback' ? direction8(d.source, d.victim.pos) : direction8(d.victim.pos, d.source);
     if (dir.x === 0 && dir.y === 0) continue;
 
-    // The displacing attacker's own body is not an obstacle: a charge that passed
-    // *through* the victim and settled beyond it may be crossed, not treated as a
-    // wall (edge-cases: MV1-fix). Every *other* living unit still blocks the path.
+    // A square is solid (blocks a resting displacement) if it is terrain or held
+    // by any living unit other than the victim; `exceptId` also lets the
+    // displacer's own body be crossed (MV1-fix: a charge that passed *through* the
+    // victim and settled beyond it isn't a wall).
+    const solidFor = (p: Vec2, exceptId?: string): boolean => {
+      const t = terrainAt(board, p);
+      if (t === 'wall' || t === 'cover' || t === 'oob') return true;
+      return draft.units.some((u) => u.alive && u.unitId !== d.victim.unitId && u.unitId !== exceptId && vecEq(u.pos, p));
+    };
+    const isDisplacer = (p: Vec2): boolean =>
+      d.attackerId !== undefined && draft.units.some((u) => u.alive && u.unitId === d.attackerId && vecEq(u.pos, p));
+
+    // Walk the line the nominal distance; the displacer's body is transparent, so
+    // `cur` may land on it.
     let cur = d.victim.pos;
     for (let step = 0; step < d.amount; step++) {
       const nxt: Vec2 = { x: cur.x + dir.x, y: cur.y + dir.y };
       if (d.kind === 'pull' && vecEq(nxt, d.source)) break; // never land on the puller
-      const t = terrainAt(board, nxt);
-      if (t === 'wall' || t === 'cover' || t === 'oob') break;
-      if (draft.units.some((u) => u.alive && u.unitId !== d.victim.unitId && u.unitId !== d.attackerId && vecEq(u.pos, nxt))) break;
+      if (solidFor(nxt, d.attackerId)) break;
       cur = nxt;
     }
-    // A unit may never *end* on another's square (co-occupancy invariant). If the
-    // victim's furthest reachable square is the attacker's own (a knockback that
-    // exactly matched the charger's landing, e.g. Ram Charge's 1-square push into
-    // the square it settled on), it stops one short rather than co-occupying.
-    if (d.attackerId !== undefined) {
-      const blocker = draft.units.find((u) => u.alive && u.unitId === d.attackerId);
-      if (blocker !== undefined && vecEq(cur, blocker.pos)) cur = { x: cur.x - dir.x, y: cur.y - dir.y };
+    // Carry-through (R1c): a unit may never *end* on another's square. If the
+    // victim came to rest on the displacer's own square, skip *past* it — advance
+    // one more along the line (repeat while still on the displacer's square). If
+    // the square beyond is blocked (wall/cover/edge/third unit), fall back to the
+    // last free square before it — the documented net-zero.
+    while (isDisplacer(cur)) {
+      const nxt: Vec2 = { x: cur.x + dir.x, y: cur.y + dir.y };
+      if (!solidFor(nxt) && !(d.kind === 'pull' && vecEq(nxt, d.source))) {
+        cur = nxt; // carried past the displacer
+      } else {
+        cur = { x: cur.x - dir.x, y: cur.y - dir.y }; // last free square before it
+        break;
+      }
     }
     if (!vecEq(cur, d.victim.pos)) {
       const from = d.victim.pos;
@@ -365,14 +389,14 @@ function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: Turn
     if (trapEffect !== undefined) {
       placeTraps(draft, plan.unit, a, trapEffect, events);
     } else {
-      applySelfEffects(plan.unit, a.def.effects, events);
+      applySelfEffects(draft, plan.unit, a.def.effects, events);
     }
     grantUseEnergy(plan.unit, a.def, false, events);
   }
 }
 
-/** Apply a self-targeted ability's effects to its caster (shields, heals, buffs). */
-function applySelfEffects(unit: UnitState, effects: readonly AbilityEffect[], events: TurnEvent[]): void {
+/** Apply a self-targeted ability's effects to its caster (shields, heals, buffs, decoy). */
+function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly AbilityEffect[], events: TurnEvent[]): void {
   for (const e of effects) {
     if (e.kind === 'heal') {
       const healed = applyHeal(unit, e.amount ?? 0);
@@ -381,13 +405,45 @@ function applySelfEffects(unit: UnitState, effects: readonly AbilityEffect[], ev
       applyStatus(unit, 'shield', e.duration ?? 1, e.amount ?? 0);
       events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'shield', duration: e.duration ?? 1, amount: e.amount ?? 0 });
     } else if (e.kind === 'decoy') {
-      // Decoy is an OPEN ruling (edge-cases.md) — not implemented in v1.
-      continue;
+      spawnDecoy(draft, unit, events); // R2: a static fake at the caster's square
     } else if (isStatusKind(e.kind)) {
       applyStatus(unit, e.kind, e.duration ?? 1);
       events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1 });
     }
   }
+}
+
+/**
+ * Spawn a Wisp decoy (edge-cases R2) at the caster's square. Kept out of
+ * `state.units`; expires at the end of the *next* turn (`castTurn + 1`) unless
+ * destroyed first. Deterministic id from caster + turn (one cast per unit/turn).
+ */
+function spawnDecoy(draft: GameState, caster: UnitState, events: TurnEvent[]): void {
+  const decoy: DecoyState = {
+    id: `decoy-${caster.unitId}-t${draft.turn}`,
+    teamId: caster.owner,
+    pos: { x: caster.pos.x, y: caster.pos.y },
+    expiresOnTurn: draft.turn + 1,
+  };
+  draft.decoys.push(decoy);
+  events.push({ type: 'decoySpawned', decoyId: decoy.id, pos: decoy.pos, teamId: decoy.teamId });
+}
+
+/**
+ * Destroy every enemy decoy whose square lies in `area` (R2: any damage destroys
+ * a decoy; damaging it grants no energy — the caller never counts it as an enemy
+ * hit). `attackerTeam` is the damaging unit's team; own-team decoys are untouched.
+ */
+function destroyDecoysInArea(draft: GameState, area: readonly Vec2[], attackerTeam: TeamId, events: TurnEvent[]): void {
+  if (draft.decoys.length === 0) return;
+  const areaKeys = new Set(area.map(vecKey));
+  draft.decoys = draft.decoys.filter((d) => {
+    if (d.teamId !== attackerTeam && areaKeys.has(vecKey(d.pos))) {
+      events.push({ type: 'decoyDestroyed', decoyId: d.id, pos: d.pos });
+      return false;
+    }
+    return true;
+  });
 }
 
 /** Place a hidden trap on each aimed square. Damage + non-trap effects fire on entry. */
@@ -435,20 +491,21 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // knockback is measured from where the charge began (push along the charge),
     // not the post-pass-through position — combat semantics stay as today.
     const origin: Vec2 = { x: plan.unit.pos.x, y: plan.unit.pos.y };
-    let charged: UnitState | undefined;
-    if (a.def.shape === 'path') charged = walkCharge(draft, plan.unit, a.aim, events);
+    let crossed: UnitState[] = [];
+    if (a.def.shape === 'path') crossed = walkCharge(draft, plan.unit, a.aim, events);
     else teleport(draft, board, plan.unit, a.aim[0], events);
 
-    // Damage: a charge hits the enemy it ran into; a teleport-strike hits enemies
-    // adjacent to where it landed.
+    // Damage: a charge hits the enemies it crossed — the first only (R1a, default)
+    // or every one (R1b, `chargeHits: "all"`, e.g. Tempest Run); a teleport-strike
+    // hits enemies adjacent to where it landed.
     const dmg = a.def.effects.find((e) => e.kind === 'damage');
     let hitEnemy = false;
     if (dmg !== undefined) {
       const victims =
         a.def.shape === 'path'
-          ? charged !== undefined
-            ? [charged]
-            : []
+          ? a.def.chargeHits === 'all'
+            ? crossed
+            : crossed.slice(0, 1)
           : draft.units.filter((u) => u.owner !== plan.unit.owner && u.alive && chebyshev(plan.unit.pos, u.pos) === 1);
       const source = a.def.shape === 'path' ? origin : plan.unit.pos;
       for (const victim of victims) {
@@ -462,8 +519,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       }
     }
 
+    // A decoy in a damaging dash's area/path is destroyed too (R2) — no energy.
+    if (dmg !== undefined) destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
+
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
-    applySelfEffects(plan.unit, a.def.effects, events);
+    applySelfEffects(draft, plan.unit, a.def.effects, events);
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
     if (hitEnemy) {
       removeStatus(plan.unit, 'stealth');
@@ -477,22 +537,22 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
  * Walk a charge along its path (MV1 / edge-cases "AR movement model"): it passes
  * *through* any character — ally or enemy — but may not *end* on an occupied
  * square, so it rests on the furthest path square that is free (or holds if none
- * is). Walls/cover never appear in the path (validated). Returns the first enemy
- * it crossed — damage targeting is unchanged (still the first enemy; the
- * first/all/destination question is an ENGINE ASK held for the Designer).
+ * is). Walls/cover never appear in the path (validated). Returns every enemy
+ * whose square lies on the path, in path order; the caller applies `chargeHits`.
  */
-function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState | undefined {
+function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState[] {
   const occupiedAt = (p: Vec2) => draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
   // Furthest square the charger may rest on (last free square in the path).
   let restIndex = -1;
   for (let i = 0; i < path.length; i++) if (!occupiedAt(path[i]!)) restIndex = i;
 
-  // The first enemy anywhere on the path — crossed while passing through, or run
-  // into at the (occupied) destination the charge cannot enter. Damage target.
-  let firstEnemy: UnitState | undefined;
+  // Every enemy whose square lies on the path, in path order: crossed while
+  // passing through, or run into at the occupied destination. `chargeHits` in the
+  // caller selects the first (R1a) or all of them (R1b).
+  const crossed: UnitState[] = [];
   for (const step of path) {
     const enemy = draft.units.find((u) => u.alive && u.owner !== unit.owner && vecEq(u.pos, step));
-    if (enemy !== undefined) { firstEnemy = enemy; break; }
+    if (enemy !== undefined) crossed.push(enemy);
   }
 
   // Move square-by-square to the rest square, triggering traps on each entry.
@@ -501,9 +561,9 @@ function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], ev
     const from = unit.pos;
     unit.pos = { x: step.x, y: step.y };
     events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-    if (triggerTrapsOnEntry(draft, unit, events)) return firstEnemy; // died mid-charge
+    if (triggerTrapsOnEntry(draft, unit, events)) return crossed; // died mid-charge
   }
-  return firstEnemy;
+  return crossed;
 }
 
 /** Teleport to `dest` if it is an open, unoccupied square (walls may be crossed). */
@@ -591,6 +651,11 @@ function runBlast(
         }
       }
     }
+    // A decoy in a damaging ability's area is destroyed (R2) — no energy, no
+    // riders; it never counts as an enemy hit, so `hitEnemy` stays units-only.
+    if (a.def.effects.some((e) => e.kind === 'damage')) {
+      destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
+    }
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
   }
 
@@ -617,7 +682,7 @@ function runBlast(
 
   // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
   for (const { target, effect } of benefits) {
-    if (target.alive) applySelfEffects(target, [effect], events);
+    if (target.alive) applySelfEffects(draft, target, [effect], events);
   }
 
   // Queue displacement against survivors, to resolve at end of Blast (item 8).
@@ -704,6 +769,22 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
   for (let step = 0; step < maxLen; step++) {
     stepMovers(draft, movers, step, events);
   }
+
+  // A decoy is destroyed by an enemy that *ends a move* on its square (R2).
+  destroyDecoysUnderEnemies(draft, movers.map((m) => m.unit), events);
+}
+
+/** Destroy any decoy an enemy of its team currently stands on (R2 move-onto). */
+function destroyDecoysUnderEnemies(draft: GameState, units: readonly UnitState[], events: TurnEvent[]): void {
+  if (draft.decoys.length === 0) return;
+  draft.decoys = draft.decoys.filter((d) => {
+    const enemyOnIt = units.some((u) => u.alive && u.owner !== d.teamId && vecEq(u.pos, d.pos));
+    if (enemyOnIt) {
+      events.push({ type: 'decoyDestroyed', decoyId: d.id, pos: d.pos });
+      return false;
+    }
+    return true;
+  });
 }
 
 /** Resolve one simultaneous step across all still-moving units. */
@@ -791,6 +872,16 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
   }
   // Delayed abilities count down (resolution attaches at BACKLOG item 12).
   for (const d of draft.delayed) d.turnsRemaining -= 1;
+
+  // Decoys expire at the end of their `expiresOnTurn` (cast turn + 1), unless
+  // already destroyed (R2). Turn has not yet advanced here, so compare directly.
+  draft.decoys = draft.decoys.filter((d) => {
+    if (draft.turn >= d.expiresOnTurn) {
+      events.push({ type: 'decoyDestroyed', decoyId: d.id, pos: d.pos });
+      return false;
+    }
+    return true;
+  });
 
   // Respawn: only units that were already dead at the start of this turn count a
   // turn down, so a unit that died THIS turn misses a full turn before returning.
