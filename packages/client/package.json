@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "size": "node scripts/bundle-budget.mjs",
     "test": "vitest run"
   },
   "dependencies": {

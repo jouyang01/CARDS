@@ -20,6 +20,8 @@ jobs:
         run: npm run typecheck
       - name: Client build
         run: npm run build
+      - name: Bundle budget (BUNDLE1)
+        run: npm run size -w @cards/client
       - name: Determinism guard (no randomness/clock/IO in engine)
         run: |
           # Widened guard (CLAUDE.md rule 1): no clock, no RNG, no floats-from-random,
