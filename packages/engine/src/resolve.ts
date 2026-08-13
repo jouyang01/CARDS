@@ -306,25 +306,40 @@ function applyDisplacements(
     const dir = d.kind === 'knockback' ? direction8(d.source, d.victim.pos) : direction8(d.victim.pos, d.source);
     if (dir.x === 0 && dir.y === 0) continue;
 
-    // The displacing attacker's own body is not an obstacle: a charge that passed
-    // *through* the victim and settled beyond it may be crossed, not treated as a
-    // wall (edge-cases: MV1-fix). Every *other* living unit still blocks the path.
+    // A square is solid (blocks a resting displacement) if it is terrain or held
+    // by any living unit other than the victim; `exceptId` also lets the
+    // displacer's own body be crossed (MV1-fix: a charge that passed *through* the
+    // victim and settled beyond it isn't a wall).
+    const solidFor = (p: Vec2, exceptId?: string): boolean => {
+      const t = terrainAt(board, p);
+      if (t === 'wall' || t === 'cover' || t === 'oob') return true;
+      return draft.units.some((u) => u.alive && u.unitId !== d.victim.unitId && u.unitId !== exceptId && vecEq(u.pos, p));
+    };
+    const isDisplacer = (p: Vec2): boolean =>
+      d.attackerId !== undefined && draft.units.some((u) => u.alive && u.unitId === d.attackerId && vecEq(u.pos, p));
+
+    // Walk the line the nominal distance; the displacer's body is transparent, so
+    // `cur` may land on it.
     let cur = d.victim.pos;
     for (let step = 0; step < d.amount; step++) {
       const nxt: Vec2 = { x: cur.x + dir.x, y: cur.y + dir.y };
       if (d.kind === 'pull' && vecEq(nxt, d.source)) break; // never land on the puller
-      const t = terrainAt(board, nxt);
-      if (t === 'wall' || t === 'cover' || t === 'oob') break;
-      if (draft.units.some((u) => u.alive && u.unitId !== d.victim.unitId && u.unitId !== d.attackerId && vecEq(u.pos, nxt))) break;
+      if (solidFor(nxt, d.attackerId)) break;
       cur = nxt;
     }
-    // A unit may never *end* on another's square (co-occupancy invariant). If the
-    // victim's furthest reachable square is the attacker's own (a knockback that
-    // exactly matched the charger's landing, e.g. Ram Charge's 1-square push into
-    // the square it settled on), it stops one short rather than co-occupying.
-    if (d.attackerId !== undefined) {
-      const blocker = draft.units.find((u) => u.alive && u.unitId === d.attackerId);
-      if (blocker !== undefined && vecEq(cur, blocker.pos)) cur = { x: cur.x - dir.x, y: cur.y - dir.y };
+    // Carry-through (R1c): a unit may never *end* on another's square. If the
+    // victim came to rest on the displacer's own square, skip *past* it — advance
+    // one more along the line (repeat while still on the displacer's square). If
+    // the square beyond is blocked (wall/cover/edge/third unit), fall back to the
+    // last free square before it — the documented net-zero.
+    while (isDisplacer(cur)) {
+      const nxt: Vec2 = { x: cur.x + dir.x, y: cur.y + dir.y };
+      if (!solidFor(nxt) && !(d.kind === 'pull' && vecEq(nxt, d.source))) {
+        cur = nxt; // carried past the displacer
+      } else {
+        cur = { x: cur.x - dir.x, y: cur.y - dir.y }; // last free square before it
+        break;
+      }
     }
     if (!vecEq(cur, d.victim.pos)) {
       const from = d.victim.pos;

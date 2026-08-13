@@ -116,17 +116,34 @@ describe('MV1-fix: displacement ignores the displacing charger\'s own body', () 
     expect(unit(state, 'e').pos).toEqual({ x: 4, y: 0 }); // knocked 2, crossing the charger's square
   });
 
-  it('a 1-square knockback into the charger\'s exact square does not co-occupy', () => {
+  it('a 1-square knockback onto the charger carries through to the far side (R1c)', () => {
     // The charger settles exactly one square beyond e and e's 1-square knockback
-    // would land on that square. The charger isn't a wall (e may cross it) but a
-    // unit may never *end* on another's square — so e stays put rather than
-    // stacking. (Ram Charge's geometry: the residual the Designer must rule on.)
+    // would land on that square. The charger's body is skipped (R1c carry-through):
+    // e is pushed one square *past* the charger rather than stacking or netting zero.
     const u = makeUnit('u', 0, { x: 0, y: 0 });
     const e = makeUnit('e', 1, { x: 2, y: 0 });
     const { state } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }], []);
     expect(unit(state, 'u').pos).toEqual({ x: 3, y: 0 });
-    expect(unit(state, 'e').pos).toEqual({ x: 2, y: 0 }); // not displaced onto the charger
+    expect(unit(state, 'e').pos).toEqual({ x: 4, y: 0 }); // carried past the charger
     expect(unit(state, 'u').pos).not.toEqual(unit(state, 'e').pos); // co-occupancy invariant holds
+  });
+
+  it('carry-through blocked by a wall beyond the charger falls back to net-zero (R1c)', () => {
+    // u (2,0) charges +x through e (4,0) and rests at (5,0); a wall at (6,0) leaves
+    // no square to carry through to, so e's 1-square knockback onto (5,0) falls back
+    // to the last free square before the charger — e's own origin: net-zero.
+    const map = makeMap(['......#..', '.........', '.........', '.........', '.........', '.........', '.........', '.........', '.........']);
+    const u = makeUnit('u', 0, { x: 2, y: 0 });
+    const e = makeUnit('e', 1, { x: 4, y: 0 });
+    const { state } = run(
+      makeState([u, e]),
+      [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 3, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 }] } }],
+      [],
+      map,
+    );
+    expect(unit(state, 'u').pos).toEqual({ x: 5, y: 0 }); // rested on the last free square before the wall
+    expect(unit(state, 'e').hp).toBe(85); // still struck for the 15 charge damage
+    expect(unit(state, 'e').pos).toEqual({ x: 4, y: 0 }); // net-zero: carry-through blocked by the wall
   });
 });
 
@@ -179,7 +196,7 @@ describe('MV4: diagonal charge paths', () => {
     );
     expect(unit(state, 'u').pos).toEqual({ x: 3, y: 3 }); // charged diagonally through e to the far side
     expect(unit(state, 'e').hp).toBe(85); // 15 charge damage on the crossed enemy
-    expect(unit(state, 'e').pos).toEqual({ x: 2, y: 2 }); // 1-square knockback onto the charger nets zero (MV1-fix interim)
+    expect(unit(state, 'e').pos).toEqual({ x: 4, y: 4 }); // knocked diagonally, carried past the charger (R1c)
   });
 
   it('a diagonal charge that cuts a wall corner is rejected (the ability is dropped, unit holds)', () => {
