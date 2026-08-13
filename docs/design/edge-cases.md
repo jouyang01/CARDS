@@ -44,30 +44,57 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   "allies also block in v1" lean is superseded. (Deduped 2026-08-15: the branch merge
   left two Pass-through entries and a redundant contested-square entry; the same-step
   and edge-swap rulings above are the single contested-square authority.)
-- **PROPOSED — Atlas Reactor movement model: pass through everyone, never end on an
-  occupied square (Dev Notes 1 & 2, 2026-08-16; backlog items MV1/MV2).** Aligns the engine
-  with Atlas Reactor movement. **This SUPERSEDES the "enemies block pass-through" half of
-  the Pass-through ruling above and the "walked charge stops in front of the first unit"
-  clause of the walked-dash ruling below, once implemented.** Rules:
-  - **Any character — ally or enemy — may be moved *through*** during both normal Move and
-    dash/charge. Walls and cover still block entry and pass-through; units never do.
-  - **A unit may not *end* its move on a square occupied by another living unit.** In the
-    planner, occupied squares are walk-through but not legal endpoints (as allies already
-    are). A dash/charge whose destination is occupied stops on the last free square before
-    it (or fizzles for a teleport, unchanged).
-  - **Simultaneous-resolution invariants are unchanged:** the same-step contested-square
-    rule and the 2-cycle no-edge-swap rule still hold (no two units share a square at rest
-    or trade squares in one step). "Pass-through" is about *crossing* a square another unit
-    occupies at a different step, not co-occupying it.
-  - **Damage-dealing charge (e.g. Ram Charge) — ENGINE ASK / Designer:** if a charge now
-    passes through enemies instead of stopping at the first, does it hit the *first* enemy
-    crossed, *all* enemies crossed, or the destination only? Do not implement the damage
-    change until the Designer rules; the movement (pass-through) change is not blocked on it.
-  - **Verification caveat:** the linked AR wiki
-    (`atlas-reactor.fandom.com/wiki/Movement`) was **egress-blocked** this session, so these
-    rules are reconstructed from the Dev Notes + AR domain knowledge. Confirm exact
-    edge-details (e.g. move-through timing, terrain interactions) against the wiki — paste
-    its text or unblock egress — before the Builder finalizes.
+- **RULED — Atlas Reactor movement model: pass through everyone, never end on an
+  occupied square (Dev Notes 1 & 2; implemented MV1/MV2, verified against the AR wiki
+  2026-08-17).** The human supplied the AR *Movement* wiki text; these are confirmed:
+  - **Any character — ally or enemy — may be moved *through*** during normal Move and
+    ground dash/charge. Walls and cover still block; units never do (AR "Collisions").
+  - **A unit may not *end* on an occupied square** — "if a path ends on a square already
+    inhabited, stop on the square before it… applies even if allied" (AR "Collisions").
+    The unit closest to a contested square holds it; later arrivals stop before it.
+  - **Ground vs airborne dash = walked charge (`path`) vs teleport (`square`):** ground
+    triggers traps and is stopped by walls; airborne ignores traps and crosses walls. ✓
+  - **Rooted does not stop a dash; Unstoppable ignores slow/root/displacement.** ✓
+- **RULED — Diagonal movement, full AR cost model (implemented 2026-08-17, item MV3).**
+  The engine is now **8-direction** (`MOVE_STEPS`). Supersedes the orthogonal-only ruling
+  (DECISIONS 2026-08-11); GAME_SPEC §3 updated to match. Cost: orthogonal = 1; the k-th
+  diagonal along a path costs 2 when k is even (2nd/4th/…), else 1 — so one diagonal reaches
+  5 instead of 4 (9 instead of 8). Realised as the 1/2 alternation (no floats). Reachability
+  is a shortest-cost search over `(square, parity-of-diagonals-used)` — deterministic.
+  Vision stays Chebyshev, cover stays orthogonally-adjacent (unchanged).
+- **RULED — Diagonal corner-cut: blocked by either solid flank (2026-08-17).** A diagonal
+  step is illegal if *either* orthogonally-adjacent square it passes between is wall/cover
+  (`diagonalCornerBlocked`); units never block a corner. This is the adopted v1 convention —
+  the AR excerpt the human supplied did not specify corner-cutting, so this stands as the
+  ruling; revisit only if AR's exact rule (e.g. single-flank cuts) is provided.
+- **RULED — Diagonal X-crossing is allowed; diagonal swaps are not (2026-08-17).** Two units
+  crossing diagonally through a shared corner without trading squares — e.g. A (0,0)→(1,1)
+  and B (1,0)→(0,1) — both proceed (pass-through; they never share a square at rest). A
+  diagonal *swap* (A and B exchanging diagonally-adjacent squares) is still blocked by the
+  position-based 2-cycle rule, same as an orthogonal swap. Consistent with the AR
+  pass-through model; flag for playtest if the visual X-cross reads oddly.
+- **RULED (v1 interim) — amount-1 charge knockback onto the charger stays put (2026-08-17,
+  bundled with the charge-combat Designer ASK).** With pass-through, a charge can land
+  beyond its victim; if the victim's knockback distance equals the overshoot it would land
+  exactly on the charger's square. The "no two units at rest on one square" invariant
+  (golden rule #1) wins: the victim may *cross* the charger but not *end* on it, so it stops
+  one short — a net-zero displacement for the amount-1 case (documented, not silently
+  dropped). amount≥2 displaces correctly. Whether such a victim should instead be carried
+  through to the far side (amplifying the knockback) or swap with the charger is bundled into
+  the Designer charge-combat ruling below — do not change without it.
+- **PROPOSED — AR "Clashes" are more permissive than our resolver (refinement, lower
+  priority).** AR: two units *both passing through* the same square (neither ending there)
+  **both continue**; if one *ends* on it and another passes through, the ender stays and
+  the other continues; only *both ending* on it forces both back. Our `stepMovers` is
+  stricter — any same-step co-target stops all of them. This is a deterministic v1
+  simplification; align with AR's pass-through-co-occupancy only if playtests want it
+  (backlog item CL1). The 2-cycle no-edge-swap rule still stands regardless.
+- **RULED — Displacement ignores the displacing attacker's own body (fixes MV1
+  regression, 2026-08-17).** Since a charge now passes through and can land *beyond* its
+  target, the victim's knockback path must **not** treat the charger's landing square as an
+  obstacle (the charger isn't a wall — it just passed through). Fixes Ram Charge no longer
+  displacing its target. The *targeting* question (does a damaging charge hit first/all/
+  destination?) remains a Designer ENGINE ASK; this rules only the mechanical knockback fix.
 - **RULED — Knockback into wall/cover/edge.** The unit stops on the last open square
   along the knockback line. No collision damage in v1.
 - **RULED — Knockback + Move.** A displaced unit loses its Move this turn (per spec).
@@ -258,3 +285,10 @@ deltas and never recomputes game logic. So the log must carry every fact the HUD
     emits `energySpent`, and that a shielded unit's `statusApplied` carries the pool. The
     playback client (item 19) then consumes both to show shields/energy. Keep events
     delta-based (consistent with `energyGained`) so replay stays order-robust.
+- **RULED — Playback shows a shield's full pool *during* its turn; no expiry event needed
+  (closes Builder OQ, 2026-08-17).** Playback folds deltas and does not tick status
+  durations, so a duration-1 shield displays its full pool while that turn animates; the
+  next turn's `initView` reflects the ticked-off pool. That is correct for an *animation*
+  of the turn (the shield was up during it). No `statusExpired`/tick event is needed for
+  v1 — the board-authoritative state at each turn boundary already comes from the engine.
+  Revisit only if a HUD needs end-of-turn post-tick pools mid-animation.

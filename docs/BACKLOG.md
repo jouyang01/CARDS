@@ -7,124 +7,104 @@ independently shippable. Each item carries **Spec Notes** (Analyzer's build guid
 **Format (GAME_SPEC §1):** 2v2 default (2–4 players), 4v4 supported (4–8), 1v1 dev/testing.
 A player controls 1–2 characters on one team.
 
-**Standing architectural directive (Dev Note, ARCHITECTURE.md):** *"…never hardcode
-single-unit assumptions… 2D SVG visuals now; the engine emits an event log so a 3D
-renderer can be swapped in later without touching game logic."* Every engine item iterates
-unit **lists**; every client item is a pure `TurnEvent[]` consumer. The engine is
-player-count-blind — the room layer owns the player→character map.
+**Standing directives:** engine iterates unit **lists** (never single-unit); every client
+item is a pure `TurnEvent[]` consumer; the engine is player-count-blind. **Open/update a PR
+to `main` at the end of every session** (CLAUDE.md "Session workflow").
 
 ## ✅ COMPLETE
 
-- **M1 — Engine core (1–12, +3a, +E1).** Board, vision, cover, pipeline, shapes/5a,
-  status, dash, knockback, traps, deaths/respawn/win, determinism, real characters +
-  delayed abilities; no-edge-swap; passive energy bypasses Energized. Reviews 08-13/14/15.
-- **M1.5 — Teams & formats (13–16).** `FORMATS`/per-format win config, ally-aware effects
-  (no friendly fire), team movement + shared vision, multi-unit spawns/respawns. Review 08-15.
-- **M2 client (17–20) + T1.** Live-state render (17), targeting logic (18), event-log
-  playback (19), hot-seat seats + per-player order merging (20); `PlayerId → TeamId` rename
-  complete (T1). Client Vitest runner added; root `npm test` runs both workspaces.
-  **244 tests** (engine 226 + client 18), typecheck clean, build green. Review 08-16.
+- **M1 — Engine core (1–12, +3a, +E1).**
+- **M1.5 — Teams & formats (13–16).**
+- **M2 client (17–20) + T1.** Render, targeting, playback, hot-seat seats/merging; TeamId rename.
+- **S1 — Event schema for HUD** (shield `amount` + `energySpent`).
+- **MV1 — Dashes/charges pass through characters.** (Dev Note: *"Dashes should be able to go
+  through other characters."*)
+- **MV2 — Normal movement AR pass-through model.** Verified against the AR wiki.
+- **MV1-fix — Displacement ignores the charger's own body.** Ram Charge displaces again
+  (amount-1-onto-charger is a documented net-zero interim; see edge-cases).
+- **MV3 — 8-direction diagonal movement, AR cost model.** Parity-state Dijkstra, corner-cut
+  blocked by either solid flank, GAME_SPEC §3 updated. (Dev Note: *"Movement rules should
+  follow this."*)
+- **TT1 — Ability tooltips.** (Dev Note: *"Need to have tooltips when hovering over ability."*)
+- **C1 — Headless hot-seat smoke test.**
+
+Current suite: **262 tests** (engine 238 + client 24), typecheck + build clean, purity green.
 
 ---
 
-## Next batch — movement alignment + HUD completion (the human's priority)
+## Next batch
 
-### S1. Complete the event schema for shields & post-ult energy — UNBLOCKED (do first)
-Playback reproduces the board but not shield pools / post-ultimate energy — the log lacks
-the facts (ruled in edge-cases "Rendering contract"). *AC: `statusApplied` carries an
-optional `amount` populated with the shield pool when `status==='shield'`; a new
-`{type:'energySpent';unitId;amount}` event fires whenever an ability removes energy (the
-ult reset emits it); engine tests assert both; `playback.ts` consumes them so the HUD shows
-shields and correct post-ult energy; existing 244 tests stay green.*
+### MS1. Move-and-shoot in one turn (client UI) — UNBLOCKED (priority)
+**Addresses Dev Note: "Yes - you should be able to move and shoot in one turn and this needs
+to be built out in the next build… Ability + move: you get a 4-square move budget. Sprint
+(move only, no ability): you get 8 squares… using a skill doesn't cost you your move — it
+just halves how far you can go (4 instead of 8). Sprint and abilities are mutually
+exclusive… Dash abilities are the exception — a dash is your movement that turn… If you get
+knocked back or pulled during Blast, you lose your Move that turn… Root blocks Move-phase
+movement entirely (but doesn't cancel a dash)… Haste/Slow adjust the budget (+50% / −50%)."**
 
-**Spec Notes.** Files: `types.ts` (TurnEvent + statusApplied), `resolve.ts` (emit `amount`
-on shield `statusApplied`; emit `energySpent` where `markAbilityUsed`/ult zeroes energy),
-`combat.ts` if energy-spend is centralized, `resolve.test.ts`, `packages/client/src/playback.ts`
-+ `test/playback.test.ts`. Keep events **delta-based** (client does `energy -= amount`) so
-replay stays order-robust. Out of scope: any non-shield status carrying an amount.
+The engine and `targeting.toUnitOrders` already support ability + move together; only the UI
+flow blocks it. *AC: with a non-dash ability selected, the player can also draw a Move path
+previewed at the ability-turn budget (4, Haste/Slow-adjusted) and lock in a `UnitOrders`
+carrying **both** `ability` and `movePath`; selecting a **dash** ability drops the separate
+move (dash is the move); **Sprint** stays move-only and clears any ability (8 budget); Root
+shows a 0 move budget; a client test asserts an ability+move draft round-trips to a
+`UnitOrders` with both fields.*
 
-### MV1. Dashes pass through characters — UNBLOCKED
-**Addresses Dev Note: "Dashes should be able to go through other characters."** Today a
-walked charge stops in front of the first unit it reaches. Change dashes/charges to pass
-*through* any character (ally or enemy); they still may not *end* on an occupied square
-(stop on the last free square; teleport still fizzles). Walls/cover still block. *AC: a
-charge whose path crosses an occupied square continues past it; a charge whose destination
-is occupied stops on the last free square before it; a dash over an ally no longer halts;
-new dash tests cover cross-through and blocked-destination.*
+**Spec Notes.** Files: `packages/client/src/app.ts` (the mutual-exclusivity is here:
+`selectAbility` wipes `movePath`, `selectMove` wipes `abilityId`; the move preview is gated
+on `draft.sprint || mode==='move'` at ~line 118), `targeting.ts` (`toUnitOrders` already
+emits both — reuse it; extend `movePreview` to run with an ability selected using
+`movementBudget(unit, /*sprint*/ false)`), `test/targeting.test.ts`. **Engine unchanged** —
+`planUnit`/`movementBudget` already give 4-with-ability / 8-sprint and drop the move for a
+dash. Model: allow `abilityId` and `movePath` to coexist in `OrderDraft`; only `sprint`
+(and a dash ability) forces move-only. Gotcha: an ability-turn move must preview the
+**4-budget** reachable set (walk-through occupied squares, per MV2), not the 8-sprint set.
+Out of scope: hidden info / timers (M3).
 
-**Spec Notes.** Files: `resolve.ts` (`walkCharge`/dash path), `movement.ts` if the charge
-reuses move-step logic, `dash.test.ts`. PROPOSED ruling in edge-cases ("AR movement
-model"). **ENGINE ASK held for Designer — do NOT implement the damage change here:** when a
-damaging charge now passes through enemies, does it hit the *first* crossed, *all* crossed,
-or the destination only? Ship the movement (pass-through) change; leave damage targeting as
-today (first enemy) until the Designer rules, and flag it in the commit. Out of scope: the
-`statusApplied`/energy schema (S1).
+### MV4 (optional). Diagonal charge paths — UNBLOCKED
+Move is 8-direction but charge paths (`aimIsLegal` `path` case) are still orthogonal, so a
+unit can move but not charge diagonally. *AC: a diagonal charge path validates (with the
+same corner-cut rule as movement) and resolves; dash tests cover a diagonal charge.*
 
-### MV2. Movement follows the Atlas Reactor model — BLOCKED BY MV1 (shares the resolver)
-**Addresses Dev Note: "Movement should follow this wiki instructions:
-https://atlas-reactor.fandom.com/wiki/Movement"** Normal Move (not just dash) may pass
-*through* any character; a unit may never *end* on an occupied square. This supersedes the
-"enemies block pass-through" rule (enemies become walk-through, still not valid endpoints —
-as allies already are). Simultaneous-resolution invariants unchanged (same-step contested
-square; 2-cycle no-edge-swap). *AC: `reachableSquares`/`validateMovePath` treat every
-occupied square as walk-through but not a legal endpoint; a path that crosses an enemy is
-legal, ending on one is not; the contested-square and no-swap tests still pass.*
+**Spec Notes.** Files: `resolve.ts` (`aimIsLegal` `path` case — accept `isAdjacentStep` +
+`diagonalCornerBlocked` instead of orthogonal-only), `dash.test.ts`. Independent of the
+charge-*damage* Designer ASK (this is path geometry only). Keep charge cost/first-enemy
+behavior unchanged. Confirmed intent (Builder OQ 2026-08-17).
 
-**Spec Notes.** Files: `movement.ts` (`allyOccupied` generalizes to *all* occupied →
-walk-through-not-stop; drop the enemy-blocks-entry branch), `resolve.stepMovers`,
-`movement.test.ts`. **Verification caveat (blocking finalize):** the AR wiki was
-**egress-blocked** this session — confirm exact edge-details (move-through timing, terrain,
-any range changes) against the wiki (human pastes it, or egress is unblocked) before
-finalizing; the Analyzer will tighten the ruling next session if needed. Keep the ruling in
-edge-cases as PROPOSED until verified. Gotcha: the client targeting UI (item 18) already
-shows ally squares as walk-through — extend that to all occupied squares.
+### CL1 (optional). AR "Clashes": pass-through co-occupancy — UNBLOCKED
+AR lets two units both *pass through* the same square (neither ending) and both continue;
+ours stops all same-step co-targets. *AC (if taken): two units crossing the same square on
+the same step, each ending elsewhere, both complete; both-ending-on-it still stops both;
+2-cycle swaps still blocked.* PROPOSED in edge-cases. Only if playtests want exact AR clashes.
 
-### TT1. Ability tooltips on hover — UNBLOCKED (client)
-**Addresses Dev Note: "Need to have tooltips when hovering over ability"** Show a tooltip
-(name, phase, range, cooldown, energy, effects/description from the `AbilityDef`) when
-hovering an ability in the targeting UI. *AC: hovering an ability control shows its data
-from the character JSON; no game logic in the tooltip (pure read of `AbilityDef`).*
-
-**Spec Notes.** Files: `packages/client/src/targeting.ts`/`app.ts`/`render.ts`, targeting
-test if a pure formatter is extracted. Read fields straight off `AbilityDef` (already in the
-roster) — the client computes nothing. DOM hover is shell-level (typecheck/build-verified);
-unit-test any pure "format tooltip text" helper. Out of scope: rich icons/art.
-
-### C1 (optional). Headless one-turn smoke test — UNBLOCKED
-The interactive DOM shell (`app.ts`/`render.ts`) is typecheck/build-verified only. *AC (if
-taken): a headless test drives one hot-seat turn (build orders → `resolveTurn` → playback)
-and asserts the rendered final board matches the engine state.* Skip if no headless tooling
-is available; note it in CI when it is.
+### CL2 (optional). Multiple simultaneous displacements sum as a vector — UNBLOCKED
+AR sums concurrent knockbacks/pulls into one vector; ours applies them sequentially. Rare in
+v1. Would also resolve the amount-1 Ram Charge net-zero case cleanly.
 
 ### E2 (optional, low). Unify cover corner convention with LoS — UNBLOCKED
-Carried. `combat.isBehindCover` corner-inclusive vs LoS corner-exclusive (ruled acceptable).
-Optional polish; skip unless touching cover.
+Carried; `isBehindCover` corner-inclusive vs LoS corner-exclusive (ruled acceptable).
 
-## M3+ — placeholder (Analyzer expands after the client is solid)
+## M3+ — placeholder
 
-21. Worker + Durable Object rooms; format selection (2v2 default; 4v4); lobby with team
-    seats and 1–2 characters per player; per-player hidden submission merged into per-team
-    orders (teammates' plans mirrored, opponents' hidden); per-player timer + Time Bank;
-    reconnect/replay; deploy client to Pages + server via wrangler.
+21. Worker + Durable Object rooms; format selection; lobby with team seats and 1–2 characters
+    per player; per-player hidden submission merged into per-team orders; per-player timer +
+    Time Bank; reconnect/replay; deploy to Pages + wrangler.
 
-## Blocked — needs a Designer spec (NOT in the Builder's unblocked set)
+## Blocked — needs a Designer ruling (NOT in the unblocked set)
 
-- **Damage-on-charge (blocks MV1's damage half).** When a charge passes through enemies,
-  which does it damage — first crossed, all crossed, or destination? Designer to rule.
-- **D1. Decoy entity (Wisp Veil & Decoy).** v1 = no-op beyond Stealth; the real fake-unit
-  entity needs a Designer ruling. `ENGINE ASK`.
-- **Duplicate picks.** May a team field the same character twice? Engine already gives
-  unique unit ids; it's a lobby/UX rule for M3.
-- **Roster / Designer follow-ups.** `roster-v1.md` §9 `ENGINE ASK`s (effect target
-  affinity; energy-on-ally-benefit — partly pre-empted by item 14's beneficial-on-use rule)
-  — **do NOT build in v1 without a ruling**. Also open: `combat_roll` path-vs-teleport;
-  cover-vs-Might composition; Support archetype kit.
+- **Charge combat (bundled).** With pass-through: does a damaging charge hit the *first*
+  enemy crossed, *all* crossed, or the destination? And for the amount-1 knockback-onto-
+  charger case — victim stays (current), is carried through to the far side, or swaps? Rule
+  these together. Files: `resolve.walkCharge`/`runDash`/`applyDisplacements`.
+- **D1. Decoy entity** (Wisp) — v1 no-op beyond Stealth; needs a Designer spec. `ENGINE ASK`.
+- **Duplicate picks** — lobby/UX rule for M3 (engine already gives unique unit ids).
+- **`combat_roll` path-vs-teleport; cover-vs-Might composition; Support archetype kit;
+  roster-v1 §9 ENGINE ASKs** (effect target affinity; energy-on-ally-benefit) — do NOT build
+  in v1 without a ruling.
 
-## Cross-role notes
+## Notes
 
-- **`CLAUDE.md` Commands wording is stale (review 2026-08-16).** Root `npm test` now runs
-  engine **and** client suites (confirmed the desired shape). Update the "npm test — engine
-  test suite" line to "engine + client suites". Constitution edit — leave to the Builder/human.
-- **Branch hygiene.** PR #6 landed the engine/client work on `main`. Retire
-  `multiplayer-configs` and `engine-backlog-t96lxw`. Keep `code-review-h3mwjs` until this
-  review's docs merge to `main`, then retire it too.
+- Research branch `claude/atlas-reactor-cards-research-n553wi` adds
+  `docs/design/atlas-reactor-reference.md` (AR source research); Designer/reference content,
+  merges separately.
