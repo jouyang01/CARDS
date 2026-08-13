@@ -26,7 +26,7 @@
 
 import {
   type Board,
-  chebyshev,
+  distance,
   inBounds,
   terrainAt,
   vecKey,
@@ -170,7 +170,12 @@ export function expandShape(
   }
 }
 
-/** Chebyshev reach of an aimed square from the caster (GAME_SPEC §3 metric). */
+/**
+ * Reach of an *aimed square* from the caster: MANHATTAN (MET1, GAME_SPEC §3).
+ * This is the target-square rule, used by `circle`/`square`. Directional shapes
+ * (`line`/`cone`) measure range as a tile count along their axis instead, so
+ * rotating one does not change how far it reaches (joint AIM2 x MET1 ruling).
+ */
 export function aimInRange(casterPos: Vec2, target: Vec2, range: number): boolean {
-  return chebyshev(casterPos, target) <= range;
+  return distance(casterPos, target) <= range;
 }

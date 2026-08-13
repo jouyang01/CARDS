@@ -47,7 +47,7 @@ import {
   ULT_COST,
 } from './constants.js';
 import { getFormat } from './formats.js';
-import { movementBudget, pathWithinBudget, validateMovePath } from './movement.js';
+import { movementBudget, pathWithinBudget, stepCost, validateMovePath } from './movement.js';
 import { aimInRange, direction8, expandShape } from './shapes.js';
 import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import type {
@@ -206,15 +206,20 @@ function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonl
       // A dash/charge path: adjacent in-bounds steps within range, no wall/cover.
       // Steps may be orthogonal OR diagonal (MV4), matching 8-direction movement;
       // a diagonal may not cut a wall/cover corner (same rule as `validateMovePath`).
-      // Range is a step count (unchanged); occupancy is not checked here — a charge
-      // passes through and rests on the furthest free square (MV1).
-      if (aim.length === 0 || aim.length > def.range) return false;
+      // Range is a movement COST budget, not a step count: a diagonal charge step
+      // costs 2 like every other diagonal (MET1 re-rules MV4). Occupancy is not
+      // checked here — a charge passes through and rests on the furthest free
+      // square (MV1).
+      if (aim.length === 0) return false;
       let prev = unit.pos;
+      let cost = 0;
       for (const p of aim) {
         if (!inBounds(board, p)) return false;
         if (!isAdjacentStep(prev, p)) return false;
         if (blocksMovement(board, p)) return false;
         if (isDiagonalStep(prev, p) && diagonalCornerBlocked(board, prev, p.x - prev.x, p.y - prev.y)) return false;
+        cost += stepCost(p.x - prev.x, p.y - prev.y);
+        if (cost > def.range) return false;
         prev = p;
       }
       return true;
@@ -509,6 +514,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
           ? a.def.chargeHits === 'all'
             ? crossed
             : crossed.slice(0, 1)
+          // A teleport-strike hits every enemy CHEBYSHEV-adjacent to the landing
+          // (edge-cases "Walked dash vs teleport"). Deliberately left Chebyshev by
+          // MET1: that ruling named vision and movement as switching to Manhattan
+          // and did not name this one, and narrowing it to 4 neighbours would
+          // rebalance Wisp's ult. Flagged for the Analyzer (DECISIONS 2026-08-21).
           : draft.units.filter((u) => u.owner !== plan.unit.owner && u.alive && chebyshev(plan.unit.pos, u.pos) === 1);
       const source = a.def.shape === 'path' ? origin : plan.unit.pos;
       for (const victim of victims) {

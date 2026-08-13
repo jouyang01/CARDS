@@ -84,21 +84,31 @@ Every turn = **Decision Phase** then **Resolution**.
 - Grid map, default arena **15×15**. Squares are either open, **wall** (blocks
   movement and line of sight), **cover** (blocks movement, does NOT block LoS,
   grants damage reduction — see below), or **brush** (concealment).
+- **Distance is MANHATTAN** (as in Atlas Reactor): every distance — movement,
+  ability range, vision — is counted orthogonally, so a **diagonally adjacent tile
+  is distance 2**. This is the single metric the whole ruleset uses.
 - **Movement:** a **4-square budget** if an ability was also used this turn; an
-  **8-square budget** when sprinting (no ability). Movement is **8-directional**:
-  orthogonal steps cost 1; diagonal steps cost 1, 2, 1, 2… — every *second*
-  diagonal along a path costs 2 (so one diagonal lets you reach 5 squares instead
-  of 4, or 9 instead of 8). A diagonal may **not** cut the corner of a wall or
-  cover square (it is blocked if either orthogonally-adjacent square it passes
-  between is solid). Walls and cover block entry and pass-through; any
+  **8-square budget** when sprinting (no ability). Movement is **8-directional**,
+  but an orthogonal step costs 1 and **every diagonal costs 2** — a diagonal is a
+  convenience, never a shortcut. So a 4-budget move covers the **41-tile** diamond
+  and a sprint the **145-tile** one. A diagonal may **not** cut the corner of a
+  wall or cover square (it is blocked if either orthogonally-adjacent square it
+  passes between is solid). Walls and cover block entry and pass-through; any
   **character — ally or enemy — may be moved *through* but never *ended* on**
-  (edge-cases "AR movement model"). Reachability is a shortest-cost search whose
-  state tracks the parity of diagonals used, kept integer and deterministic.
-- **Vision:** characters see **6 squares** (Chebyshev distance), blocked by walls.
+  (edge-cases "AR movement model"). Reachability is an integer shortest-cost
+  search, kept deterministic.
+- **Ability range:** for **target-square** shapes (`circle`, `square`) range is
+  Manhattan distance to the aimed square. **Directional** shapes (`line`, `cone`)
+  measure range as a **tile count along their axis**, so rotating one does not
+  change how far it reaches. A **charge path** (`path`) spends its range as a
+  movement cost budget — a diagonal charge step costs 2, like any other diagonal.
+- **Vision:** characters see **6 squares** (Manhattan distance), blocked by walls.
   Vision is mutual, and **shared within a team**: any square seen by a living team
   character is visible to every player on that team. A character standing in brush is hidden from enemies outside
   that brush patch unless adjacent, Revealed, or acting (attacking reveals you until
-  end of next turn). Free-aimed attacks may still be fired into unseen squares.
+  end of next turn) — and **adjacent here means the four orthogonal neighbours**
+  (Manhattan ≤ 1), so a diagonal neighbour does not reveal them. Free-aimed
+  attacks may still be fired into unseen squares.
 - **Cover:** if a defender is **orthogonally adjacent** to a cover square and the
   attack's line from attacker to defender crosses that side, damage is reduced
   **50% (round down)**. Cover is directional. Melee-range attacks (range ≤ 1) ignore
