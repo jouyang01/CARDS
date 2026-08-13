@@ -147,6 +147,15 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   displacement simple and deterministic. This is the first lever to pull if
   "shove-into-trap" combos are wanted later — a deliberate v1 simplification, not an
   oversight.
+- **RULED — Every kit needs a dash answer; Thorn is a gap to fix, not to exempt
+  (2026-08-20; addresses Builder OQ + Dev directive).** The 1v1 mind-game (and 2v2 spacing)
+  assumes each character has a Dash-phase reposition. Expanding `content.test.ts` to the full
+  roster surfaced that **Thorn (Support) has no dash**. The Builder's interim — scoping the
+  dash guardrail to non-support archetypes — is **accepted only as interim**. The real fix:
+  the human/Designer wants **one of Thorn's abilities removed and a dash added** (backlog
+  Thorn-dash, Designer/data). Once Thorn has a dash, **tighten the guardrail back to all
+  kits** (Lumen, the other Support, already has one). Do not leave Support permanently
+  dash-exempt.
 
 ## Targeting & vision
 
@@ -174,11 +183,17 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   closes the OPEN decoy ruling; ENGINE ASK, backlog D1).** Wisp's Veil & Decoy:
   - **Spawn** in Prep at the caster's square, in the same effect resolution as the Stealth
     it accompanies. It never moves or acts.
-  - **Lifetime:** expires at the end of the **next** turn (matching the 1-turn Stealth), or
-    when destroyed — whichever first.
-  - **Destruction:** *any* damage destroys it (no HP pool); an enemy that *ends a move on
-    its square* also destroys it. Emits a visible `decoyDestroyed` event (the reveal is the
-    mind-game payout for both sides).
+  - **Lifetime:** expires at the end of `castTurn + 1` (the literal "end of the next turn").
+    **Confirmed 2026-08-20 (implemented `expiresOnTurn = draft.turn + 1`):** this outlives
+    the accompanying 1-turn Stealth by a turn, and that is correct — the decoy must stand
+    through the enemy's *next* decision to fool anyone; the "matching the 1-turn Stealth"
+    phrasing was imprecise, `castTurn + 1` stands. Cast-turn-only remains the playtest lever.
+  - **Destruction:** *any* damage destroys it (no HP pool). An enemy that **ends a voluntary
+    reposition on its square — Move *or* Dash — destroys it** (you walked/dashed onto the
+    ghost). **Confirmed/widened 2026-08-20:** the shipped code destroys on Move-onto only;
+    extend it to a **Dash ending on the decoy's square** too (backlog D1-dash). An
+    *involuntary* knockback/pull onto the square does **not** destroy it — mirrors "knockback
+    doesn't trigger traps." Emits a visible `decoyDestroyed` event (the mind-game payout).
   - **Not a unit for any other purpose:** it does not block movement/LoS/occupancy, trigger
     traps, take buffs/heals/displacement, count for kills, or block respawns. Damaging it
     grants **no energy** and no on-hit riders — an ability that hits only a decoy grants
