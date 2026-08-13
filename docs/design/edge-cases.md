@@ -38,16 +38,36 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   A rotation of ≥3 units around a loop (e.g. four units cycling a 2×2 block) crosses no
   shared edge and IS allowed — nobody passes *through* anyone. Only direct swaps are
   blocked. (Irrelevant at 1v1; matters at 2v2+.)
-- **RULED — Pass-through.** Units never pass through the enemy unit, walls, or cover —
-  including the edge-swap case above. With 2 units this only matters for path planning;
-  keep the rule general for N units (allies: also no pass-through in v1 — revisit at
-  2v2).
-- **RULED — Contested square (both Move to the same square).** Neither enters it.
-  Each unit stops on the last square of its own path before the contested square.
-  Deterministic and symmetric; no priority coin-flip.
-- **RULED — Pass-through.** Units never pass through enemy units, walls, or cover.
-  Allies are ruled separately — see "Ally pass-through" under Teams & control below,
-  which supersedes the earlier "allies also block" lean now that 2v2 is the default.
+- **RULED — Pass-through.** Units never pass through *enemy* units, walls, or cover
+  (the edge-swap case above included). **Allies** are ruled separately — see "Ally
+  pass-through" under Teams & control — now that 2v2 is the default; the earlier
+  "allies also block in v1" lean is superseded. (Deduped 2026-08-15: the branch merge
+  left two Pass-through entries and a redundant contested-square entry; the same-step
+  and edge-swap rulings above are the single contested-square authority.)
+- **PROPOSED — Atlas Reactor movement model: pass through everyone, never end on an
+  occupied square (Dev Notes 1 & 2, 2026-08-16; backlog items MV1/MV2).** Aligns the engine
+  with Atlas Reactor movement. **This SUPERSEDES the "enemies block pass-through" half of
+  the Pass-through ruling above and the "walked charge stops in front of the first unit"
+  clause of the walked-dash ruling below, once implemented.** Rules:
+  - **Any character — ally or enemy — may be moved *through*** during both normal Move and
+    dash/charge. Walls and cover still block entry and pass-through; units never do.
+  - **A unit may not *end* its move on a square occupied by another living unit.** In the
+    planner, occupied squares are walk-through but not legal endpoints (as allies already
+    are). A dash/charge whose destination is occupied stops on the last free square before
+    it (or fizzles for a teleport, unchanged).
+  - **Simultaneous-resolution invariants are unchanged:** the same-step contested-square
+    rule and the 2-cycle no-edge-swap rule still hold (no two units share a square at rest
+    or trade squares in one step). "Pass-through" is about *crossing* a square another unit
+    occupies at a different step, not co-occupying it.
+  - **Damage-dealing charge (e.g. Ram Charge) — ENGINE ASK / Designer:** if a charge now
+    passes through enemies instead of stopping at the first, does it hit the *first* enemy
+    crossed, *all* enemies crossed, or the destination only? Do not implement the damage
+    change until the Designer rules; the movement (pass-through) change is not blocked on it.
+  - **Verification caveat:** the linked AR wiki
+    (`atlas-reactor.fandom.com/wiki/Movement`) was **egress-blocked** this session, so these
+    rules are reconstructed from the Dev Notes + AR domain knowledge. Confirm exact
+    edge-details (e.g. move-through timing, terrain interactions) against the wiki — paste
+    its text or unblock egress — before the Builder finalizes.
 - **RULED — Knockback into wall/cover/edge.** The unit stops on the last open square
   along the knockback line. No collision damage in v1.
 - **RULED — Knockback + Move.** A displaced unit loses its Move this turn (per spec).
@@ -112,15 +132,31 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **RULED — Kill credit is team-level.** A kill increments the killing unit's team
   tally. Traps and delayed abilities credit their caster's team even if the caster
   has since died.
-- **PROPOSED — No friendly fire.** Harmful effects (damage, negative statuses,
-  knockback/pull) never affect the casting unit's own team, even inside the aimed
-  area, and a team's traps do not trigger for that team's units. Beneficial effects
-  (heal, shield, positive statuses) apply to allies in the area and never to enemies.
-  Free-aim is unchanged — the area is the area; team allegiance only filters which
-  effects apply to whom. (Atlas Reactor's model.)
-- **PROPOSED — Ally pass-through.** Units may move and dash *through* allies but may
-  not end movement on an occupied square. Enemies still block both entry and
-  pass-through.
+- **RULED — No friendly fire, with a fixed effect polarity (implemented + confirmed
+  2026-08-15, item 14).** In an aimed area, **harmful** effects apply only to enemies and
+  **beneficial** effects only to the caster's own team (caster included if in-area);
+  a team's traps never trigger for that team. Free-aim is unchanged — the area is the
+  area; allegiance only filters who each effect touches. Energy-on-hit still requires ≥1
+  *enemy* struck. The polarity, confirmed:
+  - **Harmful (enemies only):** `damage`, `weaken`, `slow`, `root`, `knockback`, `pull`,
+    **`reveal`** (exposing a unit is hostile).
+  - **Beneficial (own team only):** `heal`, `shield`, `might`, `haste`, `energized`,
+    `unstoppable`, **`stealth`** (concealing a unit is friendly).
+  - **Neutral (self/placement, unfiltered):** `teleport`, `decoy`, `trap`.
+- **RULED — Beneficial abilities pay `energyGain` on use (confirms Builder OQ,
+  2026-08-15).** An ability carrying any beneficial effect banks its energy on use, like
+  self/utility abilities — support kits build charge by healing/shielding allies, not only
+  by hitting enemies. Still once per use.
+- **RULED (v1) — Ally pass-through is a planning affordance; resolution halts before a
+  *stationary* ally (implemented + confirmed 2026-08-15, item 15).** A path/dash may be
+  planned *through* an ally's square (never ending on it); enemies block entry and
+  pass-through outright. At resolution the "no two units share a square on any step"
+  invariant holds — so a mover slides past an ally only if that ally is *also vacating*
+  the square this step; against a stationary ally the mover halts in front of it.
+  **Consequence to watch (flag):** the planner accepts paths through a stationary ally
+  that resolution will not fully walk, so a drawn path can under-deliver. Acceptable for
+  v1 (keeps the resolver invariant); the targeting UI (item 18) should reflect it, and
+  true same-turn slide-through of a stationary ally is a deferred enhancement.
 - **RULED — Allied contested square.** Two allies moving to the same square resolve
   exactly like enemies: neither enters; each stops on the last square of its own path
   before the contested square. One symmetric rule for every contested square.
@@ -146,15 +182,12 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   engine convention and matches how Haste/Slow already round. It is a balance-affecting
   convention, not just a correctness one — if playtest balance wants cover applied to raw
   base before Might, that is a one-line change (Designer's call), but the default stands.
-- **RULED — Energized scales earned energy, not the passive drip (reaffirmed
-  2026-08-14 — current impl deviates, fix = backlog item E1).** `Energized (+50%)` boosts
-  energy *gained from abilities* (on-hit `energyGain` and self-buff-on-use), not the flat
-  `+5` passive tick — GAME_SPEC §5 lists the passive as a separate mechanic from "energy
-  gained." **The 2026-08-14 engine (`combat.grantEnergy`, applied to `PASSIVE_ENERGY` in
-  `resolve.endOfTurn`) currently DOES scale the passive by Energized (5 → 7)** — this
-  contradicts the ruling. Fix in item E1: the passive tick must bypass Energized. If a
-  future playtest wants the passive boosted, flip the ruling instead; do not leave code
-  and ruling disagreeing.
+- **RULED — Energized scales earned energy, not the passive drip (FIXED 2026-08-14, item
+  E1).** `Energized (+50%)` boosts energy *gained from abilities* (on-hit `energyGain` and
+  self/beneficial-on-use), not the flat `+5` passive tick — GAME_SPEC §5 lists the passive
+  as separate from "energy gained." `resolve.endOfTurn` now calls `grantEnergy(u,
+  PASSIVE_ENERGY, false)` so the drip bypasses Energized; regression test in
+  `resolve.test.ts` ("E1: Energized scales on-hit energy but NOT the flat passive drip").
 - **RULED — `energyGain` is granted on hit OR for self/utility abilities (confirms
   Builder OQ, review 2026-08-14).** An ability banks its `energyGain` when it hits ≥1
   enemy, OR when it is inherently self/utility — `shape: "self"`, or it carries a
@@ -203,3 +236,25 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **OPEN — Simultaneous disconnect/timeout handling** (matters at M3): if a player
   never submits, does their character sprint-hold or full-hold? Current lean: hold
   position, no ability. Decide when building the server.
+
+## Rendering contract (the event log)
+
+The `TurnEvent[]` log is the sole rendering input (ARCHITECTURE): the client folds stated
+deltas and never recomputes game logic. So the log must carry every fact the HUD shows.
+
+- **RULED — Complete the event schema for shields and energy spend (closes Builder OQ,
+  review 2026-08-16; backlog item S1).** Playback reproduces the board (position, HP,
+  alive, kills) but cannot reconstruct **shield pools** or **post-ultimate energy** from
+  the log, because (a) `statusApplied` carries no shield `amount`, and (b) spending/zeroing
+  energy (the ult reset) emits no event. Ruling — extend the schema, do not recompute in
+  the client:
+  - Add an optional **`amount`** to `statusApplied`, populated with the shield pool when
+    `status === 'shield'` (undefined otherwise). Combined with the existing `damage`
+    event's `absorbed`, the client can then track a shield pool exactly.
+  - Add a **`{ type: 'energySpent'; unitId; amount }`** event, emitted whenever an ability
+    removes energy (the ultimate's reset-to-0 emits it with the spent amount). Symmetric
+    with `energyGained`; playback does `energy -= amount`.
+  - This is an engine behavior change → ships with tests (golden rule #3): assert the ult
+    emits `energySpent`, and that a shielded unit's `statusApplied` carries the pool. The
+    playback client (item 19) then consumes both to show shields/energy. Keep events
+    delta-based (consistent with `energyGained`) so replay stays order-robust.
