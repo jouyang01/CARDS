@@ -144,8 +144,15 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     stopped by walls/cover. Damage lands in Dash.
   - **Teleport** (`shape: "square"`, e.g. Wisp Blink/Shadowstep, Lumen Glimmer Step, Aegis
     Intercept): ignores intervening squares and walls, appears at the destination; requires
-    an open, unoccupied destination or it fizzles. Triggers a trap only on the destination.
-    A teleport-strike (Shadowstep) hits every enemy Chebyshev-adjacent to the landing.
+    an open, unoccupied destination or it fizzles. **Brush is a legal destination** — a unit
+    may dash/teleport/move INTO brush and gain its concealment (owner directive 2026-08-22;
+    the engine already permits it, `blocksMovement` excludes brush — see BRUSH1 to verify the
+    client offers brush squares + add a test). Triggers a trap only on the destination. A
+    teleport-strike (Shadowstep) hits every unit (FF1) **Manhattan-≤1 (4 orthogonal
+    neighbours)** to the landing — **ruled to Manhattan 2026-08-22** for consistency with MET1
+    (was Chebyshev-8; backlog MET1-tp). **Wisp rebalance flag (Designer):** Shadowstep now
+    catches fewer squares (4 vs 8) — confirm its damage/energy still lands the fantasy, tune
+    if needed.
   Content guardrail (R4, optional): a test may assert no `shape: "path"` ability ever
   resolves through the teleport branch, so a refactor can't silently make Combat Roll
   wall-crossing.
@@ -257,24 +264,26 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   So in an aimed area:
   - **Harmful effects apply to every unit in the area — ally OR enemy** (no team filter):
     `damage`, `weaken`, `slow`, `root`, `knockback`, `pull`. Stand your ally in your own AoE
-    and you hit them. *(Default reading: the harmful **riders** ride along with the damage —
-    Chain Hook damaging an ally also pulls it. **Flag:** narrow to damage-only if the owner
-    prefers.)* `reveal` on an ally is harmless-but-legal (it does nothing useful to a unit
-    your team already sees).
+    and you hit them. **Riders ride along (owner-confirmed 2026-08-22):** a harmful ability's
+    riders land on the ally too — Chain Hook damaging an ally also pulls it. `reveal` on an
+    ally is harmless-but-legal.
+  - **This applies EVERYWHERE harmful damage is dealt, not just direct Blast (extends FF1
+    2026-08-22):** a **delayed detonation** (grenade) hits allies in its area too, and a
+    **charge strikes the first UNIT crossed — ally or enemy** (`chargeHits: "all"` = **all
+    units** crossed). This **supersedes the "first enemy crossed" wording of R1a/R1b** for
+    the friendly-fire era. Shipped code still filters both to enemies (`detonateDelayedBlasts`
+    ~:768, `walkCharge` ~:588) — those are FF1 gaps to fix (backlog FF1-charge, FF1-delayed).
   - **Beneficial effects still apply to the caster's own team only** (`heal`, `shield`,
     `might`, `haste`, `energized`, `unstoppable`, `stealth`, `untargetable`) — friendly fire
-    means your *attacks* endanger allies; it does **not** mean you heal/buff enemies. *(Flag:
-    make beneficial symmetric-to-all only on a new owner decision.)*
+    means your *attacks* endanger allies; it does **not** mean you heal/buff enemies.
   - **Neutral (self/placement, unfiltered):** `teleport`, `decoy`, `trap`.
-  - **Energy is unchanged — granted only on hitting ≥1 ENEMY.** Splashing an ally pays
-    nothing; an ability that hits only allies grants no energy (like hitting nobody).
-  - **A friendly kill scores NO kill for any team** — the ally dies and respawns normally
-    (a pure tempo loss), but neither team's kill tally moves. This avoids the exploit of
-    farming your own respawning ally for wins. Needs a "no-credit" path in `killUnit`.
-  - **Traps stay team-safe by default** (a team's trap does not trigger for its own units) —
-    friendly fire is about directly-aimed attacks, not placed hazards; a self-team minefield
-    wiping your own team is a bigger swing than intended. **Flag:** extend friendly fire to
-    traps only on a new owner decision.
+  - **Energy is unchanged — granted only on hitting ≥1 ENEMY.** Splashing/charging only allies
+    pays nothing (like hitting nobody).
+  - **A friendly kill scores NO kill for any team** (implemented: `killUnit` only increments
+    when `killer !== victim.owner`) — the ally dies and respawns as a pure tempo loss, no tally
+    moves. Prevents farming your own respawning ally for the win.
+  - **Traps stay team-safe (owner-confirmed 2026-08-22):** a team's trap does **not** trigger
+    for its own units. Friendly fire is directly-aimed/charged attacks, not placed hazards.
   The polarity **table itself is unchanged** (still total over `EFFECT_KINDS`, R7) — what
   changed is that the *harmful* row no longer filters by team. The R7 confirmations (trap
   riders → triggering unit; dash riders → caster at destination) still hold.
