@@ -313,6 +313,13 @@ each ships with tests per golden rule #3.
 
 1. **R1c — displacement skips the displacer's square.** Small, self-contained in
    `resolve.applyDisplacements`. Fixes the visible Ram Charge net-zero. *Do this first.*
+   **Heads-up — an existing test asserts the superseded interim.** PR #12 (MS1/MV4) adds
+   `dash.test.ts` → *"MV4: diagonal charge paths"* → *"a diagonal charge validates, passes
+   through, and strikes the crossed enemy"*, which asserts the victim stays at `(2,2)` with
+   the comment *"1-square knockback onto the charger nets zero (MV1-fix interim)"*. Under
+   R1c that victim is carried past the charger at `(3,3)` to `(4,4)`. **Update that
+   expectation as part of the R1c commit** — it is a deliberate behavior change, not a
+   regression. Also check `real-characters.test.ts` (Ram Charge) for the same assumption.
 2. **R7 — add `untargetable` to the polarity table** (one row; a test if you want the
    totality guarantee). Trivial.
 3. **R1b — `chargeHits?: "first" | "all"`** on `AbilityDef` + `walkCharge` + validation.
