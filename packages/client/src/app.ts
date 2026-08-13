@@ -21,6 +21,7 @@ import {
   type FormatId,
   type GameState,
   type MapDef,
+  type Phase,
   type Roster,
   type UnitOrders,
   type UnitState,
@@ -28,6 +29,8 @@ import {
 } from '@cards/engine';
 import { createRenderer, type ProjectionName, type RenderUnit, type Renderer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
+import { focusSquares, phaseWindow, sampleFrame, type Frame } from './animate.js';
+import { type Cue } from './choreograph.js';
 import {
   abilityOptions,
   abilityPreview,
@@ -64,10 +67,18 @@ const PALETTE = {
 const REACH = 0x4f8cff;
 const AIM = 0xff9a3e;
 const SELECT = 0xf0f0f0;
+const IMPACT = 0xffd166;
+/** The drawn move line (AIM1). Sprint is the same hue, dashed and brighter. */
+const MOVE_LINE = 0x9fc4ff;
+const SPRINT_LINE = 0xffd166;
 
-/** Beats are shown as a plain pause for now; the A3 re-spec tweens them. */
-const PHASE_MS = 520;
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/**
+ * The single pacing constant: one beat of `choreograph`'s timeline in
+ * milliseconds. Everything animated is a multiple of a beat, so playback speed
+ * is this number and nothing else.
+ */
+const MS_PER_BEAT = 460;
+const now = (): number => performance.now();
 
 export function startHotSeat(
   ui: HotSeatUI,
@@ -97,8 +108,20 @@ export function startHotSeat(
   };
   sizeToContainer();
   fitCamera();
-  globalThis.addEventListener('resize', () => { sizeToContainer(); fitCamera(); renderer.render(); });
+  // The renderer drives its own frames now: the orbit, the auto-camera's easing
+  // and the billboarded bars all need continuous frames, not one render per
+  // input event.
+  renderer.start();
+  globalThis.addEventListener('resize', () => { sizeToContainer(); fitCamera(); });
   ui.board.addEventListener('click', onBoardClick);
+  ui.board.addEventListener('mousemove', onBoardHover);
+
+  // Persistent corner phase label (A3): it stays put and changes text, so the
+  // eye never has to hunt for which phase is playing.
+  const phaseLabel = document.createElement('div');
+  phaseLabel.className = 'phase-label';
+  phaseLabel.style.display = 'none';
+  ui.board.appendChild(phaseLabel);
 
   // Ability hover tooltip (TT1) — one reused element, positioned by the button.
   const tooltip = document.createElement('div');
@@ -121,12 +144,17 @@ export function startHotSeat(
   const stateUnits = (): RenderUnit[] => state.units.map((u) => ({
     unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
     energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
+    // Same shield sum `initView` takes, so the planning board and the playback
+    // board show the same bar.
+    shield: u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0),
   }));
 
   const viewUnits = (view: ViewState): RenderUnit[] => [...view.units.values()].map((v) => ({
-    unitId: v.unitId, owner: v.owner, pos: v.pos, hp: v.hp, maxHp: v.maxHp,
+    unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
     energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
   }));
+
+  const viewDecoys = (view: ViewState): Vec2[] => [...view.decoys.values()].map((d) => ({ ...d.pos }));
 
   function beginTurn(): void {
     drafts = new Map();
@@ -151,13 +179,22 @@ export function startHotSeat(
 
   // ── Rendering ──────────────────────────────────────────────────────────────
 
-  function render(): void {
+  /**
+   * The board half of a decision-phase render. Split out from `render()` because
+   * mouse-follow aiming (AIM2-UX) repaints on every pointer move — rebuilding
+   * the control buttons at that rate would tear the DOM out from under the
+   * pointer and kill hover tooltips.
+   */
+  function renderPreviews(): void {
     const step = currentStep();
     if (step === undefined) return;
     const draft = drafts.get(step.unit.unitId)!;
     const character = characterFor(step.unit);
 
     renderer.show(stateUnits(), state.decoys.map((d) => d.pos));
+    renderer.setSpotlight(null); // planning shows the whole board, undimmed
+    phaseLabel.style.display = 'none';
+    renderer.focusOn([]); // ease back out to the whole board after a resolution
     renderer.highlight('select', [step.unit.pos], SELECT, 0.5);
 
     // Previews (MS1: a non-dash ability and a Move coexist). A dash *is* the
@@ -173,14 +210,28 @@ export function startHotSeat(
     }
     renderer.highlight(
       'aim',
-      ability !== undefined
-        ? abilityPreview(map, step.unit, ability, draft.aim, draft.aimStep)
-        : draft.movePath,
+      ability !== undefined ? abilityPreview(map, step.unit, ability, draft.aim, draft.aimStep) : [],
       AIM,
       0.5,
     );
-    renderer.render();
 
+    // AIM1: the drawn move is a LINE from the unit through its path, with an
+    // endpoint marker. Shaded reachability says where you *could* go; only a
+    // line says which way you actually chose and in what order.
+    renderer.drawPath(
+      draft.movePath.length > 0 ? [step.unit.pos, ...draft.movePath] : [],
+      draft.sprint ? SPRINT_LINE : MOVE_LINE,
+      draft.sprint, // sprint is the dashed one, so the two read apart at a glance
+    );
+  }
+
+  function render(): void {
+    const step = currentStep();
+    if (step === undefined) return;
+    const draft = drafts.get(step.unit.unitId)!;
+    const character = characterFor(step.unit);
+
+    renderPreviews();
     renderControls(step, draft, character);
     ui.status.textContent =
       `Turn ${state.turn} · ${teamName(step.seat.team)} · seat ${step.seat.seatId} — order ${character.name}` +
@@ -235,7 +286,22 @@ export function startHotSeat(
       fitCamera(); // the pitch changes the foreshortening, so re-fit
       render();
     };
-    viewRow.appendChild(proj);
+    const orbit = document.createElement('button');
+    const free = renderer.orbitEnabled();
+    orbit.textContent = free ? 'Camera: free orbit' : 'Camera: auto';
+    orbit.className = free ? 'sel' : '';
+    orbit.onclick = () => {
+      // Auto follows the action; free orbit hands the camera to the player and
+      // stands the auto-framing down so the two never fight.
+      renderer.setOrbitEnabled(!renderer.orbitEnabled());
+      if (!renderer.orbitEnabled()) fitCamera();
+      render();
+    };
+    viewRow.append(proj, orbit);
+    const hint = document.createElement('span');
+    hint.style.opacity = '0.6';
+    hint.textContent = free ? 'drag to orbit · wheel to zoom' : 'right-drag to orbit · wheel to zoom';
+    viewRow.appendChild(hint);
 
     const lockRow = row('');
     const lock = document.createElement('button');
@@ -304,6 +370,29 @@ export function startHotSeat(
     }
   }
 
+  /**
+   * AIM2-UX: a line/cone aims by DIRECTION, so it follows the pointer instead of
+   * waiting for a click. The covered tiles update live from `expandShape` at the
+   * quantized step — the very tiles the engine will hit — and the click that
+   * follows just commits whatever is already on screen. Click-to-aim shapes
+   * (circle/square/path) are untouched: there is no direction to preview.
+   */
+  function onBoardHover(evt: MouseEvent): void {
+    if (mode !== 'aim') return;
+    const step = currentStep();
+    if (step === undefined) return;
+    const draft = drafts.get(step.unit.unitId)!;
+    const ability = draftAbility(characterFor(step.unit), draft);
+    if (ability === undefined || !isRotatable(ability)) return;
+    const sq = renderer.squareFromPoint(evt.clientX, evt.clientY);
+    if (!sq) return;
+    const aimStep = dragToAimStep(step.unit.pos, sq);
+    if (aimStep === draft.aimStep) return; // same quantized direction: nothing moved
+    draft.aimStep = aimStep;
+    draft.aim = [];
+    renderPreviews();
+  }
+
   /** A legal path from the unit to `target` within `budget`, or []. */
   function reachPath(unit: UnitState, target: Vec2, budget: number): Vec2[] {
     const board = buildBoard(map);
@@ -335,32 +424,91 @@ export function startHotSeat(
     const result = resolveTurn(prev, map, mergeSeatOrders(seats, ordersBySeat), roster);
 
     // The player owns state — its fold IS the board, so skipping and watching
-    // agree by construction. Cue-driven tweening is the A3 re-spec's job.
+    // agree by construction. Everything below only *decorates* that fold:
+    // fractional positions, alpha, which squares glow. Drop every frame of it
+    // and the board still lands in the same place.
     const player = createTurnPlayer(prev, result.events);
     for (const layer of ['reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
-    renderer.show(viewUnits(player.view), []);
-    renderer.render();
+    renderer.drawPath([], MOVE_LINE, false);
+    renderer.show(viewUnits(player.view), viewDecoys(player.view));
 
     let skipped = false;
+    const finish = (): void => {
+      phaseLabel.style.display = 'none';
+      renderer.setSpotlight(null);
+      renderer.highlight('aim', [], AIM);
+      renderer.highlight('select', [], IMPACT);
+      renderer.show(viewUnits(player.view), viewDecoys(player.view));
+    };
     renderPlaybackControls(() => {
       skipped = true;
       player.skip();
-      renderer.show(viewUnits(player.view), []);
-      renderer.render();
+      finish();
     });
 
     for (let step = player.advancePhase(); step !== undefined; step = player.advancePhase()) {
       ui.status.textContent = `Turn ${prev.turn} · resolving — ${step.phase.toUpperCase()}`;
-      renderer.show(viewUnits(player.view), []);
-      renderer.render();
-      if (!skipped) await sleep(PHASE_MS);
+      if (skipped) continue; // keep folding; just stop animating
+      await animatePhase(player.cues, step.phase, viewUnits(player.view), viewDecoys(player.view), () => skipped);
     }
-    renderer.show(viewUnits(player.view), []);
-    renderer.render();
+    finish();
 
     state = result.state;
     if (state.status !== 'active') return renderGameOver();
     beginTurn();
+  }
+
+  /**
+   * Play one phase's slice of the cue timeline in real time. The renderer is a
+   * dumb applier: `sampleFrame` (pure, tested) says what the board should look
+   * like at time `t`, and this pushes that into scene objects.
+   *
+   * `units` is the view *after* the phase was folded — HP and aliveness are
+   * already final, which is what makes the deferred-death fade the only thing
+   * standing between a dead unit and looking dead.
+   */
+  async function animatePhase(
+    cues: readonly Cue[],
+    phase: Phase,
+    units: RenderUnit[],
+    decoys: Vec2[],
+    cancelled: () => boolean,
+  ): Promise<void> {
+    const { start, end } = phaseWindow(cues, phase);
+    renderer.show(units, decoys);
+    phaseLabel.textContent = phase.toUpperCase();
+    phaseLabel.style.display = 'block';
+    const posOf = (unitId: string): Vec2 | undefined => units.find((u) => u.unitId === unitId)?.pos;
+    const t0 = now();
+
+    await new Promise<void>((resolve) => {
+      const tick = (): void => {
+        if (cancelled()) return resolve();
+        const t = start + (now() - t0) / MS_PER_BEAT;
+        applyFrame(sampleFrame(cues, Math.min(t, end)), units, posOf);
+        if (t >= end) return resolve();
+        globalThis.requestAnimationFrame(tick);
+      };
+      globalThis.requestAnimationFrame(tick);
+    });
+  }
+
+  /** Push one sampled `Frame` into the renderer. No game state is read here. */
+  function applyFrame(frame: Frame, units: RenderUnit[], posOf: (id: string) => Vec2 | undefined): void {
+    for (const [unitId, pose] of frame.poses) renderer.setUnitAt(unitId, pose.x, pose.y, pose.lift);
+    for (const u of units) renderer.setUnitFade(u.unitId, frame.fades.get(u.unitId) ?? 1);
+    renderer.setSpotlight(frame.spotlight);
+    renderer.highlight('aim', frame.areas, AIM, 0.45);
+    // A hit is one beat of glow under the victim — the only feedback that says
+    // *this* unit is the one being hit right now. Mid-tween victims are lit
+    // where they currently *are*, not where the fold left them.
+    const squareOf = (id: string): Vec2 | undefined => {
+      const pose = frame.poses.get(id);
+      return pose !== undefined ? { x: Math.round(pose.x), y: Math.round(pose.y) } : posOf(id);
+    };
+    renderer.highlight('select', frame.impacts.map(squareOf).filter((p): p is Vec2 => p !== undefined), IMPACT, 0.55);
+    if (frame.phase !== undefined) phaseLabel.textContent = frame.phase.toUpperCase();
+    renderer.focusOn(focusSquares(frame, posOf));
   }
 
   function renderPlaybackControls(onSkip: () => void): void {
