@@ -62,13 +62,27 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   - **Ground vs airborne dash = walked charge (`path`) vs teleport (`square`):** ground
     triggers traps and is stopped by walls; airborne ignores traps and crosses walls. ✓
   - **Rooted does not stop a dash; Unstoppable ignores slow/root/displacement.** ✓
-- **RULED — Diagonal movement, full AR cost model (implemented 2026-08-17, item MV3).**
-  The engine is now **8-direction** (`MOVE_STEPS`). Supersedes the orthogonal-only ruling
-  (DECISIONS 2026-08-11); GAME_SPEC §3 updated to match. Cost: orthogonal = 1; the k-th
-  diagonal along a path costs 2 when k is even (2nd/4th/…), else 1 — so one diagonal reaches
-  5 instead of 4 (9 instead of 8). Realised as the 1/2 alternation (no floats). Reachability
-  is a shortest-cost search over `(square, parity-of-diagonals-used)` — deterministic.
-  Vision stays Chebyshev, cover stays orthogonally-adjacent (unchanged).
+- **RULED — Distance metric is MANHATTAN for movement and ability range (MET1, owner
+  directive 2026-08-20; backlog MET1).** Mimics Atlas Reactor: all range and movement are
+  counted orthogonally — a diagonally-adjacent tile is **distance 2**. **A diagonal step is
+  still legal but costs 2** (equivalent to two orthogonal steps). This **supersedes the MV3
+  "1/2 alternation" diagonal cost model below** (every diagonal now costs 2, not just the
+  even-indexed ones) and re-rules **MV4 diagonal charge paths** the same way (a diagonal
+  charge step costs 2). Effect: reachable area ~halves at the same budget (move 4: 81→41
+  tiles; sprint 8: 289→145), so the **4/8 budgets need NO retune** (they were AR's own
+  numbers under this metric) and **M1's map spec is unchanged** (spawn separation 13 / max
+  turn-1 threat 12 are measured head-on along a row, where Manhattan and Chebyshev agree).
+  The corner-cut and X-crossing rulings below **survive** (they are occupancy rules, metric-
+  independent). **Open sub-question (flag, do not assume):** vision range is currently
+  Chebyshev (`VISION_RANGE` 6) and brush adjacency is Chebyshev — MET1's FILES list does not
+  include `vision.ts`, so **vision stays Chebyshev unless the owner directs otherwise**;
+  raise it, don't silently convert. Determinism is unaffected (Manhattan is pure integer).
+- **SUPERSEDED (cost model only) — Diagonal movement, AR 1/2-alternation cost (MV3,
+  2026-08-17; superseded by MET1 2026-08-20).** The engine went 8-direction (`MOVE_STEPS`),
+  which stands; but the "k-th diagonal costs 2 when k even, else 1" parity cost is replaced
+  by MET1's flat "every diagonal costs 2." The parity-state reachability search becomes a
+  plain Manhattan cost search. Kept here (not deleted) as the record of what MET1 supersedes.
+  Cover stays orthogonally-adjacent (unchanged).
 - **RULED — Diagonal corner-cut: blocked by either solid flank (2026-08-17).** A diagonal
   step is illegal if *either* orthogonally-adjacent square it passes between is wall/cover
   (`diagonalCornerBlocked`); units never block a corner. This is the adopted v1 convention —
@@ -162,6 +176,29 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **RULED — Free-aim into fog.** Players may aim any ability at any legal square,
   seen or unseen. Hitting a stealthed/hidden unit works normally — stealth hides
   position, it is not a dodge.
+- **RULED — Free-rotation aiming via a QUANTIZED INTEGER direction (AIM2, owner directive
+  2026-08-20; backlog AIM2; scope: `line` and `cone` only).** `cone`/`line` may be rotated
+  freely (360°) instead of snapping to 4/8 compass directions. **Determinism (golden rule
+  #1) is non-negotiable:** the aim direction crosses into the engine as a **quantized integer
+  step** (e.g. one of 256 or 360), **never a float/radian**. The **client** does the trig
+  (mouse → integer step; trig is presentation). The **engine** consumes only the integer step
+  and contains **NO trig** in the resolution path — coverage is computed from a committed
+  integer direction-vector lookup table or integer half-plane / cross-product tests. A
+  **standing test guard** asserts `packages/engine` contains no `Math.cos/sin/atan2/tan`
+  (add it regardless of when AIM2 lands). `circle` (target-square Euclidean disk) and `path`
+  (dashes) are unaffected.
+- **RULED — Partial-tile coverage = centre-in, binary full damage (AIM2, owner default
+  2026-08-20).** A tile is covered iff its **centre** falls inside the rotated shape;
+  coverage is **binary** — a covered tile takes **full** damage (no partial/fractional
+  damage). "Hit half a tile" is a visual/coverage nuance, not a damage split.
+- **RULED — Range definition for rotated shapes under Manhattan (joint AIM2 × MET1, per the
+  owner's "rule them together" flag).** To keep a rotated shape's reach consistent under the
+  Manhattan metric: **directional shapes (`line`, `cone`) measure range as a TILE COUNT along
+  the shape's axis** (a range-8 line reaches 8 tiles along its quantized direction,
+  rotation-invariant; a cone of range r extends r tiles deep) — *not* a Manhattan/Chebyshev
+  envelope. **Target-square shapes (`circle`, `square`) use MANHATTAN** distance to the aimed
+  square (MET1). This is the single consistent definition the owner asked be ruled before
+  AIM2 builds; adjust only with a new owner decision.
 - **RULED — Attacking breaks concealment; Reveal lasts 2 turns (confirms Builder OQ,
   review 2026-08-14).** Using an ability that *actually deals damage* reveals the attacker
   "until the end of the next turn" — implemented as a **2-turn** Reveal
