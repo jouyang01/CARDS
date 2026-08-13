@@ -23,6 +23,7 @@ const char: CharacterDef = {
   abilities: [
     ability({ id: 'blink', shape: 'square', range: 4, energyGain: 4, effects: [{ kind: 'teleport' }] }),
     ability({ id: 'charge', shape: 'path', range: 4, energyGain: 8, effects: [{ kind: 'damage', amount: 15 }, { kind: 'knockback', amount: 1 }] }),
+    ability({ id: 'ram', shape: 'path', range: 3, energyGain: 8, effects: [{ kind: 'damage', amount: 15 }, { kind: 'knockback', amount: 2 }] }),
     ability({ id: 'shoot', phase: 'blast', shape: 'line', range: 8, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }] }),
     ability({ id: 'roll', shape: 'path', range: 3, energyGain: 4, effects: [{ kind: 'teleport' }] }),
   ],
@@ -98,6 +99,34 @@ describe('charge dashes', () => {
     const { state } = run(makeState([u, makeUnit('e', 1, { x: 8, y: 8 })]), [{ unitId: 'u', ability: { abilityId: 'roll', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }], []);
     expect(unit(state, 'u').pos).toEqual({ x: 3, y: 0 });
     expect(unit(state, 'u').energy).toBe(9); // 4 utility + 5 passive
+  });
+});
+
+describe('MV1-fix: displacement ignores the displacing charger\'s own body', () => {
+  it('a charge knockback carries the victim THROUGH the charger\'s settled square', () => {
+    // u charges through e, passing over it and resting one square beyond. e is
+    // then knocked back 2 along the charge line — its first step lands on the
+    // charger's own square, which is no longer an obstacle (the charger "just
+    // passed through"), so e crosses it and rests on the free square beyond.
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const e = makeUnit('e', 1, { x: 2, y: 0 });
+    const { state } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'ram', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }], []);
+    expect(unit(state, 'u').pos).toEqual({ x: 3, y: 0 }); // charged through e, settled beyond
+    expect(unit(state, 'e').hp).toBe(85); // 15 charge damage
+    expect(unit(state, 'e').pos).toEqual({ x: 4, y: 0 }); // knocked 2, crossing the charger's square
+  });
+
+  it('a 1-square knockback into the charger\'s exact square does not co-occupy', () => {
+    // The charger settles exactly one square beyond e and e's 1-square knockback
+    // would land on that square. The charger isn't a wall (e may cross it) but a
+    // unit may never *end* on another's square — so e stays put rather than
+    // stacking. (Ram Charge's geometry: the residual the Designer must rule on.)
+    const u = makeUnit('u', 0, { x: 0, y: 0 });
+    const e = makeUnit('e', 1, { x: 2, y: 0 });
+    const { state } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }] } }], []);
+    expect(unit(state, 'u').pos).toEqual({ x: 3, y: 0 });
+    expect(unit(state, 'e').pos).toEqual({ x: 2, y: 0 }); // not displaced onto the charger
+    expect(unit(state, 'u').pos).not.toEqual(unit(state, 'e').pos); // co-occupancy invariant holds
   });
 });
 

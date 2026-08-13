@@ -252,13 +252,21 @@ interface Displacement {
   amount: number;
   /** The attacker square the push is measured from. */
   source: Vec2;
+  /**
+   * The displacing attacker's unitId. Its own body is not an obstacle to the
+   * victim's displacement path — a charge that passed *through* the victim and
+   * settled beyond it "isn't a wall, it just passed through" (edge-cases: MV1-fix,
+   * 2026-08-17). The victim may cross the attacker's square but, like every unit,
+   * may not *end* on it (co-occupancy invariant is golden-rule-level).
+   */
+  attackerId?: string;
 }
 
 /** Collect a hit ability's knockback/pull effects against a victim. */
-function collectDisplacement(pending: Displacement[], effects: readonly AbilityEffect[], victim: UnitState, source: Vec2): void {
+function collectDisplacement(pending: Displacement[], effects: readonly AbilityEffect[], victim: UnitState, source: Vec2, attackerId?: string): void {
   for (const e of effects) {
     if (e.kind === 'knockback' || e.kind === 'pull') {
-      pending.push({ victim, kind: e.kind, amount: e.amount ?? 0, source: { x: source.x, y: source.y } });
+      pending.push({ victim, kind: e.kind, amount: e.amount ?? 0, source: { x: source.x, y: source.y }, attackerId });
     }
   }
 }
@@ -284,14 +292,25 @@ function applyDisplacements(
     const dir = d.kind === 'knockback' ? direction8(d.source, d.victim.pos) : direction8(d.victim.pos, d.source);
     if (dir.x === 0 && dir.y === 0) continue;
 
+    // The displacing attacker's own body is not an obstacle: a charge that passed
+    // *through* the victim and settled beyond it may be crossed, not treated as a
+    // wall (edge-cases: MV1-fix). Every *other* living unit still blocks the path.
     let cur = d.victim.pos;
     for (let step = 0; step < d.amount; step++) {
       const nxt: Vec2 = { x: cur.x + dir.x, y: cur.y + dir.y };
       if (d.kind === 'pull' && vecEq(nxt, d.source)) break; // never land on the puller
       const t = terrainAt(board, nxt);
       if (t === 'wall' || t === 'cover' || t === 'oob') break;
-      if (draft.units.some((u) => u.alive && u.unitId !== d.victim.unitId && vecEq(u.pos, nxt))) break;
+      if (draft.units.some((u) => u.alive && u.unitId !== d.victim.unitId && u.unitId !== d.attackerId && vecEq(u.pos, nxt))) break;
       cur = nxt;
+    }
+    // A unit may never *end* on another's square (co-occupancy invariant). If the
+    // victim's furthest reachable square is the attacker's own (a knockback that
+    // exactly matched the charger's landing, e.g. Ram Charge's 1-square push into
+    // the square it settled on), it stops one short rather than co-occupying.
+    if (d.attackerId !== undefined) {
+      const blocker = draft.units.find((u) => u.alive && u.unitId === d.attackerId);
+      if (blocker !== undefined && vecEq(cur, blocker.pos)) cur = { x: cur.x - dir.x, y: cur.y - dir.y };
     }
     if (!vecEq(cur, d.victim.pos)) {
       const from = d.victim.pos;
@@ -425,7 +444,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
         removeStatus(victim, 'stealth');
         hitEnemy = true;
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
-        else collectDisplacement(pending, a.def.effects, victim, source);
+        else collectDisplacement(pending, a.def.effects, victim, source, plan.unit.unitId);
       }
     }
 
@@ -512,7 +531,7 @@ function runBlast(
   const hits: Hit[] = [];
   const debuffs: { victim: UnitState; effect: AbilityEffect }[] = [];
   const benefits: { target: UnitState; effect: AbilityEffect }[] = [];
-  const displacers: { effects: readonly AbilityEffect[]; victim: UnitState; source: Vec2 }[] = [];
+  const displacers: { effects: readonly AbilityEffect[]; victim: UnitState; source: Vec2; attackerId: string }[] = [];
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
   // their locked squares, folded into this turn's simultaneous damage.
@@ -550,7 +569,7 @@ function runBlast(
           if (!enemy) continue; // harmful effects never touch allies
           hitEnemy = true;
           if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, raw: e.amount ?? 0, range: a.def.range });
-          else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos });
+          else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });
           else debuffs.push({ victim: target, effect: e }); // weaken/slow/root/reveal
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
           if (enemy) continue; // beneficial effects never touch enemies
@@ -588,8 +607,8 @@ function runBlast(
   }
 
   // Queue displacement against survivors, to resolve at end of Blast (item 8).
-  for (const { effects, victim, source } of displacers) {
-    if (victim.alive) collectDisplacement(pending, effects, victim, source);
+  for (const { effects, victim, source, attackerId } of displacers) {
+    if (victim.alive) collectDisplacement(pending, effects, victim, source, attackerId);
   }
 
   // A *damaging* attack reveals you and breaks your own Stealth (GAME_SPEC §6).
