@@ -4,14 +4,12 @@ Part of the spec. Status: **RULED** (implement as stated) or **PROPOSED** (imple
 as stated, but flag in playtests) or **OPEN** (needs a ruling before implementing).
 The Analyzer grows this file every review; the Builder must not invent unlisted rulings.
 
-> **⚠ Pending merge — `docs/design/rulings-v1-blockers.md` (Designer, 2026-08-13).** The
-> seven items carried in BACKLOG's "Blocked — needs a Designer ruling" section (charge
-> combat + the amount-1 knockback case, decoy D1, duplicate picks, `combat_roll`,
-> cover-vs-Might, the Support kit, roster §9) are **now ruled** in that file, written as
-> blocks to be lifted into this one. Until the Analyzer folds them in, read the two files
-> together: where they overlap, **rulings-v1-blockers.md is newer and wins** — it
-> supersedes the interim "amount-1 charge knockback stays put" ruling below and closes the
-> OPEN decoy and duplicate-picks entries.
+> **Folded in 2026-08-19 (Analyzer).** The seven Designer rulings in
+> `docs/design/rulings-v1-blockers.md` (R1–R7) are now merged into this file below — charge
+> combat (R1a first-enemy, R1b `chargeHits`, R1c carry-through), decoy (R2), duplicate picks
+> (R3), `combat_roll` (R4), cover-vs-Might (R5), Support (R6), and roster §9 / `untargetable`
+> (R7). That file stays as the Designer's rationale of record; the RULED text here is
+> authoritative. Engine work created by the rulings is scheduled in BACKLOG (R1c → R1b → D1).
 
 ## Combat simultaneity
 
@@ -82,15 +80,18 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   diagonal *swap* (A and B exchanging diagonally-adjacent squares) is still blocked by the
   position-based 2-cycle rule, same as an orthogonal swap. Consistent with the AR
   pass-through model; flag for playtest if the visual X-cross reads oddly.
-- **RULED (v1 interim) — amount-1 charge knockback onto the charger stays put (2026-08-17,
-  bundled with the charge-combat Designer ASK).** With pass-through, a charge can land
-  beyond its victim; if the victim's knockback distance equals the overshoot it would land
-  exactly on the charger's square. The "no two units at rest on one square" invariant
-  (golden rule #1) wins: the victim may *cross* the charger but not *end* on it, so it stops
-  one short — a net-zero displacement for the amount-1 case (documented, not silently
-  dropped). amount≥2 displaces correctly. Whether such a victim should instead be carried
-  through to the far side (amplifying the knockback) or swap with the charger is bundled into
-  the Designer charge-combat ruling below — do not change without it.
+- **RULED — Displacement skips the displacer's square: carry through (R1c, Designer
+  2026-08-13; supersedes the v1 interim "stays put"; ENGINE ASK, backlog).** Walk the
+  displacement line the nominal distance. If the landing square is occupied by **the unit
+  that caused the displacement**, advance to the next square along the same line (repeat
+  while it is the displacer's) — the displacer's body is skipped, not counted, so the victim
+  may travel one square further, only ever *past* the displacer. If no free square exists
+  beyond it (wall/cover/edge/third unit), fall back to the last-free-square rule (reproduces
+  the old net-zero). Never violates "no two units at rest on one square." This completes the
+  2026-08-17 "ignore the displacer's body" ruling: that made the charger transparent to the
+  *path*; this makes it transparent to the *landing*. Fixes the visible Ram Charge net-zero.
+  (Rejected alternative: swap — moves the victim backwards vs the knockback vector and
+  contends badly with simultaneous displacement.)
 - **PROPOSED — AR "Clashes" are more permissive than our resolver (refinement, lower
   priority).** AR: two units *both passing through* the same square (neither ending there)
   **both continue**; if one *ends* on it and another passes through, the ender stays and
@@ -114,18 +115,32 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   move). Damage applies immediately; if it kills, remaining path/actions are discarded.
   A unit that *starts* on a freshly placed trap square does not trigger it until it
   re-enters.
-- **RULED — Walked dash vs teleport (implemented 2026-08-14, items 7).** Two dash
-  models, distinguished by `shape`:
-  - **Walked charge** (`shape: "path"`, e.g. Bastion Ram Charge): traverses each path
-    square in order during Dash; **stops on the square in front of the first unit it
-    reaches** (does not enter it). If that unit is an enemy and the ability deals damage,
-    it is the one struck. Triggers every trap it *enters* en route. Damage lands in Dash.
-  - **Teleport** (`shape: "square"`, e.g. Wisp Blink, Shadowstep): ignores intervening
-    squares and walls, appears at the destination; requires an open, unoccupied
-    destination or it fizzles harmlessly. Triggers a trap only on the destination. A
-    teleport-strike (Shadowstep) hits every enemy Chebyshev-adjacent to the landing.
-  Rationale: GAME_SPEC §2 "dashes trigger traps they cross" is about walked charges; a
-  teleport crosses nothing. Flag in playtest if teleports dodging trap lines feel oppressive.
+- **RULED — Walked dash vs teleport; `shape` is the authority (R4, updated 2026-08-19).**
+  Two dash models, distinguished by `shape` — and `shape` alone decides *how* a reposition
+  happens; a `teleport` **effect** only says *that* the caster repositions (which makes it a
+  self/utility ability for the energy-on-use rule). So Vex's Combat Roll and Cinder's
+  Backdraft (`shape: "path"` carrying a `teleport` effect) are **walked** ground dashes, not
+  wall-crossers — no data change (R4).
+  - **Walked charge** (`shape: "path"`, e.g. Ram Charge; also Combat Roll/Backdraft):
+    traverses each path square in Dash; **passes through characters** (MV1) and, if it deals
+    damage, strikes the **first enemy whose square it crosses** and no others (R1a — the
+    destination is not special). May move diagonally (MV4). Triggers every trap it enters;
+    stopped by walls/cover. Damage lands in Dash.
+  - **Teleport** (`shape: "square"`, e.g. Wisp Blink/Shadowstep, Lumen Glimmer Step, Aegis
+    Intercept): ignores intervening squares and walls, appears at the destination; requires
+    an open, unoccupied destination or it fizzles. Triggers a trap only on the destination.
+    A teleport-strike (Shadowstep) hits every enemy Chebyshev-adjacent to the landing.
+  Content guardrail (R4, optional): a test may assert no `shape: "path"` ability ever
+  resolves through the teleport branch, so a refactor can't silently make Combat Roll
+  wall-crossing.
+- **RULED — Charge breadth via optional `chargeHits` (R1b, Designer 2026-08-13; ENGINE ASK,
+  backlog).** `AbilityDef` gains `chargeHits?: "first" | "all"`, default `"first"`. On
+  `"all"` a damaging `path` dash applies its effects to **every** enemy crossed (Kestrel's
+  ult Tempest Run); `"first"` / absent = R1a. Energy is still once-per-use on hitting ≥1
+  enemy. Validation rejects any other value and rejects the field on non-`path` shapes.
+  **Interim:** `kestrel.json` already carries `"chargeHits": "all"`; until implemented the
+  engine ignores it and Tempest Run hits only the first enemy — weaker than designed, never
+  stronger, safe to ship.
 - **RULED — Knockback/pull do NOT trigger traps in v1 (closes Builder OQ, review
   2026-08-14).** Trap triggers list dash and move (entry under a unit's own power); a unit
   *shoved* onto a trap by knockback or pull does not trigger it. Keeps end-of-Blast
@@ -155,13 +170,27 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **RULED — Delayed abilities.** Resolve at their locked squares in the stated phase
   `delayTurns` later, regardless of whether the caster moved, is stealthed, or died
   in between.
-- **RULED (v1 interim) — Decoy is a no-op beyond its Stealth (closes Builder OQ, review
-  2026-08-14).** Wisp's Veil & Decoy applies Stealth; the `decoy` effect is currently a
-  no-op (no decoy entity spawned). This ships Wisp on Stealth alone without blocking the
-  engine. The **full decoy entity** (a fake unit rendered only to the opponent, that
-  absorbs a hit and expires) is a separate backlog item pending a Designer spec — the
-  roster-v1 design branch is the place that spec should land. Until then the engine models
-  no decoy, and content may carry the `decoy` effect harmlessly.
+- **RULED — Decoy is a static fake unit that dies to any damage (R2, Designer 2026-08-13;
+  closes the OPEN decoy ruling; ENGINE ASK, backlog D1).** Wisp's Veil & Decoy:
+  - **Spawn** in Prep at the caster's square, in the same effect resolution as the Stealth
+    it accompanies. It never moves or acts.
+  - **Lifetime:** expires at the end of the **next** turn (matching the 1-turn Stealth), or
+    when destroyed — whichever first.
+  - **Destruction:** *any* damage destroys it (no HP pool); an enemy that *ends a move on
+    its square* also destroys it. Emits a visible `decoyDestroyed` event (the reveal is the
+    mind-game payout for both sides).
+  - **Not a unit for any other purpose:** it does not block movement/LoS/occupancy, trigger
+    traps, take buffs/heals/displacement, count for kills, or block respawns. Damaging it
+    grants **no energy** and no on-hit riders — an ability that hits only a decoy grants
+    nothing (like hitting nobody).
+  - **Rendering:** shown to the **enemy** as Wisp (frozen cast-time HP bar); to Wisp's team
+    as a decoy.
+  - **Engine shape:** a separate `decoys: DecoyState[]` on `GameState`
+    (`{id, teamId, pos, expiresOnTurn}`), **not** in `state.units` (so every phase loop /
+    vision union / spawn picker / win check stays correct without an "is this real?" guard).
+    Damage resolution checks the decoy list after units. Deterministic, N-unit-safe.
+  - **Playtest lever:** if Wisp is oppressive, shorten the lifetime (cast turn only), not the
+    destruction rule.
 
 ## Teams & control (2v2 default, 4v4 — GAME_SPEC §1)
 
@@ -177,8 +206,14 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   - **Harmful (enemies only):** `damage`, `weaken`, `slow`, `root`, `knockback`, `pull`,
     **`reveal`** (exposing a unit is hostile).
   - **Beneficial (own team only):** `heal`, `shield`, `might`, `haste`, `energized`,
-    `unstoppable`, **`stealth`** (concealing a unit is friendly).
+    `unstoppable`, `stealth` (concealing a unit is friendly), **`untargetable`** (R7,
+    2026-08-19 — self-applied on Wisp's ult today; closes the one hole so the table is
+    **total** over `EFFECT_KINDS`).
   - **Neutral (self/placement, unfiltered):** `teleport`, `decoy`, `trap`.
+  Content guardrail (R7, optional): a test asserting every `EFFECT_KIND` appears in exactly
+  one polarity row. Also confirmed (R7): trap sibling effects apply to the **triggering
+  unit at trigger time**; dash rider effects apply to the **caster at the destination** —
+  both match shipped behavior.
 - **RULED — Beneficial abilities pay `energyGain` on use (confirms Builder OQ,
   2026-08-15).** An ability carrying any beneficial effect banks its energy on use, like
   self/utility abilities — support kits build charge by healing/shielding allies, not only
@@ -204,20 +239,31 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   and extends only that player's own deadline.
 - **RULED — Teammate information.** Teammates see each other's planned orders during
   the Decision Phase. Hidden information is team vs. team, never within a team.
-- **OPEN — Duplicate picks.** May a team (or both teams) field the same character
-  twice? Designer to rule before the lobby is built at M3.
+- **RULED — Duplicate picks: unique within a team; mirrors across teams legal (R3,
+  Designer 2026-08-13; closes the OPEN entry).** A team may not field the same character
+  twice (intra-team stacking — double-Lumen loops, double-Thorn minefields — is the
+  degenerate stall case). Both teams **may** field the same character (blind-pick mirrors
+  are legal). Lives in **M3 lobby validation**, not the engine (which already mints unique
+  unit ids and is indifferent).
 - **OPEN — Partial-team disconnect (matters at M3).** If one player on a multi-player
   team disconnects, does a teammate gain control of the abandoned characters? Current
   lean: yes, after one fully missed turn. Decide when building the server.
 
 ## Economy & timing
 
-- **RULED — Damage composition order (confirms Builder OQ, review 2026-08-13).** A landed
-  hit composes as **outgoing modifiers (Might/Weaken) → cover reduction → shields → HP**,
-  each an *independent* `floor`. Two floors, outgoing-before-defensive; this is the
-  engine convention and matches how Haste/Slow already round. It is a balance-affecting
-  convention, not just a correctness one — if playtest balance wants cover applied to raw
-  base before Might, that is a one-line change (Designer's call), but the default stands.
+- **RULED — Damage composition order is FINAL (R5, Designer 2026-08-13; retires the flag).**
+  A landed hit composes as **outgoing modifiers (Might/Weaken) → cover reduction → shields →
+  HP**, each an *independent* `floor`. The candidate orders differ by at most 1 point on the
+  biggest hits (Lance of Dawn+Might into cover: 28 shipped vs 27 reversed); the shipped order
+  matches Haste/Slow, tells the more intuitive story, and is tested. Flag closed — revisit
+  only on a concrete playtest complaint (the known one-line change).
+- **RULED — Support archetype is unblocked (R6, Designer 2026-08-13).** Its two engine
+  prerequisites shipped (no-friendly-fire polarity + beneficial-on-use energy, 2026-08-15),
+  and the 1v1-only deferral no longer applies now that 2v2 is default. Lumen and Thorn ship
+  as drafted — **no engine work**. Two permanent constraints: every beneficial effect must be
+  self-aimable (1v1 stays a supported format), and Supports pay for sustain in lower auto
+  damage (16–18 band). Anti-stall is a **playtest** item (Lumen+Thorn vs double-Firepower at
+  2v2), tuned via the per-format turn limit, not the kits.
 - **RULED — Energized scales earned energy, not the passive drip (FIXED 2026-08-14, item
   E1).** `Energized (+50%)` boosts energy *gained from abilities* (on-hit `energyGain` and
   self/beneficial-on-use), not the flat `+5` passive tick — GAME_SPEC §5 lists the passive
