@@ -6,6 +6,7 @@ import {
   EFFECT_KINDS,
   TARGET_SHAPES,
 } from './types.js';
+import { MAX_ABILITY_RANGE } from './constants.js';
 
 /**
  * Content validation for data-driven characters and maps.
@@ -20,7 +21,12 @@ function isInt(n: unknown): n is number {
   return typeof n === 'number' && Number.isInteger(n);
 }
 
-export function validateAbility(a: AbilityDef, path: string): string[] {
+/**
+ * `isUltimate` exempts a character's ultimate from the non-ultimate range cap
+ * (M2) — Lance of Dawn is range 99 by design. It defaults to false so the cap is
+ * the safe default for any caller that does not say otherwise.
+ */
+export function validateAbility(a: AbilityDef, path: string, isUltimate = false): string[] {
   const errs: string[] = [];
   if (!a.id) errs.push(`${path}: missing id`);
   if (!a.name) errs.push(`${path}: missing name`);
@@ -31,6 +37,12 @@ export function validateAbility(a: AbilityDef, path: string): string[] {
     errs.push(`${path}: invalid shape "${a.shape}"`);
   }
   if (!isInt(a.range) || a.range < 0) errs.push(`${path}: range must be a non-negative integer`);
+  // Map geometry depends on this: spawn separation (M1) is sized so no turn-1
+  // move+ability reaches the enemy spawn, and one retuned range would silently
+  // break it. Ultimates are exempt (Lance of Dawn is range 99 by design).
+  if (!isUltimate && isInt(a.range) && a.range > MAX_ABILITY_RANGE) {
+    errs.push(`${path}: non-ultimate range must be <= ${MAX_ABILITY_RANGE} (got ${a.range})`);
+  }
   if (a.shape === 'circle' && (!isInt(a.radius) || (a.radius ?? 0) < 1)) {
     errs.push(`${path}: circle shape requires integer radius >= 1`);
   }
@@ -85,7 +97,7 @@ export function validateCharacter(c: CharacterDef): string[] {
   if (!c.ultimate) {
     errs.push(`${path}: missing ultimate`);
   } else {
-    errs.push(...validateAbility(c.ultimate, `${path}.ultimate`));
+    errs.push(...validateAbility(c.ultimate, `${path}.ultimate`, true)); // ults are range-exempt (M2)
     if (ids.has(c.ultimate.id)) errs.push(`${path}: ultimate id duplicates an ability id`);
   }
   return errs;
