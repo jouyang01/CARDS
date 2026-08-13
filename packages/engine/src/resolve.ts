@@ -482,6 +482,7 @@ function placeTraps(
  */
 function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'dash' });
+  const repositioned: UnitState[] = []; // units that actually moved under their own power (D1-dash)
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'dash' || !plan.unit.alive) continue;
@@ -532,7 +533,14 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       applyStatus(plan.unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
       events.push({ type: 'statusApplied', unitId: plan.unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS });
     }
+    if (!vecEq(plan.unit.pos, origin)) repositioned.push(plan.unit);
   }
+
+  // A decoy is destroyed by an enemy ending a *voluntary* reposition on its
+  // square — Dash as well as Move (D1-dash, edge-cases 2026-08-20). Only units
+  // that actually travelled count, so an enemy parked on the square by an earlier
+  // knockback (which must NOT destroy it) is never swept up by a fizzled dash.
+  destroyDecoysUnderEnemies(draft, repositioned, events);
 }
 
 /**

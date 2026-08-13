@@ -6,10 +6,12 @@ import type { CharacterDef, GameState, PlayerOrders, TurnEvent } from '../src/ty
 
 import vex from '../../../data/characters/vex.json';
 import wisp from '../../../data/characters/wisp.json';
+import bastion from '../../../data/characters/bastion.json';
 
 const VEX = vex as unknown as CharacterDef;
 const WISP = wisp as unknown as CharacterDef;
-const roster = buildRoster([VEX, WISP]);
+const BASTION = bastion as unknown as CharacterDef;
+const roster = buildRoster([VEX, WISP, BASTION]);
 const OPEN = () => makeMap(Array.from({ length: 15 }, () => '.'.repeat(15)));
 
 const unit = (s: GameState, id: string) => s.units.find((u) => u.unitId === id)!;
@@ -113,5 +115,58 @@ describe('D1: Wisp decoy (R2)', () => {
     ], roster);
     expect(unit(t2.state, 'vex-0').pos).toEqual({ x: 5, y: 8 }); // passed clean through
     expect(t2.state.kills).toEqual(before); // destroying a decoy is not a kill
+  });
+});
+
+describe('D1-dash: a Dash ending on a decoy destroys it; a knockback does not', () => {
+  /** Index of the first event of `type`, or -1. Used to place a destroy in the phase order. */
+  const idxOf = (evts: TurnEvent[], pred: (e: TurnEvent) => boolean) => evts.findIndex(pred);
+  const phaseIdx = (evts: TurnEvent[], phase: string) =>
+    idxOf(evts, (e) => e.type === 'phaseStart' && (e as { phase: string }).phase === phase);
+
+  it('an enemy Dash ending on the decoy square destroys it, during the Dash phase', () => {
+    const start = makeState([
+      spawnUnit(WISP, 'wisp-0', 0, { x: 5, y: 7 }),
+      spawnUnit(VEX, 'vex-0', 1, { x: 5, y: 5 }),
+    ]);
+    const t1 = castAndStepAside(start);
+    expect(t1.state.decoys[0]!.pos).toEqual({ x: 5, y: 7 });
+
+    // Vex combat-rolls (dash, path) onto the decoy square.
+    const t2 = resolveTurn(t1.state, OPEN(), [
+      { team: 0, units: [] },
+      { team: 1, units: [{ unitId: 'vex-0', ability: { abilityId: 'combat_roll', target: [{ x: 5, y: 6 }, { x: 5, y: 7 }] } }] },
+    ], roster);
+
+    expect(unit(t2.state, 'vex-0').pos).toEqual({ x: 5, y: 7 }); // dash ended on it
+    expect(t2.state.decoys).toHaveLength(0);
+    const destroyed = idxOf(t2.events, (e) => e.type === 'decoyDestroyed');
+    expect(destroyed).toBeGreaterThan(-1);
+    // Destroyed by the dash, not by end-of-turn expiry: it fires before Blast starts.
+    expect(destroyed).toBeLessThan(phaseIdx(t2.events, 'blast'));
+  });
+
+  it('an involuntary knockback onto the decoy square does NOT destroy it', () => {
+    const start = makeState([
+      spawnUnit(WISP, 'wisp-0', 0, { x: 5, y: 7 }),
+      spawnUnit(BASTION, 'bastion-0', 0, { x: 2, y: 7 }),
+      spawnUnit(VEX, 'vex-0', 1, { x: 4, y: 7 }),
+    ]);
+    const t1 = castAndStepAside(start);
+    expect(t1.state.decoys[0]!.pos).toEqual({ x: 5, y: 7 });
+
+    // Bastion rams from (2,7): it rests at (3,7) (Vex blocks (4,7)) and knocks Vex
+    // one square along the charge, from (4,7) onto the decoy at (5,7).
+    const t2 = resolveTurn(t1.state, OPEN(), [
+      { team: 0, units: [{ unitId: 'bastion-0', ability: { abilityId: 'ram_charge', target: [{ x: 3, y: 7 }, { x: 4, y: 7 }] } }] },
+      { team: 1, units: [] },
+    ], roster);
+
+    expect(unit(t2.state, 'vex-0').pos).toEqual({ x: 5, y: 7 }); // shoved onto the decoy
+    expect(unit(t2.state, 'bastion-0').pos).toEqual({ x: 3, y: 7 }); // charger did not end on it
+    // The decoy survived the knockback and only went away at end-of-turn expiry,
+    // so its single destroy event comes after the Move phase started.
+    const destroyed = idxOf(t2.events, (e) => e.type === 'decoyDestroyed');
+    expect(destroyed).toBeGreaterThan(phaseIdx(t2.events, 'move'));
   });
 });
