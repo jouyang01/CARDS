@@ -27,7 +27,7 @@ import {
 import { CELL, PAD, cssVar, paintOverlay, renderState, squareFromPoint } from './render.js';
 import { createStage, type Stage } from './stage.js';
 import { createTurnPlayer } from './turn-player.js';
-import { abilityOptions, abilityPreview, abilityTooltip, draftAbility, emptyDraft, movePreview, nextDraft, toUnitOrders, type OrderDraft } from './targeting.js';
+import { abilityOptions, abilityPreview, abilityTooltip, dragToAimStep, draftAbility, emptyDraft, isRotatable, movePreview, nextDraft, toUnitOrders, type OrderDraft } from './targeting.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { type ViewState } from './playback.js';
 
@@ -132,7 +132,7 @@ export function startHotSeat(
       paintOverlay(svg, draft.movePath, cssVar('--aim'), 0.5);
     }
     if (ability !== undefined) {
-      paintOverlay(svg, abilityPreview(map, step.unit, ability, draft.aim), cssVar('--aim'), 0.5);
+      paintOverlay(svg, abilityPreview(map, step.unit, ability, draft.aim, draft.aimStep), cssVar('--aim'), 0.5);
     }
 
     svg.style.cursor = 'crosshair';
@@ -235,7 +235,17 @@ export function startHotSeat(
     if (mode === 'aim') {
       const ability = draftAbility(characterFor(step.unit), draft);
       if (!ability) return;
-      draft.aim = ability.shape === 'path' ? reachPath(step.unit, sq, ability.range) : [sq];
+      if (isRotatable(ability)) {
+        // AIM2: a line/cone is aimed by DIRECTION, not by a target square. The
+        // pointer position is turned into a quantized integer step — the only
+        // thing the engine ever sees — so the shape rotates freely instead of
+        // snapping to a compass point.
+        draft.aimStep = dragToAimStep(step.unit.pos, sq);
+        draft.aim = [];
+      } else {
+        draft.aim = ability.shape === 'path' ? reachPath(step.unit, sq, ability.range) : [sq];
+        draft.aimStep = undefined;
+      }
       render();
     } else if (mode === 'move' || draft.sprint) {
       draft.movePath = reachPath(step.unit, sq, movementBudget(step.unit, draft.sprint));
