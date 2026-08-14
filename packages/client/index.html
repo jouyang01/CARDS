@@ -128,15 +128,45 @@
         padding: 8px 10px; font-size: 12px; line-height: 1.5; white-space: pre-line;
         box-shadow: 0 4px 16px rgb(0 0 0 / 0.5); pointer-events: none; }
       footer { font-size: 12px; opacity: 0.5; }
+
+      /* ── UI-responsive: the fixed chrome has to give way on a laptop ───────
+         The HUD and log are position:fixed, so below ~1200px they would simply
+         cover the board. `sizeToContainer` measures them rather than assuming,
+         so shrinking them here is all that is needed — the board re-fits. */
+      @media (max-width: 1400px) {
+        .log { width: 240px; }
+        #app { padding-right: 256px; }
+        .hud-ability { min-width: 78px; padding: 7px 8px; font-size: 11px; }
+      }
+      @media (max-width: 1100px) {
+        /* The log stops being a column and becomes a short strip above the HUD,
+           so the board keeps the full width — on a laptop the board is what you
+           are actually looking at. */
+        .log { top: auto; left: 0; width: auto; height: 116px; bottom: 132px;
+          padding: 10px 14px; border-left: none; border-top: 1px solid var(--grid-line); }
+        #app { padding: 12px 16px 250px; }
+        .hud { grid-template-columns: auto 1fr auto; gap: 10px; padding: 8px 12px 10px; }
+        .hud-bars { min-width: 150px; }
+        .hud-portrait { width: 38px; height: 38px; font-size: 18px; }
+        .hud-lock { font-size: 13px; padding: 8px 14px; }
+        h1 { font-size: 16px; }
+        footer { display: none; }
+      }
+      @media (max-width: 820px) {
+        /* Narrower than this the character panel is the first thing to go —
+           its HP/energy are also on the unit's own billboarded bars. */
+        .hud-left { display: none; }
+        .hud { grid-template-columns: 1fr auto; }
+      }
     </style>
   </head>
   <body>
-    <aside id="log"></aside>
+    <aside id="log" class="log"></aside>
     <div id="app">
       <h1>CARDS — Duel Arena</h1>
       <div id="status"></div>
       <div id="board"></div>
-      <div id="controls"></div>
+      <div id="controls" class="hud"></div>
       <footer>M2 hot-seat · order entry, resolution & playback driven entirely by the engine</footer>
     </div>
     <script type="module" src="/src/main.ts"></script>

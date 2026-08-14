@@ -99,8 +99,14 @@ const DASH_LINE = 0xffd23f;
  * is this number and nothing else.
  */
 const MS_PER_BEAT = 460;
-/** Vertical space the fixed HUD and page chrome claim, so the board fits above. */
-const HUD_RESERVED_PX = 260;
+/** Board shape and the space page chrome claims around it. */
+const BOARD_ASPECT = 0.58;
+const MAX_BOARD_WIDTH_PX = 1180;
+const MIN_BOARD_PX = { width: 320, height: 240 };
+/** Title + status line above the board; the HUD and log are measured instead. */
+const TOP_CHROME_PX = 120;
+/** Breathing room either side of the board. */
+const GUTTER_PX = 32;
 /**
  * How far a floating readout rises over its lifetime, and where it starts —
  * above the billboarded bars, so a number never sits on top of the HP it just
@@ -145,12 +151,36 @@ export function startHotSeat(
   // Size from the VIEWPORT, never from the container: the canvas is the
   // container's only child, so measuring the container would feed the canvas its
   // own width back and pin it at Three's 300px default.
+  /**
+   * Fit the board to the space the fixed chrome leaves it.
+   *
+   * The HUD and the log are `position: fixed`, so they do not shrink the
+   * viewport — the board has to subtract them itself or it renders underneath.
+   * Their sizes are **measured**, not assumed: both have CSS breakpoints, and a
+   * hardcoded 260/300 would silently mis-fit the board at every width except
+   * the one it was tuned on.
+   *
+   * The board's own container is still never measured — the canvas is its only
+   * child, so that would feed the canvas its own width back and pin it.
+   */
   const sizeToContainer = (): void => {
-    // The fixed HUD (UI3) owns the bottom strip, so the board is fitted to what
-    // is left rather than to the raw viewport — otherwise it hides behind it.
-    const w = Math.max(360, Math.min(globalThis.innerWidth - 48, 1180));
-    const h = Math.max(280, Math.min(Math.round(w * 0.58), globalThis.innerHeight - HUD_RESERVED_PX));
-    renderer.resize(Math.round(h / 0.58) < w ? Math.round(h / 0.58) : w, h);
+    // The log is a right-hand column on a wide screen and a strip above the HUD
+    // on a narrow one, so it costs width in one layout and height in the other.
+    // Which one is *read off the box*, not branched on a pixel threshold — the
+    // breakpoint lives in the stylesheet and duplicating it here would let the
+    // two drift apart silently.
+    const logBox = ui.log?.getBoundingClientRect();
+    const logIsColumn = logBox !== undefined && logBox.width < globalThis.innerWidth * 0.6;
+    const sideChrome = logIsColumn ? logBox.width : 0;
+    const bottomChrome =
+      ui.controls.getBoundingClientRect().height
+      + (logIsColumn ? 0 : (logBox?.height ?? 0))
+      + TOP_CHROME_PX;
+    const w = Math.max(MIN_BOARD_PX.width, Math.min(globalThis.innerWidth - sideChrome - GUTTER_PX, MAX_BOARD_WIDTH_PX));
+    const h = Math.max(MIN_BOARD_PX.height, Math.min(Math.round(w * BOARD_ASPECT), globalThis.innerHeight - bottomChrome));
+    // Keep the aspect when height is the binding constraint, so a short window
+    // narrows the board rather than stretching it.
+    renderer.resize(Math.min(Math.round(h / BOARD_ASPECT), w), h);
   };
   sizeToContainer();
   fitCamera();
@@ -230,6 +260,11 @@ export function startHotSeat(
       render();
     },
   });
+
+  // The HUD and log are what `sizeToContainer` measures, so re-fit now that both
+  // exist and carry content — the first pass ran before either was populated.
+  sizeToContainer();
+  fitCamera();
 
   // Ability hover tooltip (TT1) — one reused element, positioned by the button.
   const tooltip = document.createElement('div');

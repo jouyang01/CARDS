@@ -194,3 +194,32 @@ test('the camera responds to a right-drag orbit', async ({ page }) => {
   await page.waitForTimeout(300);
   expect(same(await frame(page), before), 'a right-drag must orbit the camera').toBe(false);
 });
+
+/**
+ * UI-responsive — the HUD and log are `position: fixed`, so on a laptop they
+ * cover the board rather than pushing it. The board subtracts their *measured*
+ * sizes, which is the part that silently regresses: a breakpoint changes the
+ * chrome and the fit keeps using yesterday's numbers.
+ */
+test.describe('the layout survives a laptop-sized window', () => {
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 1024, height: 700 }]) {
+    test(`${viewport.width}x${viewport.height}: the board fits and still draws`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(400);
+
+      const board = (await boardCanvas(page).boundingBox())!;
+      const hud = (await page.locator('.hud').boundingBox())!;
+
+      // Fully on screen, and clear of the fixed chrome rather than under it.
+      expect(board.x, 'board runs off the left').toBeGreaterThanOrEqual(-1);
+      expect(board.x + board.width, 'board runs off the right').toBeLessThanOrEqual(viewport.width + 1);
+      expect(board.y + board.height, 'board is hidden behind the HUD').toBeLessThanOrEqual(hud.y + 2);
+      // Not collapsed to the minimum: it should still use most of the width.
+      expect(board.width).toBeGreaterThan(viewport.width * 0.4);
+
+      // And it is still a live scene, not a stretched empty canvas.
+      const image = await pixels(page);
+      expect(countPixels(image, isTeamBlue), 'units stopped drawing at this size').toBeGreaterThan(0);
+    });
+  }
+});
