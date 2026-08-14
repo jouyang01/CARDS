@@ -45,6 +45,19 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Cache the browser binaries — ~280 MB per run otherwise. This job gates
+      # the Pages deploy (deploy-pages.yml only fires when CI concludes
+      # success), so a CDN hiccup here stops the site publishing; fewer
+      # downloads is fewer chances to be blocked by someone else's outage.
+      #
+      # The install below still runs unconditionally rather than being skipped
+      # on a cache hit: with a warm cache it is a fast no-op, and a stale or
+      # mis-keyed cache then costs time instead of correctness.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
       # Only Chromium: the suite asserts composited colours, not cross-browser
       # behaviour, so the other engines would cost minutes and prove nothing.
       - name: Install Chromium

@@ -47,9 +47,22 @@ export default defineConfig({
   ],
 
   webServer: {
-    command: 'npm run build && npx vite preview --port 4173 --strictPort',
+    // `--host 127.0.0.1` is load-bearing, not tidiness. Vite's default host is
+    // the *name* `localhost`, and since Node 17 DNS results are returned
+    // verbatim rather than IPv4-first — so on a GitHub runner `localhost`
+    // resolves to `::1` and the server binds there, while Playwright polls the
+    // literal `127.0.0.1` below and waits until it times out. Binding and
+    // polling the same literal address removes the ambiguity entirely.
+    //
+    // `npm run preview` rather than `npx vite preview` so resolution goes
+    // through the workspace's own dependency rather than npx's lookup.
+    command: 'npm run build && npm run preview -- --port 4173 --strictPort --host 127.0.0.1',
     url: 'http://127.0.0.1:4173/',
     reuseExistingServer: process.env.CI === undefined,
     timeout: 120_000,
+    // Surface the server's own output: the first CI failure here showed the
+    // build log and then silence, which said nothing about why the poll failed.
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
 });

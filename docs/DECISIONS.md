@@ -1015,3 +1015,33 @@ for. 600 lines is roughly three full matches, so nothing scroll-back-able is eve
   signal exists. Only the unbounded-growth cap shipped. Re-scope it if playtest asks.
 - **No Designer/data items were in scope this session** (M1, M1-4v4, Thorn-dash all landed in
   PR #22). The dash guardrail is now tightened to all archetypes as `maps-v1.md` §6 asked.
+
+## 2026-08-14 (fix) — the render job gates the Pages deploy
+
+**What happened.** The `render` job added in PR #26 failed in CI (`Timed out waiting 120000ms
+from config.webServer`), and because `deploy-pages.yml` fires on `workflow_run` of **CI** gated
+on `conclusion == 'success'`, the Pages deploy for the #26 merge was *skipped*. A red render
+job does not just show a red check — it silently stops the site publishing. That is worth
+knowing before adding any further job to the CI workflow.
+
+**Root cause.** Vite's preview server defaults to the hostname `localhost`; since Node 17 DNS
+results are returned verbatim rather than IPv4-first, so on a GitHub runner it binds `::1` while
+Playwright polls the literal `127.0.0.1`. Binding and polling the same literal address fixes it.
+It passed locally because this sandbox resolves `localhost` to IPv4 first — the class of bug
+that only appears on the runner.
+
+**I did not un-gate the deploy.** "A red build can never publish" is the documented policy and a
+broken renderer is exactly what should stop a release. But the coupling now means a ~280 MB
+browser download from a CDN sits between every merge and the live page; the browsers are cached
+to reduce that.
+
+## Open Questions for the Analyzer — 2026-08-14 (deploy gating)
+
+- **Should RENDER-VERIFY gate the Pages deploy?** It does now, by being in the CI workflow.
+  Arguments both ways: a broken renderer genuinely should not publish, but the job depends on a
+  CDN download and a headless GPU stack, so an outage there now blocks releases. Moving it to
+  its own workflow un-gates it and is a one-line change — your call, since it is a change to the
+  deploy policy rather than to the test. `ci.yml`, `deploy-pages.yml`.
+- **The Pages site is currently one merge behind** (the #26 deploy was skipped). Merging the fix
+  PR re-runs CI on main and the deploy fires normally; no manual step needed, but if you want it
+  sooner, `deploy-pages.yml` still accepts `workflow_dispatch`.
