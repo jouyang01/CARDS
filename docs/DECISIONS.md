@@ -937,3 +937,81 @@ against A2's end-of-phase death cue.
   turn-1-threat guard, wiring `iron-basin` into `content.test.ts`, and tightening the dash
   guardrail to all archetypes — were **not** in this session's unblocked backlog set. Add them
   to BACKLOG if you want them next session.
+
+## 2026-08-14 (later) — UI1-fix, M1-tests, RENDER-VERIFY, responsive + log cap
+
+**(UI1-fix) The two-line disarm became a module, on purpose.** The fix itself is "set the
+interaction to idle on a committing click", in both the aim and move branches. But the AC asks
+for a regression test, and the decision it guards — hover previews a hypothetical, a click
+commits and *stops* previewing — lived inside a closure in `app.ts` that needs WebGL to
+instantiate. `order-mode.ts` now holds `Mode`/`Hover`, `hoverBoard`, `afterCommit`,
+`previewAim` and `previewMovePath` as pure functions, so a test can drive them exactly as a
+player does: arm, hover, click, hover again, assert the painted aim did not move. The bug was
+one arm of that split being wrong; it should not have been untestable.
+
+**(UI1-fix) Re-aiming is by re-selecting, not by a second click.** Disarming means a stray
+click after committing does nothing, which is the point of the dev note. `selectAbility`
+re-arms, which UI1 already specified as "choosing another ability before Lock In replaces it".
+
+**(M1-tests) The turn-1 threat is measured conservatively, and that is deliberate.**
+`movement + longest non-ultimate range` over-estimates: Blast resolves before Move, so a shot
+is fired from the pre-move square and movement adds nothing to its reach, and a dash's range is
+its own travel rather than a bonus on top. A guard that is exactly tight fails on any Designer
+nudge. **Both maps sit at separation 13 against a worst case of 12** — one tile of headroom.
+That is the range cap working as designed, but it is not much; flagged below.
+
+**(M1-tests) A third assertion ties the guard to `MAX_ABILITY_RANGE`.** The per-map check only
+proves today's roster is safe. Asserting `separation > movement + MAX_ABILITY_RANGE` proves the
+maps survive *any* cap-legal roster, which is what makes the guard useful to a future Designer
+rather than a snapshot of this one.
+
+**(RENDER-VERIFY) Not golden screenshots, and not PNG size either.** Byte size was the first
+idea and is useless here — a flat frame and a full board come out within 20% of each other. The
+frames are decoded (a ~40-line PNG reader, no dependency) and sampled for colour *families*,
+relationships between channels, because everything is Lambert-shaded and no unit is ever
+literally `#4f8cff` on screen. Two traps worth recording: `locator.screenshot()` captures the
+element region after scrolling it into view and drags in page chrome — anti-aliased title text
+was enough stray colour to keep a "no units drew" mutation passing, so frames are clipped to
+the canvas box; and a first-draft `isTeamRed` also matched the orange aim overlay and the brown
+of cover, quadrupling on any armed ability. The suite was validated by mutation (hide the unit
+groups → it fails with "team 0 units are missing"), not by counting assertions.
+
+**(UI-responsive) The board measures its chrome instead of assuming it.** The HUD and log are
+`position: fixed`, so they do not shrink the viewport. Two latent bugs fell out: `#log` and
+`#controls` only received their layout when JS added a class, so the *first* fit measured an
+unstyled full-width `<aside>` and collapsed the board to its minimum (classes now ship in the
+markup, and the fit re-runs once both exist); and below 1100px the log becomes a horizontal
+strip, where subtracting its *width* goes negative. Which axis the log costs is read off its
+own box rather than branched on a pixel threshold, so the stylesheet stays the single source of
+the breakpoint.
+
+**(UI6-cap) A 600-line window, not the filter.** The backlog offers "a per-tone filter or a
+max-entry window" *if* 4v4 proves noisy. No such signal has arrived, so I built only the part
+that fixes an unconditional defect — an uncapped log grows the DOM for as long as the tab is
+open — and left the filter alone rather than guessing at an interaction the owner has not asked
+for. 600 lines is roughly three full matches, so nothing scroll-back-able is ever lost.
+
+## Open Questions for the Analyzer — 2026-08-14 (UI1-fix / M1-tests / RENDER-VERIFY)
+
+- **Turn-1 spawn safety has exactly one tile of margin** (separation 13, worst case
+  `movement 4 + cap 8 = 12`) on *both* maps. It passes, and the conservative model means the
+  true margin is larger — but any spawn nudge inward, or raising `MAX_ABILITY_RANGE`, trips it
+  immediately. Worth the Designer knowing the constraint is this tight.
+  `content.test.ts`, `constants.MAX_ABILITY_RANGE`, `data/maps/*`.
+- **`iron-basin` is validated but unreachable.** `main.ts` still hard-codes `duel-arena`, so the
+  4v4 map cannot be played. `maps-v1.md` §6 calls map selection an M3/lobby concern; confirm
+  that is still the plan, or schedule a dev-only map toggle so it can be playtested before M3.
+- **RENDER-VERIFY adds ~50s and a Chromium download to CI**, in its own job so the fast
+  feedback is unaffected. If that is too slow for every PR, the cheap lever is running it only
+  on pushes to `main` — say which you want.
+- **The e2e suite pins `@playwright/test` to `~1.56`** because the sandbox's preinstalled
+  Chromium is revision 1194 and only 1.56 matches it. CI installs its own browser so it does not
+  care, but a minor bump will break local runs in this environment until the image updates.
+- **UI-responsive shipped despite its "only if the owner plays on a laptop" gate.** The defect
+  it describes (board cramped, no breakpoint) is unconditional, and the fix removed two real
+  bugs in the fit. If the owner only ever plays full-screen this was cheap; no scope was added
+  beyond the breakpoints.
+- **UI6's per-tone filter was NOT built** — it is gated on "if 4v4 makes it noisy", and no such
+  signal exists. Only the unbounded-growth cap shipped. Re-scope it if playtest asks.
+- **No Designer/data items were in scope this session** (M1, M1-4v4, Thorn-dash all landed in
+  PR #22). The dash guardrail is now tightened to all archetypes as `maps-v1.md` §6 asked.
