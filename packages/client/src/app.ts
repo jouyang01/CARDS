@@ -43,6 +43,7 @@ import {
   toUnitOrders,
   type OrderDraft,
 } from './targeting.js';
+import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { type ViewState } from './playback.js';
 
@@ -78,6 +79,8 @@ const PALETTE = {
   open: 0x20242f, wall: 0x4a5065, cover: 0x6b5b3e, brush: 0x2e4632,
   team0: 0x4f8cff, team1: 0xff6b5e, background: 0x12141a,
 };
+/** The same two team colours the board uses, for the DOM side of the HUD. */
+const TEAM_CSS = ['#4f8cff', '#ff6b5e'] as const;
 const REACH = 0x4f8cff;
 /** The hover range envelope (UI1) — dimmer than anything committed. */
 const RANGE = 0x8fb6ff;
@@ -94,6 +97,8 @@ const SPRINT_LINE = 0xffd166;
  * is this number and nothing else.
  */
 const MS_PER_BEAT = 460;
+/** Vertical space the fixed HUD and page chrome claim, so the board fits above. */
+const HUD_RESERVED_PX = 260;
 const now = (): number => performance.now();
 
 export function startHotSeat(
@@ -126,8 +131,11 @@ export function startHotSeat(
   // container's only child, so measuring the container would feed the canvas its
   // own width back and pin it at Three's 300px default.
   const sizeToContainer = (): void => {
-    const w = Math.max(360, Math.min(globalThis.innerWidth - 48, 1000));
-    renderer.resize(w, Math.round(w * 0.62));
+    // The fixed HUD (UI3) owns the bottom strip, so the board is fitted to what
+    // is left rather than to the raw viewport — otherwise it hides behind it.
+    const w = Math.max(360, Math.min(globalThis.innerWidth - 48, 1180));
+    const h = Math.max(280, Math.min(Math.round(w * 0.58), globalThis.innerHeight - HUD_RESERVED_PX));
+    renderer.resize(Math.round(h / 0.58) < w ? Math.round(h / 0.58) : w, h);
   };
   sizeToContainer();
   fitCamera();
@@ -146,6 +154,44 @@ export function startHotSeat(
   phaseLabel.style.display = 'none';
   ui.board.appendChild(phaseLabel);
 
+  // The HUD is built ONCE and updated in place (UI3). Rebuilding it per render
+  // would fire mouseleave on nodes that no longer exist, so UI1's hover state
+  // would be wiped by its own repaint.
+  const hud: Hud = createHud(ui.controls, {
+    selectCharacter: selectUnit,
+    selectAbility,
+    hoverAbility: (abilityId, control, def) => {
+      if (abilityId === undefined || control === undefined || def === undefined) { hideTip(); clearHover(); }
+      else { showTip(control, def); hover = { abilityId }; }
+      renderPreviews();
+    },
+    selectMove,
+    hoverMove: (kind) => { hover = kind === undefined ? {} : { move: kind }; renderPreviews(); },
+    hold: () => {
+      const unit = selectedUnit();
+      if (unit === undefined) return;
+      drafts.set(unit.unitId, emptyDraft(unit.unitId));
+      mode = 'idle';
+      clearHover();
+      render();
+    },
+    lock: lockSelected,
+    toggleProjection: () => {
+      // One camera, two pitches — the whole point of going orthographic.
+      projection = projection === 'isometric' ? 'top' : 'isometric';
+      renderer.setProjection(projection);
+      fitCamera(); // the pitch changes the foreshortening, so re-fit
+      render();
+    },
+    toggleOrbit: () => {
+      // Auto follows the action; free orbit hands the camera to the player and
+      // stands the auto-framing down so the two never fight.
+      renderer.setOrbitEnabled(!renderer.orbitEnabled());
+      if (!renderer.orbitEnabled()) fitCamera();
+      render();
+    },
+  });
+
   // Ability hover tooltip (TT1) — one reused element, positioned by the button.
   const tooltip = document.createElement('div');
   tooltip.className = 'tooltip';
@@ -153,10 +199,14 @@ export function startHotSeat(
   document.body.appendChild(tooltip);
   const showTip = (target: HTMLElement, def: AbilityDef): void => {
     tooltip.textContent = abilityTooltip(def).join('\n');
-    const r = target.getBoundingClientRect();
-    tooltip.style.left = `${Math.round(r.left)}px`;
-    tooltip.style.top = `${Math.round(r.bottom + 6)}px`;
     tooltip.style.display = 'block';
+    const r = target.getBoundingClientRect();
+    // The hotbar sits at the bottom of the viewport (UI3), so a tooltip hung
+    // below its button would fall off the screen. Flip it above when it must.
+    const h = tooltip.getBoundingClientRect().height;
+    const below = r.bottom + 6;
+    tooltip.style.left = `${Math.round(Math.max(8, Math.min(r.left, globalThis.innerWidth - 296)))}px`;
+    tooltip.style.top = `${Math.round(below + h > globalThis.innerHeight - 8 ? r.top - h - 6 : below)}px`;
   };
   const hideTip = (): void => { tooltip.style.display = 'none'; };
 
@@ -177,12 +227,14 @@ export function startHotSeat(
   };
   const clearHover = (): void => { hover = {}; };
 
+  /** The shield pool `initView` sums, so board and HUD never disagree. */
+  const shieldOf = (u: UnitState): number =>
+    u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
+
   const stateUnits = (): RenderUnit[] => state.units.map((u) => ({
     unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
     energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
-    // Same shield sum `initView` takes, so the planning board and the playback
-    // board show the same bar.
-    shield: u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0),
+    shield: shieldOf(u),
   }));
 
   const viewUnits = (view: ViewState): RenderUnit[] => [...view.units.values()].map((v) => ({
@@ -325,7 +377,7 @@ export function startHotSeat(
     const unit = selectedUnit();
     if (unit === undefined) return;
     renderPreviews();
-    renderControls(unit, draftFor(unit), characterFor(unit));
+    hud.update(hudModel(unit, draftFor(unit), characterFor(unit)));
     const seat = currentSeat();
     const roster = seatRoster();
     const done = roster.filter((u) => locked.has(u.unitId)).length;
@@ -334,103 +386,55 @@ export function startHotSeat(
       ` — ${characterFor(unit).name} (${done}/${roster.length} locked)`;
   }
 
-  function renderControls(unit: UnitState, draft: OrderDraft, character: CharacterDef): void {
-    ui.controls.replaceChildren();
-    const row = (label: string) => {
-      const d = document.createElement('div');
-      d.className = 'control-row';
-      d.append(label);
-      ui.controls.appendChild(d);
-      return d;
+  /** One character as the HUD's view of it — presentation data only. */
+  function hudCharacter(unit: UnitState): HudCharacter {
+    const character = characterFor(unit);
+    return {
+      unitId: unit.unitId,
+      name: character.name,
+      archetype: character.archetype,
+      colour: unit.owner === 0 ? TEAM_CSS[0] : TEAM_CSS[1],
+      hp: unit.hp,
+      maxHp: unit.maxHp,
+      energy: unit.energy,
+      shield: shieldOf(unit),
+      locked: locked.has(unit.unitId),
+      hasOrder: draftHasOrder(draftFor(unit)),
     };
+  }
 
-    // The seat's characters. A player switches between them freely; Lock In
-    // locks only the selected one (UI1's ruling).
+  function hudModel(unit: UnitState, draft: OrderDraft, character: CharacterDef): HudModel {
     const roster = seatRoster();
-    if (roster.length > 1) {
-      const who = row('Character: ');
-      for (const u of roster) {
-        const b = document.createElement('button');
-        const isLocked = locked.has(u.unitId);
-        b.textContent = `${characterFor(u).name}${isLocked ? ' ✓' : draftHasOrder(draftFor(u)) ? ' •' : ''}`;
-        b.className = u.unitId === unit.unitId ? 'sel' : '';
-        b.disabled = isLocked;
-        b.onclick = () => selectUnit(u.unitId);
-        who.appendChild(b);
-      }
-    }
-
-    const abilityRow = row('Ability: ');
-    for (const opt of abilityOptions(unit, character)) {
-      const b = document.createElement('button');
-      b.textContent = `${opt.def.name}${opt.isUlt ? ' ★' : ''}` + (opt.available ? '' : ` (${opt.reason})`);
-      b.disabled = !opt.available;
-      b.className = draft.abilityId === opt.def.id ? 'sel' : '';
-      b.onclick = () => selectAbility(opt.def.id);
-      // UI1: hovering a control paints its effective range and nothing else —
-      // no draft is touched, and mouse-out puts the board back.
-      b.addEventListener('mouseenter', () => { showTip(b, opt.def); hover = { abilityId: opt.def.id }; renderPreviews(); });
-      b.addEventListener('mouseleave', () => { hideTip(); clearHover(); renderPreviews(); });
-      abilityRow.appendChild(b);
-    }
-
-    const budget = movementBudget(unit, draft.sprint);
-    const moveRow = row(`Move (${budget}): `);
-    const moveBtn = document.createElement('button');
-    moveBtn.textContent = 'Draw move';
-    moveBtn.className = mode === 'move' && !draft.sprint ? 'sel' : '';
-    moveBtn.onclick = () => selectMove(false);
-    const sprintBtn = document.createElement('button');
-    sprintBtn.textContent = 'Sprint';
-    sprintBtn.className = draft.sprint ? 'sel' : '';
-    sprintBtn.disabled = draft.abilityId !== undefined; // Sprint is move-only (GAME_SPEC §2)
-    sprintBtn.onclick = () => selectMove(true);
-    for (const [btn, kind] of [[moveBtn, 'move'], [sprintBtn, 'sprint']] as const) {
-      btn.addEventListener('mouseenter', () => { hover = { move: kind }; renderPreviews(); });
-      btn.addEventListener('mouseleave', () => { clearHover(); renderPreviews(); });
-    }
-    const holdBtn = document.createElement('button');
-    holdBtn.textContent = 'Hold / clear';
-    holdBtn.onclick = () => { drafts.set(unit.unitId, emptyDraft(unit.unitId)); mode = 'idle'; clearHover(); render(); };
-    moveRow.append(moveBtn, sprintBtn, holdBtn);
-
-    const viewRow = row('View: ');
-    const proj = document.createElement('button');
-    proj.textContent = projection === 'isometric' ? 'Isometric' : 'Top-down';
-    proj.onclick = () => {
-      // One camera, two pitches — the whole point of going orthographic.
-      projection = projection === 'isometric' ? 'top' : 'isometric';
-      renderer.setProjection(projection);
-      fitCamera(); // the pitch changes the foreshortening, so re-fit
-      render();
+    // The last unlocked character of the last seat is the one whose Lock In
+    // actually resolves the turn — say so, rather than surprising the player.
+    const last = seatIdx === seats.length - 1
+      && roster.every((u) => u.unitId === unit.unitId || locked.has(u.unitId));
+    return {
+      active: hudCharacter(unit),
+      roster: roster.map(hudCharacter),
+      // `abilityOptions` already answers availability and why — never re-derived.
+      abilities: abilityOptions(unit, character).map((opt) => ({
+        id: opt.def.id,
+        name: opt.def.name,
+        isUlt: opt.isUlt,
+        available: opt.available,
+        reason: opt.reason,
+        cooldown: opt.cooldown,
+        selected: draft.abilityId === opt.def.id,
+        def: opt.def,
+      })),
+      move: {
+        budget: movementBudget(unit, draft.sprint),
+        drawing: mode === 'move',
+        sprinting: draft.sprint,
+        sprintDisabled: draft.abilityId !== undefined, // Sprint is move-only (GAME_SPEC §2)
+      },
+      lock: { label: last ? 'Lock In & resolve ⚔' : 'Lock In ▸' },
+      view: {
+        projection: projection === 'isometric' ? 'Isometric' : 'Top-down',
+        orbit: renderer.orbitEnabled(),
+      },
     };
-    const orbit = document.createElement('button');
-    const free = renderer.orbitEnabled();
-    orbit.textContent = free ? 'Camera: free orbit' : 'Camera: auto';
-    orbit.className = free ? 'sel' : '';
-    orbit.onclick = () => {
-      // Auto follows the action; free orbit hands the camera to the player and
-      // stands the auto-framing down so the two never fight.
-      renderer.setOrbitEnabled(!renderer.orbitEnabled());
-      if (!renderer.orbitEnabled()) fitCamera();
-      render();
-    };
-    viewRow.append(proj, orbit);
-    const hint = document.createElement('span');
-    hint.style.opacity = '0.6';
-    hint.textContent = free ? 'drag to orbit · wheel to zoom' : 'right-drag to orbit · wheel to zoom';
-    viewRow.appendChild(hint);
-
-    const lockRow = row('');
-    const lock = document.createElement('button');
-    const last = seatIdx === seats.length - 1 && roster.every((u) => u.unitId === unit.unitId || locked.has(u.unitId));
-    lock.textContent = last ? 'Lock In & resolve ⚔' : 'Lock In ▸';
-    lock.className = 'primary';
-    lock.onclick = lockSelected;
-    lockRow.appendChild(lock);
-
-    const bars = row('');
-    bars.textContent = `HP ${unit.hp}/${unit.maxHp} · Energy ${unit.energy}/100`;
   }
 
   // ── Selection ────────────────────────────────────────────────────────────────
@@ -551,7 +555,7 @@ export function startHotSeat(
       renderer.highlight('select', [], IMPACT);
       renderer.show(viewUnits(player.view), viewDecoys(player.view));
     };
-    renderPlaybackControls(() => {
+    hud.showPlayback(() => {
       skipped = true;
       player.skip();
       finish();
@@ -622,25 +626,13 @@ export function startHotSeat(
     renderer.focusOn(focusSquares(frame, posOf));
   }
 
-  function renderPlaybackControls(onSkip: () => void): void {
-    ui.controls.replaceChildren();
-    const row = document.createElement('div');
-    row.className = 'control-row';
-    const skip = document.createElement('button');
-    skip.textContent = 'Skip ⏭';
-    skip.className = 'primary';
-    skip.onclick = onSkip;
-    row.appendChild(skip);
-    ui.controls.appendChild(row);
-  }
-
   function renderGameOver(): void {
     renderer.show(stateUnits(), []);
     for (const layer of ['reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.setSpotlight(null);
     renderer.fitBoard();
-    ui.controls.replaceChildren();
+    hud.clear();
     ui.status.textContent = state.status === 'draw'
       ? 'Double KO — the match is a draw.'
       : `${teamName(state.winner ?? 0)} wins! (${state.kills[0]}–${state.kills[1]})`;
