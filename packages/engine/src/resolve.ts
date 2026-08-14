@@ -57,6 +57,7 @@ import type {
   DecoyState,
   EffectKind,
   GameState,
+  AbilityOrder,
   MapDef,
   PlayerOrders,
   TeamId,
@@ -97,6 +98,13 @@ interface PlannedAbility {
 interface UnitPlan {
   unit: UnitState;
   ability?: PlannedAbility;
+  /**
+   * A free action (FREE1) declared **alongside** `ability`. Kept in its own
+   * field for exactly the reason the mechanic exists: everything that reads
+   * `ability` to decide what a turn costs — the Sprint exclusion above all —
+   * must not see this one.
+   */
+  freeAbility?: PlannedAbility;
   movePath: Vec2[];
   sprint: boolean;
 }
@@ -160,23 +168,19 @@ function planUnit(
   const unit = draft.units.find((u) => u.unitId === order.unitId);
   if (unit === undefined || unit.owner !== team || !unit.alive) return undefined;
 
-  let ability: PlannedAbility | undefined;
-  const found = order.ability !== undefined ? findAbility(roster, unit.characterId, order.ability.abilityId) : undefined;
-  if (order.ability !== undefined && found !== undefined) {
-    const { def, isUlt } = found;
-    const aim = order.ability.target ?? [];
-    const onCooldown = (unit.cooldowns[def.id] ?? 0) > 0;
-    const canAfford = !isUlt || unit.energy >= ULT_COST;
-    const aimStep = order.ability.aimStep;
-    // An out-of-range aim step is rejected like any other illegal component:
-    // the ability is dropped, deterministically, never thrown on (AIM2).
-    const stepLegal = aimStep === undefined || isAimStep(aimStep);
-    if (!onCooldown && canAfford && stepLegal && aimIsLegal(board, unit, def, aim, aimStep)) {
-      ability = { def, aim, area: expandShape(board, def, unit.pos, aim, aimStep), isUlt };
-    }
-  }
+  const ability = planAbility(board, unit, roster, order.ability);
 
-  // Sprint is "move only": it is ignored the moment a real ability is used.
+  // FREE1 — a free action is declared in addition to the normal one. It must
+  // name an ability that is actually `free: true`, and it may not simply repeat
+  // the normal slot: ordering the same trap twice would fire it twice off one
+  // cooldown, which is the one way this slot could be abused.
+  let freeAbility = planAbility(board, unit, roster, order.freeAbility);
+  if (freeAbility?.def.free !== true || freeAbility.def.id === ability?.def.id) freeAbility = undefined;
+
+  // Sprint is "move only": it is ignored the moment a real ability is used —
+  // and a free action is **not** one. Reading `ability` alone here is the whole
+  // of FREE1's budget independence: `movementBudget` takes only the unit and
+  // this flag, so a free action can never shrink a move or cancel a Sprint.
   const sprint = ability === undefined && order.sprint === true;
 
   // A dash ability IS the unit's movement this turn; a separate Move path is
@@ -188,7 +192,32 @@ function planUnit(
     if (check.valid) movePath = order.movePath.map((p) => ({ x: p.x, y: p.y }));
   }
 
-  return { unit, ability, movePath, sprint };
+  return { unit, ability, freeAbility, movePath, sprint };
+}
+
+/**
+ * Validate one ability order into a plan, or `undefined` if any part of it is
+ * illegal. Every rejection is a silent drop rather than a throw, so a malformed
+ * order costs the player that component and nothing else — deterministically.
+ */
+function planAbility(
+  board: Board,
+  unit: UnitState,
+  roster: Roster,
+  order: AbilityOrder | undefined,
+): PlannedAbility | undefined {
+  if (order === undefined) return undefined;
+  const found = findAbility(roster, unit.characterId, order.abilityId);
+  if (found === undefined) return undefined;
+  const { def, isUlt } = found;
+  const aim = order.target ?? [];
+  if ((unit.cooldowns[def.id] ?? 0) > 0) return undefined;
+  if (isUlt && unit.energy < ULT_COST) return undefined;
+  // An out-of-range aim step is rejected like any other illegal component (AIM2).
+  const aimStep = order.aimStep;
+  if (aimStep !== undefined && !isAimStep(aimStep)) return undefined;
+  if (!aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
+  return { def, aim, area: expandShape(board, def, unit.pos, aim, aimStep), isUlt };
 }
 
 /** Is an ability's aim geometrically legal for its shape and range? */
@@ -413,20 +442,32 @@ function grantUseEnergy(unit: UnitState, def: AbilityDef, hitEnemy: boolean, eve
 
 function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'prep' });
+  // Free actions resolve first (FREE1). Validation pins them to Prep, so this is
+  // the only phase that needs the pass — and going first is the ordering
+  // catalysts will need, so there is one rule rather than two.
+  for (const plan of orderedPlans(draft, plans)) {
+    if (plan.freeAbility !== undefined) firePrep(draft, plan.unit, plan.freeAbility, events);
+  }
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
-    if (a === undefined || a.def.phase !== 'prep' || !plan.unit.alive) continue;
-    events.push({ type: 'abilityFired', unitId: plan.unit.unitId, abilityId: a.def.id, area: a.area });
-    markAbilityUsed(plan.unit, a, events);
-
-    const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
-    if (trapEffect !== undefined) {
-      placeTraps(draft, plan.unit, a, trapEffect, events);
-    } else {
-      applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
-    }
-    grantUseEnergy(plan.unit, a.def, false, events);
+    if (a === undefined || a.def.phase !== 'prep') continue;
+    firePrep(draft, plan.unit, a, events);
   }
+}
+
+/** Resolve one Prep-phase ability for `unit`: traps place, everything else self-applies. */
+function firePrep(draft: GameState, unit: UnitState, a: PlannedAbility, events: TurnEvent[]): void {
+  if (!unit.alive) return;
+  events.push({ type: 'abilityFired', unitId: unit.unitId, abilityId: a.def.id, area: a.area });
+  markAbilityUsed(unit, a, events);
+
+  const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
+  if (trapEffect !== undefined) {
+    placeTraps(draft, unit, a, trapEffect, events);
+  } else {
+    applySelfEffects(draft, unit, a.def.effects, sourceOf(unit, a.def.id), events);
+  }
+  grantUseEnergy(unit, a.def, false, events);
 }
 
 /**

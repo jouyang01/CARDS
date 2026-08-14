@@ -95,6 +95,20 @@ export interface AbilityDef {
    * any non-`path` shape (validate.ts).
    */
   chargeHits?: 'first' | 'all';
+  /**
+   * A **free action** (FREE1): may be declared *in addition to* a normal
+   * ability, and never reduces the move budget or blocks Sprint. Absent/false is
+   * today's behaviour.
+   *
+   * Which abilities may carry it is a rule, not a list (edge-cases): Prep phase
+   * only, no immediate damage/heal/shield, payoff deferred or conditional — the
+   * point is to make a setup play affordable without losing tempo. Two of those
+   * three are machine-checkable and `validateAbility` enforces them: `free`
+   * requires `phase === 'prep'` and `energyGain === 0`, as errors rather than
+   * runtime special cases, so no future kit can quietly grant a free Blast or a
+   * free action that is strictly better in every dimension.
+   */
+  free?: boolean;
   effects: AbilityEffect[];
   description: string;
 }
@@ -230,9 +244,19 @@ export interface AbilityOrder {
 export interface UnitOrders {
   unitId: string;
   ability?: AbilityOrder;
+  /**
+   * A **free action** declared alongside `ability` (FREE1) — it must name an
+   * ability the unit owns that is `free: true` and off cooldown.
+   *
+   * This is a separate slot on purpose: a free action is additive, so putting it
+   * in `ability` would make it compete with the normal one and defeat the whole
+   * mechanic. At most one free action per unit per turn (edge-cases, the
+   * conservative v1 reading), counting this and `catalyst` together.
+   */
+  freeAbility?: AbilityOrder;
   /** Move-phase path, first square = first step. Empty/absent = hold. */
   movePath?: Vec2[];
-  /** True = no ability, extended move range. */
+  /** True = no ability, extended move range. A free action never blocks it. */
   sprint?: boolean;
 }
 
