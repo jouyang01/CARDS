@@ -354,11 +354,23 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   - **Interaction with HITBOX1:** the wedge defines the continuous cone *region*; HITBOX1's
     tile-centre circle decides which tiles it hits; `expandShape` composes the two (one
     authority — UI2's overlay tracks it for free).
-  - **Acceptance (all three):** axis-aligned counts stay 3/8/15/24; **every quantized rotation
-    lands within ±1** of them; **and** the furthest covered tile is within ±0.5 tile-widths of
-    the axis-aligned figure in every direction (the *reach* check — the one that catches the
-    diagonal-length bug the tile count alone hid). `line` = degenerate zero-width wedge
-    (unchanged in kind, now Euclidean-metered).
+  - **Acceptance — RATIFIED to the measured bound 2026-08-28 (was "±1 count", unattainable).**
+    The Builder proved (OQ 2026-08-26 #2 / 2026-08-27 #1) that the cone *area* is now exactly
+    rotation-invariant, so what varies is how the lattice samples the half-tile boundary band —
+    which grows with the perimeter, so with range; and the axis-aligned case sits at the **bottom**
+    of that spread (the lattice lines up with the wedge edges), not its centre. A literal ±1 is
+    therefore impossible without moving the owner-approved 3/8/15/24 footprint. **Ratified AC:**
+    (a) axis-aligned counts stay **3/8/15/24**; (b) the tile count over all 256 rotations lands in
+    **`[axis − 1, axis + range + 1]`** (verified ranges 1–8); (c) — the meaningful check — the
+    **reach** projected on the axis is within **±0.5 tile-widths** of the axis-aligned figure in
+    every direction (catches the diagonal-length bug the count alone hides). For a **`line`**
+    (degenerate zero-width wedge, Euclidean-metered): count in **`[floor(range/√2), range + 1]`**
+    (a diagonal beam's tiles are √2 apart, so it covers fewer than an axis beam — reach, not
+    count, is the invariant), with **over-reach ≤ 0** (the hard half — over-reach was the bug) and
+    **shortfall < 1.5** (lattice slack). The **45° half-width ramp is hard-coded in the engine**
+    (OQ #3): it is the value that leaves the axis footprint untouched, not a balance pick; a
+    tunable cone angle is a separate **ENGINE ASK** (squared intermediates scale k⁴ — own overflow
+    audit), not a data field. No one has asked for a different angle.
 - **RULED — An authored `circle` `radius` is the FINAL footprint radius, not the pre-hitbox
   region radius (CIRCLE-FIX; Designer 2026-08-14, measured; backlog CIRCLE-FIX; ENGINE ASK).**
   HITBOX1's half-tile is *added on top of* the authored radius — `radius: 2` is drawn as a disc
@@ -410,6 +422,25 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     detonate; knockback drops because it now applies to an area, within the kit's displacement
     budget). Ravok's knockback nerf is live now; the `impact` is inert — **weaker than designed,
     never stronger** (the `chargeHits`/`free` interim convention).
+  - **SHIPPED 2026-08-27 (PR #33):** DASH-IMPACT is now live — the three `impact` blocks resolve
+    and the hardcoded teleport-strike branch is deleted. One live behaviour change ratified: a
+    dash `impact` is an **area**, so FF1 filters it — **Shadowstep no longer catches an adjacent
+    ALLY** (Builder OQ 2026-08-27 #4). That is correct (an impact is harmful AoE; hitting an ally
+    was never the intent) and is what makes Intercept's beneficial impact reach allies. Confirmed.
+- **RULED — A dash `impact` area MUST be previewed at plan time (owner directive 2026-08-28,
+  "Shadowstep Strike needs to show what boxes are being hit, not just the box of arrival";
+  backlog DASH-PREVIEW — client; closes Builder OQ 2026-08-27 #3).** DASH-IMPACT shipped without a
+  preview: `expandShape` returns the path (or landing square) for a dash, so UI2's overlay shows
+  only the arrival tile for an ability whose whole point is "leap in and detonate." **Ruling:**
+  the client draws the impact circle(s) — an `impact.destination` disc centred on the **aimed
+  landing square** and, if present, an `impact.origin` disc on the takeoff square — as a preview
+  overlay while aiming, using the same `circleSquares` geometry the engine resolves with. **Do not
+  overload `expandShape`'s `a.area`** (it means "aimed area" at plan time but the engine detonates
+  at the *actual* rest square after pass-through/stop — making them the same field would make the
+  preview lie for a charge stopped short). So this is a **client-side overlay** reading the
+  ability's `impact` radii, not an engine change; it is a *plan-time estimate* (aimed landing) and
+  the resolution playback already shows the true detonation. Ships with a client test that a dash
+  with `impact:{destination:r}` paints an r-radius disc at the aimed square.
 - **RULED — Attacking breaks concealment; Reveal lasts 2 turns (confirms Builder OQ,
   review 2026-08-14).** Using an ability that *actually deals damage* reveals the attacker
   "until the end of the next turn" — implemented as a **2-turn** Reveal
@@ -446,8 +477,17 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     traps, take buffs/heals/displacement, count for kills, or block respawns. Damaging it
     grants **no energy** and no on-hit riders — an ability that hits only a decoy grants
     nothing (like hitting nobody).
-  - **Rendering:** shown to the **enemy** as Wisp (frozen cast-time HP bar); to Wisp's team
-    as a decoy.
+  - **Rendering (owner directive 2026-08-28, "decoy should show as an enemy for the enemy team
+    and a unique purple color for ally team"; backlog DECOY-RENDER — client, NOT shipped):** to
+    the **enemy** the decoy renders **as a normal enemy Wisp** (frozen cast-time HP bar,
+    indistinguishable from the real unit — the whole point); to **Wisp's own team** it renders in
+    a **unique purple** so allies read it as their decoy at a glance. **And it is subject to fog
+    like a real enemy:** the enemy sees the decoy only when a teammate has vision of its square
+    (it is a `teamId` object — feed it through the same `visibleSquaresForTeam` gate as units).
+    The shipped client (`app.ts` ~409) draws **all** decoys as bare positions with no team/fog
+    treatment — so a decoy is currently visible to everyone and styled as neither, which reads as
+    "stealth is broken" (Dev Note #2): the enemy sees a marker exactly where the "hidden" Wisp is.
+    Fixing the render is half of making Wisp's stealth *read* as working.
   - **Engine shape:** a separate `decoys: DecoyState[]` on `GameState`
     (`{id, teamId, pos, expiresOnTurn}`), **not** in `state.units` (so every phase loop /
     vision union / spawn picker / win check stays correct without an "is this real?" guard).
@@ -477,7 +517,18 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     ~:768, `walkCharge` ~:588) — those are FF1 gaps to fix (backlog FF1-charge, FF1-delayed).
   - **Beneficial effects still apply to the caster's own team only** (`heal`, `shield`,
     `might`, `haste`, `energized`, `unstoppable`, `stealth`, `untargetable`) — friendly fire
-    means your *attacks* endanger allies; it does **not** mean you heal/buff enemies.
+    means your *attacks* endanger allies; it does **not** mean you heal/buff enemies. **They
+    apply to EVERY allied unit in the aimed area, in EVERY phase — including Prep (BUG, backlog
+    PREP-AOE).** A beneficial area ability shields/heals/buffs all allies whose square is in
+    `a.area`, exactly as the Blast beneficial loop (`resolve.ts` ~:1006) and the dash-impact ally
+    loop (~:806) already do. **The Prep path does NOT (owner directive 2026-08-28, "Aegis Barrier
+    Pulse is only shielding one ally, should shield all allies in the area of effect"):**
+    `firePrep`'s non-trap branch (`resolve.ts` ~:600) calls `applySelfEffects(draft, unit, …)`,
+    applying the effect to **the caster alone** and ignoring `a.area`. So Barrier Pulse (a Prep
+    `circle radius 1` shield) only ever shields Aegis — not the aimed ally, not the area. Fix:
+    `firePrep` must run the same beneficial-allies-in-`a.area` loop the Blast/impact paths use
+    (caster included once, no double-application). This is an **engine** bug; ships with a test
+    that a Prep beneficial AoE shields two allies standing in its area.
   - **Neutral (self/placement, unfiltered):** `teleport`, `decoy`, `trap`.
   - **Energy is unchanged — granted only on hitting ≥1 ENEMY.** Splashing/charging only allies
     pays nothing (like hitting nobody).
@@ -596,8 +647,23 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 
 ## Free actions & catalysts (folded in from `free-actions-and-catalysts.md`, 2026-08-13)
 
-Two systems the engine does not yet support. Full rationale in the source spec; the RULED text
-here is authoritative. Scheduled in BACKLOG as **FREE1 → CAT1 → CAT2 → M3 lobby**.
+Two systems. **ENGINE shipped (FREE1/CAT1, PR #33); the CLIENT half is broken** — see FREE-UI.
+Full rationale in the source spec; the RULED text here is authoritative.
+
+> **⚠ FREE-UI (owner directive 2026-08-28; backlog FREE-UI — CLIENT bug, HIGH).** The engine's
+> FREE1 budget-independence is correct, but **the client never built a free-action slot** — there
+> are zero `freeAbility` references in `packages/client/src`. A `free: true` ability (Overwatch
+> Trap, Snare Bloom, Veil & Decoy) shows in the normal hotbar and, when selected, fills
+> `draft.abilityId` (the *normal* ability slot); `toUnitOrders` (`targeting.ts` ~:559) emits it
+> as `order.ability`, not `order.freeAbility`. Consequences, exactly the owner's report: *"I
+> cannot use overwatch trap and attack/sprint after"* (#6) and *"Veil and Decoy … cannot
+> sprint/attack after"* (#7) — the free ability eats the one ability slot and disables Sprint
+> (`app.ts` ~:581 `sprintDisabled: draft.abilityId !== undefined`). **Fix (client):** a `free:
+> true` ability gets **its own draft slot + arm-mode**, exactly as CAT2 built for catalysts
+> (`draft.freeAbilityId` beside `abilityId`; a `'free'` interaction mode; its own overlay layer);
+> `toUnitOrders` routes it to `order.freeAbility`; selecting it does **not** disable Sprint or the
+> normal ability. This also un-confuses Dev Notes #2/#4 ("stealth not working"): Veil & Decoy is a
+> free ability, so today it can only be cast *instead of* the rest of Wisp's turn.
 
 ### Free actions
 
@@ -606,13 +672,21 @@ here is authoritative. Scheduled in BACKLOG as **FREE1 → CAT1 → CAT2 → M3 
   Sprint**. Legal turn shapes: free action + normal ability + 4-move ✅; free action + Sprint 8
   ✅; free action + dash ability ✅; free action alone + 4-move ✅; **two free actions in one
   turn ❌** (§ one-per-turn). "Free" is about what it costs to *declare*, not how it resolves —
-  a free action resolves in its own phase like any ability.
-- **RULED — Which abilities may be `free: true` — a rule, not a list.** All three must hold:
-  (1) **Prep phase only** (repeatable free Dash/Blast actions are the catalysts' job —
+  a free action resolves in its own phase like any ability. **The ENGINE enforces this
+  correctly; the CLIENT does not expose it — see FREE-UI above.**
+- **RULED — Which abilities may be `free: true` — a rule, not a list.** For a character's own
+  abilities: (1) **Prep phase only** (repeatable free Dash/Blast actions are the catalysts' job —
   once-per-match, self-limiting); (2) **no immediate `damage`/`heal`/`shield`**; (3) **payoff
   is deferred or conditional** (does not decide *this* turn's exchange). Applied to the roster,
   exactly three qualify — the three setup kits: **Vex Overwatch Trap**, **Thorn Snare Bloom**,
   **Wisp Veil & Decoy**. The mechanic exists to make setup plays viable without losing tempo.
+  **RATIFIED 2026-08-28 (Builder OQ 2026-08-26 #5): the validation is "Prep UNLESS
+  `oncePerMatch`."** Catalysts are all `free: true` and three are Dash/Blast, which conflicted
+  with "Prep only". The restriction exists because a *repeatable* free attack is too strong, and
+  `oncePerMatch` (catalysts) is exactly the property that removes that — so a non-Prep `free`
+  ability is legal **iff** it is `oncePerMatch`. **`energyGain: 0` stays unconditional** for every
+  `free: true` ability. (This does not license a *character* free Dash/Blast — no roster ability
+  is `oncePerMatch`; it is the catalyst carve-out, stated as one rule.)
 - **RULED — A free action grants no energy and pays for itself in cooldown.** `free: true`
   **requires `energyGain: 0` as a VALIDATION ERROR** (not a runtime special-case) — otherwise a
   free action is strictly better in every dimension. Each converted ability also takes a
@@ -637,6 +711,21 @@ here is authoritative. Scheduled in BACKLOG as **FREE1 → CAT1 → CAT2 → M3 
 
 ### Catalysts
 
+- **PROPOSED / ENGINE ASK → DESIGNER — Dash catalysts should NOT be free actions (owner directive
+  2026-08-28, "Dash catalysts should not be free actions"; backlog CAT-DASH-COST, blocked on
+  Designer).** Every catalyst currently resolves as a free, additive action; the owner has singled
+  out the **Dash** colour (Shift, Fade, Unshackle) as too much when fully free — most pointedly
+  **Shift**, a free ≤3 teleport that does **not** consume Move (a unit Shifts 3 *and* walks 4 the
+  same turn). The owner's intent is that a Dash catalyst should **cost the unit's Dash economy** —
+  i.e. it occupies the Dash phase like a dash ability, so it is *additive with a normal ability
+  and a Move but NOT with a dash ability*, and (the likely reading) a free-dash catalyst
+  **consumes that turn's Move** rather than stacking on top of it. This **reverses the CAT1 "Shift
+  does not consume Move" ruling** for the Dash colour. **Analyzer recommendation to the Designer:**
+  make Dash catalysts non-free (they compete with dash abilities and spend the Move for a
+  reposition), leaving Prep/Blast catalysts free/additive; confirm whether Fade/Unshackle (no
+  reposition) also lose additivity or only Shift does. This is a balance/economy call the Designer
+  owns — the Analyzer routes it and the Builder holds until it is ruled. Until then the shipped
+  fully-free behaviour stands (weaker constraint, never a broken state).
 - **RULED — Three catalyst slots, one per phase, each once per match.** Every character carries
   exactly three catalysts — one **Prep (Green)**, one **Dash (Yellow)**, one **Blast (Red)**.
   Each is **consumed on use and gone for the rest of the match** (not a cooldown), is a **free
