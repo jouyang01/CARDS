@@ -119,6 +119,22 @@ export interface AbilityDef {
    * free attack is too strong, and a once-per-match one is self-limiting.
    */
   oncePerMatch?: boolean;
+  /**
+   * An **area of effect at takeoff and/or landing**, for `phase: "dash"` only
+   * (DASH-IMPACT). Radii are **Euclidean** (AIM-METRIC) and expand through
+   * `circleSquares`, so this adds no new geometry.
+   *
+   * `destination` is centred on the square the dasher comes to rest on (after
+   * pass-through or an early stop for a `path` charge; the landing square for a
+   * `square` teleport). `origin` is centred on the square it left. Both compose
+   * with the existing dash models: a charge still hits the first body it crosses
+   * *and* detonates where it stops.
+   *
+   * Absent = today's behaviour exactly. This is also what let the hardcoded
+   * teleport-strike adjacency be deleted: it was a Manhattan-1 special case with
+   * exactly one user, and `{ destination: 1 }` says the same thing in data.
+   */
+  impact?: { origin?: number; destination?: number };
   effects: AbilityEffect[];
   description: string;
 }

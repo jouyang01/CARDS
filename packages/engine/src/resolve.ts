@@ -48,7 +48,7 @@ import {
 } from './constants.js';
 import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, stepCost, validateMovePath } from './movement.js';
-import { aimInRange, direction8, expandShape, isAimStep } from './shapes.js';
+import { aimInRange, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
 import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import type { CatalystPool } from './catalysts.js';
 import type {
@@ -682,6 +682,38 @@ function placeTraps(
   }
 }
 
+/** `"x,y"` back to a `Vec2` — the inverse of `vecKey`, for blast bookkeeping. */
+function unkey(key: string): Vec2 {
+  const [x, y] = key.split(',');
+  return { x: Number(x), y: Number(y) };
+}
+
+/**
+ * The squares an `impact` covers (DASH-IMPACT), one entry per blast so each
+ * victim can be pushed away from the centre that actually caught it.
+ *
+ * Radii are Euclidean and expand through `circleSquares`, so this reuses the
+ * fixed circle rather than adding geometry. `destination` is the square the
+ * dasher came to rest on — the real one, not the aimed one, so a charge stopped
+ * early detonates where it stopped.
+ */
+function impactBlasts(
+  board: Board,
+  def: AbilityDef,
+  origin: Vec2,
+  restedAt: Vec2,
+): { centre: Vec2; area: Set<string> }[] {
+  if (def.impact === undefined) return [];
+  const out: { centre: Vec2; area: Set<string> }[] = [];
+  const add = (centre: Vec2, radius: number | undefined): void => {
+    if (radius === undefined || radius < 1) return;
+    out.push({ centre, area: new Set(circleSquares(board, centre, radius).map(vecKey)) });
+  };
+  add(restedAt, def.impact.destination);
+  add(origin, def.impact.origin);
+  return out;
+}
+
 // ── Dash ────────────────────────────────────────────────────────────────────
 
 /**
@@ -723,37 +755,71 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     if (a.def.shape === 'path') crossed = walkCharge(draft, plan.unit, a.aim, events);
     else teleport(draft, board, plan.unit, a.aim[0], events);
 
-    // Damage: a charge hits the UNITS it crossed — the first only (R1a's shape,
+    // DASH-IMPACT: an optional AoE at takeoff and/or landing, expanded from the
+    // square the dasher actually came to rest on rather than the one it aimed
+    // at — a charge that is stopped early detonates where it stopped.
+    const blasts = impactBlasts(board, a.def, origin, plan.unit.pos);
+
+    // Damage. A charge hits the UNITS it crossed — the first only (R1a's shape,
     // now "first unit" under FF1-charge) or every one (`chargeHits: "all"`, e.g.
-    // Tempest Run); a teleport-strike hits everyone adjacent to where it landed.
-    // Both include allies: a directly aimed attack does not filter by team (FF1).
+    // Tempest Run) — and those include allies, because a directly aimed attack
+    // does not filter by team (FF1). An `impact` is an **area**, so FF1 polarity
+    // does apply to it: harmful effects reach enemies only.
+    //
+    // A `square` dash has no crossed units at all now. Its old Manhattan-1
+    // teleport-strike adjacency was a hardcoded special case with exactly one
+    // user; Shadowstep's `impact: { destination: 1 }` says the same thing in
+    // data, so the branch is gone (closes MET1-tp).
     const dmg = a.def.effects.find((e) => e.kind === 'damage');
     let hitEnemy = false;
+    const struck = new Set<string>(); // each unit is affected at most once
     if (dmg !== undefined) {
-      const victims =
-        a.def.shape === 'path'
-          ? a.def.chargeHits === 'all'
-            ? crossed
-            : crossed.slice(0, 1)
-          // Adjacency is MANHATTAN-1 — the 4 orthogonal neighbours (MET1-tp).
-          // It used to be the 8 surrounding squares; under a Manhattan world a
-          // diagonal neighbour is distance 2, so a teleport-strike no longer
-          // catches the corners. (Wisp rebalance is a Designer/playtest call.)
-          : draft.units.filter((u) => u.alive && u.unitId !== plan.unit.unitId && distance(plan.unit.pos, u.pos) === 1);
-      const source = a.def.shape === 'path' ? origin : plan.unit.pos;
-      for (const victim of victims) {
-        const behindCover = isBehindCover(board, source, victim.pos, a.def.range);
+      const crossedVictims = a.def.shape === 'path'
+        ? (a.def.chargeHits === 'all' ? crossed : crossed.slice(0, 1)).map((u) => ({ unit: u, from: origin }))
+        : [];
+      const blasted = blasts.flatMap(({ centre, area }) =>
+        draft.units
+          .filter((u) => u.alive && u.owner !== plan.unit.owner && area.has(vecKey(u.pos)))
+          .map((u) => ({ unit: u, from: centre })));
+      for (const { unit: victim, from } of [...crossedVictims, ...blasted]) {
+        if (struck.has(victim.unitId)) continue;
+        struck.add(victim.unitId);
+        const behindCover = isBehindCover(board, from, victim.pos, a.def.range);
         const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
         events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
         removeStatus(victim, 'stealth');
         if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
-        else collectDisplacement(pending, a.def.effects, victim, source, plan.unit.unitId);
+        else collectDisplacement(pending, a.def.effects, victim, from, plan.unit.unitId);
       }
     }
 
-    // A decoy in a damaging dash's area/path is destroyed too (R2) — no energy.
-    if (dmg !== undefined) destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
+    // Beneficial effects reach ALLIES standing in the blast — the half of
+    // `impact` that makes Aegis's Intercept a bodyguard tool rather than a
+    // teleport that arrives with nothing for the person being dived. The caster
+    // is excluded here and picked up by `applySelfEffects` below, so nobody is
+    // shielded twice.
+    const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
+    if (boons.length > 0) {
+      const helped = new Set<string>();
+      for (const { area } of blasts) {
+        for (const ally of draft.units) {
+          if (!ally.alive || ally.owner !== plan.unit.owner || ally.unitId === plan.unit.unitId) continue;
+          if (!area.has(vecKey(ally.pos)) || helped.has(ally.unitId)) continue;
+          helped.add(ally.unitId);
+          applySelfEffects(draft, ally, boons, sourceOf(plan.unit, a.def.id), events);
+        }
+      }
+    }
+
+    // A decoy in a damaging dash's area/path — or its blast — is destroyed too
+    // (R2), no energy.
+    if (dmg !== undefined) {
+      destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
+      for (const { area } of blasts) {
+        destroyDecoysInArea(draft, [...area].map(unkey), plan.unit.owner, events);
+      }
+    }
 
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
     applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
