@@ -34,6 +34,23 @@ export interface UnitPose {
   lift: number;
 }
 
+/**
+ * A floating number over a unit during resolution (UI5). Damage, shield
+ * absorption and healing are three DIFFERENT readouts, not three identical
+ * white numbers — the whole point of the item is that you can tell at a glance
+ * whether a shield ate the hit.
+ *
+ * Every value is read from the log and never recomputed: `damage.amount`,
+ * `damage.absorbed`, `heal.amount`, and the shield pool on `statusApplied`.
+ */
+export interface Readout {
+  unitId: string;
+  kind: 'damage' | 'absorb' | 'heal' | 'shield';
+  amount: number;
+  /** 0 the instant it lands, 1 when it has finished rising and faded out. */
+  age: number;
+}
+
 export interface Frame {
   /** The phase the corner label should read, or undefined before the first banner. */
   phase?: Phase;
@@ -47,10 +64,19 @@ export interface Frame {
   areas: Vec2[];
   /** Units taking a hit this instant — a one-beat flash. */
   impacts: string[];
+  /** Floating damage / absorb / heal / shield numbers currently on screen. */
+  readouts: Readout[];
 }
 
 /** Alpha a unit fades *to* once its death cue has played (a visible corpse). */
 export const DEAD_ALPHA = 0.3;
+/**
+ * How long a floating number stays up, in beats. Longer than the one-beat cue
+ * that spawns it so a hit that kills is still legible: the death cue lands at
+ * the end of the phase, and the number is still rising when it does (A2's
+ * deferred-death rule, made visible).
+ */
+export const READOUT_BEATS = 2.2;
 /** Peak height of a knockback/pull arc, in world units. */
 const ARC = 0.35;
 
@@ -149,7 +175,7 @@ function actorAt(phaseCues: readonly Cue[], t: number): string | undefined {
  */
 export function sampleFrame(cues: readonly Cue[], t: number): Frame {
   const phase = phaseAt(cues, t);
-  const frame: Frame = { phase, poses: new Map(), fades: new Map(), spotlight: null, areas: [], impacts: [] };
+  const frame: Frame = { phase, poses: new Map(), fades: new Map(), spotlight: null, areas: [], impacts: [], readouts: [] };
 
   // ── Positions: every leg a unit has played so far, across the whole turn ────
   const legsByUnit = new Map<string, Leg[]>();
@@ -172,6 +198,23 @@ export function sampleFrame(cues: readonly Cue[], t: number): Frame {
       frame.fades.set(c.unitId, 1 - (1 - DEAD_ALPHA) * u);
     } else if (c.kind === 'respawn') {
       frame.fades.delete(c.unitId);
+    }
+  }
+
+  // ── Floating readouts (UI5) ────────────────────────────────────────────────
+  // Gathered across the WHOLE timeline, not just the current phase: a number is
+  // still rising for a couple of beats after its cue, and phases butt up
+  // against each other, so a phase-local scan would cut them off at the seam.
+  for (const c of cues) {
+    if (c.t > t || t >= c.t + READOUT_BEATS) continue;
+    const age = unit01((t - c.t) / READOUT_BEATS);
+    if (c.kind === 'impact') {
+      // Two numbers when a shield ate part of it — "26 damage" and "18 absorbed"
+      // tell a different story from "8 damage", and both are in the log.
+      if (c.amount > 0) frame.readouts.push({ unitId: c.unitId, kind: 'damage', amount: c.amount, age });
+      if (c.absorbed > 0) frame.readouts.push({ unitId: c.unitId, kind: 'absorb', amount: c.absorbed, age });
+    } else if (c.kind === 'benefit') {
+      frame.readouts.push({ unitId: c.unitId, kind: c.benefit, amount: c.amount, age });
     }
   }
 

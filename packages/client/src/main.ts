@@ -28,6 +28,7 @@ const ui: HotSeatUI = {
   board: document.getElementById('board')!,
   status: document.getElementById('status')!,
   controls: document.getElementById('controls')!,
+  log: document.getElementById('log') ?? undefined,
 };
 
 // A demo 2v2: Team 1 = Vex + Wisp, Team 2 = Bastion + Aegis. Team 1 is split

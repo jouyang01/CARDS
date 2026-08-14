@@ -14,11 +14,15 @@ import {
   ULT_COST,
   aimInRange,
   buildBoard,
+  direction8,
+  dominantCardinal,
   expandShape,
   findAbility,
   isAimStep,
+  stepToVector,
   movementBudget,
   reachableSquares,
+  reconstructPath,
   validateMovePath,
   vectorToStep,
   type AbilityDef,
@@ -163,6 +167,46 @@ export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef
   return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
 }
 
+/**
+ * The **effective-range envelope**: every square this ability could be aimed at
+ * or reach, before you have aimed it (UI1).
+ *
+ * This is a different question from `abilityPreview`, which answers "what does
+ * *this* aim cover". A player deciding whether an ability is worth selecting
+ * needs the first question answered on hover — "can I even reach them?" — and
+ * the shape's footprint tells them nothing about that.
+ *
+ * The rules are the engine's own, not a client approximation:
+ * - `path` (dashes/charges) — `range` is a **movement-cost budget** (MET1), so
+ *   the envelope is `reachableSquares`, walls and units accounted for.
+ * - everything else — `range` is a Manhattan radius, so the envelope is the
+ *   diamond `aimInRange` accepts. Wall squares stay in: the engine lets you aim
+ *   at one (a circle centred on a wall still catches its neighbours), and an
+ *   envelope that quietly disagreed with legality would be a lie.
+ * - `self` — the caster's own square, which is exactly where it lands.
+ */
+export function rangeEnvelope(map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef): Vec2[] {
+  if (ability.shape === 'self') return [{ ...unit.pos }];
+  if (ability.shape === 'path') {
+    const board = buildBoard(map);
+    return reachableSquares(board, state, unit, ability.range).map((s) => ({ ...s.pos }));
+  }
+  const out: Vec2[] = [];
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      const p = { x, y };
+      if (aimInRange(unit.pos, p, ability.range)) out.push(p);
+    }
+  }
+  return out;
+}
+
+/** The move/sprint equivalent of `rangeEnvelope` — where this unit could go. */
+export function moveEnvelope(map: MapDef, state: GameState, unit: UnitState, sprint: boolean): Vec2[] {
+  const { stops, through } = movePreview(map, state, unit, sprint);
+  return [...stops, ...through];
+}
+
 export interface MovePreview {
   /** Legal destinations (BFS squares the unit may stop on). */
   stops: Vec2[];
@@ -183,6 +227,216 @@ export function movePreview(map: MapDef, state: GameState, unit: UnitState, spri
   const through: Vec2[] = [];
   for (const s of squares) (s.canStop ? stops : through).push(s.pos);
   return { stops, through };
+}
+
+/** A legal path from `unit` to `target` within `budget` movement cost, or []. */
+export function pathTo(map: MapDef, state: GameState, unit: UnitState, target: Vec2, budget: number): Vec2[] {
+  const board = buildBoard(map);
+  return reconstructPath(reachableSquares(board, state, unit, budget), unit.pos, target) ?? [];
+}
+
+/**
+ * Resolve "the player pointed at this square" into the aim an order carries —
+ * the single place that decision is made, so hover-preview and click-to-commit
+ * can never disagree about what a square means for a given shape (UI1).
+ *
+ * `line`/`cone` become a quantized direction (AIM2) with no target square;
+ * `path` becomes a walked route; everything else is just the square.
+ */
+export function aimFor(
+  map: MapDef,
+  state: GameState,
+  unit: UnitState,
+  ability: AbilityDef,
+  target: Vec2,
+): { aim: Vec2[]; aimStep?: number } {
+  switch (ability.shape) {
+    case 'self':
+      return { aim: [{ ...unit.pos }] };
+    case 'line':
+    case 'cone':
+      return { aim: [], aimStep: dragToAimStep(unit.pos, target) };
+    case 'path':
+      return { aim: pathTo(map, state, unit, target, ability.range) };
+    case 'circle':
+    case 'square':
+      return { aim: [{ ...target }] };
+  }
+}
+
+/**
+ * The squares a drafted **dash** travels through (UI4), so it can be drawn with
+ * the same line-and-marker indicator a move gets — a dash is still a route, and
+ * the owner asked for the same indicator in yellow rather than for nothing.
+ *
+ * A `path` dash carries its whole route in the aim. A teleporting dash carries
+ * only a destination, and a straight segment to it is still the honest
+ * statement: you end up there. Empty only when no dash is drafted, which is the
+ * one case where the line should be suppressed.
+ */
+export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim: readonly Vec2[]): Vec2[] {
+  if (ability === undefined || ability.phase !== 'dash') return [];
+  if (ability.shape === 'path') return aim.map((p) => ({ ...p }));
+  const target = aim[0];
+  if (target === undefined) return [];
+  // A dash aimed at your own square is a hold, not a route.
+  return target.x === unit.pos.x && target.y === unit.pos.y ? [] : [{ ...target }];
+}
+
+/**
+ * A closed polygon in **board coordinates** (fractional squares) outlining the
+ * continuous geometric shape an ability projects — UI2's Layer 1.
+ *
+ * Layer 2 is the truth (`expandShape`'s tiles, centre-in binary). Layer 1 is the
+ * fiction: the smooth cone/beam/disk the tiles approximate. Drawing only the
+ * tiles makes a clipped corner read as a bug; drawing only the shape hides which
+ * squares actually take the hit. So both, and **from the same numbers** — every
+ * dimension below is the engine's own rule, not an eyeballed silhouette:
+ *
+ * - a **line** reaches `range` tiles along its axis (`alongAxis`), and covers a
+ *   tile whose centre is nearest the ray — so the beam is a half-tile-wide band.
+ * - a **cone**'s half-width at depth `d` is `d − 1` tiles, i.e. `d − 0.5` from
+ *   centre to outer tile edge. That line hits zero at `d = 0.5`, so the true
+ *   apex sits half a tile in front of the caster. Not an approximation — it is
+ *   where the engine's own widening rule starts.
+ * - a **circle** is `dx² + dy² ≤ r²`, a genuine disk; `r + 0.5` reaches the
+ *   outer edge of the last covered tile.
+ *
+ * `path` and `self` return no outline: a route already draws as a line (AIM1),
+ * and a self-cast has no projected shape.
+ */
+export function shapeOutline(
+  unit: UnitState,
+  ability: AbilityDef,
+  aim: readonly Vec2[],
+  aimStep: number | undefined,
+  covered: readonly Vec2[],
+): Vec2[] {
+  const from = unit.pos;
+  const target = aim[0];
+  const dir = directionOf(from, ability, aim, aimStep);
+  // A directional shape is truncated to what it ACTUALLY reached. `lineSquares`
+  // stops at the first wall, so an untruncated beam would carry on through it —
+  // which reads as "the shot goes through walls", the exact disagreement between
+  // the two layers this item exists to prevent. A disk is different: the engine
+  // drops wall tiles from it without shortening it, so the disk stays whole and
+  // the missing tiles beneath it are the point.
+  const reach = Math.min(ability.range, depthReached(from, covered));
+
+  switch (ability.shape) {
+    case 'square':
+      return target === undefined ? [] : tileOutline(target);
+    case 'circle':
+      return target === undefined ? [] : diskOutline(target, (ability.radius ?? 1) + HALF_TILE);
+    case 'line': {
+      if (dir === undefined || reach < 1) return [];
+      // The far end reaches the OUTER EDGE of the last covered tile, not its
+      // centre — a beam that stopped at the centre would leave the tile it hits
+      // half outside the shape that is supposed to explain it.
+      const end = alongAxis(dir, reach + HALF_TILE);
+      const n = perpUnit(dir);
+      // A band, not a hairline: the beam covers the tiles whose centres it runs
+      // through, so it is drawn a tile wide.
+      return [
+        { x: from.x - n.x * HALF_TILE, y: from.y - n.y * HALF_TILE },
+        { x: from.x + end.x - n.x * HALF_TILE, y: from.y + end.y - n.y * HALF_TILE },
+        { x: from.x + end.x + n.x * HALF_TILE, y: from.y + end.y + n.y * HALF_TILE },
+        { x: from.x + n.x * HALF_TILE, y: from.y + n.y * HALF_TILE },
+      ];
+    }
+    case 'cone': {
+      if (dir === undefined || reach < 1) return [];
+      const axis = unitVector(dir);
+      const n = perpUnit(dir);
+      // Half-width grows as `d − 0.5` (the engine's `d − 1` tiles, plus the half
+      // tile out to the edge), so the wedge is the exact triangle through
+      // (0.5, 0) and (range + 0.5, range): apex half a tile ahead of the
+      // caster, far edge past the last covered row.
+      const apex = { x: from.x + axis.x * HALF_TILE, y: from.y + axis.y * HALF_TILE };
+      const far = alongAxis(dir, reach + HALF_TILE);
+      const half = reach;
+      return [
+        apex,
+        { x: from.x + far.x - n.x * half, y: from.y + far.y - n.y * half },
+        { x: from.x + far.x + n.x * half, y: from.y + far.y + n.y * half },
+      ];
+    }
+    case 'path':
+    case 'self':
+      return [];
+  }
+}
+
+/**
+ * How far a directional shape got, in tiles along its axis. `alongAxis` divides
+ * by the dominant component, so a covered tile at depth `d` always sits exactly
+ * `d` away on that component — `max(|dx|, |dy|)` recovers the depth exactly,
+ * for any rotation, with no trig and no projection error.
+ */
+function depthReached(from: Vec2, covered: readonly Vec2[]): number {
+  let deepest = 0;
+  for (const p of covered) deepest = Math.max(deepest, Math.abs(p.x - from.x), Math.abs(p.y - from.y));
+  return deepest;
+}
+
+/** Half a board square, in board units — the distance from tile centre to edge. */
+const HALF_TILE = 0.5;
+/** Segments used to approximate a disk. Enough that the seams do not read. */
+const DISK_SEGMENTS = 48;
+
+/**
+ * The direction a directional shape points, resolved exactly as the engine
+ * resolves it: a quantized step wins, otherwise the caster→target fallback,
+ * which differs between line (`direction8`) and cone (`dominantCardinal`).
+ */
+function directionOf(from: Vec2, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number): Vec2 | undefined {
+  if (ability.shape !== 'line' && ability.shape !== 'cone') return undefined;
+  if (isAimStep(aimStep)) return stepToVector(aimStep);
+  const target = aim[0];
+  if (target === undefined) return undefined;
+  const v = ability.shape === 'line' ? direction8(from, target) : dominantCardinal(from, target);
+  return v.x === 0 && v.y === 0 ? undefined : v;
+}
+
+/** `d` tiles along `v`, measured on the dominant axis — the engine's metering. */
+function alongAxis(v: Vec2, d: number): Vec2 {
+  const m = Math.max(Math.abs(v.x), Math.abs(v.y));
+  return m === 0 ? { x: 0, y: 0 } : { x: (d * v.x) / m, y: (d * v.y) / m };
+}
+
+/** `v` scaled to length 1 — for the apex offset, where direction alone matters. */
+function unitVector(v: Vec2): Vec2 {
+  const len = Math.hypot(v.x, v.y);
+  return len === 0 ? { x: 0, y: 0 } : { x: v.x / len, y: v.y / len };
+}
+
+/** The unit normal to `v` — the width direction of a beam or wedge. */
+function perpUnit(v: Vec2): Vec2 {
+  const u = unitVector(v);
+  return { x: -u.y, y: u.x };
+}
+
+/** The four corners of one tile. */
+function tileOutline(p: Vec2): Vec2[] {
+  return [
+    { x: p.x - HALF_TILE, y: p.y - HALF_TILE },
+    { x: p.x + HALF_TILE, y: p.y - HALF_TILE },
+    { x: p.x + HALF_TILE, y: p.y + HALF_TILE },
+    { x: p.x - HALF_TILE, y: p.y + HALF_TILE },
+  ];
+}
+
+/** A regular polygon standing in for a disk of `radius` around `centre`. */
+function diskOutline(centre: Vec2, radius: number): Vec2[] {
+  return Array.from({ length: DISK_SEGMENTS }, (_, i) => {
+    const a = (i / DISK_SEGMENTS) * Math.PI * 2;
+    return { x: centre.x + Math.cos(a) * radius, y: centre.y + Math.sin(a) * radius };
+  });
+}
+
+/** Does this draft carry an actual order, or is the character holding? */
+export function draftHasOrder(draft: OrderDraft): boolean {
+  return draft.abilityId !== undefined || draft.sprint || draft.movePath.length > 0;
 }
 
 /** Is a drawn move path legal right now (delegates to the engine)? */

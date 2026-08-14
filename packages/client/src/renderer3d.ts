@@ -22,6 +22,7 @@ import {
   BoxGeometry,
   BufferGeometry,
   Color,
+  DoubleSide,
   DirectionalLight,
   Group,
   Line,
@@ -34,6 +35,8 @@ import {
   PlaneGeometry,
   Raycaster,
   Scene,
+  Shape,
+  ShapeGeometry,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -74,6 +77,17 @@ const AUTO_ZOOM_FLOOR = 0.85;
 /** Alpha applied to everything outside a spotlight. */
 const DIM_ALPHA = 0.22;
 
+/**
+ * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
+ * covered tile always reads on top of the envelope that contains it.
+ */
+export type HighlightLayer = 'range' | 'reach' | 'aim' | 'select';
+
+/** Height above the ground plane per layer, so they never z-fight. */
+const LAYER_LIFT: Record<HighlightLayer, number> = { range: 0.006, reach: 0.010, aim: 0.016, select: 0.022 };
+/** UI2's continuous shape sits just above the covered tiles it explains. */
+const SHAPE_LIFT = 0.026;
+
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
   unitId: string;
@@ -90,10 +104,21 @@ export interface RenderUnit {
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
   show(units: readonly RenderUnit[], decoys?: readonly Vec2[]): void;
-  /** Highlight squares (previews, reachability, ability areas). */
-  highlight(layer: 'reach' | 'aim' | 'select', squares: readonly Vec2[], color: number, opacity?: number): void;
+  /**
+   * Highlight squares. Layers stack bottom-up in the order listed here:
+   * `range` is the hover envelope (UI1 — where an ability *could* go), `reach`
+   * the move envelope, `aim` the tiles an aim actually covers, `select` the
+   * current unit and impact flashes.
+   */
+  highlight(layer: HighlightLayer, squares: readonly Vec2[], color: number, opacity?: number): void;
   /** The board square under a client-space point, via a ray/plane intersection. */
   squareFromPoint(clientX: number, clientY: number): Vec2 | undefined;
+  /**
+   * The inverse: where a (fractional) board position lands on screen, in pixels
+   * relative to the canvas. UI5's floating readouts are DOM anchored to world
+   * positions, so they stay crisp and need no font atlas.
+   */
+  screenPosition(x: number, y: number, lift?: number): { x: number; y: number } | undefined;
   /** Switch projection at runtime — the whole reason for an orthographic camera. */
   setProjection(name: ProjectionName): void;
   /** Frame the camera on a board-space rectangle (A3's camera targets this). */
@@ -121,6 +146,12 @@ export interface Renderer {
   focusOn(squares: readonly Vec2[]): void;
   /** A stroked path through tile centres plus an endpoint marker (AIM1). */
   drawPath(squares: readonly Vec2[], color: number, dashed: boolean): void;
+  /**
+   * UI2 Layer 1: fill a closed polygon given in **fractional board coordinates**
+   * on the ground plane — the continuous cone/beam/disk the covered tiles
+   * approximate. Empty clears it.
+   */
+  drawShape(outline: readonly Vec2[], color: number, opacity?: number): void;
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
@@ -506,7 +537,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           new MeshLambertMaterial({ color, transparent: true, opacity }),
         );
         tile.rotation.x = -Math.PI / 2;
-        tile.position.copy(toWorld(map, p)).setY(0.01 + (layer === 'aim' ? 0.01 : 0));
+        tile.position.copy(toWorld(map, p)).setY(LAYER_LIFT[layer]);
         g.add(tile);
       }
     },
@@ -527,6 +558,19 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       if (hit === undefined) return undefined;
       const sq = toSquare(map, world.worldToLocal(hit.point.clone()));
       return onBoard(map, sq) ? sq : undefined;
+    },
+
+    screenPosition(x, y, lift = 0) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return undefined;
+      const w = squareToWorldXZ(map, { x, y });
+      const ndc = new Vector3(w.x, lift, w.z).project(camera);
+      // Behind the camera, or off the board's plane entirely: nothing to anchor.
+      if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return undefined;
+      return {
+        x: ((ndc.x + 1) / 2) * rect.width,
+        y: ((1 - ndc.y) / 2) * rect.height,
+      };
     },
 
     setProjection(name) {
@@ -636,6 +680,30 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       marker.rotation.z = Math.PI / 4; // a diamond, so the endpoint reads as an endpoint
       marker.position.copy(toWorld(map, last)).setY(0.09);
       g.add(marker);
+    },
+
+    drawShape(outline, color, opacity = 0.18) {
+      const g = layerGroup('shape');
+      disposeChildren(g);
+      if (outline.length < 3) return;
+      // Built in the XY plane from board coordinates, then laid flat — the same
+      // squareToWorldXZ mapping picking uses, so the fiction and the truth are
+      // registered to the same grid and a clipped corner reads as geometry
+      // rather than as a bug.
+      const shape = new Shape();
+      outline.forEach((p, i) => {
+        const w = squareToWorldXZ(map, p);
+        if (i === 0) shape.moveTo(w.x, w.z);
+        else shape.lineTo(w.x, w.z);
+      });
+      shape.closePath();
+      const mesh = new Mesh(
+        new ShapeGeometry(shape),
+        new MeshBasicMaterial({ color, transparent: true, opacity, side: DoubleSide, depthWrite: false }),
+      );
+      mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
+      mesh.position.y = SHAPE_LIFT;
+      g.add(mesh);
     },
 
     start() {

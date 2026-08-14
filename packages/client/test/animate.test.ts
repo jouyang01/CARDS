@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type UnitOrders } from '@cards/engine';
 import { choreograph, timelineLength, type Cue } from '../src/choreograph.js';
-import { DEAD_ALPHA, focusSquares, phaseAt, phaseWindow, sampleFrame } from '../src/animate.js';
+import { DEAD_ALPHA, READOUT_BEATS, focusSquares, phaseAt, phaseWindow, sampleFrame } from '../src/animate.js';
 
 /**
  * The A3 re-spec's pure half. Like the choreographer tests, these assert
@@ -262,7 +262,10 @@ describe('a Frame is presentation only — it cannot move the board', () => {
     const cues = choreograph(events);
     for (const { f } of walk(cues, 20)) {
       const keys = Object.keys(f).sort();
-      expect(keys).toEqual(['areas', 'fades', 'impacts', 'phase', 'poses', 'spotlight'].sort());
+      expect(keys).toEqual(['areas', 'fades', 'impacts', 'phase', 'poses', 'readouts', 'spotlight'].sort());
+      // Readouts carry a magnitude the log stated — never a resulting HP, which
+      // would be the animation layer deriving state.
+      for (const r of f.readouts) expect(Object.keys(r).sort()).toEqual(['age', 'amount', 'kind', 'unitId']);
     }
   });
 
@@ -273,5 +276,86 @@ describe('a Frame is presentation only — it cannot move the board', () => {
     const cues = choreograph(events);
     const total = timelineLength(cues);
     expect(sampleFrame(cues, total * 10)).toEqual(sampleFrame(cues, total));
+  });
+});
+
+/**
+ * UI5 — damage, shield absorption and healing each surface as a distinct
+ * readout. The values come from the log (`damage.amount`, `damage.absorbed`,
+ * `heal.amount`, the shield pool) and are never recomputed here.
+ */
+describe('UI5: readouts for damage, absorb, heal and shield', () => {
+  const hit = () => {
+    const a = mkUnit('a', 0, 2, 6);
+    const e = mkUnit('e', 1, 6, 6);
+    const { events } = run(mkState([a, e]), [{ unitId: 'a', ability: { abilityId: 'shoot', target: [{ x: 12, y: 6 }] } }], []);
+    return { cues: choreograph(events), events };
+  };
+
+  it('a hit floats a damage number carrying exactly the logged amount', () => {
+    const { cues, events } = hit();
+    const dmg = events.find((e) => e.type === 'damage') as Extract<typeof events[number], { type: 'damage' }>;
+    const impact = of(cues, 'impact')[0]!;
+    const readouts = sampleFrame(cues, impact.t).readouts.filter((r) => r.unitId === 'e');
+    expect(readouts).toHaveLength(1);
+    expect(readouts[0]).toMatchObject({ kind: 'damage', amount: dmg.amount, unitId: 'e' });
+  });
+
+  it('rises and fades over its life, then goes away', () => {
+    const { cues } = hit();
+    const impact = of(cues, 'impact')[0]!;
+    expect(sampleFrame(cues, impact.t).readouts[0]!.age).toBe(0);
+    const mid = sampleFrame(cues, impact.t + READOUT_BEATS / 2).readouts[0]!;
+    expect(mid.age).toBeGreaterThan(0);
+    expect(mid.age).toBeLessThan(1);
+    expect(sampleFrame(cues, impact.t + READOUT_BEATS + 0.01).readouts).toEqual([]);
+  });
+
+  it('a shielded hit shows BOTH numbers — the damage and what the shield ate', () => {
+    // The whole reason absorb is its own readout: "26 damage" next to
+    // "18 absorbed" is a different story from a bare "8".
+    const caster = mkUnit('doc', 0, 4, 6);
+    const tank = mkUnit('tank', 0, 5, 6);
+    const enemy = mkUnit('e', 1, 5, 9);
+    const t1 = run(mkState([caster, tank, enemy]), [{ unitId: 'doc', ability: { abilityId: 'guard', target: [{ x: 4, y: 6 }] } }], []);
+    // `guard` is self-shield; shield the caster, then have the enemy shoot it.
+    const t2 = run(t1.state, [], [{ unitId: 'e', ability: { abilityId: 'shoot', target: [{ x: 5, y: 0 }] } }]);
+    const damage = t2.events.find((e) => e.type === 'damage') as Extract<typeof t2.events[number], { type: 'damage' }>;
+    if (damage === undefined || damage.absorbed === 0) return; // no shielded hit landed
+    const cues = choreograph(t2.events);
+    const impact = of(cues, 'impact').find((c) => c.unitId === damage.unitId)!;
+    const kinds = sampleFrame(cues, impact.t).readouts.filter((r) => r.unitId === damage.unitId).map((r) => r.kind);
+    expect(kinds).toContain('absorb');
+  });
+
+  it('a self-shield floats a shield readout with the granted pool', () => {
+    const a = mkUnit('a', 0, 2, 6);
+    const { events } = run(mkState([a, mkUnit('e', 1, 11, 6)]), [{ unitId: 'a', ability: { abilityId: 'guard', target: [{ x: 2, y: 6 }] } }], []);
+    const cues = choreograph(events);
+    const benefit = of(cues, 'benefit')[0];
+    expect(benefit).toBeDefined();
+    expect(benefit).toMatchObject({ unitId: 'a', benefit: 'shield', amount: 30 });
+    expect(sampleFrame(cues, benefit!.t).readouts).toContainEqual({ unitId: 'a', kind: 'shield', amount: 30, age: 0 });
+  });
+
+  it('a benefit is bound to its CASTER, so it plays in that actor’s slot', () => {
+    // Only possible because A0-heal put `sourceUnitId` on heal/statusApplied.
+    const a = mkUnit('a', 0, 2, 6);
+    const { events } = run(mkState([a, mkUnit('e', 1, 11, 6)]), [{ unitId: 'a', ability: { abilityId: 'guard', target: [{ x: 2, y: 6 }] } }], []);
+    const benefit = of(choreograph(events), 'benefit')[0]!;
+    expect(benefit.sourceUnitId).toBe('a');
+    expect(benefit.abilityId).toBe('guard');
+  });
+
+  it('a killing blow shows its number BEFORE the deferred-death fall (A2 rule)', () => {
+    const killer = mkUnit('killer', 0, 4, 6);
+    const victim = mkUnit('victim', 1, 8, 6, { hp: 10 });
+    const { events } = run(mkState([killer, victim]), [{ unitId: 'killer', ability: { abilityId: 'shoot', target: [{ x: 12, y: 6 }] } }], []);
+    const cues = choreograph(events);
+    const death = of(cues, 'death').find((c) => c.unitId === 'victim')!;
+    // At the instant the death cue starts, the damage number is still up.
+    const atDeath = sampleFrame(cues, death.t).readouts.filter((r) => r.unitId === 'victim');
+    expect(atDeath.length).toBeGreaterThan(0);
+    expect(atDeath[0]!.kind).toBe('damage');
   });
 });

@@ -1,0 +1,170 @@
+/**
+ * The combat log (UI6) — turn a resolved turn's `TurnEvent[]` into readable
+ * lines naming **both ends** of each exchange.
+ *
+ * **Pure, and a pure consumer.** Same contract as `playback.ts`: this reads what
+ * events state and never recomputes an outcome. It cannot say "that would have
+ * killed them" or "that shot missed" — only what the log already carries.
+ *
+ * Naming both ends is only possible because A0 put `sourceUnitId`/`abilityId` on
+ * `damage` and A0-heal extended it to `heal` and `statusApplied`. Without those
+ * a support's whole contribution reads as "Lumen gained 30 shield" — an effect
+ * with no author.
+ *
+ * Entries are emitted in **log order and never re-sorted**: the log's order is
+ * the engine's own resolution order, and re-sorting it (by team, by unit, by
+ * magnitude) would quietly invent a causality the turn did not have.
+ */
+
+import type { TurnEvent, Vec2 } from '@cards/engine';
+
+/** How an entry reads, so the panel can colour it without parsing text. */
+export type LogTone = 'damage' | 'heal' | 'shield' | 'status' | 'death' | 'respawn' | 'neutral';
+
+export interface LogEntry {
+  /** Turn number, so the panel can group and separate. */
+  turn: number;
+  tone: LogTone;
+  text: string;
+  /** Who caused it, where the event names a source. */
+  sourceUnitId?: string;
+  /** Who it happened to. */
+  unitId?: string;
+}
+
+/** Display names by unitId. Anything missing falls back to the raw id. */
+export type NameLookup = (unitId: string) => string;
+
+/** Ability display names by id, for the same reason. */
+export type AbilityLookup = (abilityId: string) => string;
+
+export interface LogNames {
+  unit: NameLookup;
+  ability: AbilityLookup;
+}
+
+/** Statuses worth a line of their own. The rest are animation cues, not news. */
+const NOTABLE_STATUSES = new Set(['slow', 'root', 'weaken', 'might', 'haste', 'energized', 'unstoppable', 'untargetable', 'stealth']);
+
+/**
+ * Build the log lines for ONE resolved turn. `turn` is the turn the events
+ * belong to; the caller accumulates across turns and inserts separators.
+ */
+export function logEntriesForTurn(turn: number, events: readonly TurnEvent[], names: LogNames): LogEntry[] {
+  const out: LogEntry[] = [];
+  const who = (id: string): string => names.unit(id);
+  const via = (abilityId: string): string => names.ability(abilityId);
+  const at = (p: Vec2): string => `(${p.x},${p.y})`;
+
+  for (const e of events) {
+    switch (e.type) {
+      case 'damage': {
+        // The absorbed portion is stated separately: a shield that ate 18 of 26
+        // is the most interesting thing that happened, and the log carries it.
+        const absorbed = e.absorbed > 0 ? ` (${e.absorbed} absorbed)` : '';
+        out.push({
+          turn, tone: 'damage', sourceUnitId: e.sourceUnitId, unitId: e.unitId,
+          text: `${who(e.sourceUnitId)} hit ${who(e.unitId)} for ${e.amount}${absorbed} — ${via(e.abilityId)}`,
+        });
+        break;
+      }
+      case 'heal': {
+        // Self-heals read as "X healed themselves", not "X healed X".
+        const self = e.sourceUnitId === e.unitId;
+        out.push({
+          turn, tone: 'heal', sourceUnitId: e.sourceUnitId, unitId: e.unitId,
+          text: self
+            ? `${who(e.unitId)} healed for ${e.amount} — ${via(e.abilityId)}`
+            : `${who(e.sourceUnitId)} healed ${who(e.unitId)} for ${e.amount} — ${via(e.abilityId)}`,
+        });
+        break;
+      }
+      case 'statusApplied': {
+        if (e.status === 'shield') {
+          const self = e.sourceUnitId === e.unitId;
+          out.push({
+            turn, tone: 'shield', sourceUnitId: e.sourceUnitId, unitId: e.unitId,
+            text: self
+              ? `${who(e.unitId)} shielded for ${e.amount ?? 0} — ${via(e.abilityId)}`
+              : `${who(e.sourceUnitId)} shielded ${who(e.unitId)} for ${e.amount ?? 0} — ${via(e.abilityId)}`,
+          });
+          break;
+        }
+        // `reveal` fires on every attacker every turn they hit — it would drown
+        // the log, and the damage line above already says they attacked.
+        if (!NOTABLE_STATUSES.has(e.status)) break;
+        out.push({
+          turn, tone: 'status', sourceUnitId: e.sourceUnitId, unitId: e.unitId,
+          text: `${who(e.unitId)} is ${e.status} for ${e.duration}t — ${via(e.abilityId)}`,
+        });
+        break;
+      }
+      case 'death':
+        out.push({ turn, tone: 'death', unitId: e.unitId, text: `${who(e.unitId)} was killed` });
+        break;
+      case 'respawn':
+        out.push({ turn, tone: 'respawn', unitId: e.unitId, text: `${who(e.unitId)} respawned at ${at(e.pos)}` });
+        break;
+      case 'trapTriggered':
+        out.push({ turn, tone: 'status', unitId: e.unitId, text: `${who(e.unitId)} triggered a trap` });
+        break;
+      case 'gameEnd':
+        out.push({
+          turn, tone: 'neutral',
+          text: e.result === 'draw' ? 'Double KO — the match is a draw.' : `Team ${(e.winner ?? 0) + 1} wins the match.`,
+        });
+        break;
+      default:
+        // phaseStart / abilityFired / moveStep / displaced / energy / decoys /
+        // trapPlaced: movement and bookkeeping, not news the log is asked for.
+        break;
+    }
+  }
+  return out;
+}
+
+export interface CombatLog {
+  /** Append one resolved turn's entries under a turn separator. */
+  appendTurn(turn: number, events: readonly TurnEvent[], names: LogNames): void;
+  /** Entries so far, oldest first — the accumulated record. */
+  entries(): readonly LogEntry[];
+}
+
+/**
+ * The scrollable panel. It accumulates across turns and **auto-scrolls only
+ * when the reader is already at the bottom** — scrolling back to read turn 2
+ * should not be yanked away the moment turn 7 resolves.
+ */
+export function createCombatLog(root: HTMLElement): CombatLog {
+  root.replaceChildren();
+  root.classList.add('log');
+  const list = document.createElement('div');
+  list.className = 'log-list';
+  root.appendChild(list);
+
+  const all: LogEntry[] = [];
+
+  return {
+    appendTurn(turn, events, names) {
+      const fresh = logEntriesForTurn(turn, events, names);
+      if (fresh.length === 0) return;
+      // "Already at the bottom" has to be sampled BEFORE appending, or the new
+      // content has already moved the goalposts.
+      const pinned = root.scrollHeight - root.scrollTop - root.clientHeight < 24;
+
+      const separator = document.createElement('div');
+      separator.className = 'log-turn';
+      separator.textContent = `Turn ${turn}`;
+      list.appendChild(separator);
+      for (const entry of fresh) {
+        const line = document.createElement('div');
+        line.className = `log-line ${entry.tone}`;
+        line.textContent = entry.text;
+        list.appendChild(line);
+      }
+      all.push(...fresh);
+      if (pinned) root.scrollTop = root.scrollHeight;
+    },
+    entries: () => all,
+  };
+}

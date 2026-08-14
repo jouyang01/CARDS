@@ -28,7 +28,8 @@
       }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
         font-family: system-ui, -apple-system, sans-serif; }
-      #app { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; }
+      #app { display: flex; flex-direction: column; align-items: center; gap: 12px;
+        padding: 20px 316px 190px 24px; }
       h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: 0.5px; }
       #board { position: relative; background: var(--panel); border-radius: 8px;
         box-shadow: 0 4px 24px rgb(0 0 0 / 0.4); }
@@ -41,8 +42,81 @@
       .chip { display: inline-flex; align-items: center; gap: 6px; }
       .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
       #status { font-size: 15px; font-weight: 600; min-height: 20px; }
-      #controls { display: flex; flex-direction: column; gap: 6px; min-height: 40px; }
-      .control-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+
+      /* ── UI3: a persistent, viewport-anchored HUD ─────────────────────────
+         Bottom-left character panel, bottom-centre hotbar, bottom-right Lock
+         In. Anchored so it never moves as the board redraws, and built once —
+         see hud.ts for why rebuilding it would break UI1's hover. */
+      .hud { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+        display: grid; grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+        align-items: end; gap: 16px; padding: 12px 18px 14px;
+        background: linear-gradient(to top, rgb(9 10 14 / 0.97) 55%, rgb(9 10 14 / 0)); }
+      .hud-left { display: grid; grid-template-columns: auto auto; gap: 4px 10px;
+        align-items: center; justify-content: start; }
+      .hud-portrait { grid-row: span 2; width: 46px; height: 46px; border-radius: 8px;
+        display: grid; place-items: center; font-size: 22px; font-weight: 700; color: #0d0f14; }
+      .hud-name { font-size: 15px; font-weight: 700; letter-spacing: 0.3px; }
+      .hud-role { font-size: 11px; opacity: 0.6; text-transform: uppercase; letter-spacing: 1px; }
+      .hud-bars { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 3px; min-width: 210px; }
+      .hud-bar { display: grid; grid-template-columns: 22px 1fr auto; gap: 6px;
+        align-items: center; font-size: 10px; }
+      .hud-bar-label { opacity: 0.55; letter-spacing: 1px; }
+      .hud-bar-track { height: 7px; border-radius: 4px; background: var(--bar-bg); overflow: hidden; }
+      .hud-bar-fill { height: 100%; width: 0; border-radius: 4px; background: var(--hp);
+        transition: width 140ms ease-out; }
+      .hud-bar-track.shield .hud-bar-fill { background: var(--shield); }
+      .hud-bar-track.energy .hud-bar-fill { background: var(--energy); }
+      .hud-bar-value { opacity: 0.7; font-variant-numeric: tabular-nums; }
+      .hud-switcher { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 2px; }
+      .hud-chip { font-size: 11px; padding: 3px 8px; }
+
+      .hud-centre { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      .hud-hotbar { display: flex; gap: 6px; }
+      .hud-ability { display: flex; flex-direction: column; align-items: center; gap: 2px;
+        min-width: 92px; padding: 8px 10px; font-size: 12px; line-height: 1.25; }
+      .hud-ability.ult { border-color: #6b5b8e; }
+      .hud-ability.sel { border-color: var(--aim); color: var(--aim); }
+      .hud-ability-name { font-weight: 600; }
+      .hud-ability-note { font-size: 10px; opacity: 0.6; }
+      .hud-moves { display: flex; gap: 6px; }
+      .hud-move { font-size: 11px; padding: 3px 10px; }
+
+      .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+      .hud-view { display: flex; gap: 6px; }
+      .hud-small { font-size: 11px; padding: 3px 8px; }
+      .hud-lock { background: var(--reach); color: #fff; border-color: var(--reach);
+        font-weight: 700; font-size: 14px; padding: 10px 20px; }
+      .hud-playback { grid-column: 1 / -1; display: flex; justify-content: center; }
+
+      /* ── UI5: floating damage / absorb / heal / shield readouts ───────────
+         Four visually distinct treatments, not four white numbers: the point
+         is telling at a glance whether a shield ate the hit. */
+      .readouts { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+      .readout { position: absolute; transform: translate(-50%, -100%); white-space: nowrap;
+        font-weight: 800; font-variant-numeric: tabular-nums;
+        text-shadow: 0 1px 3px #000, 0 0 10px rgb(0 0 0 / 0.8); }
+      .readout.damage { color: #ff6b5e; font-size: 20px; }
+      .readout.absorb { color: var(--shield); font-size: 13px; font-weight: 700; }
+      .readout.heal { color: var(--hp); font-size: 18px; }
+      .readout.shield { color: var(--shield); font-size: 14px; font-weight: 700; }
+
+      /* ── UI6: the combat log, right side, independently scrollable ───────── */
+      .log { position: fixed; top: 0; right: 0; bottom: 0; width: 300px; z-index: 4;
+        overflow-y: auto; overscroll-behavior: contain;
+        padding: 16px 14px 200px; font-size: 12px; line-height: 1.5;
+        background: rgb(16 18 24 / 0.92); border-left: 1px solid var(--grid-line); }
+      .log-list { display: flex; flex-direction: column; gap: 2px; }
+      .log-turn { margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid var(--grid-line);
+        font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.5; }
+      .log-turn:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+      .log-line { opacity: 0.9; }
+      .log-line.damage { color: #ff9b90; }
+      .log-line.heal { color: var(--hp); }
+      .log-line.shield { color: var(--shield); }
+      .log-line.status { color: var(--aim); opacity: 0.85; }
+      .log-line.death { color: #ff6b5e; font-weight: 700; }
+      .log-line.respawn { color: var(--reach); }
+      .log-line.neutral { color: var(--text); font-weight: 700; }
       button { background: var(--open); color: var(--text); border: 1px solid var(--grid-line);
         border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
       button:hover:not(:disabled) { border-color: var(--reach); }
@@ -57,6 +131,7 @@
     </style>
   </head>
   <body>
+    <aside id="log"></aside>
     <div id="app">
       <h1>CARDS — Duel Arena</h1>
       <div id="status"></div>

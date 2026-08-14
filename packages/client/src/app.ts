@@ -12,10 +12,7 @@
 import {
   createMatch,
   movementBudget,
-  reachableSquares,
-  reconstructPath,
   resolveTurn,
-  buildBoard,
   type AbilityDef,
   type CharacterDef,
   type FormatId,
@@ -29,21 +26,27 @@ import {
 } from '@cards/engine';
 import { createRenderer, type ProjectionName, type RenderUnit, type Renderer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
-import { focusSquares, phaseWindow, sampleFrame, type Frame } from './animate.js';
+import { focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { type Cue } from './choreograph.js';
 import {
   abilityOptions,
   abilityPreview,
   abilityTooltip,
-  dragToAimStep,
+  aimFor,
+  dashRoute,
   draftAbility,
+  draftHasOrder,
   emptyDraft,
-  isRotatable,
-  movePreview,
+  moveEnvelope,
   nextDraft,
+  pathTo,
+  rangeEnvelope,
+  shapeOutline,
   toUnitOrders,
   type OrderDraft,
 } from './targeting.js';
+import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js';
+import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { type ViewState } from './playback.js';
 
@@ -51,26 +54,55 @@ export interface HotSeatUI {
   board: HTMLElement;
   status: HTMLElement;
   controls: HTMLElement;
+  /** The right-side combat log panel (UI6). Optional so tests can omit it. */
+  log?: HTMLElement;
 }
 
-interface Step {
-  seat: Seat;
-  unit: UnitState;
-}
-
+/**
+ * What a board click will do. `idle` means the click does nothing — an ability
+ * or Draw-move must be chosen first, which is the "click the skill to set the
+ * mode" half of the owner's note (UI1).
+ */
 type Mode = 'idle' | 'aim' | 'move';
+
+/**
+ * Purely presentational pointer state (UI1). **Nothing here is ever written into
+ * a draft.** Hover shows you what an action *would* do; only a click commits it.
+ * Keeping the two apart is what lets the range envelope, the live cone and the
+ * committed order all render at once without one overwriting another.
+ */
+interface Hover {
+  /** An ability control is under the pointer — paint its range envelope. */
+  abilityId?: string;
+  /** A move control is under the pointer — paint where the unit could walk. */
+  move?: 'move' | 'sprint';
+  /** The board square under the pointer, while a mode is armed. */
+  square?: Vec2;
+}
 
 const PALETTE = {
   open: 0x20242f, wall: 0x4a5065, cover: 0x6b5b3e, brush: 0x2e4632,
   team0: 0x4f8cff, team1: 0xff6b5e, background: 0x12141a,
 };
+/** The same two team colours the board uses, for the DOM side of the HUD. */
+const TEAM_CSS = ['#4f8cff', '#ff6b5e'] as const;
 const REACH = 0x4f8cff;
+/** The hover range envelope (UI1) — dimmer than anything committed. */
+const RANGE = 0x8fb6ff;
 const AIM = 0xff9a3e;
+/** UI2's continuous shape — the same family as the tiles, deliberately paler. */
+const SHAPE = 0xffc98a;
 const SELECT = 0xf0f0f0;
 const IMPACT = 0xffd166;
-/** The drawn move line (AIM1). Sprint is the same hue, dashed and brighter. */
+/**
+ * The drawn movement lines (AIM1/UI4). All three share one geometry — a
+ * polyline through tile centres plus an endpoint marker — and differ only in
+ * colour and dashing, so a player learns the shape once and reads the colour:
+ * blue walks, blue dashed sprints, YELLOW dashes (owner directive).
+ */
 const MOVE_LINE = 0x9fc4ff;
-const SPRINT_LINE = 0xffd166;
+const SPRINT_LINE = 0x8fd6ff;
+const DASH_LINE = 0xffd23f;
 
 /**
  * The single pacing constant: one beat of `choreograph`'s timeline in
@@ -78,6 +110,22 @@ const SPRINT_LINE = 0xffd166;
  * is this number and nothing else.
  */
 const MS_PER_BEAT = 460;
+/** Vertical space the fixed HUD and page chrome claim, so the board fits above. */
+const HUD_RESERVED_PX = 260;
+/**
+ * How far a floating readout rises over its lifetime, and where it starts —
+ * above the billboarded bars, so a number never sits on top of the HP it just
+ * changed.
+ */
+const READOUT_RISE_PX = 34;
+const READOUT_LIFT = 1.6;
+/** How each readout kind reads. Signs and words, not four identical numbers. */
+const READOUT_TEXT: Record<Readout['kind'], (n: number) => string> = {
+  damage: (n) => `−${n}`,
+  absorb: (n) => `${n} absorbed`,
+  heal: (n) => `+${n}`,
+  shield: (n) => `+${n} shield`,
+};
 const now = (): number => performance.now();
 
 export function startHotSeat(
@@ -91,10 +139,17 @@ export function startHotSeat(
   let state = createMatch(map, format, teams);
   const seats = deriveSeats(state, playersPerTeam);
 
-  let steps: Step[] = [];
-  let stepIdx = 0;
+  // UI1's Lock-In ruling: a seat's characters are all orderable at once and the
+  // player switches between them freely; **Lock In locks the selected character
+  // only, and committing an action never ends the turn.** The old model walked
+  // one character at a time and made "lock" mean "next", which is why choosing
+  // an action felt like spending your turn.
+  let seatIdx = 0;
+  let selectedUnitId: string | undefined;
+  let locked = new Set<string>();
   let drafts = new Map<string, OrderDraft>();
   let mode: Mode = 'idle';
+  let hover: Hover = {};
   let projection: ProjectionName = 'isometric';
 
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
@@ -103,8 +158,11 @@ export function startHotSeat(
   // container's only child, so measuring the container would feed the canvas its
   // own width back and pin it at Three's 300px default.
   const sizeToContainer = (): void => {
-    const w = Math.max(360, Math.min(globalThis.innerWidth - 48, 1000));
-    renderer.resize(w, Math.round(w * 0.62));
+    // The fixed HUD (UI3) owns the bottom strip, so the board is fitted to what
+    // is left rather than to the raw viewport — otherwise it hides behind it.
+    const w = Math.max(360, Math.min(globalThis.innerWidth - 48, 1180));
+    const h = Math.max(280, Math.min(Math.round(w * 0.58), globalThis.innerHeight - HUD_RESERVED_PX));
+    renderer.resize(Math.round(h / 0.58) < w ? Math.round(h / 0.58) : w, h);
   };
   sizeToContainer();
   fitCamera();
@@ -116,12 +174,74 @@ export function startHotSeat(
   ui.board.addEventListener('click', onBoardClick);
   ui.board.addEventListener('mousemove', onBoardHover);
 
+  // UI6: the right-side combat log accumulates for the whole match. It is a
+  // pure `TurnEvent[]` consumer — same contract as playback.
+  const combatLog: CombatLog | undefined = ui.log !== undefined ? createCombatLog(ui.log) : undefined;
+  const logNames: LogNames = {
+    unit: (unitId) => {
+      const unit = unitById(unitId);
+      return unit === undefined ? unitId : characterFor(unit).name;
+    },
+    ability: (abilityId) => {
+      for (const character of Object.values(roster)) {
+        const found = [...character.abilities, character.ultimate].find((a) => a.id === abilityId);
+        if (found !== undefined) return found.name;
+      }
+      return abilityId;
+    },
+  };
+
   // Persistent corner phase label (A3): it stays put and changes text, so the
   // eye never has to hunt for which phase is playing.
   const phaseLabel = document.createElement('div');
   phaseLabel.className = 'phase-label';
   phaseLabel.style.display = 'none';
   ui.board.appendChild(phaseLabel);
+
+  // UI5: floating readouts are DOM anchored to projected world positions —
+  // crisp text with no font atlas, and the renderer stays a geometry engine.
+  const readoutLayer = document.createElement('div');
+  readoutLayer.className = 'readouts';
+  ui.board.appendChild(readoutLayer);
+  const readoutNodes = new Map<string, HTMLElement>();
+
+  // The HUD is built ONCE and updated in place (UI3). Rebuilding it per render
+  // would fire mouseleave on nodes that no longer exist, so UI1's hover state
+  // would be wiped by its own repaint.
+  const hud: Hud = createHud(ui.controls, {
+    selectCharacter: selectUnit,
+    selectAbility,
+    hoverAbility: (abilityId, control, def) => {
+      if (abilityId === undefined || control === undefined || def === undefined) { hideTip(); clearHover(); }
+      else { showTip(control, def); hover = { abilityId }; }
+      renderPreviews();
+    },
+    selectMove,
+    hoverMove: (kind) => { hover = kind === undefined ? {} : { move: kind }; renderPreviews(); },
+    hold: () => {
+      const unit = selectedUnit();
+      if (unit === undefined) return;
+      drafts.set(unit.unitId, emptyDraft(unit.unitId));
+      mode = 'idle';
+      clearHover();
+      render();
+    },
+    lock: lockSelected,
+    toggleProjection: () => {
+      // One camera, two pitches — the whole point of going orthographic.
+      projection = projection === 'isometric' ? 'top' : 'isometric';
+      renderer.setProjection(projection);
+      fitCamera(); // the pitch changes the foreshortening, so re-fit
+      render();
+    },
+    toggleOrbit: () => {
+      // Auto follows the action; free orbit hands the camera to the player and
+      // stands the auto-framing down so the two never fight.
+      renderer.setOrbitEnabled(!renderer.orbitEnabled());
+      if (!renderer.orbitEnabled()) fitCamera();
+      render();
+    },
+  });
 
   // Ability hover tooltip (TT1) — one reused element, positioned by the button.
   const tooltip = document.createElement('div');
@@ -130,23 +250,42 @@ export function startHotSeat(
   document.body.appendChild(tooltip);
   const showTip = (target: HTMLElement, def: AbilityDef): void => {
     tooltip.textContent = abilityTooltip(def).join('\n');
-    const r = target.getBoundingClientRect();
-    tooltip.style.left = `${Math.round(r.left)}px`;
-    tooltip.style.top = `${Math.round(r.bottom + 6)}px`;
     tooltip.style.display = 'block';
+    const r = target.getBoundingClientRect();
+    // The hotbar sits at the bottom of the viewport (UI3), so a tooltip hung
+    // below its button would fall off the screen. Flip it above when it must.
+    const h = tooltip.getBoundingClientRect().height;
+    const below = r.bottom + 6;
+    tooltip.style.left = `${Math.round(Math.max(8, Math.min(r.left, globalThis.innerWidth - 296)))}px`;
+    tooltip.style.top = `${Math.round(below + h > globalThis.innerHeight - 8 ? r.top - h - 6 : below)}px`;
   };
   const hideTip = (): void => { tooltip.style.display = 'none'; };
 
   const characterFor = (u: UnitState): CharacterDef => roster[u.characterId]!;
   const unitById = (uid: string) => state.units.find((u) => u.unitId === uid);
-  const currentStep = () => steps[stepIdx];
+  const currentSeat = (): Seat | undefined => seats[seatIdx];
+  /** The living characters the seat on the clock controls, in seat order. */
+  const seatRoster = (): UnitState[] =>
+    (currentSeat()?.unitIds ?? []).map(unitById).filter((u): u is UnitState => u !== undefined && u.alive);
+  const selectedUnit = (): UnitState | undefined =>
+    selectedUnitId === undefined ? undefined : unitById(selectedUnitId);
+  const draftFor = (unit: UnitState): OrderDraft => {
+    const existing = drafts.get(unit.unitId);
+    if (existing !== undefined) return existing;
+    const fresh = emptyDraft(unit.unitId);
+    drafts.set(unit.unitId, fresh);
+    return fresh;
+  };
+  const clearHover = (): void => { hover = {}; };
+
+  /** The shield pool `initView` sums, so board and HUD never disagree. */
+  const shieldOf = (u: UnitState): number =>
+    u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
 
   const stateUnits = (): RenderUnit[] => state.units.map((u) => ({
     unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
     energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
-    // Same shield sum `initView` takes, so the planning board and the playback
-    // board show the same bar.
-    shield: u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0),
+    shield: shieldOf(u),
   }));
 
   const viewUnits = (view: ViewState): RenderUnit[] => [...view.units.values()].map((v) => ({
@@ -158,23 +297,39 @@ export function startHotSeat(
 
   function beginTurn(): void {
     drafts = new Map();
-    steps = seats.flatMap((seat) =>
-      seat.unitIds
-        .map((uid) => state.units.find((u) => u.unitId === uid))
-        .filter((u): u is UnitState => u !== undefined && u.alive)
-        .map((unit) => ({ seat, unit })),
-    );
-    stepIdx = 0;
-    if (steps.length === 0) return void resolveAndPlay(); // nobody alive to order
-    startStep();
+    locked = new Set();
+    seatIdx = 0;
+    openSeat();
   }
 
-  function startStep(): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    drafts.set(step.unit.unitId, emptyDraft(step.unit.unitId));
+  /** Put the next seat with living characters on the clock, or resolve. */
+  function openSeat(): void {
+    while (seatIdx < seats.length && seatRoster().length === 0) seatIdx += 1;
+    const roster = seatRoster();
+    if (roster.length === 0) return void resolveAndPlay(); // nobody left to order
+    for (const unit of roster) draftFor(unit); // every character is orderable at once
+    selectUnit(roster[0]!.unitId);
+  }
+
+  function selectUnit(unitId: string): void {
+    selectedUnitId = unitId;
     mode = 'idle';
+    clearHover();
     render();
+  }
+
+  /**
+   * Lock In (UI1): commit the *selected* character and hand the seat its next
+   * unlocked one. Only when every character the seat controls is locked does the
+   * clock move on — and only when every seat is done does the turn resolve.
+   */
+  function lockSelected(): void {
+    if (selectedUnitId === undefined) return;
+    locked.add(selectedUnitId);
+    const next = seatRoster().find((u) => !locked.has(u.unitId));
+    if (next !== undefined) return selectUnit(next.unitId);
+    seatIdx += 1;
+    openSeat();
   }
 
   // ── Rendering ──────────────────────────────────────────────────────────────
@@ -186,132 +341,161 @@ export function startHotSeat(
    * pointer and kill hover tooltips.
    */
   function renderPreviews(): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
-    const character = characterFor(step.unit);
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const draft = draftFor(unit);
+    const character = characterFor(unit);
 
     renderer.show(stateUnits(), state.decoys.map((d) => d.pos));
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
+    clearReadouts();
     renderer.focusOn([]); // ease back out to the whole board after a resolution
-    renderer.highlight('select', [step.unit.pos], SELECT, 0.5);
+    renderer.highlight('select', [unit.pos], SELECT, 0.5);
 
-    // Previews (MS1: a non-dash ability and a Move coexist). A dash *is* the
-    // movement, so it shows no separate move preview; the budget comes straight
-    // from the engine (4 with an ability, 8 sprinting, 0 rooted).
-    const ability = draftAbility(character, draft);
-    const isDash = ability?.phase === 'dash';
-    if (!isDash && (draft.sprint || mode === 'move' || draft.movePath.length > 0)) {
-      const { stops, through } = movePreview(map, state, step.unit, draft.sprint);
-      renderer.highlight('reach', [...stops, ...through], REACH, 0.22);
-    } else {
-      renderer.highlight('reach', [], REACH);
-    }
+    const chosen = draftAbility(character, draft);
+    const isDash = chosen?.phase === 'dash';
+
+    // ── Layer: the effective-range ENVELOPE (UI1) ────────────────────────────
+    // Where an action *could* go, which is a different question from what a
+    // given aim covers — and the one a player asks before selecting anything.
+    // Hovering a control answers it without touching the draft.
+    const hovered = hover.abilityId !== undefined ? findOnCharacter(character, hover.abilityId) : undefined;
+    const envelopeAbility = hovered ?? (hover.move === undefined ? chosen : undefined);
     renderer.highlight(
-      'aim',
-      ability !== undefined ? abilityPreview(map, step.unit, ability, draft.aim, draft.aimStep) : [],
-      AIM,
-      0.5,
+      'range',
+      envelopeAbility !== undefined ? rangeEnvelope(map, state, unit, envelopeAbility) : [],
+      RANGE,
+      0.16,
     );
 
-    // AIM1: the drawn move is a LINE from the unit through its path, with an
-    // endpoint marker. Shaded reachability says where you *could* go; only a
-    // line says which way you actually chose and in what order.
-    renderer.drawPath(
-      draft.movePath.length > 0 ? [step.unit.pos, ...draft.movePath] : [],
-      draft.sprint ? SPRINT_LINE : MOVE_LINE,
-      draft.sprint, // sprint is the dashed one, so the two read apart at a glance
+    // ── Layer: the MOVE envelope ─────────────────────────────────────────────
+    // A dash *is* the movement, so it shows no separate move preview; the budget
+    // comes straight from the engine (4 with an ability, 8 sprinting, 0 rooted).
+    const sprinting = hover.move === 'sprint' || (hover.move === undefined && draft.sprint);
+    const showMove = hover.move !== undefined
+      || (!isDash && (draft.sprint || mode === 'move' || draft.movePath.length > 0));
+    renderer.highlight('reach', showMove ? moveEnvelope(map, state, unit, sprinting) : [], REACH, 0.22);
+
+    // ── Layer: the tiles an aim actually covers ──────────────────────────────
+    // While the pointer is over the board with a mode armed, this previews the
+    // HOVERED aim; otherwise it shows what has been committed. Same `aimFor`
+    // either way, so the preview and the commit can never disagree.
+    const preview = previewAim(unit, chosen, draft);
+    const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
+    renderer.highlight('aim', covered, AIM, 0.5);
+
+    // ── UI2 Layer 1: the continuous shape over Layer 2's tiles ───────────────
+    // The tiles are the truth (centre-in binary, AIM2); the wedge/beam/disk is
+    // the fiction they approximate. Showing only the tiles makes a clipped
+    // corner look like a bug; showing only the shape hides what actually gets
+    // hit. Both, from the same numbers.
+    renderer.drawShape(
+      chosen !== undefined && covered.length > 0 ? shapeOutline(unit, chosen, preview.aim, preview.aimStep, covered) : [],
+      SHAPE,
+      0.16,
     );
+
+    // ── AIM1 (+UI4): the drawn route as a LINE ───────────────────────────────
+    // Shaded reachability says where you *could* go; only a line says which way
+    // you chose and in what order. A DASH is the same indicator in yellow (UI4)
+    // — it is still a route, so it gets route geometry rather than nothing, and
+    // colour carries the fact that it resolves in a different phase.
+    const route = isDash ? dashRoute(unit, chosen, preview.aim) : previewMovePath(unit, draft);
+    renderer.drawPath(
+      route.length > 0 ? [unit.pos, ...route] : [],
+      isDash ? DASH_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
+      !isDash && draft.sprint, // sprint is the dashed one; a dash reads by colour
+    );
+  }
+
+  /** An ability (ult included) on a character by id — hover works off ids. */
+  function findOnCharacter(character: CharacterDef, abilityId: string): AbilityDef | undefined {
+    return [...character.abilities, character.ultimate].find((a) => a.id === abilityId);
+  }
+
+  /**
+   * The aim to PAINT right now: the hovered square's aim while the pointer is
+   * over the board in aim mode, else whatever the draft has committed. Hover
+   * never writes to the draft — that is the whole commit/preview split (UI1).
+   */
+  function previewAim(unit: UnitState, ability: AbilityDef | undefined, draft: OrderDraft): { aim: Vec2[]; aimStep?: number } {
+    if (ability !== undefined && mode === 'aim' && hover.square !== undefined) {
+      return aimFor(map, state, unit, ability, hover.square);
+    }
+    return { aim: draft.aim, aimStep: draft.aimStep };
+  }
+
+  /** Likewise for the drawn move: hovered route while drawing, else committed. */
+  function previewMovePath(unit: UnitState, draft: OrderDraft): Vec2[] {
+    if (mode === 'move' && hover.square !== undefined) {
+      return pathTo(map, state, unit, hover.square, movementBudget(unit, draft.sprint));
+    }
+    return draft.movePath;
   }
 
   function render(): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
-    const character = characterFor(step.unit);
-
+    const unit = selectedUnit();
+    if (unit === undefined) return;
     renderPreviews();
-    renderControls(step, draft, character);
+    hud.update(hudModel(unit, draftFor(unit), characterFor(unit)));
+    const seat = currentSeat();
+    const roster = seatRoster();
+    const done = roster.filter((u) => locked.has(u.unitId)).length;
     ui.status.textContent =
-      `Turn ${state.turn} · ${teamName(step.seat.team)} · seat ${step.seat.seatId} — order ${character.name}` +
-      ` (${stepIdx + 1}/${steps.length})`;
+      `Turn ${state.turn} · ${teamName(seat?.team ?? 0)} · seat ${seat?.seatId ?? '?'}` +
+      ` — ${characterFor(unit).name} (${done}/${roster.length} locked)`;
   }
 
-  function renderControls(step: Step, draft: OrderDraft, character: CharacterDef): void {
-    ui.controls.replaceChildren();
-    const row = (label: string) => {
-      const d = document.createElement('div');
-      d.className = 'control-row';
-      d.append(label);
-      ui.controls.appendChild(d);
-      return d;
+  /** One character as the HUD's view of it — presentation data only. */
+  function hudCharacter(unit: UnitState): HudCharacter {
+    const character = characterFor(unit);
+    return {
+      unitId: unit.unitId,
+      name: character.name,
+      archetype: character.archetype,
+      colour: unit.owner === 0 ? TEAM_CSS[0] : TEAM_CSS[1],
+      hp: unit.hp,
+      maxHp: unit.maxHp,
+      energy: unit.energy,
+      shield: shieldOf(unit),
+      locked: locked.has(unit.unitId),
+      hasOrder: draftHasOrder(draftFor(unit)),
     };
+  }
 
-    const abilityRow = row('Ability: ');
-    for (const opt of abilityOptions(step.unit, character)) {
-      const b = document.createElement('button');
-      b.textContent = `${opt.def.name}${opt.isUlt ? ' ★' : ''}` + (opt.available ? '' : ` (${opt.reason})`);
-      b.disabled = !opt.available;
-      b.className = draft.abilityId === opt.def.id ? 'sel' : '';
-      b.onclick = () => selectAbility(opt.def.id);
-      b.addEventListener('mouseenter', () => showTip(b, opt.def)); // TT1
-      b.addEventListener('mouseleave', hideTip);
-      abilityRow.appendChild(b);
-    }
-
-    const budget = movementBudget(step.unit, draft.sprint);
-    const moveRow = row(`Move (${budget}): `);
-    const moveBtn = document.createElement('button');
-    moveBtn.textContent = 'Draw move';
-    moveBtn.className = mode === 'move' && !draft.sprint ? 'sel' : '';
-    moveBtn.onclick = () => selectMove(false);
-    const sprintBtn = document.createElement('button');
-    sprintBtn.textContent = 'Sprint';
-    sprintBtn.className = draft.sprint ? 'sel' : '';
-    sprintBtn.disabled = draft.abilityId !== undefined; // Sprint is move-only (GAME_SPEC §2)
-    sprintBtn.onclick = () => selectMove(true);
-    const holdBtn = document.createElement('button');
-    holdBtn.textContent = 'Hold / clear';
-    holdBtn.onclick = () => { drafts.set(step.unit.unitId, emptyDraft(step.unit.unitId)); mode = 'idle'; render(); };
-    moveRow.append(moveBtn, sprintBtn, holdBtn);
-
-    const viewRow = row('View: ');
-    const proj = document.createElement('button');
-    proj.textContent = projection === 'isometric' ? 'Isometric' : 'Top-down';
-    proj.onclick = () => {
-      // One camera, two pitches — the whole point of going orthographic.
-      projection = projection === 'isometric' ? 'top' : 'isometric';
-      renderer.setProjection(projection);
-      fitCamera(); // the pitch changes the foreshortening, so re-fit
-      render();
+  function hudModel(unit: UnitState, draft: OrderDraft, character: CharacterDef): HudModel {
+    const roster = seatRoster();
+    // The last unlocked character of the last seat is the one whose Lock In
+    // actually resolves the turn — say so, rather than surprising the player.
+    const last = seatIdx === seats.length - 1
+      && roster.every((u) => u.unitId === unit.unitId || locked.has(u.unitId));
+    return {
+      active: hudCharacter(unit),
+      roster: roster.map(hudCharacter),
+      // `abilityOptions` already answers availability and why — never re-derived.
+      abilities: abilityOptions(unit, character).map((opt) => ({
+        id: opt.def.id,
+        name: opt.def.name,
+        isUlt: opt.isUlt,
+        available: opt.available,
+        reason: opt.reason,
+        cooldown: opt.cooldown,
+        selected: draft.abilityId === opt.def.id,
+        def: opt.def,
+      })),
+      move: {
+        budget: movementBudget(unit, draft.sprint),
+        drawing: mode === 'move',
+        sprinting: draft.sprint,
+        sprintDisabled: draft.abilityId !== undefined, // Sprint is move-only (GAME_SPEC §2)
+      },
+      lock: { label: last ? 'Lock In & resolve ⚔' : 'Lock In ▸' },
+      view: {
+        projection: projection === 'isometric' ? 'Isometric' : 'Top-down',
+        orbit: renderer.orbitEnabled(),
+      },
     };
-    const orbit = document.createElement('button');
-    const free = renderer.orbitEnabled();
-    orbit.textContent = free ? 'Camera: free orbit' : 'Camera: auto';
-    orbit.className = free ? 'sel' : '';
-    orbit.onclick = () => {
-      // Auto follows the action; free orbit hands the camera to the player and
-      // stands the auto-framing down so the two never fight.
-      renderer.setOrbitEnabled(!renderer.orbitEnabled());
-      if (!renderer.orbitEnabled()) fitCamera();
-      render();
-    };
-    viewRow.append(proj, orbit);
-    const hint = document.createElement('span');
-    hint.style.opacity = '0.6';
-    hint.textContent = free ? 'drag to orbit · wheel to zoom' : 'right-drag to orbit · wheel to zoom';
-    viewRow.appendChild(hint);
-
-    const lockRow = row('');
-    const lock = document.createElement('button');
-    lock.textContent = stepIdx + 1 < steps.length ? 'Lock character ▸' : 'Lock & resolve turn ⚔';
-    lock.className = 'primary';
-    lock.onclick = lockStep;
-    lockRow.appendChild(lock);
-
-    const bars = row('');
-    bars.textContent = `HP ${step.unit.hp}/${step.unit.maxHp} · Energy ${step.unit.energy}/100`;
   }
 
   // ── Selection ────────────────────────────────────────────────────────────────
@@ -320,93 +504,83 @@ export function startHotSeat(
     draftAbility(character, draft)?.phase === 'dash';
 
   function selectAbility(abilityId: string): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    const character = characterFor(step.unit);
-    const chosen = draftAbility(character, { ...drafts.get(step.unit.unitId)!, abilityId });
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const character = characterFor(unit);
+    const prev = draftFor(unit);
+    const chosen = draftAbility(character, { ...prev, abilityId });
     const isDash = chosen?.phase === 'dash';
-    const draft = nextDraft(drafts.get(step.unit.unitId)!, { type: 'selectAbility', abilityId, isDash }, isDash);
-    if (chosen && chosen.shape === 'self') draft.aim = [{ ...step.unit.pos }];
+    // Choosing another ability before Lock In simply replaces the last one
+    // (UI1) — `nextDraft` owns the exclusivity rules (sprint, dash-owns-move).
+    const draft = nextDraft(prev, { type: 'selectAbility', abilityId, isDash }, isDash);
+    if (chosen && chosen.shape === 'self') draft.aim = [{ ...unit.pos }];
     draft.aimStep = undefined;
-    drafts.set(step.unit.unitId, draft);
+    drafts.set(unit.unitId, draft);
+    // A self-cast has nowhere to point, so it is committed by selecting it;
+    // everything else arms aim mode and waits for the confirming board click.
     mode = chosen && chosen.shape !== 'self' ? 'aim' : 'idle';
+    clearHover();
     render();
   }
 
   function selectMove(sprint: boolean): void {
-    const step = currentStep();
-    if (step === undefined) return;
-    const prev = drafts.get(step.unit.unitId)!;
-    const wasDash = currentIsDash(prev, characterFor(step.unit));
-    drafts.set(step.unit.unitId, nextDraft(prev, { type: sprint ? 'selectSprint' : 'selectMove' }, wasDash));
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const prev = draftFor(unit);
+    const wasDash = currentIsDash(prev, characterFor(unit));
+    drafts.set(unit.unitId, nextDraft(prev, { type: sprint ? 'selectSprint' : 'selectMove' }, wasDash));
     mode = 'move';
+    clearHover();
     render();
   }
 
+  /**
+   * A board click CONFIRMS the armed action (UI1) — it does not end the turn.
+   * The committed aim stays painted until the player replaces it or locks in.
+   */
   function onBoardClick(evt: MouseEvent): void {
     const sq = renderer.squareFromPoint(evt.clientX, evt.clientY);
     if (!sq) return;
-    const step = currentStep();
-    if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const draft = draftFor(unit);
 
     if (mode === 'aim') {
-      const ability = draftAbility(characterFor(step.unit), draft);
-      if (!ability) return;
-      if (isRotatable(ability)) {
-        // AIM2: a line/cone is aimed by DIRECTION. The pointer becomes a
-        // quantized integer step — the only thing the engine ever sees — so the
-        // shape rotates freely instead of snapping to a compass point.
-        draft.aimStep = dragToAimStep(step.unit.pos, sq);
-        draft.aim = [];
-      } else {
-        draft.aim = ability.shape === 'path' ? reachPath(step.unit, sq, ability.range) : [sq];
-        draft.aimStep = undefined;
-      }
+      const ability = draftAbility(characterFor(unit), draft);
+      if (ability === undefined) return;
+      // Exactly the aim the hover was already painting — one resolver, so what
+      // you saw is what you committed.
+      const { aim, aimStep } = aimFor(map, state, unit, ability, sq);
+      draft.aim = aim;
+      draft.aimStep = aimStep;
       render();
     } else if (mode === 'move' || draft.sprint) {
-      draft.movePath = reachPath(step.unit, sq, movementBudget(step.unit, draft.sprint));
+      draft.movePath = pathTo(map, state, unit, sq, movementBudget(unit, draft.sprint));
       render();
     }
   }
 
   /**
-   * AIM2-UX: a line/cone aims by DIRECTION, so it follows the pointer instead of
-   * waiting for a click. The covered tiles update live from `expandShape` at the
-   * quantized step — the very tiles the engine will hit — and the click that
-   * follows just commits whatever is already on screen. Click-to-aim shapes
-   * (circle/square/path) are untouched: there is no direction to preview.
+   * Board hover (UI1): while a mode is armed, the pointer's square previews the
+   * action live — the cone/line rotates with the mouse (the old AIM2-UX), a
+   * circle follows it, a drawn route re-routes. **The draft is not touched**;
+   * `renderPreviews` reads `hover.square` and paints from that instead.
    */
   function onBoardHover(evt: MouseEvent): void {
-    if (mode !== 'aim') return;
-    const step = currentStep();
-    if (step === undefined) return;
-    const draft = drafts.get(step.unit.unitId)!;
-    const ability = draftAbility(characterFor(step.unit), draft);
-    if (ability === undefined || !isRotatable(ability)) return;
+    if (mode === 'idle') return;
+    if (selectedUnit() === undefined) return;
     const sq = renderer.squareFromPoint(evt.clientX, evt.clientY);
-    if (!sq) return;
-    const aimStep = dragToAimStep(step.unit.pos, sq);
-    if (aimStep === draft.aimStep) return; // same quantized direction: nothing moved
-    draft.aimStep = aimStep;
-    draft.aim = [];
+    if (sq === undefined) {
+      if (hover.square === undefined) return;
+      clearHover();
+      return renderPreviews();
+    }
+    if (hover.square !== undefined && hover.square.x === sq.x && hover.square.y === sq.y) return;
+    hover = { square: sq };
     renderPreviews();
   }
 
-  /** A legal path from the unit to `target` within `budget`, or []. */
-  function reachPath(unit: UnitState, target: Vec2, budget: number): Vec2[] {
-    const board = buildBoard(map);
-    const squares = reachableSquares(board, state, unit, budget);
-    return reconstructPath(squares, unit.pos, target) ?? [];
-  }
-
   // ── Turn resolution + playback ───────────────────────────────────────────────
-
-  function lockStep(): void {
-    stepIdx += 1;
-    if (stepIdx >= steps.length) void resolveAndPlay();
-    else startStep();
-  }
 
   async function resolveAndPlay(): Promise<void> {
     const ordersBySeat = new Map<string, UnitOrders[]>();
@@ -422,14 +596,18 @@ export function startHotSeat(
     }
     const prev = state;
     const result = resolveTurn(prev, map, mergeSeatOrders(seats, ordersBySeat), roster);
+    // The log is written from the resolved event list up front, so it is
+    // complete whether the player watches the animation or skips it.
+    combatLog?.appendTurn(prev.turn, result.events, logNames);
 
     // The player owns state — its fold IS the board, so skipping and watching
     // agree by construction. Everything below only *decorates* that fold:
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
     const player = createTurnPlayer(prev, result.events);
-    for (const layer of ['reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
+    renderer.drawShape([], SHAPE);
     renderer.show(viewUnits(player.view), viewDecoys(player.view));
 
     let skipped = false;
@@ -440,9 +618,10 @@ export function startHotSeat(
 
       renderer.highlight('aim', [], AIM);
       renderer.highlight('select', [], IMPACT);
+      clearReadouts();
       renderer.show(viewUnits(player.view), viewDecoys(player.view));
     };
-    renderPlaybackControls(() => {
+    hud.showPlayback(() => {
       skipped = true;
       player.skip();
       finish();
@@ -511,27 +690,57 @@ export function startHotSeat(
     renderer.highlight('select', frame.impacts.map(squareOf).filter((p): p is Vec2 => p !== undefined), IMPACT, 0.55);
     if (frame.phase !== undefined) phaseLabel.textContent = frame.phase.toUpperCase();
     renderer.focusOn(focusSquares(frame, posOf));
+    showReadouts(frame.readouts, squareOf);
   }
 
-  function renderPlaybackControls(onSkip: () => void): void {
-    ui.controls.replaceChildren();
-    const row = document.createElement('div');
-    row.className = 'control-row';
-    const skip = document.createElement('button');
-    skip.textContent = 'Skip ⏭';
-    skip.className = 'primary';
-    skip.onclick = onSkip;
-    row.appendChild(skip);
-    ui.controls.appendChild(row);
+  /**
+   * Paint UI5's floating numbers. Nodes are keyed and reconciled — a readout
+   * lives for a couple of beats, so rebuilding the layer every frame would
+   * restart its CSS transition on each one.
+   */
+  function showReadouts(readouts: readonly Readout[], squareOf: (id: string) => Vec2 | undefined): void {
+    const live = new Set<string>();
+    for (const r of readouts) {
+      // One node per (unit, kind, amount): a hit and the shield that ate part of
+      // it are two separate numbers on the same unit, and both should show.
+      const key = `${r.unitId}:${r.kind}:${r.amount}`;
+      live.add(key);
+      let node = readoutNodes.get(key);
+      if (node === undefined) {
+        node = document.createElement('div');
+        node.className = `readout ${r.kind}`;
+        node.textContent = READOUT_TEXT[r.kind](r.amount);
+        readoutLayer.appendChild(node);
+        readoutNodes.set(key, node);
+      }
+      const square = squareOf(r.unitId);
+      const at = square === undefined ? undefined : renderer.screenPosition(square.x, square.y, READOUT_LIFT);
+      if (at === undefined) { node.style.display = 'none'; continue; }
+      node.style.display = '';
+      // Rise and fade with age, so several numbers on one unit stack visibly
+      // instead of overprinting.
+      node.style.left = `${at.x.toFixed(1)}px`;
+      node.style.top = `${(at.y - r.age * READOUT_RISE_PX).toFixed(1)}px`;
+      node.style.opacity = `${(1 - r.age * r.age).toFixed(3)}`;
+    }
+    for (const [key, node] of readoutNodes) {
+      if (!live.has(key)) { node.remove(); readoutNodes.delete(key); }
+    }
+  }
+
+  function clearReadouts(): void {
+    for (const node of readoutNodes.values()) node.remove();
+    readoutNodes.clear();
   }
 
   function renderGameOver(): void {
     renderer.show(stateUnits(), []);
-    for (const layer of ['reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
+    renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);
     renderer.fitBoard();
-    ui.controls.replaceChildren();
+    hud.clear();
     ui.status.textContent = state.status === 'draw'
       ? 'Double KO — the match is a draw.'
       : `${teamName(state.winner ?? 0)} wins! (${state.kills[0]}–${state.kills[1]})`;

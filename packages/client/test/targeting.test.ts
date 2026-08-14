@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { buildBoard, createMatch, expandShape, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
+import { aimInRange, buildBoard, createMatch, expandShape, reachableSquares, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
 import {
   abilityOptions,
   abilityPreview,
   abilityTooltip,
+  aimFor,
+  dashRoute,
   dragToAimStep,
+  draftHasOrder,
   isRotatable,
   effectLabel,
   emptyDraft,
+  moveEnvelope,
   movePreview,
   nextDraft,
   pathValid,
+  rangeEnvelope,
+  shapeOutline,
   sprintAllowed,
   toUnitOrders,
   toUnitOrdersFor,
@@ -298,5 +304,283 @@ describe('BRUSH1: the client offers brush squares as move and dash destinations'
     const u = s.units.find((x) => x.characterId === 'vex')!;
     const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!; // path dash
     expect(abilityPreview(BRUSHY, u, roll, [{ x: 2, y: 7 }]).length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * UI1 — the effective-range **envelope** and the single aim resolver.
+ *
+ * The envelope answers a question the footprint cannot: "can I even reach
+ * them?". A player asks that *before* selecting an ability, so it has to be
+ * derivable from the ability alone, with no aim yet chosen.
+ */
+describe('UI1: rangeEnvelope is where an ability COULD go', () => {
+  it('a circle/square envelope is the engine’s own Manhattan diamond', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!; // circle range 6
+    const env = rangeEnvelope(OPEN, s, u, grenade);
+    // Every square in the envelope is legal to aim at, and every legal square is
+    // in the envelope — the two must agree or the preview is lying.
+    for (const p of env) expect(aimInRange(u.pos, p, grenade.range), `${p.x},${p.y}`).toBe(true);
+    let legal = 0;
+    for (let y = 0; y < OPEN.height; y++) {
+      for (let x = 0; x < OPEN.width; x++) if (aimInRange(u.pos, { x, y }, grenade.range)) legal++;
+    }
+    expect(env).toHaveLength(legal);
+  });
+
+  it('is wider than the tiles the ability actually covers — that is the point', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!; // line, range 8
+    const env = rangeEnvelope(OPEN, s, u, rail);
+    const covered = abilityPreview(OPEN, u, rail, [{ x: 14, y: 7 }]);
+    expect(env.length).toBeGreaterThan(covered.length);
+  });
+
+  it('a PATH ability measures its range as a movement budget, not a diamond', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!; // path, dash
+    const env = rangeEnvelope(OPEN, s, u, roll);
+    const reach = reachableSquares(buildBoard(OPEN), s, u, roll.range).map((r) => r.pos);
+    expect(env).toEqual(reach);
+    // A dash may not walk through a wall, so its envelope is not a plain diamond.
+    for (const p of env) expect(Math.abs(p.x - u.pos.x) + Math.abs(p.y - u.pos.y)).toBeLessThanOrEqual(roll.range);
+  });
+
+  it('a SELF ability’s envelope is the caster’s own square, which is where it lands', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const selfish = { ...VEX.abilities[0]!, shape: 'self' as const, range: 0 };
+    expect(rangeEnvelope(OPEN, s, u, selfish)).toEqual([{ x: u.pos.x, y: u.pos.y }]);
+  });
+
+  it('the move envelope is exactly the move preview’s stops plus walk-throughs', () => {
+    const s = state();
+    const u = vexUnit(s);
+    const { stops, through } = movePreview(OPEN, s, u, false);
+    expect(moveEnvelope(OPEN, s, u, false)).toEqual([...stops, ...through]);
+    // Sprinting reaches strictly further.
+    expect(moveEnvelope(OPEN, s, u, true).length).toBeGreaterThan(moveEnvelope(OPEN, s, u, false).length);
+  });
+});
+
+describe('UI1: aimFor is the one place a pointed-at square becomes an aim', () => {
+  const s = state();
+  const u = vexUnit(s);
+
+  it('a line/cone becomes a quantized DIRECTION with no target square', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const got = aimFor(OPEN, s, u, rail, { x: 9, y: 7 });
+    expect(got.aim).toEqual([]);
+    expect(got.aimStep).toBe(vectorToStep(9 - u.pos.x, 7 - u.pos.y));
+  });
+
+  it('a circle becomes that square, and carries no direction', () => {
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    expect(aimFor(OPEN, s, u, grenade, { x: 4, y: 7 })).toEqual({ aim: [{ x: 4, y: 7 }] });
+  });
+
+  it('a path becomes a walked route ending on the pointed-at square', () => {
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!;
+    const target = { x: u.pos.x + 2, y: u.pos.y };
+    const got = aimFor(OPEN, s, u, roll, target);
+    expect(got.aim.length).toBeGreaterThan(0);
+    expect(got.aim[got.aim.length - 1]).toEqual(target);
+  });
+
+  it('a self ability ignores the pointer and aims at the caster', () => {
+    const selfish = { ...VEX.abilities[0]!, shape: 'self' as const, range: 0 };
+    expect(aimFor(OPEN, s, u, selfish, { x: 12, y: 2 })).toEqual({ aim: [{ x: u.pos.x, y: u.pos.y }] });
+  });
+
+  it('hover and click agree by construction: the same square gives the same aim', () => {
+    // The commit/preview split (UI1) is only safe because both call this.
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const target = { x: 5, y: 11 };
+    expect(aimFor(OPEN, s, u, rail, target)).toEqual(aimFor(OPEN, s, u, rail, target));
+    const previewed = aimFor(OPEN, s, u, rail, target);
+    expect(abilityPreview(OPEN, u, rail, previewed.aim, previewed.aimStep))
+      .toEqual(expandShape(buildBoard(OPEN), rail, u.pos, previewed.aim, previewed.aimStep));
+  });
+
+  it('an unreachable path target yields an empty aim rather than an illegal one', () => {
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!;
+    expect(aimFor(OPEN, s, u, roll, { x: 14, y: 14 }).aim).toEqual([]);
+  });
+});
+
+describe('UI1: draftHasOrder marks a character as having committed something', () => {
+  it('is false for a blank draft and true once anything is chosen', () => {
+    const blank = emptyDraft('u');
+    expect(draftHasOrder(blank)).toBe(false);
+    expect(draftHasOrder({ ...blank, abilityId: 'rail_shot' })).toBe(true);
+    expect(draftHasOrder({ ...blank, sprint: true })).toBe(true);
+    expect(draftHasOrder({ ...blank, movePath: [{ x: 1, y: 1 }] })).toBe(true);
+  });
+});
+
+/**
+ * AIM1 (+UI4) — a dash gets the same line-and-marker indicator a move gets, in
+ * yellow. It is still a route, so it deserves route geometry; the colour is
+ * what says it resolves in a different phase.
+ */
+describe('UI4: dashRoute gives a drafted dash the same route geometry as a move', () => {
+  const s = state();
+  const u = vexUnit(s);
+  const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!; // dash, path
+
+  it('a PATH dash draws its whole walked route', () => {
+    const aim = aimFor(OPEN, s, u, roll, { x: u.pos.x + 2, y: u.pos.y }).aim;
+    expect(dashRoute(u, roll, aim)).toEqual(aim);
+    expect(dashRoute(u, roll, aim).length).toBeGreaterThan(1);
+  });
+
+  it('a TELEPORTING dash draws a straight segment to where it lands', () => {
+    // Wisp's Blink is a dash that is not a path — it still ends somewhere, and
+    // "you end up there" is the honest indicator.
+    const blink = { ...roll, shape: 'circle' as const, range: 5 };
+    expect(dashRoute(u, blink, [{ x: u.pos.x + 4, y: u.pos.y + 1 }])).toEqual([{ x: u.pos.x + 4, y: u.pos.y + 1 }]);
+  });
+
+  it('is empty for a non-dash ability — the one case the line is suppressed', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    expect(dashRoute(u, rail, [{ x: 9, y: 7 }])).toEqual([]);
+    expect(dashRoute(u, undefined, [{ x: 9, y: 7 }])).toEqual([]);
+  });
+
+  it('is empty for an unaimed dash, and for one aimed at your own square', () => {
+    expect(dashRoute(u, roll, [])).toEqual([]);
+    const blink = { ...roll, shape: 'circle' as const };
+    expect(dashRoute(u, blink, [{ ...u.pos }])).toEqual([]); // a hold, not a route
+  });
+
+  it('copies its squares, so the caller cannot write back into the draft', () => {
+    const aim = [{ x: u.pos.x + 1, y: u.pos.y }];
+    const route = dashRoute(u, roll, aim);
+    route[0]!.x = 99;
+    expect(aim[0]!.x).toBe(u.pos.x + 1);
+  });
+});
+
+/**
+ * UI2 — Layer 1, the continuous shape. The tests that matter check it is built
+ * from the ENGINE's numbers rather than an eyeballed silhouette: every covered
+ * tile's centre must fall inside the polygon, or the fiction and the truth
+ * disagree and a clipped corner reads as a bug.
+ */
+describe('UI2: shapeOutline is the continuous shape the covered tiles approximate', () => {
+  const s = state();
+  const u = vexUnit(s);
+
+  /** Even-odd point-in-polygon, in board coordinates. */
+  const inside = (poly: { x: number; y: number }[], p: { x: number; y: number }): boolean => {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i]!, b = poly[j]!;
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+    }
+    return hit;
+  };
+
+  it('a LINE beam contains the centre of every tile the engine says it hits', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    for (const step of [0, 17, 64, 130, 200]) {
+      const covered = abilityPreview(OPEN, u, rail, [], step);
+      const poly = shapeOutline(u, rail, [], step, covered);
+      expect(poly.length, `step ${step}`).toBe(4);
+      for (const tile of covered) expect(inside(poly, tile), `step ${step} tile ${tile.x},${tile.y}`).toBe(true);
+    }
+  });
+
+  it('a CONE wedge contains every tile it hits, and its apex is at the caster', () => {
+    // Bastion's Crushing Slam is the cone in the shipped roster.
+    const cone = [...BASTION.abilities, BASTION.ultimate].find((a) => a.shape === 'cone');
+    if (cone === undefined) return; // roster has no cone: nothing to assert
+    const bast = state().units.find((x) => x.characterId === 'bastion')!;
+    for (const step of [0, 64, 128, 192]) {
+      const covered = abilityPreview(OPEN, bast, cone, [], step);
+      const poly = shapeOutline(bast, cone, [], step, covered);
+      expect(poly).toHaveLength(3); // a wedge is a triangle
+      for (const tile of covered) expect(inside(poly, tile), `step ${step} tile ${tile.x},${tile.y}`).toBe(true);
+      // The apex sits half a tile in front of the caster — where the engine's
+      // own "half-width is d-1" rule reaches zero, not at the caster's centre.
+      const apex = poly[0]!;
+      expect(Math.hypot(apex.x - bast.pos.x, apex.y - bast.pos.y)).toBeCloseTo(0.5, 6);
+    }
+  });
+
+  it('a CIRCLE disk encloses every covered tile centre and matches radius + half a tile', () => {
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    const target = { x: u.pos.x + 4, y: u.pos.y };
+    const covered = abilityPreview(OPEN, u, grenade, [target]);
+    const poly = shapeOutline(u, grenade, [target], undefined, covered);
+    for (const tile of covered) expect(inside(poly, tile), `${tile.x},${tile.y}`).toBe(true);
+    const radii = poly.map((p) => Math.hypot(p.x - target.x, p.y - target.y));
+    for (const r of radii) expect(r).toBeCloseTo((grenade.radius ?? 1) + 0.5, 6);
+  });
+
+  it('a SQUARE outlines exactly its one tile', () => {
+    const square = { ...VEX.abilities[0]!, shape: 'square' as const, range: 6 };
+    const poly = shapeOutline(u, square, [{ x: 5, y: 5 }], undefined, [{ x: 5, y: 5 }]);
+    expect(poly).toEqual([
+      { x: 4.5, y: 4.5 }, { x: 5.5, y: 4.5 }, { x: 5.5, y: 5.5 }, { x: 4.5, y: 5.5 },
+    ]);
+  });
+
+  it('has no outline for a path or a self-cast — a route draws as a line instead', () => {
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!;
+    expect(shapeOutline(u, roll, [{ x: u.pos.x + 1, y: u.pos.y }], undefined, [{ x: u.pos.x + 1, y: u.pos.y }])).toEqual([]);
+    expect(shapeOutline(u, { ...roll, shape: 'self' }, [], undefined, [])).toEqual([]);
+  });
+
+  it('has no outline for an unaimed directional shape', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    expect(shapeOutline(u, rail, [], undefined, [])).toEqual([]);
+    expect(shapeOutline(u, rail, [{ ...u.pos }], undefined, [])).toEqual([]); // aimed at yourself: no direction
+  });
+
+  it('rotates with the aim step rather than snapping — same rule as the tiles', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const east = shapeOutline(u, rail, [], 0, abilityPreview(OPEN, u, rail, [], 0));
+    const askew = shapeOutline(u, rail, [], 30, abilityPreview(OPEN, u, rail, [], 30));
+    expect(askew).not.toEqual(east);
+  });
+});
+
+describe('UI2: Layer 1 stops where Layer 2 stops', () => {
+  it('a beam blocked by a wall does not carry on past it', () => {
+    // The disagreement UI2 exists to prevent: `lineSquares` stops at the first
+    // wall, so an untruncated beam would read as "the shot goes through walls".
+    const WALLED: MapDef = { ...OPEN, walls: [{ x: 5, y: 7 }] };
+    const s = createMatch(WALLED, '1v1', [[VEX], [BASTION]]);
+    const u = s.units.find((x) => x.characterId === 'vex')!;
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const covered = abilityPreview(WALLED, u, rail, [], 0); // due east, into the wall
+    expect(covered.length).toBeLessThan(rail.range); // the wall really did stop it
+
+    const poly = shapeOutline(u, rail, [], 0, covered);
+    const reach = Math.max(...poly.map((p) => p.x)) - u.pos.x;
+    const unblocked = shapeOutline(u, rail, [], 0, abilityPreview(OPEN, u, rail, [], 0));
+    expect(reach).toBeLessThan(Math.max(...unblocked.map((p) => p.x)) - u.pos.x);
+    // It still encloses everything it did hit.
+    expect(reach).toBeGreaterThanOrEqual(covered.length);
+  });
+
+  it('a disk keeps its shape when walls punch tiles out of it — that is the point', () => {
+    // Unlike a beam, the engine does not shorten a circle for a wall; it drops
+    // the tile. Truncating the disk would hide that a corner was clipped.
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    const target = { x: 6, y: 7 };
+    const WALLED: MapDef = { ...OPEN, walls: [{ x: 6, y: 6 }] };
+    const s = createMatch(WALLED, '1v1', [[VEX], [BASTION]]);
+    const u = s.units.find((x) => x.characterId === 'vex')!;
+    const clipped = abilityPreview(WALLED, u, grenade, [target]);
+    const whole = abilityPreview(OPEN, u, grenade, [target]);
+    expect(clipped.length).toBeLessThan(whole.length); // a tile really was dropped
+    expect(shapeOutline(u, grenade, [target], undefined, clipped))
+      .toEqual(shapeOutline(u, grenade, [target], undefined, whole));
   });
 });
