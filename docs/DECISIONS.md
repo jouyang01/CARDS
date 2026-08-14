@@ -1231,3 +1231,55 @@ person adding a job to `ci.yml` needs to know they are adding a release gate.
 RENDER-VERIFY still runs on every PR and on `main`; a red check there is the guardrail. What
 it no longer does is let a 280 MB browser download or a headless GPU hiccup stop an urgent
 engine fix from shipping.
+
+## Open Questions for the Analyzer — 2026-08-14 (MOVE1 / HITBOX1 / VISION1 / MAPTOGGLE / CI-decouple)
+
+1. **HITBOX1 grew every area shape — the Designer needs to retune, or rule that they meant
+   it.** Coverage is strictly more generous under the AR hitbox: the roster's four cones (all
+   `range: 2`) go 4 → 8 tiles, radius-1 circles 5 → 9, radius-2 13 → 21, radius-3 25 → 37.
+   Lines are unchanged. Damage numbers were tuned against the old footprints, so every circle
+   and cone in the roster is now meaningfully stronger at the same cost. I did not touch
+   `data/`. Is this a Designer pass on `radius`/`range`, or accepted as-is?
+
+2. **A rotated cone now covers more tiles than an axis-aligned one — and that follows from a
+   ruling I cannot change alone.** The standing MET1×AIM2 ruling meters directional range as a
+   *tile count* along the axis, so at 45° one "tile" of depth is a diagonal step and the wedge
+   is √2 longer in real distance — and area goes as the square. At `range: 2` (the whole
+   shipped roster) that is 8 tiles axis-aligned vs 12 at 45°; at `range: 4` it would be 24 vs
+   42. The old discrete rule hid this by counting a fixed 1+3+5+7 tiles at every rotation
+   while spreading them over the same stretched footprint. Two options, both one-line:
+   **(a)** accept it — rotated cones reach the same tile count and hit more, or **(b)** meter
+   the wedge's *half-width* in Euclidean tiles rather than tile-count units, which narrows a
+   diagonal cone's angle and makes its area near-rotation-invariant. I have shipped (a)
+   because it is what the standing ruling literally says. Your call, and it wants an
+   edge-cases entry either way.
+
+3. **Fog makes the enemy team invisible at turn 1 on both maps.** Spawn separation is 13,
+   `VISION_RANGE` is 6. That is faithful to the reference and to the Dev Note, but the first
+   thing a playtester sees is now an empty half of the board with no indication anything is
+   over there. Is that the intended opening, or does it want a turn-1 grace reveal / spawn
+   markers / last-known-position ghosts (the AC put ghosts explicitly out of scope)?
+
+4. **`iron-basin` is not the only 4v4 map — `duel-arena` has four spawn squares per team.**
+   Review issue 2 framed 4v4 as an iron-basin feature; in fact `?format=4v4` works on both.
+   Worth correcting in the backlog so 4v4 playtest is not scoped to one map.
+
+5. **MOVE1's forgiving routing is client-side only, and deliberately not applied to dashes.**
+   A move click that cannot be honoured now walks as far toward it as it legally can; a dash
+   aim still requires an exactly reachable target, because re-routing a charge changes who it
+   rams. If you would rather charges were forgiving too, that is a rules question — say so and
+   it is a one-line change.
+
+6. **`Kestrel` is not in the dev draft.** 4v4 needs exactly eight characters and the roster
+   has nine, so the dev catalogue lists eight and Kestrel never plays through MAPTOGGLE.
+   Deciding who plays is the M3 lobby's job; flagging it so Kestrel does not go untested by
+   accident until then.
+
+7. **The bundle is at 160.6 kB gzipped against a 300 kB budget** after MAPTOGGLE pulled in
+   the second map and four more characters. No action needed; noting the trend since every
+   future character is another JSON import into the entry chunk.
+
+8. **`docs/design/edge-cases.md` has no HITBOX1 or MOVE1 entry.** Both were ruled in the
+   backlog and the review rather than in edge-cases, and that file is the Designer's. The
+   rulings as implemented are written up in this file under today's entries — they should
+   probably be mirrored there by whoever owns it.
