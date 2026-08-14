@@ -29,6 +29,17 @@ import { createTurnPlayer } from './turn-player.js';
 import { focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { type Cue } from './choreograph.js';
 import {
+  IDLE,
+  afterCommit,
+  arm,
+  hoverAbility,
+  hoverBoard,
+  hoverMove,
+  previewAim,
+  previewMovePath,
+  type Interaction,
+} from './order-mode.js';
+import {
   abilityOptions,
   abilityPreview,
   abilityTooltip,
@@ -56,28 +67,6 @@ export interface HotSeatUI {
   controls: HTMLElement;
   /** The right-side combat log panel (UI6). Optional so tests can omit it. */
   log?: HTMLElement;
-}
-
-/**
- * What a board click will do. `idle` means the click does nothing — an ability
- * or Draw-move must be chosen first, which is the "click the skill to set the
- * mode" half of the owner's note (UI1).
- */
-type Mode = 'idle' | 'aim' | 'move';
-
-/**
- * Purely presentational pointer state (UI1). **Nothing here is ever written into
- * a draft.** Hover shows you what an action *would* do; only a click commits it.
- * Keeping the two apart is what lets the range envelope, the live cone and the
- * committed order all render at once without one overwriting another.
- */
-interface Hover {
-  /** An ability control is under the pointer — paint its range envelope. */
-  abilityId?: string;
-  /** A move control is under the pointer — paint where the unit could walk. */
-  move?: 'move' | 'sprint';
-  /** The board square under the pointer, while a mode is armed. */
-  square?: Vec2;
 }
 
 const PALETTE = {
@@ -110,8 +99,14 @@ const DASH_LINE = 0xffd23f;
  * is this number and nothing else.
  */
 const MS_PER_BEAT = 460;
-/** Vertical space the fixed HUD and page chrome claim, so the board fits above. */
-const HUD_RESERVED_PX = 260;
+/** Board shape and the space page chrome claims around it. */
+const BOARD_ASPECT = 0.58;
+const MAX_BOARD_WIDTH_PX = 1180;
+const MIN_BOARD_PX = { width: 320, height: 240 };
+/** Title + status line above the board; the HUD and log are measured instead. */
+const TOP_CHROME_PX = 120;
+/** Breathing room either side of the board. */
+const GUTTER_PX = 32;
 /**
  * How far a floating readout rises over its lifetime, and where it starts —
  * above the billboarded bars, so a number never sits on top of the HP it just
@@ -148,8 +143,7 @@ export function startHotSeat(
   let selectedUnitId: string | undefined;
   let locked = new Set<string>();
   let drafts = new Map<string, OrderDraft>();
-  let mode: Mode = 'idle';
-  let hover: Hover = {};
+  let interaction: Interaction = IDLE;
   let projection: ProjectionName = 'isometric';
 
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
@@ -157,12 +151,36 @@ export function startHotSeat(
   // Size from the VIEWPORT, never from the container: the canvas is the
   // container's only child, so measuring the container would feed the canvas its
   // own width back and pin it at Three's 300px default.
+  /**
+   * Fit the board to the space the fixed chrome leaves it.
+   *
+   * The HUD and the log are `position: fixed`, so they do not shrink the
+   * viewport — the board has to subtract them itself or it renders underneath.
+   * Their sizes are **measured**, not assumed: both have CSS breakpoints, and a
+   * hardcoded 260/300 would silently mis-fit the board at every width except
+   * the one it was tuned on.
+   *
+   * The board's own container is still never measured — the canvas is its only
+   * child, so that would feed the canvas its own width back and pin it.
+   */
   const sizeToContainer = (): void => {
-    // The fixed HUD (UI3) owns the bottom strip, so the board is fitted to what
-    // is left rather than to the raw viewport — otherwise it hides behind it.
-    const w = Math.max(360, Math.min(globalThis.innerWidth - 48, 1180));
-    const h = Math.max(280, Math.min(Math.round(w * 0.58), globalThis.innerHeight - HUD_RESERVED_PX));
-    renderer.resize(Math.round(h / 0.58) < w ? Math.round(h / 0.58) : w, h);
+    // The log is a right-hand column on a wide screen and a strip above the HUD
+    // on a narrow one, so it costs width in one layout and height in the other.
+    // Which one is *read off the box*, not branched on a pixel threshold — the
+    // breakpoint lives in the stylesheet and duplicating it here would let the
+    // two drift apart silently.
+    const logBox = ui.log?.getBoundingClientRect();
+    const logIsColumn = logBox !== undefined && logBox.width < globalThis.innerWidth * 0.6;
+    const sideChrome = logIsColumn ? logBox.width : 0;
+    const bottomChrome =
+      ui.controls.getBoundingClientRect().height
+      + (logIsColumn ? 0 : (logBox?.height ?? 0))
+      + TOP_CHROME_PX;
+    const w = Math.max(MIN_BOARD_PX.width, Math.min(globalThis.innerWidth - sideChrome - GUTTER_PX, MAX_BOARD_WIDTH_PX));
+    const h = Math.max(MIN_BOARD_PX.height, Math.min(Math.round(w * BOARD_ASPECT), globalThis.innerHeight - bottomChrome));
+    // Keep the aspect when height is the binding constraint, so a short window
+    // narrows the board rather than stretching it.
+    renderer.resize(Math.min(Math.round(h / BOARD_ASPECT), w), h);
   };
   sizeToContainer();
   fitCamera();
@@ -212,18 +230,18 @@ export function startHotSeat(
     selectCharacter: selectUnit,
     selectAbility,
     hoverAbility: (abilityId, control, def) => {
-      if (abilityId === undefined || control === undefined || def === undefined) { hideTip(); clearHover(); }
-      else { showTip(control, def); hover = { abilityId }; }
+      if (abilityId === undefined || control === undefined || def === undefined) hideTip();
+      else showTip(control, def);
+      interaction = hoverAbility(interaction, abilityId);
       renderPreviews();
     },
     selectMove,
-    hoverMove: (kind) => { hover = kind === undefined ? {} : { move: kind }; renderPreviews(); },
+    hoverMove: (kind) => { interaction = hoverMove(interaction, kind); renderPreviews(); },
     hold: () => {
       const unit = selectedUnit();
       if (unit === undefined) return;
       drafts.set(unit.unitId, emptyDraft(unit.unitId));
-      mode = 'idle';
-      clearHover();
+      interaction = IDLE;
       render();
     },
     lock: lockSelected,
@@ -242,6 +260,11 @@ export function startHotSeat(
       render();
     },
   });
+
+  // The HUD and log are what `sizeToContainer` measures, so re-fit now that both
+  // exist and carry content — the first pass ran before either was populated.
+  sizeToContainer();
+  fitCamera();
 
   // Ability hover tooltip (TT1) — one reused element, positioned by the button.
   const tooltip = document.createElement('div');
@@ -276,7 +299,6 @@ export function startHotSeat(
     drafts.set(unit.unitId, fresh);
     return fresh;
   };
-  const clearHover = (): void => { hover = {}; };
 
   /** The shield pool `initView` sums, so board and HUD never disagree. */
   const shieldOf = (u: UnitState): number =>
@@ -313,8 +335,7 @@ export function startHotSeat(
 
   function selectUnit(unitId: string): void {
     selectedUnitId = unitId;
-    mode = 'idle';
-    clearHover();
+    interaction = IDLE;
     render();
   }
 
@@ -360,6 +381,7 @@ export function startHotSeat(
     // Where an action *could* go, which is a different question from what a
     // given aim covers — and the one a player asks before selecting anything.
     // Hovering a control answers it without touching the draft.
+    const { hover } = interaction;
     const hovered = hover.abilityId !== undefined ? findOnCharacter(character, hover.abilityId) : undefined;
     const envelopeAbility = hovered ?? (hover.move === undefined ? chosen : undefined);
     renderer.highlight(
@@ -374,14 +396,14 @@ export function startHotSeat(
     // comes straight from the engine (4 with an ability, 8 sprinting, 0 rooted).
     const sprinting = hover.move === 'sprint' || (hover.move === undefined && draft.sprint);
     const showMove = hover.move !== undefined
-      || (!isDash && (draft.sprint || mode === 'move' || draft.movePath.length > 0));
+      || (!isDash && (draft.sprint || interaction.mode === 'move' || draft.movePath.length > 0));
     renderer.highlight('reach', showMove ? moveEnvelope(map, state, unit, sprinting) : [], REACH, 0.22);
 
     // ── Layer: the tiles an aim actually covers ──────────────────────────────
     // While the pointer is over the board with a mode armed, this previews the
     // HOVERED aim; otherwise it shows what has been committed. Same `aimFor`
     // either way, so the preview and the commit can never disagree.
-    const preview = previewAim(unit, chosen, draft);
+    const preview = previewAim(map, state, unit, chosen, draft, interaction);
     const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
     renderer.highlight('aim', covered, AIM, 0.5);
 
@@ -401,7 +423,7 @@ export function startHotSeat(
     // you chose and in what order. A DASH is the same indicator in yellow (UI4)
     // — it is still a route, so it gets route geometry rather than nothing, and
     // colour carries the fact that it resolves in a different phase.
-    const route = isDash ? dashRoute(unit, chosen, preview.aim) : previewMovePath(unit, draft);
+    const route = isDash ? dashRoute(unit, chosen, preview.aim) : previewMovePath(map, state, unit, draft, interaction);
     renderer.drawPath(
       route.length > 0 ? [unit.pos, ...route] : [],
       isDash ? DASH_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
@@ -412,26 +434,6 @@ export function startHotSeat(
   /** An ability (ult included) on a character by id — hover works off ids. */
   function findOnCharacter(character: CharacterDef, abilityId: string): AbilityDef | undefined {
     return [...character.abilities, character.ultimate].find((a) => a.id === abilityId);
-  }
-
-  /**
-   * The aim to PAINT right now: the hovered square's aim while the pointer is
-   * over the board in aim mode, else whatever the draft has committed. Hover
-   * never writes to the draft — that is the whole commit/preview split (UI1).
-   */
-  function previewAim(unit: UnitState, ability: AbilityDef | undefined, draft: OrderDraft): { aim: Vec2[]; aimStep?: number } {
-    if (ability !== undefined && mode === 'aim' && hover.square !== undefined) {
-      return aimFor(map, state, unit, ability, hover.square);
-    }
-    return { aim: draft.aim, aimStep: draft.aimStep };
-  }
-
-  /** Likewise for the drawn move: hovered route while drawing, else committed. */
-  function previewMovePath(unit: UnitState, draft: OrderDraft): Vec2[] {
-    if (mode === 'move' && hover.square !== undefined) {
-      return pathTo(map, state, unit, hover.square, movementBudget(unit, draft.sprint));
-    }
-    return draft.movePath;
   }
 
   function render(): void {
@@ -486,7 +488,7 @@ export function startHotSeat(
       })),
       move: {
         budget: movementBudget(unit, draft.sprint),
-        drawing: mode === 'move',
+        drawing: interaction.mode === 'move',
         sprinting: draft.sprint,
         sprintDisabled: draft.abilityId !== undefined, // Sprint is move-only (GAME_SPEC §2)
       },
@@ -518,8 +520,7 @@ export function startHotSeat(
     drafts.set(unit.unitId, draft);
     // A self-cast has nowhere to point, so it is committed by selecting it;
     // everything else arms aim mode and waits for the confirming board click.
-    mode = chosen && chosen.shape !== 'self' ? 'aim' : 'idle';
-    clearHover();
+    interaction = arm(chosen && chosen.shape !== 'self' ? 'aim' : 'idle');
     render();
   }
 
@@ -529,14 +530,14 @@ export function startHotSeat(
     const prev = draftFor(unit);
     const wasDash = currentIsDash(prev, characterFor(unit));
     drafts.set(unit.unitId, nextDraft(prev, { type: sprint ? 'selectSprint' : 'selectMove' }, wasDash));
-    mode = 'move';
-    clearHover();
+    interaction = arm('move');
     render();
   }
 
   /**
    * A board click CONFIRMS the armed action (UI1) — it does not end the turn.
-   * The committed aim stays painted until the player replaces it or locks in.
+   * It also **disarms** (UI1-fix): the aim stops following the mouse and the
+   * committed order is what stays on screen. Re-aim by re-selecting the ability.
    */
   function onBoardClick(evt: MouseEvent): void {
     const sq = renderer.squareFromPoint(evt.clientX, evt.clientY);
@@ -545,7 +546,7 @@ export function startHotSeat(
     if (unit === undefined) return;
     const draft = draftFor(unit);
 
-    if (mode === 'aim') {
+    if (interaction.mode === 'aim') {
       const ability = draftAbility(characterFor(unit), draft);
       if (ability === undefined) return;
       // Exactly the aim the hover was already painting — one resolver, so what
@@ -553,9 +554,11 @@ export function startHotSeat(
       const { aim, aimStep } = aimFor(map, state, unit, ability, sq);
       draft.aim = aim;
       draft.aimStep = aimStep;
+      interaction = afterCommit();
       render();
-    } else if (mode === 'move' || draft.sprint) {
+    } else if (interaction.mode === 'move' || draft.sprint) {
       draft.movePath = pathTo(map, state, unit, sq, movementBudget(unit, draft.sprint));
+      interaction = afterCommit();
       render();
     }
   }
@@ -564,19 +567,16 @@ export function startHotSeat(
    * Board hover (UI1): while a mode is armed, the pointer's square previews the
    * action live — the cone/line rotates with the mouse (the old AIM2-UX), a
    * circle follows it, a drawn route re-routes. **The draft is not touched**;
-   * `renderPreviews` reads `hover.square` and paints from that instead.
+   * `renderPreviews` reads `interaction.hover.square` and paints from that.
+   *
+   * Once an action is committed the mode is idle, so this early-returns and the
+   * committed order is left alone.
    */
   function onBoardHover(evt: MouseEvent): void {
-    if (mode === 'idle') return;
     if (selectedUnit() === undefined) return;
-    const sq = renderer.squareFromPoint(evt.clientX, evt.clientY);
-    if (sq === undefined) {
-      if (hover.square === undefined) return;
-      clearHover();
-      return renderPreviews();
-    }
-    if (hover.square !== undefined && hover.square.x === sq.x && hover.square.y === sq.y) return;
-    hover = { square: sq };
+    const next = hoverBoard(interaction, renderer.squareFromPoint(evt.clientX, evt.clientY));
+    if (next === undefined) return; // same tile, or nothing armed: no repaint
+    interaction = next;
     renderPreviews();
   }
 

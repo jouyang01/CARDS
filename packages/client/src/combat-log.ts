@@ -131,6 +131,15 @@ export interface CombatLog {
 }
 
 /**
+ * How many lines the panel keeps. Well past a whole match — a 20-turn 4v4
+ * produces a couple of hundred — so nothing a player could scroll back to is
+ * ever dropped. The cap exists because "accumulates across turns" is otherwise
+ * unbounded: a long session grows the DOM forever, and an oldest-first trim is
+ * the cheap fix. It is a backstop, not a feature.
+ */
+export const MAX_LOG_LINES = 600;
+
+/**
  * The scrollable panel. It accumulates across turns and **auto-scrolls only
  * when the reader is already at the bottom** — scrolling back to read turn 2
  * should not be yanked away the moment turn 7 resolves.
@@ -143,6 +152,24 @@ export function createCombatLog(root: HTMLElement): CombatLog {
   root.appendChild(list);
 
   const all: LogEntry[] = [];
+
+  /**
+   * Drop the oldest lines past the cap. A separator whose entries have all been
+   * trimmed goes with them, so the panel never shows a "Turn 3" heading with
+   * nothing under it.
+   */
+  const trim = (): void => {
+    while (list.childElementCount > MAX_LOG_LINES) {
+      const oldest = list.firstElementChild;
+      if (oldest === null) break;
+      oldest.remove();
+    }
+    while (list.firstElementChild?.classList.contains('log-turn') === true
+      && list.children[1]?.classList.contains('log-turn') === true) {
+      list.firstElementChild.remove(); // an emptied separator
+    }
+    if (all.length > MAX_LOG_LINES) all.splice(0, all.length - MAX_LOG_LINES);
+  };
 
   return {
     appendTurn(turn, events, names) {
@@ -163,6 +190,7 @@ export function createCombatLog(root: HTMLElement): CombatLog {
         list.appendChild(line);
       }
       all.push(...fresh);
+      trim();
       if (pinned) root.scrollTop = root.scrollHeight;
     },
     entries: () => all,
