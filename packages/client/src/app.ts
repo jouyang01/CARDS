@@ -26,7 +26,7 @@ import {
 } from '@cards/engine';
 import { createRenderer, type ProjectionName, type RenderUnit, type Renderer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
-import { focusSquares, phaseWindow, sampleFrame, type Frame } from './animate.js';
+import { focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { type Cue } from './choreograph.js';
 import {
   abilityOptions,
@@ -112,6 +112,20 @@ const DASH_LINE = 0xffd23f;
 const MS_PER_BEAT = 460;
 /** Vertical space the fixed HUD and page chrome claim, so the board fits above. */
 const HUD_RESERVED_PX = 260;
+/**
+ * How far a floating readout rises over its lifetime, and where it starts —
+ * above the billboarded bars, so a number never sits on top of the HP it just
+ * changed.
+ */
+const READOUT_RISE_PX = 34;
+const READOUT_LIFT = 1.6;
+/** How each readout kind reads. Signs and words, not four identical numbers. */
+const READOUT_TEXT: Record<Readout['kind'], (n: number) => string> = {
+  damage: (n) => `−${n}`,
+  absorb: (n) => `${n} absorbed`,
+  heal: (n) => `+${n}`,
+  shield: (n) => `+${n} shield`,
+};
 const now = (): number => performance.now();
 
 export function startHotSeat(
@@ -183,6 +197,13 @@ export function startHotSeat(
   phaseLabel.className = 'phase-label';
   phaseLabel.style.display = 'none';
   ui.board.appendChild(phaseLabel);
+
+  // UI5: floating readouts are DOM anchored to projected world positions —
+  // crisp text with no font atlas, and the renderer stays a geometry engine.
+  const readoutLayer = document.createElement('div');
+  readoutLayer.className = 'readouts';
+  ui.board.appendChild(readoutLayer);
+  const readoutNodes = new Map<string, HTMLElement>();
 
   // The HUD is built ONCE and updated in place (UI3). Rebuilding it per render
   // would fire mouseleave on nodes that no longer exist, so UI1's hover state
@@ -328,6 +349,7 @@ export function startHotSeat(
     renderer.show(stateUnits(), state.decoys.map((d) => d.pos));
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
+    clearReadouts();
     renderer.focusOn([]); // ease back out to the whole board after a resolution
     renderer.highlight('select', [unit.pos], SELECT, 0.5);
 
@@ -596,6 +618,7 @@ export function startHotSeat(
 
       renderer.highlight('aim', [], AIM);
       renderer.highlight('select', [], IMPACT);
+      clearReadouts();
       renderer.show(viewUnits(player.view), viewDecoys(player.view));
     };
     hud.showPlayback(() => {
@@ -667,6 +690,47 @@ export function startHotSeat(
     renderer.highlight('select', frame.impacts.map(squareOf).filter((p): p is Vec2 => p !== undefined), IMPACT, 0.55);
     if (frame.phase !== undefined) phaseLabel.textContent = frame.phase.toUpperCase();
     renderer.focusOn(focusSquares(frame, posOf));
+    showReadouts(frame.readouts, squareOf);
+  }
+
+  /**
+   * Paint UI5's floating numbers. Nodes are keyed and reconciled — a readout
+   * lives for a couple of beats, so rebuilding the layer every frame would
+   * restart its CSS transition on each one.
+   */
+  function showReadouts(readouts: readonly Readout[], squareOf: (id: string) => Vec2 | undefined): void {
+    const live = new Set<string>();
+    for (const r of readouts) {
+      // One node per (unit, kind, amount): a hit and the shield that ate part of
+      // it are two separate numbers on the same unit, and both should show.
+      const key = `${r.unitId}:${r.kind}:${r.amount}`;
+      live.add(key);
+      let node = readoutNodes.get(key);
+      if (node === undefined) {
+        node = document.createElement('div');
+        node.className = `readout ${r.kind}`;
+        node.textContent = READOUT_TEXT[r.kind](r.amount);
+        readoutLayer.appendChild(node);
+        readoutNodes.set(key, node);
+      }
+      const square = squareOf(r.unitId);
+      const at = square === undefined ? undefined : renderer.screenPosition(square.x, square.y, READOUT_LIFT);
+      if (at === undefined) { node.style.display = 'none'; continue; }
+      node.style.display = '';
+      // Rise and fade with age, so several numbers on one unit stack visibly
+      // instead of overprinting.
+      node.style.left = `${at.x.toFixed(1)}px`;
+      node.style.top = `${(at.y - r.age * READOUT_RISE_PX).toFixed(1)}px`;
+      node.style.opacity = `${(1 - r.age * r.age).toFixed(3)}`;
+    }
+    for (const [key, node] of readoutNodes) {
+      if (!live.has(key)) { node.remove(); readoutNodes.delete(key); }
+    }
+  }
+
+  function clearReadouts(): void {
+    for (const node of readoutNodes.values()) node.remove();
+    readoutNodes.clear();
   }
 
   function renderGameOver(): void {

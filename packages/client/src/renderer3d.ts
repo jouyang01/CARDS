@@ -113,6 +113,12 @@ export interface Renderer {
   highlight(layer: HighlightLayer, squares: readonly Vec2[], color: number, opacity?: number): void;
   /** The board square under a client-space point, via a ray/plane intersection. */
   squareFromPoint(clientX: number, clientY: number): Vec2 | undefined;
+  /**
+   * The inverse: where a (fractional) board position lands on screen, in pixels
+   * relative to the canvas. UI5's floating readouts are DOM anchored to world
+   * positions, so they stay crisp and need no font atlas.
+   */
+  screenPosition(x: number, y: number, lift?: number): { x: number; y: number } | undefined;
   /** Switch projection at runtime — the whole reason for an orthographic camera. */
   setProjection(name: ProjectionName): void;
   /** Frame the camera on a board-space rectangle (A3's camera targets this). */
@@ -552,6 +558,19 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       if (hit === undefined) return undefined;
       const sq = toSquare(map, world.worldToLocal(hit.point.clone()));
       return onBoard(map, sq) ? sq : undefined;
+    },
+
+    screenPosition(x, y, lift = 0) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return undefined;
+      const w = squareToWorldXZ(map, { x, y });
+      const ndc = new Vector3(w.x, lift, w.z).project(camera);
+      // Behind the camera, or off the board's plane entirely: nothing to anchor.
+      if (!Number.isFinite(ndc.x) || !Number.isFinite(ndc.y)) return undefined;
+      return {
+        x: ((ndc.x + 1) / 2) * rect.width,
+        y: ((1 - ndc.y) / 2) * rect.height,
+      };
     },
 
     setProjection(name) {

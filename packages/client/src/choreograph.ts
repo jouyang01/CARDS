@@ -58,6 +58,10 @@ export type Cue =
   | (CueBase & { kind: 'move'; unitId: string; from: Vec2; to: Vec2 })
   | (CueBase & { kind: 'displace'; unitId: string; from: Vec2; to: Vec2; displaceKind: 'knockback' | 'pull' })
   | (CueBase & { kind: 'impact'; unitId: string; amount: number; absorbed: number; sourceUnitId: string; abilityId: string })
+  // A benefit landing (UI5). Same shape as an impact and bound to its actor the
+  // same way — by `sourceUnitId`, which A0-heal put on `heal`/`statusApplied`
+  // precisely so a heal could be attributed like a hit.
+  | (CueBase & { kind: 'benefit'; unitId: string; amount: number; benefit: 'heal' | 'shield'; sourceUnitId: string; abilityId: string })
   | (CueBase & { kind: 'death'; unitId: string })
   | (CueBase & { kind: 'respawn'; unitId: string; at: Vec2 })
   | (CueBase & { kind: 'decoy'; decoyId: string; at: Vec2; event: 'spawned' | 'destroyed' });
@@ -71,6 +75,28 @@ const maxEnd = (cues: readonly Cue[], fallback: number): number =>
 
 type Damage = Extract<TurnEvent, { type: 'damage' }>;
 type Fired = Extract<TurnEvent, { type: 'abilityFired' }>;
+type Heal = Extract<TurnEvent, { type: 'heal' }>;
+type Status = Extract<TurnEvent, { type: 'statusApplied' }>;
+
+/**
+ * Heals and shields worth a floating number (UI5). A shield is only news when
+ * it is granted with a pool; other statuses have no magnitude to show.
+ */
+function benefitEvents(events: readonly TurnEvent[]): { unitId: string; amount: number; benefit: 'heal' | 'shield'; sourceUnitId: string; abilityId: string }[] {
+  const out: { unitId: string; amount: number; benefit: 'heal' | 'shield'; sourceUnitId: string; abilityId: string }[] = [];
+  for (const e of events) {
+    if (e.type === 'heal') {
+      const h = e as Heal;
+      out.push({ unitId: h.unitId, amount: h.amount, benefit: 'heal', sourceUnitId: h.sourceUnitId, abilityId: h.abilityId });
+    } else if (e.type === 'statusApplied') {
+      const s = e as Status;
+      if (s.status === 'shield' && (s.amount ?? 0) > 0) {
+        out.push({ unitId: s.unitId, amount: s.amount ?? 0, benefit: 'shield', sourceUnitId: s.sourceUnitId, abilityId: s.abilityId });
+      }
+    }
+  }
+  return out;
+}
 
 /**
  * Build the cue timeline for one resolved turn.
@@ -122,10 +148,12 @@ export function choreograph(events: readonly TurnEvent[]): Cue[] {
 function sequentialPhase(phase: Phase, events: readonly TurnEvent[], start: number): Cue[] {
   const fired = events.filter((e): e is Fired => e.type === 'abilityFired');
   const damage = events.filter((e): e is Damage => e.type === 'damage');
+  const benefits = benefitEvents(events);
 
   const order: string[] = [];
   for (const e of fired) if (!order.includes(e.unitId)) order.push(e.unitId);
   for (const d of damage) if (!order.includes(d.sourceUnitId)) order.push(d.sourceUnitId);
+  for (const b of benefits) if (!order.includes(b.sourceUnitId)) order.push(b.sourceUnitId);
 
   const cues: Cue[] = [];
   let t = start;
@@ -139,6 +167,9 @@ function sequentialPhase(phase: Phase, events: readonly TurnEvent[], start: numb
     const impactT = maxEnd(slot, t);
     for (const d of damage.filter((x) => x.sourceUnitId === actor)) {
       slot.push({ kind: 'impact', t: impactT, dur: BEAT, unitId: d.unitId, amount: d.amount, absorbed: d.absorbed, sourceUnitId: d.sourceUnitId, abilityId: d.abilityId });
+    }
+    for (const b of benefits.filter((x) => x.sourceUnitId === actor)) {
+      slot.push({ kind: 'benefit', t: impactT, dur: BEAT, ...b });
     }
     cues.push(...slot);
     t = maxEnd(slot, t); // next actor starts where this one finished — disjoint ranges
@@ -174,6 +205,7 @@ function simultaneousPhase(phase: Phase, events: readonly TurnEvent[], start: nu
       cues.push({ kind: 'impact', t: impactT, dur: BEAT, unitId: e.unitId, amount: e.amount, absorbed: e.absorbed, sourceUnitId: e.sourceUnitId, abilityId: e.abilityId });
     }
   }
+  for (const b of benefitEvents(events)) cues.push({ kind: 'benefit', t: impactT, dur: BEAT, ...b });
   cueDecoys(events, cues, start);
   return cues;
 }

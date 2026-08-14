@@ -88,6 +88,18 @@
         font-weight: 700; font-size: 14px; padding: 10px 20px; }
       .hud-playback { grid-column: 1 / -1; display: flex; justify-content: center; }
 
+      /* ── UI5: floating damage / absorb / heal / shield readouts ───────────
+         Four visually distinct treatments, not four white numbers: the point
+         is telling at a glance whether a shield ate the hit. */
+      .readouts { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+      .readout { position: absolute; transform: translate(-50%, -100%); white-space: nowrap;
+        font-weight: 800; font-variant-numeric: tabular-nums;
+        text-shadow: 0 1px 3px #000, 0 0 10px rgb(0 0 0 / 0.8); }
+      .readout.damage { color: #ff6b5e; font-size: 20px; }
+      .readout.absorb { color: var(--shield); font-size: 13px; font-weight: 700; }
+      .readout.heal { color: var(--hp); font-size: 18px; }
+      .readout.shield { color: var(--shield); font-size: 14px; font-weight: 700; }
+
       /* ── UI6: the combat log, right side, independently scrollable ───────── */
       .log { position: fixed; top: 0; right: 0; bottom: 0; width: 300px; z-index: 4;
         overflow-y: auto; overscroll-behavior: contain;
