@@ -26,7 +26,7 @@ const char: CharacterDef = {
 const roster: Roster = { 'test-char': char };
 
 const mkUnit = (unitId: string, owner: 0 | 1, x: number, y: number, over: Partial<GameState['units'][number]> = {}) =>
-  ({ unitId, characterId: 'test-char', owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], ...over });
+  ({ unitId, characterId: 'test-char', owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], catalysts: [], catalystsUsed: [], ...over });
 const mkState = (units: GameState['units'], over: Partial<GameState> = {}): GameState =>
   ({ turn: 1, units, traps: [], delayed: [], decoys: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false, ...over });
 const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>

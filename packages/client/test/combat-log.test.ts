@@ -32,7 +32,7 @@ const medic: CharacterDef = {
 const roster: Roster = { gunner, medic };
 
 const mkUnit = (unitId: string, characterId: string, owner: 0 | 1, x: number, y: number, over: Partial<GameState['units'][number]> = {}) =>
-  ({ unitId, characterId, owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], ...over });
+  ({ unitId, characterId, owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], catalysts: [], catalystsUsed: [], ...over });
 const mkState = (units: GameState['units']): GameState =>
   ({ turn: 1, units, traps: [], delayed: [], decoys: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false });
 const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>

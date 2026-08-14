@@ -63,7 +63,12 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   // better than a normal one in every dimension and would accelerate the ult
   // clock for nothing. Both are validation errors, not runtime special cases.
   if (a.free === true) {
-    if (a.phase !== 'prep') errs.push(`${path}: free abilities must be phase "prep" (got "${a.phase}")`);
+    // …except a catalyst, which is consumed rather than cooled down. The reason
+    // the restriction exists is that a *repeatable* free attack is too strong;
+    // `oncePerMatch` is exactly the property that removes that (CAT1).
+    if (a.phase !== 'prep' && a.oncePerMatch !== true) {
+      errs.push(`${path}: free abilities must be phase "prep" unless oncePerMatch (got "${a.phase}")`);
+    }
     if (a.energyGain !== 0) errs.push(`${path}: free abilities must have energyGain 0 (got ${a.energyGain})`);
   }
   if (a.free !== undefined && typeof a.free !== 'boolean') {

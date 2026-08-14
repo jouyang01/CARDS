@@ -6,6 +6,7 @@
  * Row 0 is the first string; x increases left→right, y increases top→bottom.
  */
 
+import { DEFAULT_CATALYSTS } from '../src/catalysts.js';
 import type { GameState, MapDef, TeamId, StatusInstance, UnitState, Vec2 } from '../src/types.js';
 
 export function makeMap(rows: string[], overrides: Partial<MapDef> = {}): MapDef {
@@ -54,6 +55,8 @@ export function makeUnit(
     respawnIn: 0,
     cooldowns: {},
     statuses: [],
+    catalysts: [...DEFAULT_CATALYSTS],
+    catalystsUsed: [],
     ...overrides,
   };
 }

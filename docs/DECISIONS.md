@@ -1361,3 +1361,59 @@ precisely long enough to miss a one-frame flash.
 If the owner saw the enemy team on open, the most likely explanation is a Pages build from
 before VISION1 — worth confirming with them rather than assuming, since a fix for a bug that
 was never there is a fix that can regress unnoticed. Raised in Open Questions.
+
+## 2026-08-26 — CAT1 catalysts (Builder)
+
+**(1) `free: true` outside Prep is legal exactly when `oncePerMatch` is set.** FREE1's
+validation says free abilities must be Prep; CAT1 says every catalyst is `free: true` and
+three of them are Dash/Blast. Both texts are in edge-cases, so this is a genuine conflict and
+the minimal compliant resolution is the one the FREE1 ruling gives its own reason for: the
+restriction exists because a *repeatable* free attack is too strong, and `oncePerMatch` is
+precisely the property that removes that ("repeatable free Dash/Blast actions are the
+catalysts' job — once-per-match, self-limiting"). So the check is now "Prep **unless**
+oncePerMatch", `energyGain: 0` stays unconditional, and nothing else relaxed.
+
+**(2) The catalyst pool reaches the engine as an optional fifth argument to `resolveTurn`.**
+Catalysts are content, so they cannot live in `GameState`, and they are not on any character,
+so `Roster` cannot find them. Widening `Roster` into an object would have touched 25 call
+sites across 20 files and buried the actual change; an additive parameter touches none. With
+no pool passed, a `catalyst` order is dropped exactly like any other unusable component —
+deterministic, never a throw — so an older caller keeps working and simply has no catalysts.
+A test pins that.
+
+**(3) `data/catalysts.json` is a transcription, not a design.** The AC names the file and
+assigns CAT1 to the Builder, but `data/` is the Designer's. Every value in it — the nine
+catalysts, their effects, amounts and durations — is copied verbatim from
+`docs/design/free-actions-and-catalysts.md` §2.2, and the file says so at the top. The
+Designer owns any change. Flagged in Open Questions.
+
+**(4) A range-0 catalyst with no aim targets its own caster.** Suppression is a `circle` of
+range 0 centred on the caster, so the caster's square is the *only* legal aim — rejecting an
+absent one would make it undeclarable, which is the kind of silent nothing this batch exists
+to avoid. Scoped to catalyst planning; ordinary abilities are untouched.
+
+**(5) A Shift is planned for, not planned around.** A Shift resolves at the start of Dash, so
+everything the unit does from Dash onward happens at its landing square: the dash/blast
+ability and the move path are validated from there, and only the Prep ability keeps the
+original square. The ruling ("a Shift resolves before a dash ability the same unit declared")
+means nothing otherwise — the dash would simply be dropped as non-adjacent. Because a
+teleport can be blocked, `runDash` then checks the unit actually arrived and discards those
+plans if it did not; and `runMove` re-checks that the first step is adjacent to where the unit
+really is, so a Move can never become a second teleport.
+
+**(6) When a free ability and a catalyst are ordered together, the catalyst yields.** The
+one-free-action-per-turn rule needs a tiebreak and the ruling does not give one. A catalyst is
+once per match and a free ability is on cooldown, so burning the catalyst is the worse of the
+two mistakes to make on the player's behalf. It stays unspent.
+
+**(7) `AbilityOrder.target` is now optional.** A `self` shape has nothing to aim at, and the
+resolver already read it as `order.target ?? []`. Requiring an empty array to declare Fade or
+Adrenaline was a papercut with no upside. Strict widening — no existing caller changes.
+
+**(8) A Blast-applied Haste cannot extend the same turn's walk — flagged, not fixed.** Move
+paths are validated against the pre-turn budget and only re-clamped *downward* at Move time,
+so Overdrive's Haste can offset a Slow but cannot buy squares. That makes Overdrive read
+slightly weaker than its description ("the Haste lands on the Move that follows it"). Fixing
+it means validating moves optimistically and letting the Move-phase clamp be the only
+enforcement, which changes move semantics for every ability — out of scope for CAT1 and not
+the Builder's call. Pinned by a test so the behaviour is stated rather than discovered.

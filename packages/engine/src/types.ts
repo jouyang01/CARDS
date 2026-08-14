@@ -109,6 +109,16 @@ export interface AbilityDef {
    * free action that is strictly better in every dimension.
    */
   free?: boolean;
+  /**
+   * A **catalyst** (CAT1): consumed on use and gone for the rest of the match,
+   * rather than put on cooldown. Death does not refund one; unused catalysts
+   * survive death and respawn.
+   *
+   * This is also what lets a catalyst be a free Dash or Blast action, which
+   * `free` alone may not be: the reason `free` is Prep-only is that a repeatable
+   * free attack is too strong, and a once-per-match one is self-limiting.
+   */
+  oncePerMatch?: boolean;
   effects: AbilityEffect[];
   description: string;
 }
@@ -170,6 +180,14 @@ export interface UnitState {
   /** abilityId → turns remaining. */
   cooldowns: Record<string, number>;
   statuses: StatusInstance[];
+  /**
+   * The three catalysts this unit carries, one per phase (CAT1). Plain string
+   * **arrays**, not Sets, on purpose: `structuredClone` and the determinism hash
+   * both assume `GameState` is plain JSON, and a Set survives neither.
+   */
+  catalysts: string[];
+  /** Catalyst ids already spent this match. Consumed, not cooled down. */
+  catalystsUsed: string[];
 }
 
 export interface TrapState {
@@ -229,8 +247,12 @@ export interface GameState {
 
 export interface AbilityOrder {
   abilityId: string;
-  /** Meaning depends on shape: aimed square, direction endpoint, or path. */
-  target: Vec2[];
+  /**
+   * Meaning depends on shape: aimed square, direction endpoint, or path.
+   * Optional because a `self` shape has nothing to aim at — a self-cast or a
+   * self-centred catalyst should not have to carry an empty array to be legal.
+   */
+  target?: Vec2[];
   /**
    * Free-rotation aim for `line`/`cone` (AIM2): a QUANTIZED INTEGER direction in
    * [0, AIM_STEPS), never a float or a radian — the client does the mouse→step
@@ -254,6 +276,12 @@ export interface UnitOrders {
    * conservative v1 reading), counting this and `catalyst` together.
    */
   freeAbility?: AbilityOrder;
+  /**
+   * A **catalyst** (CAT1) — one of the three this unit carries, not already
+   * spent. Like `freeAbility` it is additive and never prices the turn; at most
+   * one of the two per unit per turn (edge-cases, the conservative v1 reading).
+   */
+  catalyst?: AbilityOrder;
   /** Move-phase path, first square = first step. Empty/absent = hold. */
   movePath?: Vec2[];
   /** True = no ability, extended move range. A free action never blocks it. */
@@ -296,6 +324,8 @@ export type TurnEvent =
   | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
+  // A catalyst is spent (CAT1) — playback and the HUD's spent-slot greying.
+  | { type: 'catalystUsed'; unitId: string; catalystId: string }
   | { type: 'trapTriggered'; trapId: string; unitId: string }
   // A decoy appears (rendered to the enemy team as Wisp) / is revealed & removed.
   | { type: 'decoySpawned'; decoyId: string; pos: Vec2; teamId: TeamId }
