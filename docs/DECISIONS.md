@@ -1283,3 +1283,49 @@ engine fix from shipping.
    backlog and the review rather than in edge-cases, and that file is the Designer's. The
    rulings as implemented are written up in this file under today's entries — they should
    probably be mirrored there by whoever owns it.
+
+## 2026-08-14 — AoE footprints: CONE-B ramp, and circles fixed at the rule (Designer)
+
+Answers backlog HITBOX-tune and supplies CONE-B's ramp. Every number measured against the
+shipped engine on an empty board, not derived from prose. Full workings in
+`docs/design/aoe-footprints-v1.md`.
+
+**(1) CONE-B's ramp falls out of the measurement: `halfWidth(d) = d`.** Today's axis-aligned
+cone covers 3 / 8 / 15 / 24 tiles at ranges 1–4, whose per-depth widths are 3, 5, 7, 9 — i.e.
+exactly `2d+1`, which is the footprint of a wedge whose perpendicular half-width equals the
+axial depth. So the ramp that preserves the owner-approved reach needs no table and no
+division: the test is `perp² ≤ d²` in HITBOX1's ×2 integer lattice. Measured for context, the
+inflation CONE-B removes is larger than the prose suggested — a range-4 cone covers 24 tiles
+axis-aligned and **42 on the diagonal**, 75% more for the same number.
+
+**(2) The circle half of HITBOX-tune cannot be done in data, so it is done in the rule.**
+`radius` is an integer and the steps are far too coarse: an r2 circle either keeps its
+inflated 21 tiles or drops to 9, against a pre-HITBOX1 target of 13. No integer lands on the
+target, so the prescribed data pass would churn thirteen abilities to arrive somewhere still
+wrong. The real cause is not the metric but that **the half-tile hitbox is added on top of the
+authored radius** — `radius: 2` is drawn as a disc of radius 2 and then granted another half
+tile, for a true reach of 2.5. Ruling: **an authored `radius` is the final footprint radius,
+not the pre-hitbox region radius.** The engine derives the region as `r − 0.5` so composing
+HITBOX1 returns exactly `r`, which reduces `circleSquares` to `dx² + dy² ≤ r²` — simpler than
+what it replaces, still pure integer. HITBOX1's rule and its halfway guarantee are untouched;
+only the interpretation of the authored number changes. Measured result: r1 and r2 land
+**exactly** on their pre-HITBOX1 footprints (5 and 13), covering 12 of the roster's 13
+circles; r3 goes 37 → 29 against an old 25, accepted for a single ultimate. **No data changes
+anywhere**, which removes a thirteen-ability balance pass from the batch.
+
+**(3) The principle worth keeping: a number in `data/` means the footprint you get.** Authored
+values are the final reach and the engine derives whatever internal region produces it. The
+alternative — data holding pre-composition values the engine then inflates — is precisely how
+thirteen circles silently grew 48–80% without anyone editing a file. The CONE-B ramp follows
+the same principle.
+
+**(4) A live conflict surfaced, needing an owner call.** MET1 rules that `circle`/`square`
+measure **Manhattan** distance to the aimed square; HITBOX1's circular hitbox test made
+circles **Euclidean** discs. Both are RULED and they disagree, and nobody following either has
+been wrong. Recommended resolution is **Euclidean** (superseding MET1's circle clause), because
+HITBOX1's hitbox is itself a circle and a circular region composed with circular hitboxes is
+rotation-invariant by construction — the same property CONE-B exists to restore for cones,
+whereas a Manhattan diamond bakes in the axis bias we are removing. The alternative (Manhattan,
+`|dx| + |dy| ≤ r`) restores all three counts exactly at 5 / 13 / 25 and is the same size of
+change in the other direction. Either way **one of the two rulings must be marked superseded**
+rather than left in quiet conflict.

@@ -22,6 +22,27 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > `data/catalysts.json` and the `free: true` flags in `data/characters/{vex,thorn,wisp}.json`
 > are already written against the final design and are inert until the engine reads them.
 
+> **⚠ NOT YET FOLDED IN — AoE footprints, ruled 2026-08-14 (Designer).**
+> `docs/design/aoe-footprints-v1.md` answers **HITBOX-tune** and supplies the **CONE-B** ramp,
+> measured against the shipped engine. Two things the Analyzer needs from it:
+> 1. **CONE-B's ramp is `halfWidth(d) = d`** — the ramp that reproduces today's approved
+>    axis-aligned footprint (3 / 8 / 15 / 24 tiles at ranges 1–4) exactly. Owner has approved
+>    those numbers, so **no cone data changes**.
+> 2. **HITBOX-tune's data pass should be re-scoped to a one-line engine fix.** Lowering
+>    `radius` cannot work for circles — the integer steps are too coarse (r2 keeps 21 or drops
+>    to 9, target 13). The cause is that HITBOX1's half-tile is *added on top of* the authored
+>    radius. Ruling: **an authored `radius` is the final footprint radius**, so the engine
+>    derives the region as `r − 0.5` and `circleSquares`' test `4·(dx²+dy²) ≤ (2r+1)²` becomes
+>    `dx² + dy² ≤ r²`. Restores r1=5 and r2=13 exactly (12 of the 13 circles in the roster);
+>    r3 → 29. **No data changes anywhere** — suggest closing HITBOX-tune's data half and
+>    scheduling **CIRCLE-FIX** (engine) instead.
+>
+> **It also surfaces a live conflict needing a ruling:** MET1 says `circle`/`square` use
+> **Manhattan** to the aimed square, but HITBOX1 made circles **Euclidean** discs. Both are
+> RULED and they disagree. The doc recommends Euclidean (and supersedes MET1's circle clause);
+> the Manhattan alternative restores all three counts exactly (5 / 13 / 25). Either way one of
+> the two rulings must be marked superseded rather than left in quiet conflict.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
