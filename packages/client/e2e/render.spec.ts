@@ -4,6 +4,7 @@ import {
   decodePng,
   distinctColours,
   isAimOrange,
+  isFogged,
   isTeamBlue,
   isTeamRed,
   type Image,
@@ -93,16 +94,20 @@ test.beforeEach(async ({ page }) => {
   expect(failures, 'the page must load without throwing').toEqual([]);
 });
 
-test('the board composites an actual scene, with both teams on it', async ({ page }) => {
+test('the board composites an actual scene, fogged to the seat on the clock', async ({ page }) => {
   const image = await pixels(page);
 
   // A renderer that draws nothing composites one flat colour. Hundreds of
   // distinct colours means terrain, units and shading all made it to the screen.
   expect(distinctColours(image), 'the canvas looks flat — nothing was drawn').toBeGreaterThan(MIN_DISTINCT_COLOURS);
 
-  // And they are the right things: two teams, two colours, both present.
+  // And they are the right things. Team 0 has the clock, so its units are on
+  // screen; team 1 spawns further than sight reaches, so under VISION1 it is
+  // not drawn at all. Both halves matter: the first catches "nothing drew", the
+  // second catches fog quietly doing nothing.
   expect(countPixels(image, isTeamBlue), 'team 0 units are missing from the board').toBeGreaterThan(0);
-  expect(countPixels(image, isTeamRed), 'team 1 units are missing from the board').toBeGreaterThan(0);
+  expect(countPixels(image, isTeamRed), 'the unseen enemy team must not be drawn').toBe(0);
+  expect(countPixels(image, isFogged), 'the board is not fogged — VISION1 did not paint').toBeGreaterThan(0);
 
   // The HUD came up with it, so this is a live match rather than a
   // half-initialised page that happened to paint a background.
@@ -193,6 +198,36 @@ test('the camera responds to a right-drag orbit', async ({ page }) => {
   await page.mouse.up({ button: 'right' });
   await page.waitForTimeout(300);
   expect(same(await frame(page), before), 'a right-drag must orbit the camera').toBe(false);
+});
+
+/**
+ * MAPTOGGLE — the 4v4 map has been in `data/` and validated by unit tests since
+ * M1, and was still unreachable in a browser because the entry point hard-coded
+ * `duel-arena`. A unit test cannot tell you the URL boots; this can.
+ */
+test.describe('the dev map/format toggle', () => {
+  test('?map=iron-basin&format=4v4 boots a playable 4v4', async ({ page }) => {
+    const failures: string[] = [];
+    page.on('pageerror', (e) => failures.push(`pageerror: ${e.message}`));
+    await page.goto('./?map=iron-basin&format=4v4');
+    await expect(boardCanvas(page)).toBeVisible();
+    await page.waitForTimeout(700);
+    expect(failures, 'the 4v4 setup must load without throwing').toEqual([]);
+
+    // A live board with the seat's own team on it, and a HUD you can act
+    // through — "playable", not just "painted".
+    const image = await pixels(page);
+    expect(distinctColours(image), 'the 4v4 board looks flat').toBeGreaterThan(MIN_DISTINCT_COLOURS);
+    expect(countPixels(image, isTeamBlue), 'no units on the 4v4 board').toBeGreaterThan(0);
+    await expect(page.locator('.hud-ability').first()).toBeVisible();
+    await expect(lockIn(page)).toBeVisible();
+  });
+
+  test('a mistyped map says so instead of quietly loading another one', async ({ page }) => {
+    await page.goto('./?map=iron-bason');
+    await expect(page.locator('#app pre')).toContainText('unknown map');
+    await expect(boardCanvas(page)).toHaveCount(0);
+  });
 });
 
 /**

@@ -1,0 +1,47 @@
+name: Render verify
+# RENDER-VERIFY: the only check that can see what the renderer composited.
+# `gl.readPixels`/`toDataURL` come back all-black off the WebGL canvas, so the
+# rendered output is unreachable from a unit test — a real browser taking real
+# screenshots is the only thing that catches "it drew nothing".
+#
+# Deliberately a SEPARATE workflow from CI: the Pages deploy gates on CI, and a
+# browser download or a headless GPU hiccup must not be able to block shipping
+# an engine fix. This is a pre-merge signal, not a release gate.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Cache the browser binaries — ~280 MB per run otherwise. The install
+      # below still runs unconditionally rather than being skipped on a cache
+      # hit: with a warm cache it is a fast no-op, and a stale or mis-keyed
+      # cache then costs time instead of correctness.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+      # Only Chromium: the suite asserts composited colours, not cross-browser
+      # behaviour, so the other engines would cost minutes and prove nothing.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: packages/client
+      - name: Render smoke test
+        run: npm run test:e2e
+        working-directory: packages/client
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: render-verify-trace
+          path: packages/client/test-results/
+          retention-days: 7

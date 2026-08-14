@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aimInRange, buildBoard, createMatch, expandShape, reachableSquares, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
+import { aimInRange, buildBoard, createMatch, distance, expandShape, reachableSquares, reconstructPath, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
 import {
   abilityOptions,
   abilityPreview,
@@ -14,6 +14,8 @@ import {
   moveEnvelope,
   movePreview,
   nextDraft,
+  pathTo,
+  pathToExact,
   pathValid,
   rangeEnvelope,
   shapeOutline,
@@ -505,10 +507,11 @@ describe('UI2: shapeOutline is the continuous shape the covered tiles approximat
       const poly = shapeOutline(bast, cone, [], step, covered);
       expect(poly).toHaveLength(3); // a wedge is a triangle
       for (const tile of covered) expect(inside(poly, tile), `step ${step} tile ${tile.x},${tile.y}`).toBe(true);
-      // The apex sits half a tile in front of the caster — where the engine's
-      // own "half-width is d-1" rule reaches zero, not at the caster's centre.
+      // The engine's wedge starts half a tile in front of the caster; growing it
+      // by the half-tile hitbox drags the drawn apex 0.71 back along the axis,
+      // so it ends up just *behind* the caster's centre (HITBOX1).
       const apex = poly[0]!;
-      expect(Math.hypot(apex.x - bast.pos.x, apex.y - bast.pos.y)).toBeCloseTo(0.5, 6);
+      expect(Math.hypot(apex.x - bast.pos.x, apex.y - bast.pos.y)).toBeCloseTo(Math.SQRT1_2 - 0.5, 6);
     }
   });
 
@@ -582,5 +585,114 @@ describe('UI2: Layer 1 stops where Layer 2 stops', () => {
     expect(clipped.length).toBeLessThan(whole.length); // a tile really was dropped
     expect(shapeOutline(u, grenade, [target], undefined, clipped))
       .toEqual(shapeOutline(u, grenade, [target], undefined, whole));
+  });
+});
+
+/**
+ * MOVE1 — clicking somewhere you cannot end must never do nothing.
+ *
+ * The reported bug: clicking a teammate's tile left the character standing
+ * still. Two separate failures produce it — an occupied square is *reachable*,
+ * so the old code handed the engine a path ending where the unit may not stop
+ * (rejected wholesale), while an unreachable square produced no path at all.
+ * Both now walk as far toward the click as the rules allow.
+ */
+describe('MOVE1: a move click routes to the nearest legal tile', () => {
+  // The shared OPEN map is 1v1-shaped; a 2v2 needs a second spawn per team so
+  // two allies actually stand next to each other.
+  const PAIRED: MapDef = { ...OPEN, spawns: [[{ x: 1, y: 7 }, { x: 1, y: 8 }], [{ x: 13, y: 7 }, { x: 13, y: 8 }]] };
+  const crowded = () => {
+    const s = createMatch(PAIRED, '2v2', [[VEX, VEX], [BASTION, BASTION]]);
+    return { s, unit: s.units[0]!, ally: s.units[1]! };
+  };
+
+  it('clicking an OCCUPIED tile still moves — the reported bug', () => {
+    const { s, unit, ally } = crowded();
+    // Sanity: the ally's square really is reachable-but-not-stoppable, which is
+    // why the old path ended there and the engine threw the order away.
+    const reach = reachableSquares(buildBoard(PAIRED), s, unit, 4);
+    const allySquare = reach.find((r) => r.pos.x === ally.pos.x && r.pos.y === ally.pos.y)!;
+    expect(allySquare.canStop).toBe(false);
+
+    const path = pathTo(PAIRED, s, unit, ally.pos, 4);
+    expect(path.length, 'the move must not be dropped').toBeGreaterThan(0);
+    const end = path[path.length - 1]!;
+    expect(end, 'must not end on the occupied square').not.toEqual({ x: ally.pos.x, y: ally.pos.y });
+    // And it is a legal destination the engine will accept.
+    expect(pathValid(PAIRED, s, unit, path, false)).toBe(true);
+  });
+
+  it('lands adjacent to the tile it could not stop on — as far as legally possible', () => {
+    const { s, unit, ally } = crowded();
+    const end = pathTo(PAIRED, s, unit, ally.pos, 4).at(-1)!;
+    expect(Math.abs(end.x - ally.pos.x) + Math.abs(end.y - ally.pos.y)).toBe(1);
+  });
+
+  it('clicking OUT OF RANGE walks toward it instead of standing still', () => {
+    const s = state();
+    const unit = vexUnit(s);
+    const far = { x: 14, y: 14 };
+    expect(reconstructPath(reachableSquares(buildBoard(OPEN), s, unit, 4), unit.pos, far)).toBeNull();
+
+    const path = pathTo(OPEN, s, unit, far, 4);
+    expect(path.length).toBeGreaterThan(0);
+    const end = path.at(-1)!;
+    // Strictly closer to the click than standing still would be.
+    expect(distance(end, far)).toBeLessThan(distance(unit.pos, far));
+    expect(pathValid(OPEN, s, unit, path, false)).toBe(true);
+  });
+
+  it('picks the reachable square CLOSEST to the click, not merely a legal one', () => {
+    const s = state();
+    const unit = vexUnit(s);
+    const far = { x: 14, y: 14 };
+    const end = pathTo(OPEN, s, unit, far, 4).at(-1)!;
+    const best = Math.min(
+      ...reachableSquares(buildBoard(OPEN), s, unit, 4).filter((r) => r.canStop).map((r) => distance(r.pos, far)),
+    );
+    expect(distance(end, far)).toBe(best);
+  });
+
+  it('a normal reachable click is unchanged — exact target, exact path', () => {
+    const s = state();
+    const unit = vexUnit(s);
+    const target = { x: unit.pos.x + 2, y: unit.pos.y };
+    expect(pathTo(OPEN, s, unit, target, 4).at(-1)).toEqual(target);
+  });
+
+  it('clicking your OWN square is a hold, not a re-route', () => {
+    const s = state();
+    const unit = vexUnit(s);
+    expect(pathTo(OPEN, s, unit, { ...unit.pos }, 4)).toEqual([]);
+  });
+
+  it('is deterministic — repeated calls agree, and ties do not depend on BFS order', () => {
+    const s = state();
+    const unit = vexUnit(s);
+    const far = { x: 14, y: 0 }; // diagonal-ish, so several squares tie on distance
+    const first = pathTo(OPEN, s, unit, far, 4);
+    for (let i = 0; i < 5; i++) expect(pathTo(OPEN, s, unit, far, 4)).toEqual(first);
+  });
+
+  it('a rooted unit (zero budget) still yields no move rather than a bogus one', () => {
+    const s = state();
+    const unit = vexUnit(s);
+    expect(pathTo(OPEN, s, unit, { x: 14, y: 14 }, 0)).toEqual([]);
+  });
+});
+
+describe('MOVE1: a DASH aim still requires a reachable target', () => {
+  it('does not re-route — a charge must ram who you clicked, or nothing', () => {
+    // MOVE1's forgiving fallback is a ruling about the *move* command. Silently
+    // walking a charge somewhere else would change which unit it hits, so the
+    // dash resolver stays strict and the preview stays honestly empty.
+    const s = state();
+    const u = vexUnit(s);
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!;
+    expect(aimFor(OPEN, s, u, roll, { x: 14, y: 14 }).aim).toEqual([]);
+    expect(pathToExact(OPEN, s, u, { x: 14, y: 14 }, roll.range)).toEqual([]);
+    // A reachable one still works exactly as before.
+    const near = { x: u.pos.x + 2, y: u.pos.y };
+    expect(pathToExact(OPEN, s, u, near, roll.range).at(-1)).toEqual(near);
   });
 });

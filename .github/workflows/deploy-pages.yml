@@ -2,6 +2,10 @@ name: Deploy to GitHub Pages
 # Deploy only runs after the CI workflow succeeds on main, so a red build
 # (failing tests, typecheck, or the determinism guard) can never publish to
 # the live site. Manual runs via workflow_dispatch are still allowed.
+#
+# CI is the CORE checks only. RENDER-VERIFY is a separate workflow on purpose
+# (see ci.yml): a broken engine or build must never publish, but a browser
+# download failing must never stop an urgent fix from shipping.
 on:
   workflow_run:
     workflows: [CI]

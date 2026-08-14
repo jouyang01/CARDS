@@ -15,6 +15,7 @@ import {
   aimInRange,
   buildBoard,
   direction8,
+  distance,
   dominantCardinal,
   expandShape,
   findAbility,
@@ -31,6 +32,7 @@ import {
   type CharacterDef,
   type GameState,
   type MapDef,
+  type ReachableSquare,
   type UnitOrders,
   type UnitState,
   type Vec2,
@@ -229,10 +231,72 @@ export function movePreview(map: MapDef, state: GameState, unit: UnitState, spri
   return { stops, through };
 }
 
-/** A legal path from `unit` to `target` within `budget` movement cost, or []. */
+/**
+ * A legal path from `unit` toward `target` within `budget` movement cost.
+ *
+ * **Clicking somewhere you cannot end never does nothing (MOVE1).** You may not
+ * *stop* on an occupied square, and you may not reach past your budget or
+ * through a wall — but silently dropping the whole move reads as "the game
+ * ignored me", which is what the owner hit when clicking a teammate's tile.
+ * Instead the unit goes **as far as legally possible toward** the click.
+ *
+ * Two distinct failures both land here: an occupied target is *reachable* and so
+ * yields a path that ends where the unit may not stop (the engine then rejects
+ * the whole order), while an unreachable target yields no path at all. Both
+ * become "walk toward it".
+ *
+ * The engine rule is untouched — this is the client picking a legal destination.
+ */
 export function pathTo(map: MapDef, state: GameState, unit: UnitState, target: Vec2, budget: number): Vec2[] {
+  // Clicking your own square is a deliberate hold, not a failed move.
+  if (target.x === unit.pos.x && target.y === unit.pos.y) return [];
+
+  const board = buildBoard(map);
+  const squares = reachableSquares(board, state, unit, budget);
+  const exact = squares.find((s) => s.pos.x === target.x && s.pos.y === target.y);
+  const destination = exact?.canStop === true ? target : nearestLegalStop(squares, target)?.pos;
+  if (destination === undefined) return []; // boxed in — there is nowhere legal to go
+  return reconstructPath(squares, unit.pos, destination) ?? [];
+}
+
+/**
+ * The strict resolver: the clicked square's own path, or nothing.
+ *
+ * **Dash aims use this, not `pathTo`.** MOVE1's forgiving re-route is a ruling
+ * about the *move* command; a dash is an ability, and walking a charge to a
+ * different square than the player clicked would silently change who it rams.
+ * An unreachable dash target therefore still previews as illegal — which is the
+ * honest answer — rather than quietly becoming a shorter charge.
+ */
+export function pathToExact(map: MapDef, state: GameState, unit: UnitState, target: Vec2, budget: number): Vec2[] {
   const board = buildBoard(map);
   return reconstructPath(reachableSquares(board, state, unit, budget), unit.pos, target) ?? [];
+}
+
+/**
+ * The reachable square a unit should settle for when the clicked one is not a
+ * legal stop: closest to the target, then cheapest, then a fixed scan order.
+ *
+ * All three keys are needed for determinism. Distance alone ties constantly on a
+ * grid; cost breaks most of those and prefers not overshooting; the final
+ * `(y, x)` comparison makes the answer independent of the order
+ * `reachableSquares` happens to return, so a future BFS change cannot silently
+ * move where players end up.
+ */
+function nearestLegalStop(squares: readonly ReachableSquare[], target: Vec2): ReachableSquare | undefined {
+  let best: ReachableSquare | undefined;
+  for (const square of squares) {
+    if (!square.canStop) continue;
+    if (best === undefined || rank(square, target) < rank(best, target)) best = square;
+  }
+  return best;
+}
+
+/** Lexicographic (distance, cost, y, x) packed into one comparable number. */
+function rank(square: ReachableSquare, target: Vec2): number {
+  // Grid coordinates and costs are small integers, so packing is exact; the
+  // widths are generous enough that no field can bleed into the next.
+  return ((distance(square.pos, target) * 1024 + square.cost) * 1024 + square.pos.y) * 1024 + square.pos.x;
 }
 
 /**
@@ -257,7 +321,7 @@ export function aimFor(
     case 'cone':
       return { aim: [], aimStep: dragToAimStep(unit.pos, target) };
     case 'path':
-      return { aim: pathTo(map, state, unit, target, ability.range) };
+      return { aim: pathToExact(map, state, unit, target, ability.range) };
     case 'circle':
     case 'square':
       return { aim: [{ ...target }] };
@@ -287,20 +351,23 @@ export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim:
  * A closed polygon in **board coordinates** (fractional squares) outlining the
  * continuous geometric shape an ability projects — UI2's Layer 1.
  *
- * Layer 2 is the truth (`expandShape`'s tiles, centre-in binary). Layer 1 is the
- * fiction: the smooth cone/beam/disk the tiles approximate. Drawing only the
- * tiles makes a clipped corner read as a bug; drawing only the shape hides which
- * squares actually take the hit. So both, and **from the same numbers** — every
- * dimension below is the engine's own rule, not an eyeballed silhouette:
+ * Layer 2 is the truth (`expandShape`'s tiles, binary). Layer 1 is the fiction:
+ * the smooth cone/beam/disk the tiles approximate. Drawing only the tiles makes
+ * a clipped corner read as a bug; drawing only the shape hides which squares
+ * actually take the hit. So both, and **from the same numbers** — every
+ * dimension below is the engine's own rule, not an eyeballed silhouette.
  *
- * - a **line** reaches `range` tiles along its axis (`alongAxis`), and covers a
- *   tile whose centre is nearest the ray — so the beam is a half-tile-wide band.
- * - a **cone**'s half-width at depth `d` is `d − 1` tiles, i.e. `d − 0.5` from
- *   centre to outer tile edge. That line hits zero at `d = 0.5`, so the true
- *   apex sits half a tile in front of the caster. Not an approximation — it is
- *   where the engine's own widening rule starts.
- * - a **circle** is `dx² + dy² ≤ r²`, a genuine disk; `r + 0.5` reaches the
- *   outer edge of the last covered tile.
+ * Under HITBOX1 a tile is covered when the ability's area comes within half a
+ * tile of its centre, so each outline is that area pushed out by half a tile —
+ * which makes Layer 1 exactly the boundary Layer 2 is testing against:
+ *
+ * - a **line** is a ray `range` tiles along its axis (`alongAxis`), so the beam
+ *   draws as a band half a tile to each side of it.
+ * - a **cone** is a 45° wedge whose apex sits half a tile ahead of the caster.
+ *   Pushing its edges out half a tile widens each row by 0.71 (½ / cos 45°) and
+ *   pulls the apex back behind the caster.
+ * - a **circle** is a genuine disk of radius `r`; `r + 0.5` is where the hitbox
+ *   of the outermost covered tile is reached.
  *
  * `path` and `self` return no outline: a route already draws as a line (AIM1),
  * and a self-cast has no projected shape.
@@ -348,13 +415,18 @@ export function shapeOutline(
       if (dir === undefined || reach < 1) return [];
       const axis = unitVector(dir);
       const n = perpUnit(dir);
-      // Half-width grows as `d − 0.5` (the engine's `d − 1` tiles, plus the half
-      // tile out to the edge), so the wedge is the exact triangle through
-      // (0.5, 0) and (range + 0.5, range): apex half a tile ahead of the
-      // caster, far edge past the last covered row.
-      const apex = { x: from.x + axis.x * HALF_TILE, y: from.y + axis.y * HALF_TILE };
+      // The engine's wedge has its apex half a tile ahead and 45° edges. Under
+      // HITBOX1 a tile is covered when that wedge comes within half a tile of
+      // its centre, so the silhouette is the wedge pushed out by half a tile:
+      // sliding a 45° edge sideways by ½ moves it ½/cos45° = 0.71 across, which
+      // widens every row by that much and drags the apex back behind the caster.
+      const grow = HALF_TILE * Math.SQRT2;
+      const apex = {
+        x: from.x + axis.x * (HALF_TILE - grow),
+        y: from.y + axis.y * (HALF_TILE - grow),
+      };
       const far = alongAxis(dir, reach + HALF_TILE);
-      const half = reach;
+      const half = reach + grow;
       return [
         apex,
         { x: from.x + far.x - n.x * half, y: from.y + far.y - n.y * half },

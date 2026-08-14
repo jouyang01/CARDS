@@ -1096,3 +1096,190 @@ stops a single turn dumping a whole kit. Flagged as the designed first lever to 
 abilities read as ordinary Prep abilities on a longer cooldown with no energy — weaker than
 they are today and weaker than designed, never stronger. That is the safe direction to fail
 in, and it is the convention `chargeHits` already shipped under.
+
+## 2026-08-14 — MOVE1 and HITBOX1 (Builder)
+
+**(1) A move click that cannot be honoured routes as far as it legally can (MOVE1).** The
+Dev Note reported that clicking an occupied square does nothing. Two different mechanisms
+produced that one symptom: an occupied square *is* reachable but has `canStop: false`, so
+`reconstructPath` returned a path ending on it and the engine rejected the whole order; an
+out-of-budget square is simply unreachable and returned `null`. Both now fall back to the
+**nearest legal stop** — minimum Manhattan distance to the click, ties broken by lowest path
+cost, then y, then x, so the choice is total and deterministic. Clicking your own square
+stays a deliberate hold. The engine rule ("you may not end your move on an occupied square")
+is untouched; this is purely the client deciding what an unhonourable click *meant*.
+
+**(2) A dash aim still requires an exactly reachable target.** Applying the same forgiveness
+to charges would change **who they ram**, which is the whole decision a charge is. So
+`pathTo` (forgiving, for the Move order) and `pathToExact` (strict, for `path`-shaped
+ability aims) are now separate functions and the dash path uses the strict one.
+
+**(3) HITBOX1 needed the *area* of each shape spelled out, not just the coverage rule.**
+"A tile is hit iff the area intersects a half-tile circle at its centre" is only answerable
+once you say what the area is. The three continuous regions chosen are the ones the old
+discrete rules were approximating, so nothing about a shape's character changes — only which
+tiles at its fringe count:
+- **line** — the segment from the caster's centre to the point `range` tiles along the axis.
+  A zero-width ray, so the covered band comes out exactly one tile wide.
+- **cone** — a 45° wedge with its **apex half a tile in front of the caster**, capped `range`
+  tiles along the axis. That apex is not a choice: the old "half-width is `d − 1` tiles"
+  rule reaches zero width at `d = 0.5`, so it is where the engine's own widening already
+  started (the client's Layer-1 outline has drawn it there since UI2).
+- **circle** — a true disk of the ability's radius.
+
+**(4) The boundary is inclusive: exactly half a tile away is a hit.** The Dev Note is
+explicit ("if an AoE cuts at least halfway along the edge it's guaranteed to hit"), and an
+inclusive `≤` also keeps the arithmetic integral — a strict `<` would make the answer depend
+on ties that only exist because the lattice is exact. Cardinal cones sit on that boundary at
+every row, so this is not a corner case: it is what makes a range-3 cone 3/5/7 tiles wide
+instead of 3/5/5.
+
+**(5) The whole predicate is squared-integer, never a distance.** Square roots and float
+compares are exactly where two machines disagree, and a shape that covers one extra tile on
+one machine desynchronises a match. So every test is a comparison of two squared quantities
+scaled by a common integer factor. The cone needed the most care: shifting the origin to the
+apex and scaling by `2m` turns the wedge into the triangle `(0,0) → (cap, ±cap)`, whose 45°
+edges have direction `(1, 1)` — which is why distances are carried as **twice** the squared
+distance, so `2·(perp/√2)²` is the plain integer `perp²`. Every predicate was cross-checked
+against an exact floating-point reference over all 256 aim steps × the 8 compass directions ×
+ranges 1–8 × the full offset box: **2,078,208 comparisons, zero mismatches**, with the 1,152
+exact-boundary cases all resolving to "hit". Largest intermediate is 1.9e11, four orders
+below 2^53, so nothing can silently lose precision. A `shapes.test.ts` signature folds every
+shape at every aim into one `Math.imul` checksum, which is the cross-engine regression: no
+refactor can move a single tile anywhere without changing that number.
+
+**(6) A wall stops a line at its depth, and ties settle y-then-x.** Coverage is no longer
+computed by walking outward one step at a time, so "stops at the first wall" needed
+restating: candidates are sorted by their projection along the axis and the ray ends at the
+first wall in that order. Two tiles the beam grazes at the same depth are ordered y then x —
+arbitrary, but fixed, which is all determinism asks. Cones still drop wall squares without
+occluding what is behind them (unchanged).
+
+**(7) Coverage grew, and rebalancing is not mine to do.** The new rule is strictly more
+generous — the shipped roster's four cones (all `range: 2`) go from 4 tiles to 8, a radius-1
+circle from 5 to 9, radius-2 from 13 to 21, radius-3 from 25 to 37. Lines are unchanged.
+That is a real balance shift and it belongs to the Designer; it is raised in this session's
+Open Questions rather than absorbed by quietly editing `data/`.
+
+## 2026-08-14 — VISION1 fog of war (Builder)
+
+**(1) The client asks, it never derives.** The engine already models AR-style vision in full —
+line of sight through cover but not walls, a Manhattan sight radius, brush concealment with
+the adjacency exception, Stealth/Reveal, sight shared across a team. `fog.ts` calls
+`visibleEnemiesForTeam` and `visibleSquaresForTeam` and paints the answers. There is
+deliberately nowhere in the client for the vision *rules* to be wrong differently from the
+engine's; if fog looks wrong, the engine is wrong and the fix is an engine test.
+
+**(2) Corpses are not fogged.** A unit that died in front of you was revealed when it died,
+and `teamCanSee` returns false for the dead — so a strict reading would have remains blink
+out on the next turn's fog check. That reads as a rendering bug, not as information you lost,
+so dead units are always drawn. Living enemies are the only thing fog hides.
+
+**(3) Fog sits *under* the aim overlay, not over it.** You may shoot where you cannot see —
+that is the whole tension of a simultaneous-turn game — so the ability preview has to read
+over darkness. The fog layer is therefore the bottom-most tile layer, and it is the one layer
+drawn at full tile size: inset like the others, it came out as a grid of lit seams.
+
+**(4) At turn 1 the enemy team is invisible, on both shipped maps.** Spawn separation is 13
+and sight reaches 6, so the first thing a playtester now sees is an empty half of the board.
+That is faithful to the reference and it is what the Dev Note asked for, but it is a large
+change to how the game *reads* on opening, so it is called out rather than buried — and
+RENDER-VERIFY now asserts it in a real browser, which is where it was first noticed.
+
+**(5) One-slot memo, because mouse-follow aiming repaints per pointer move.** `fogView` walks
+every unit's line of sight, and AIM2-UX re-renders on every `mousemove`. State cannot change
+mid-Decision, so the answer depends only on which seat is looking; caching on
+`(state, team)` identity is exact rather than an approximation.
+
+## 2026-08-14 — MAPTOGGLE (Builder)
+
+**(1) A typo is an error, not a fallback.** `?map=iron-bason` renders "unknown map — try one
+of: duel-arena, iron-basin" and refuses to start. Quietly loading `duel-arena` because you
+mistyped the map you wanted to test is the one behaviour a dev toggle must not have: you get
+a whole playtest session's data about the wrong map. Every problem is reported at once
+rather than the first, so one reload fixes a URL with two mistakes in it.
+
+**(2) Teams are dealt alternately from one catalogue.** `dealTeams` gives team 0 the even
+indices and team 1 the odd. That reproduces the shipped 2v2 demo exactly (Vex + Wisp vs
+Bastion + Aegis) from the same list that yields a mixed 4v4, so there is one ordering to
+maintain instead of a table per format. Kestrel is the odd one out at nine characters and is
+simply left off the dev list — deciding who plays is the M3 lobby's job, not a constant's.
+
+**(3) Default seating is per format, and 2v2's stays asymmetric.** 2v2 keeps `[2, 1]`, the
+three-player split this entry point has always shipped, because a seat handover only has a
+bug to have when the two teams are seated differently — it is the arrangement most worth
+exercising. Everything else takes the fewest seats the format allows so a solo playtester
+does the fewest handovers. `?players=a,b` overrides either way.
+
+**(4) Both shipped maps already seat 4v4.** `duel-arena` carries four spawn squares per team,
+not two, so `?format=4v4` works on it as well — worth knowing, because the review framed
+4v4 as an `iron-basin` feature. The map/format validation is still checked (and unit-tested
+against a synthetic one-spawn map), because the next map added is the one that forgets.
+
+## 2026-08-14 — CI-decouple (Builder)
+
+**RENDER-VERIFY moved to its own workflow rather than being reordered inside CI.** The
+Analyzer's ruling was "the Pages deploy gates on core CI, not on the render smoke test", and
+the cleanest way to make that structurally true is for the render job not to be in the
+workflow the deploy watches at all. `deploy-pages.yml` still fires on `workflow_run: [CI]`
+concluding success — unchanged, no new gate to get wrong — and `CI` now contains only the
+release gates: engine tests, typecheck, client build, bundle budget, determinism guard. A
+comment in each of the three files says which side of the line it is on, because the failure
+mode this fixes was invisible (a red render job **skipped** the deploy silently) and the next
+person adding a job to `ci.yml` needs to know they are adding a release gate.
+
+RENDER-VERIFY still runs on every PR and on `main`; a red check there is the guardrail. What
+it no longer does is let a 280 MB browser download or a headless GPU hiccup stop an urgent
+engine fix from shipping.
+
+## Open Questions for the Analyzer — 2026-08-14 (MOVE1 / HITBOX1 / VISION1 / MAPTOGGLE / CI-decouple)
+
+1. **HITBOX1 grew every area shape — the Designer needs to retune, or rule that they meant
+   it.** Coverage is strictly more generous under the AR hitbox: the roster's four cones (all
+   `range: 2`) go 4 → 8 tiles, radius-1 circles 5 → 9, radius-2 13 → 21, radius-3 25 → 37.
+   Lines are unchanged. Damage numbers were tuned against the old footprints, so every circle
+   and cone in the roster is now meaningfully stronger at the same cost. I did not touch
+   `data/`. Is this a Designer pass on `radius`/`range`, or accepted as-is?
+
+2. **A rotated cone now covers more tiles than an axis-aligned one — and that follows from a
+   ruling I cannot change alone.** The standing MET1×AIM2 ruling meters directional range as a
+   *tile count* along the axis, so at 45° one "tile" of depth is a diagonal step and the wedge
+   is √2 longer in real distance — and area goes as the square. At `range: 2` (the whole
+   shipped roster) that is 8 tiles axis-aligned vs 12 at 45°; at `range: 4` it would be 24 vs
+   42. The old discrete rule hid this by counting a fixed 1+3+5+7 tiles at every rotation
+   while spreading them over the same stretched footprint. Two options, both one-line:
+   **(a)** accept it — rotated cones reach the same tile count and hit more, or **(b)** meter
+   the wedge's *half-width* in Euclidean tiles rather than tile-count units, which narrows a
+   diagonal cone's angle and makes its area near-rotation-invariant. I have shipped (a)
+   because it is what the standing ruling literally says. Your call, and it wants an
+   edge-cases entry either way.
+
+3. **Fog makes the enemy team invisible at turn 1 on both maps.** Spawn separation is 13,
+   `VISION_RANGE` is 6. That is faithful to the reference and to the Dev Note, but the first
+   thing a playtester sees is now an empty half of the board with no indication anything is
+   over there. Is that the intended opening, or does it want a turn-1 grace reveal / spawn
+   markers / last-known-position ghosts (the AC put ghosts explicitly out of scope)?
+
+4. **`iron-basin` is not the only 4v4 map — `duel-arena` has four spawn squares per team.**
+   Review issue 2 framed 4v4 as an iron-basin feature; in fact `?format=4v4` works on both.
+   Worth correcting in the backlog so 4v4 playtest is not scoped to one map.
+
+5. **MOVE1's forgiving routing is client-side only, and deliberately not applied to dashes.**
+   A move click that cannot be honoured now walks as far toward it as it legally can; a dash
+   aim still requires an exactly reachable target, because re-routing a charge changes who it
+   rams. If you would rather charges were forgiving too, that is a rules question — say so and
+   it is a one-line change.
+
+6. **`Kestrel` is not in the dev draft.** 4v4 needs exactly eight characters and the roster
+   has nine, so the dev catalogue lists eight and Kestrel never plays through MAPTOGGLE.
+   Deciding who plays is the M3 lobby's job; flagging it so Kestrel does not go untested by
+   accident until then.
+
+7. **The bundle is at 160.6 kB gzipped against a 300 kB budget** after MAPTOGGLE pulled in
+   the second map and four more characters. No action needed; noting the trend since every
+   future character is another JSON import into the entry chunk.
+
+8. **`docs/design/edge-cases.md` has no HITBOX1 or MOVE1 entry.** Both were ruled in the
+   backlog and the review rather than in edge-cases, and that file is the Designer's. The
+   rulings as implemented are written up in this file under today's entries — they should
+   probably be mirrored there by whoever owns it.
