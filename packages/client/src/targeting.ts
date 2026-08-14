@@ -156,9 +156,19 @@ export function dragToAimStep(from: Vec2, to: Vec2): number {
   return vectorToStep(to.x - from.x, to.y - from.y);
 }
 
-/** Is `sprint` currently selectable? Only when no ability is chosen (GAME_SPEC §2). */
-export function sprintAllowed(draft: OrderDraft): boolean {
-  return draft.abilityId === undefined;
+/**
+ * Is `sprint` currently selectable? Only when no ability is chosen
+ * (GAME_SPEC §2) — and, since CAT-DASH-COST, only when no **Dash catalyst** is
+ * armed either, because a Dash catalyst now spends the Move rather than riding
+ * alongside it. A free *ability* still never blocks it (FREE1), and neither
+ * does a Prep or Blast catalyst.
+ *
+ * `dashCatalystArmed` is passed in rather than read off the draft because a
+ * draft stores ids, and only the caller holds the catalyst pool that says which
+ * phase an id belongs to.
+ */
+export function sprintAllowed(draft: OrderDraft, dashCatalystArmed = false): boolean {
+  return draft.abilityId === undefined && !dashCatalystArmed;
 }
 
 /** Resolve a draft's ability id against the character (ult included). */
@@ -650,13 +660,25 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
  */
 export type DraftAction =
   | { type: 'selectAbility'; abilityId: string; isDash: boolean }
-  | { type: 'selectCatalyst'; catalystId: string }
+  // `isDash` mirrors `selectAbility`'s: since CAT-DASH-COST a Dash catalyst
+  // spends the Move, so it has the same exclusivity a dash ability does.
+  | { type: 'selectCatalyst'; catalystId: string; isDash?: boolean }
   | { type: 'selectFreeAbility'; abilityId: string }
   | { type: 'selectMove' }
   | { type: 'selectSprint' }
   | { type: 'clear' };
 
-export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash: boolean): OrderDraft {
+/** Hand a Dash catalyst's slot back when the player chooses to move instead. */
+const releaseDashCatalyst = (draft: OrderDraft, isDash: boolean): OrderDraft =>
+  isDash ? { ...draft, catalystId: undefined, catalystAim: [] } : draft;
+
+export function nextDraft(
+  draft: OrderDraft,
+  action: DraftAction,
+  currentIsDash: boolean,
+  /** Whether the draft's *existing* catalyst is a Dash one (CAT-DASH-COST). */
+  currentCatalystIsDash = false,
+): OrderDraft {
   switch (action.type) {
     case 'selectAbility':
       // Choosing an ability clears sprint and re-aims; a dash owns the movement
@@ -666,11 +688,21 @@ export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash:
       // A catalyst is a SEPARATE slot: everything else in the draft survives,
       // including the chosen ability and its aim. Re-picking the same one
       // deselects it, so the slot can be given back without clearing the turn.
-      return draft.catalystId === action.catalystId
-        ? { ...draft, catalystId: undefined, catalystAim: [] }
+      if (draft.catalystId === action.catalystId) return { ...draft, catalystId: undefined, catalystAim: [] };
+      return {
+        ...draft,
+        catalystId: action.catalystId,
+        catalystAim: [],
         // The other side of "one free action per turn": a catalyst drops an
         // armed free ability, symmetrically.
-        : { ...draft, catalystId: action.catalystId, catalystAim: [], freeAbilityId: undefined, freeAim: [] };
+        freeAbilityId: undefined,
+        freeAim: [],
+        // …and a DASH catalyst additionally drops the move, because it is no
+        // longer free: it buys its effect with the Move (CAT-DASH-COST), so a
+        // move line left drawn beside it would promise a walk the engine is
+        // going to throw away. Prep and Blast catalysts still change nothing.
+        ...(action.isDash === true ? { sprint: false, movePath: [] } : {}),
+      };
     case 'selectFreeAbility':
       // A separate slot, exactly like a catalyst: the chosen ability, its aim,
       // its rotation and any drawn move all survive. Re-picking deselects.
@@ -680,15 +712,24 @@ export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash:
       return draft.freeAbilityId === action.abilityId
         ? { ...draft, freeAbilityId: undefined, freeAim: [] }
         : { ...draft, freeAbilityId: action.abilityId, freeAim: [], catalystId: undefined, catalystAim: [] };
-    case 'selectMove':
-      // "Draw move" keeps a non-dash ability; a dash (or no ability) is replaced.
+    case 'selectMove': {
+      // Choosing to move gives back whatever was holding the Move: a dash
+      // ability, or (since CAT-DASH-COST) a Dash catalyst. A non-dash ability
+      // keeps its slot — move AND shoot is the point of MS1.
+      const freed = releaseDashCatalyst(draft, currentCatalystIsDash);
       return draft.abilityId !== undefined && !currentIsDash
-        ? { ...draft, sprint: false, movePath: [] }
-        : { ...draft, abilityId: undefined, aim: [], sprint: false, movePath: [] };
+        ? { ...freed, sprint: false, movePath: [] }
+        : { ...freed, abilityId: undefined, aim: [], sprint: false, movePath: [] };
+    }
     case 'selectSprint':
-      // Sprint is move-only (8) and clears any ability — but NOT the catalyst,
-      // which never prices the turn (FREE1 budget independence).
-      return { ...draft, abilityId: undefined, aim: [], sprint: true, movePath: [] };
+      // Sprint is move-only (8) and clears any ability. A Prep or Blast catalyst
+      // rides along untouched — those never price the turn (FREE1 budget
+      // independence) — but a Dash catalyst is given back, because it and Sprint
+      // are now bidding for the same Move.
+      return {
+        ...releaseDashCatalyst(draft, currentCatalystIsDash),
+        abilityId: undefined, aim: [], sprint: true, movePath: [],
+      };
     case 'clear':
       return emptyDraft(draft.unitId);
   }

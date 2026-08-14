@@ -1740,3 +1740,34 @@ emitted when Stealth is actually broken and for each status that expires at the 
 and only when the status was really present. `removeStatus` now returns whether it removed
 anything and `tickStatuses` returns the expired kinds, so neither caller has to re-inspect the
 unit. This is additive to the log; no state, no ordering and no resolution outcome changed.
+
+## 2026-08-28 — Builder: CAT-DASH-COST implemented under a dev overrule, uniformly per colour
+
+**The conflict, stated plainly.** `docs/design/edge-cases.md` carries a shipped ruling —
+*"RULED — A free dash catalyst (Shift) does NOT consume your Move. Genuinely additive."* — and
+`docs/BACKLOG.md` files CAT-DASH-COST under "Blocked on Designer" with **"Do not implement before
+the Designer rules."** The owner's Dev Note for this session says *"Dash Catalysts should not be a
+free action,"* and the Analyzer's notes mark the item **DO NOT HOLD (DEV OVERRULE)**. Implemented
+on that authority. The edge-cases ruling is now stale on this point; **the Builder does not edit
+`docs/design/`**, so the Designer needs to retire it — flagged in Open Questions below.
+
+**What shipped.** A Dash-phase catalyst spends the unit's Move, exactly as a dash ability does:
+`planUnit` drops the walk and cancels Sprint for any unit that actually spends one. Shift 3 in
+Dash *or* walk 4 in Move, never both. Prep and Blast catalysts are untouched and stay fully
+additive — they never touched movement, so repricing them would be inventing a cost the directive
+did not ask for. Free *abilities* are also untouched: FREE1's budget independence was never in
+question, and a regression test pins that the change did not leak out of the Dash colour.
+
+**The judgment call.** The Analyzer's PROPOSED recommendation was narrower — the Move cost for the
+catalyst that *repositions*, with an open question about whether Fade and Unshackle (which move
+nobody) also lose additivity. The directive names the **colour**, not Shift, so all three Dash
+catalysts pay. One rule per colour is also the version a player can hold in their head: "yellow
+costs your Move" is learnable, "yellow costs your Move unless it doesn't move you" is a footnote.
+This is the more conservative reading of the directive and the *less* conservative reading of the
+economy, so it is exactly the sub-question worth a Designer confirmation — noted below rather than
+settled here.
+
+**Client.** The cost has to be visible before it is paid, or it is just a bug: arming a Dash
+catalyst clears the drawn move and disables Sprint, the HUD's move budget reads 0, and choosing to
+move or sprint hands the catalyst slot back rather than silently voiding it. The CAT2 separate-slot
+invariant is otherwise intact — a Dash catalyst still never touches the chosen ability or its aim.

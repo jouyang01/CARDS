@@ -232,34 +232,52 @@ function planUnit(
   if (freeAbility?.def.free !== true || freeAbility.def.id === ability?.def.id) freeAbility = undefined;
 
 
+  // **At most one free action per turn** (edge-cases, the conservative v1
+  // reading) counts catalysts and free abilities together. The catalyst yields:
+  // it is the scarcer resource, so burning one by accident on a turn that also
+  // declared a free ability is the worse of the two mistakes. Resolved here
+  // rather than in the return, because whether a catalyst is actually spent is
+  // what decides the Move below.
+  const spentCatalyst = freeAbility === undefined ? catalyst : undefined;
+
+  // CAT-DASH-COST — a **Dash catalyst is not a free action** (owner directive,
+  // 2026-08-28: "Dash Catalysts should not be a free action"). It buys its
+  // effect with the unit's Move, exactly as a dash ability does: Shift 3 in Dash
+  // *or* walk 4 in Move, never both. This reverses CAT1's "a free dash catalyst
+  // does NOT consume your Move" for the Dash colour only — Prep and Blast
+  // catalysts stay fully additive, because they never touched movement.
+  //
+  // Applied uniformly across all three Dash catalysts, not just the one that
+  // repositions. The directive names the colour, not Shift, and one rule per
+  // colour is the reading a player can hold in their head; see DECISIONS
+  // 2026-08-28 for the sub-question this leaves open for the Designer.
+  const dashCatalyst = spentCatalyst?.def.phase === 'dash';
+
   // Sprint is "move only": it is ignored the moment a real ability is used —
-  // and a free action is **not** one. Reading `ability` alone here is the whole
-  // of FREE1's budget independence: `movementBudget` takes only the unit and
-  // this flag, so a free action can never shrink a move or cancel a Sprint.
-  const sprint = ability === undefined && order.sprint === true;
+  // and a free action is **not** one. Reading `ability` alone here was the whole
+  // of FREE1's budget independence; a Dash catalyst now joins it, because it is
+  // no longer free. `movementBudget` still takes only the unit and this flag, so
+  // a *free* action still cannot shrink a move or cancel a Sprint.
+  const sprint = ability === undefined && !dashCatalyst && order.sprint === true;
 
   // A dash ability IS the unit's movement this turn; a separate Move path is
-  // dropped (see docs/DECISIONS.md).
+  // dropped (see docs/DECISIONS.md). A Dash catalyst now costs the same.
   let movePath: Vec2[] = [];
   const dashing = ability?.def.phase === 'dash';
-  if (!dashing && order.movePath !== undefined && order.movePath.length > 0) {
-    // A Shift resolves in Dash and does NOT consume the Move (CAT1), so the walk
-    // that follows it starts from where it lands — validate from there, not from
-    // where the unit is standing now. If the teleport turns out to be blocked,
-    // Move re-checks that the first step is actually adjacent and drops the walk.
+  if (!dashing && !dashCatalyst && order.movePath !== undefined && order.movePath.length > 0) {
+    // A Shift resolves in Dash, so a walk that followed it would start from
+    // where it lands — validate from there, not from where the unit is standing
+    // now. Unreachable while a Dash catalyst spends the Move, and kept because
+    // `after` is the correct origin for any future non-Move-spending teleport.
     const check = validateMovePath(board, draft, after, order.movePath, sprint);
     if (check.valid) movePath = order.movePath.map((p) => ({ x: p.x, y: p.y }));
   }
 
-  // **At most one free action per turn** (edge-cases, the conservative v1
-  // reading) counts catalysts and free abilities together. The catalyst yields:
-  // it is the scarcer resource, so burning one by accident on a turn that also
-  // declared a free ability is the worse of the two mistakes.
   return {
     unit,
     ability,
     freeAbility,
-    catalyst: freeAbility === undefined ? catalyst : undefined,
+    catalyst: spentCatalyst,
     shiftTo: freeAbility === undefined ? shiftTo : undefined,
     movePath,
     sprint,
@@ -789,9 +807,10 @@ function impactBlasts(
  */
 function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'dash' });
-  // Shift resolves before a dash ability the same unit declared, and — the
-  // ruling that fails silently — it does NOT consume the Move: nothing here
-  // touches `plan.movePath`, and Move reads only `plan.sprint` for its budget.
+  // Shift resolves before a dash ability the same unit declared. Its Move cost
+  // (CAT-DASH-COST) was already taken at plan time — `planUnit` drops the walk
+  // for any unit spending a Dash catalyst — so nothing here needs to touch
+  // `plan.movePath`.
   runCatalysts(draft, board, plans, 'dash', events);
   // A blocked Shift leaves the unit where it started, and everything it planned
   // from the landing square now describes nothing. Dropping those is the safe

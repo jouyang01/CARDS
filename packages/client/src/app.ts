@@ -60,6 +60,7 @@ import {
   pathTo,
   rangeEnvelope,
   shapeOutline,
+  sprintAllowed,
   toUnitOrders,
   type OrderDraft,
 } from './targeting.js';
@@ -669,13 +670,17 @@ export function startHotSeat(
         }];
       }),
       move: {
-        budget: movementBudget(unit, draft.sprint),
+        // A Dash catalyst buys its effect with the Move (CAT-DASH-COST), so the
+        // budget reads 0 rather than 4 — the number has to say what you will
+        // actually get, or the cost is invisible until the turn resolves.
+        budget: dashCatalystArmed(draft) ? 0 : movementBudget(unit, draft.sprint),
         drawing: interaction.mode === 'move',
         sprinting: draft.sprint,
         // Sprint is move-only (GAME_SPEC §2) — but a FREE ability is not the
         // turn's ability, so it must not disable it. Keying this off the wrong
-        // field is how "I cannot sprint after placing my trap" happened.
-        sprintDisabled: draft.abilityId !== undefined,
+        // field is how "I cannot sprint after placing my trap" happened. A Dash
+        // catalyst does disable it: it is no longer a free action.
+        sprintDisabled: !sprintAllowed(draft, dashCatalystArmed(draft)),
       },
       lock: { label: last ? 'Lock In & resolve ⚔' : 'Lock In ▸' },
       view: {
@@ -689,6 +694,14 @@ export function startHotSeat(
 
   const currentIsDash = (draft: OrderDraft, character: CharacterDef): boolean =>
     draftAbility(character, draft)?.phase === 'dash';
+
+  /**
+   * Is the draft holding a Dash catalyst? Since CAT-DASH-COST that is no longer
+   * a free rider — it spends the Move — so it gates Sprint and the move budget
+   * exactly as a dash ability does.
+   */
+  const dashCatalystArmed = (draft: OrderDraft): boolean =>
+    draft.catalystId !== undefined && catalysts[draft.catalystId]?.phase === 'dash';
 
   /**
    * Arm a **free** ability (FREE-UI): its own slot, its own aim, additive with
@@ -737,7 +750,13 @@ export function startHotSeat(
     if (unit === undefined) return;
     const def = catalysts[catalystId];
     if (def === undefined || unit.catalystsUsed.includes(catalystId)) return;
-    const draft = nextDraft(draftFor(unit), { type: 'selectCatalyst', catalystId }, false);
+    const prev = draftFor(unit);
+    const draft = nextDraft(
+      prev,
+      { type: 'selectCatalyst', catalystId, isDash: def.phase === 'dash' },
+      false,
+      dashCatalystArmed(prev),
+    );
     // A self-cast has nowhere to point; a Shift or a Suppression needs a square,
     // so the board click that follows lands in the catalyst's own aim slot.
     if (draft.catalystId !== undefined && def.shape === 'self') draft.catalystAim = [{ ...unit.pos }];
@@ -751,7 +770,12 @@ export function startHotSeat(
     if (unit === undefined) return;
     const prev = draftFor(unit);
     const wasDash = currentIsDash(prev, characterFor(unit));
-    drafts.set(unit.unitId, nextDraft(prev, { type: sprint ? 'selectSprint' : 'selectMove' }, wasDash));
+    drafts.set(unit.unitId, nextDraft(
+      prev,
+      { type: sprint ? 'selectSprint' : 'selectMove' },
+      wasDash,
+      dashCatalystArmed(prev),
+    ));
     interaction = arm('move');
     render();
   }
