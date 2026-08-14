@@ -1607,3 +1607,104 @@ Bodyguard hybrid failing at its one job), and Ravok's Bullrush (charge-and-deton
 knockback 2 → 1 because it now applies to an area and the kit's displacement budget allows one
 displacement ≥2). Escapes were deliberately left alone — an escape that also deals AoE is not
 an escape, it is an engage.
+
+## 2026-08-27 — Track A geometry: AIM-METRIC, CONE-B, CIRCLE-FIX, DASH-IMPACT (Builder)
+
+**(1) The line keeps its half-tile band; only its range becomes a distance.** AIM-METRIC makes
+`line` axial depth Euclidean, and CONE-B's `perp² ≤ d²` would make a line (a zero-width wedge)
+cover only tiles exactly on the axis — a rotated beam would hit almost nothing. So the band is
+HITBOX1's, unchanged, and only the cap moved. The visible consequence, asserted rather than
+left to be found: a **diagonal beam covers fewer tiles** than an axis-aligned one of the same
+range, because its tiles are √2 apart. Reach is the invariant; count is not.
+
+**(2) CONE-B needed no geometry change — the predicate already shipped in this branch was
+exactly the re-spec.** `b² ≤ a²` with `a² ≤ range²·|V|²` in the `(a = P·V, b = V×P)` frame *is*
+`perp² ≤ d²` with Euclidean axial range. What was missing was the acceptance check, now added:
+the **reach**, projected onto the axis, lands within **0.5 tile-widths** of the axis-aligned
+figure at every one of the 256 rotations for ranges 1–8. That is the check the tile count
+misses and the one that catches the 4-vs-7 length bug.
+
+**(3) The ±1 cone tile-count AC is not attainable, and the suite asserts the measured bound
+instead.** The region's area is exactly rotation-invariant now; what varies is how the lattice
+samples the half-tile boundary band, which grows with the perimeter and so with range. The
+axis-aligned case is **the bottom of that distribution, not its centre** — the lattice lines up
+with the wedge's edges, so `≤` picks up a whole extra row for free. Measured over all 256
+rotations: r1 3..4, r2 8..10, r3 14..19, r4 24..29, r8 80..88. The suite asserts
+`[axis − 1, axis + range + 1]`, verified for every rotation at ranges 1–8. Making it ±1 would
+require moving the axis-aligned footprint off the owner-approved 3/8/15/24, which is a Designer
+call, not a Builder one. Raised in Open Questions.
+
+**(4) The line's reach check needed its own tolerance.** A beam is one tile wide, so its last
+covered centre can sit up to √2/2 inside the endpoint — measured worst case 1.30 tiles at
+range 8. The suite asserts **over-reach ≤ 0** (the hard half — over-reach was the bug) and
+**shortfall < 1.5** (the soft half, which is the lattice rather than the rule).
+
+**(5) A dash `impact` is an AREA, so FF1 polarity applies to it — and that changes one shipped
+behaviour.** The deleted teleport-strike branch was a "directly aimed" strike and hit allies;
+a blast radius is an area, and harmful area effects reach enemies only. So Shadowstep no longer
+catches an adjacent ally. The same ruling is what makes Aegis's Intercept work: beneficial
+effects reach allies in the blast, which is the Bodyguard fantasy the ability never delivered.
+The caster is excluded from the ally pass and picked up by the existing self-effects, so nobody
+is shielded twice. Asserted both ways.
+
+**(6) `impact.destination` is centred on where the dasher ACTUALLY came to rest.** A charge that
+passes through bodies and stops short detonates where it stopped, not where it aimed. The
+alternative — blasting the ordered square — would let a player detonate on a square they never
+reached. A test drives a charge stopped two squares short.
+
+**(7) The blast is not previewed.** `expandShape` still returns the path (or landing square) for
+a dash, so UI2's overlay shows no blast radius for an ability whose whole point is "leap into
+the middle of them and detonate". Extending `expandShape` was not in DASH-IMPACT's scoped files
+and would change what `a.area` denotes at plan time (aimed) versus resolution (actual rest), so
+it is flagged rather than assumed. Raised in Open Questions.
+
+**(8) `validateAbility` now rejects unknown `impact` members, but still accepts unknown
+top-level `AbilityDef` keys.** The review suggested a general "reject unknown keys" pass. The
+`impact` block is covered; the general pass touches every ability in `data/` and every test
+fixture at once, so it is a separate item rather than a rider on this one.
+
+## Open Questions for the Analyzer — 2026-08-27 (Track A + carryover)
+
+1. **CONE-B's ±1 tile-count AC cannot hold; the suite asserts `[axis − 1, axis + range + 1]`,
+   verified at every one of the 256 rotations for ranges 1–8.** The axis-aligned case is the
+   bottom of the distribution, not its centre (the lattice lines up with the wedge edges). The
+   **reach** half of the AC passes exactly — within 0.5 tile-widths everywhere. Confirm the
+   count bound, or rule a different axis-aligned footprint (a Designer call).
+
+2. **The line's rotation-invariance clause needs re-wording.** "(a) `line`/`cone` tile count
+   within ±1 of axis-aligned" is unattainable for beams by construction: a diagonal beam's tiles
+   are √2 apart, so a range-8 line is 8 tiles east and 5 on the diagonal. The suite asserts
+   `[floor(range/√2), range + 1]` plus the reach cap. The *reach* clause is the meaningful one
+   for lines and it passes.
+
+3. **DASH-IMPACT is not previewed** (DECISIONS (7)). `expandShape` returns the path/landing
+   square, so UI2 shows no blast radius. Natural follow-up item: either extend `expandShape` for
+   `impact` (one authority, preview for free — but `a.area` then means "aimed" while the
+   resolver blasts "actual rest"), or a client-side overlay. Needs a ruling on which.
+
+4. **Shadowstep no longer catches an adjacent ALLY** (DECISIONS (5)) — the deleted branch was a
+   directly-aimed strike, an `impact` is an area, and FF1 filters areas. Ruled as a consequence
+   rather than a choice; flagging because it is a live behaviour change to a shipped ability,
+   and Wisp already carried a rebalance flag.
+
+5. **A general "reject unknown `AbilityDef` keys" pass is not done** (review 2026-08-27 issue 1).
+   `impact` is validated; the general pass touches every ability and fixture at once, so it wants
+   its own item.
+
+6. **Track B and VISION1-opening are built on this branch, not on `main`.** The backlog lists
+   them as carryover because PR #33 is still open — FREE1, CAT1, CAT2 and VISION1-opening are all
+   implemented and tested here. Re-review them against the ACs on this PR rather than scheduling
+   them again. Their open questions from 2026-08-26 (1–11) are still open — in particular the
+   FREE1/CAT1 `free`+`oncePerMatch` conflict resolution, the one-free-action tiebreak, and
+   `AbilityOrder.target` becoming optional.
+
+7. **CAT2's parked "Shift teleport-preview" is ambiguous and half of it already exists.** What
+   ships: selecting Shift arms a `'catalyst'` mode and a board click paints its destination in
+   its own overlay layer. What does **not**: previewing a *normal ability* aimed from the Shift's
+   landing square (the engine plans it from there — CAT1 — but the client still aims from the
+   unit's current position). Confirm which one M3 owns; the shipped half is working and would be
+   a regression to remove.
+
+8. **Ravok's Bullrush is un-nerfed now.** Its `impact:{destination:2}` is live, so the playtest
+   note "Ravok is temporarily undertuned" no longer applies — the knockback is still 2→1 as the
+   Designer set it, but the AoE it was traded for now exists.
