@@ -22,6 +22,19 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > `data/catalysts.json` and the `free: true` flags in `data/characters/{vex,thorn,wisp}.json`
 > are already written against the final design and are inert until the engine reads them.
 
+> **Folded in 2026-08-27 (Analyzer).** The Designer's `docs/design/aoe-footprints-v1.md`
+> (RULED 2026-08-14; every number measured against the shipped engine) answered **HITBOX-tune**
+> and set the **CONE-B** ramp, and the owner ruled the **aiming metric** and **dash impact**
+> alongside it. Now merged below under **"Targeting & vision"** (AIM-METRIC, CONE-B ramp,
+> CIRCLE-FIX, DASH-IMPACT) and scheduled in BACKLOG as **AIM-METRIC → CONE-B → CIRCLE-FIX →
+> DASH-IMPACT** (the metric ruling is the foundation; CONE-B and CIRCLE-FIX are its consumers;
+> DASH-IMPACT reuses the fixed circle). That spec file stays the Designer's rationale of record;
+> the RULED text here is authoritative. Headline results: **HITBOX-tune needs NO data changes**
+> — circles are fixed at the rule (`dx²+dy² ≤ r²`), cones are already owner-approved — and the
+> live **MET1-vs-HITBOX1 metric conflict is resolved to Euclidean for aiming** (movement stays
+> Manhattan; MET1 stands for walking). The three `impact` fields in
+> `data/characters/{aegis,ravok,wisp}.json` are already written and inert until DASH-IMPACT.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
@@ -82,8 +95,12 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   - **Ground vs airborne dash = walked charge (`path`) vs teleport (`square`):** ground
     triggers traps and is stopped by walls; airborne ignores traps and crosses walls. ✓
   - **Rooted does not stop a dash; Unstoppable ignores slow/root/displacement.** ✓
-- **RULED — Distance metric is MANHATTAN for movement and ability range (MET1, owner
-  directive 2026-08-20; backlog MET1).** Mimics Atlas Reactor: all range and movement are
+- **RULED — Distance metric is MANHATTAN for movement (MET1, owner directive 2026-08-20;
+  backlog MET1). PARTIALLY SUPERSEDED 2026-08-14 by AIM-METRIC — see "Targeting & vision":
+  aiming (`line`/`cone` range, `circle`/`square` aim range and radius, dash `impact`) is now
+  EUCLIDEAN; MET1 stands only for MOVEMENT — walking, sprint, reachability, and `path` dash
+  length (a walked charge is movement). Vision stays Manhattan (perception, not aiming — a
+  separate owner call).** Mimics Atlas Reactor: all *movement* is
   counted orthogonally — a diagonally-adjacent tile is **distance 2**. **A diagonal step is
   still legal but costs 2** (equivalent to two orthogonal steps). This **supersedes the MV3
   "1/2 alternation" diagonal cost model below** (every diagonal now costs 2, not just the
@@ -168,11 +185,13 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     may dash/teleport/move INTO brush and gain its concealment (owner directive 2026-08-22;
     the engine already permits it, `blocksMovement` excludes brush — see BRUSH1 to verify the
     client offers brush squares + add a test). Triggers a trap only on the destination. A
-    teleport-strike (Shadowstep) hits every unit (FF1) **Manhattan-≤1 (4 orthogonal
-    neighbours)** to the landing — **ruled to Manhattan 2026-08-22** for consistency with MET1
-    (was Chebyshev-8; backlog MET1-tp). **Wisp rebalance flag (Designer):** Shadowstep now
-    catches fewer squares (4 vs 8) — confirm its damage/energy still lands the fantasy, tune
-    if needed.
+    teleport-strike (Shadowstep) hits every unit (FF1) adjacent to the landing.
+    **SUPERSEDED 2026-08-14 by DASH-IMPACT: the hardcoded teleport-strike adjacency branch is
+    DELETED and replaced by Shadowstep carrying `impact: { destination: 1 }` in data** (a
+    Euclidean radius-1 `circleSquares` region — the same 4 orthogonal neighbours it resolved to
+    under the interim Manhattan-1 ruling, now expressed as data, not an engine special case).
+    The MET1-tp backlog item is closed by DASH-IMPACT. **Wisp rebalance flag (Designer):**
+    confirm Shadowstep's damage/energy still lands the fantasy at the radius-1 footprint.
   Content guardrail (R4, optional): a test may assert no `shape: "path"` ability ever
   resolves through the teleport branch, so a refactor can't silently make Combat Roll
   wall-crossing.
@@ -265,60 +284,132 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   This is more generous than centre-in for a shape that reaches within half a tile of a centre
   without covering it, and stricter for a corner-only nick — exactly AR's feel. `expandShape`
   is the one authority; UI2's Layer-2 tiles read it, so the overlay stays honest for free.
-- **RULED — Tune ability ranges DOWN now that HITBOX1 enlarged every footprint (owner
-  directive 2026-08-26, "tune the range a little lower"; backlog HITBOX-tune; Designer/data,
-  NOT engine).** HITBOX1 replaced centre-in with hitbox-circle intersection, which is *net more
-  generous* for area shapes (a shape now hits any tile it reaches within half a tile of, not
-  only tiles whose centre it covers) — so every `cone`/`circle`/`line` grew its real footprint
-  without any `range`/`radius` number changing. The owner playtested this (OQ1) and wants the
-  footprints brought back toward their pre-HITBOX1 size, **because the damage numbers were tuned
-  against the old, smaller areas.** The fix is **data, not engine**: the Designer lowers the
-  offending `range`/`radius` values in `data/characters/*.json` so the post-HITBOX1 footprint ≈
-  the old centre-in footprint. Keep it conservative — "a little lower" — and verify against the
-  `content.test.ts` turn-1 spawn-safety guard (a range cut only *loosens* it, so it stays safe).
-  This is the reach the CONE-B `halfWidth` ramp should also match. Engine and HITBOX1 rule
-  unchanged; this only retunes the numbers the rule operates on.
+- **SUPERSEDED — "Tune ability ranges DOWN in data" (HITBOX-tune, owner directive 2026-08-26;
+  superseded by the Designer's measurement 2026-08-14, aoe-footprints-v1.md).** The owner's
+  intent — bring the HITBOX1-inflated footprints back toward their pre-HITBOX1 size, because the
+  damage was tuned against the old areas — **stands**; only the *mechanism* changes. The Designer
+  measured the shipped engine and proved a **data pass cannot deliver it for circles**: `radius`
+  is an integer and the steps are far too coarse (an r2 circle keeps its inflated 21 tiles or
+  drops to 9, against a target of 13 — no integer lands on target, and the pass would churn
+  thirteen abilities to arrive somewhere still wrong). And **cones need no change at all** — the
+  owner already approved their axis-aligned footprint (3/8/15/24). So HITBOX-tune's data half is
+  **closed with no data changes**, replaced by two rule-level fixes below: **CIRCLE-FIX** (an
+  authored `radius` is the *final* footprint radius) and **CONE-B + AIM-METRIC** (Euclidean
+  aiming). The reach the damage was tuned for is restored at the rule, not by editing numbers.
 - **SUPERSEDED — Partial-tile coverage = centre-in, binary full damage (AIM2, 2026-08-20;
   superseded by the AR hitbox rule above, 2026-08-25).** Kept as the record of what HITBOX1
   replaces. The binary-full-damage half survives; the centre-point test is replaced by the
   hitbox-circle intersection.
-- **RULED — Range definition for rotated shapes under Manhattan (joint AIM2 × MET1, per the
-  owner's "rule them together" flag).** To keep a rotated shape's reach consistent under the
-  Manhattan metric: **directional shapes (`line`, `cone`) measure range as a TILE COUNT along
-  the shape's axis** (a range-8 line reaches 8 tiles along its quantized direction,
-  rotation-invariant; a cone of range r extends r tiles deep) — *not* a Manhattan/Chebyshev
-  envelope. **Target-square shapes (`circle`, `square`) use MANHATTAN** distance to the aimed
-  square (MET1). This is the single consistent definition the owner asked be ruled before
-  AIM2 builds; adjust only with a new owner decision.
-- **RULED — Rotated cone area is metered by a EUCLIDEAN wedge half-width, restoring
-  near-rotation-invariance (owner directive 2026-08-26, "go with option b"; SUPERSEDES the
-  cone half of the tile-count reading above; backlog CONE-B; ENGINE ASK).** The Builder found
-  (OQ2) that a freely-rotated `cone` covers **more** tiles at 45° than axis-aligned, because
-  the current cone test admits a tile whenever its centre falls inside the angular wedge and
-  within the axial range — an angular half-width sweeps a wider arc off-axis, so the footprint
-  breathes with rotation. The owner chose **option b**: keep coverage binary and integer, but
-  define a cone as a **wedge of fixed half-width measured as a perpendicular EUCLIDEAN distance
-  in tiles from the cone's axis, growing linearly with axial depth** — i.e. a tile at axial
-  depth *d* is in-cone iff its centre is within axial range **and** its perpendicular (integer
-  cross-product) distance to the axis ≤ `halfWidth(d)`, where `halfWidth` is a fixed
-  tiles-per-depth ramp, not an angle. Because the half-width is a distance (not a swept angle),
-  the covered area is **near-identical under every rotation** — the option-a alternative
-  (snap-metering by re-projecting onto Manhattan) was rejected as it re-introduces the axis
-  bias this fixes.
-  - **Determinism (hard, golden rule #1):** no trig, no float — the wedge is an **integer
-    half-plane / cross-product perpendicular-distance** test in the same ×2 scaled lattice as
-    HITBOX1, comparing **squared** distances against a squared/integer `halfWidth(d)` ramp. The
-    AIM2 no-trig-in-engine guard must still pass.
+- **RULED — Aiming is EUCLIDEAN; movement stays Manhattan (AIM-METRIC; Designer + owner
+  directive 2026-08-14, *"movement is measured in steps; aiming is measured in distance"*;
+  SUPERSEDES the tile-count clause for `line`/`cone` and the Manhattan clause for
+  `circle`/`square` in the prior joint AIM2×MET1 ruling; backlog AIM-METRIC; ENGINE ASK).**
+  Both the cone-inflation and circle-inflation bugs share one root cause — **lattice-step
+  metering applied to projected geometry.** MET1 made everything Manhattan, which is right for
+  *walking* and wrong for *aiming*. The split is principled, not a compromise: movement is a
+  lattice walk where the step is the atom (a step-count metric *is* the rule), while aiming
+  projects a continuous shape that must describe the same shape whichever way it points (as in
+  Atlas Reactor, where rotation preserves area for free). So **all ability geometry is
+  Euclidean:**
+  - **`line`/`cone` range (axial depth)** — Euclidean tile-widths along the axis (was a
+    lattice-step count). A range-r line/cone reaches r tile-widths in **every** direction.
+  - **`circle`/`square` aim range** — Euclidean to the aimed square (was Manhattan). The
+    aimable region becomes a **disc, not a diamond** — see the balance note below.
+  - **`circle` radius** — Euclidean (CIRCLE-FIX below).
+  - **dash `impact` radii** — Euclidean (DASH-IMPACT below).
+  - **UNCHANGED — `path` dash length, movement, sprint, reachability** — a walked charge *is*
+    movement, so it stays Manhattan (diagonal = 2). **MET1 stands for everything that walks.**
+  - **Determinism untouched:** every test stays an integer **squared-distance** comparison
+    (`dx²+dy² ≤ r²`) in the existing ×2 lattice — no trig, no `Math.sqrt`, no floats; the AIM2
+    no-trig guard still passes.
+  - **Balance consequence (accepted, flagged):** Euclidean `circle`/`square` aim ranges get
+    modestly more generous at long range (range 6: 85→113 aimable tiles; range 8: 145→197),
+    symmetric for both teams — it *removes* the arbitrary diamond restriction. Directional
+    shapes move the **other** way: a range-8 line stops over-reaching 11.3 tiles on the diagonal
+    and reaches 8 in every direction (the nerf that is the whole point). **Vision is deliberately
+    NOT in scope** — it is perception, not aiming; changing the sight diamond is a separate owner
+    call (flagged, not folded).
+  - **This resolves the live MET1-vs-HITBOX1 conflict** the Designer surfaced: MET1 said
+    `circle`/`square` measure Manhattan, HITBOX1's circular hitbox made circles Euclidean discs.
+    Both were RULED and disagreed. **Euclidean wins** (a circular region composed with circular
+    hitboxes is rotation-invariant by construction — the same property CONE-B restores for
+    cones; a Manhattan diamond bakes in the axis bias being removed). MET1's circle/square clause
+    is **superseded** here, not left in quiet conflict.
+- **RULED — CONE-B ramp is `halfWidth(d) = d`, with Euclidean axial range (Designer 2026-08-14,
+  measured; backlog CONE-B; ENGINE ASK; DEPENDS ON AIM-METRIC).** A freely-rotated `cone`
+  currently covers more tiles off-axis than axis-aligned — and the Designer's measurement showed
+  **the inflation is in the LENGTH, not the width**: a range-4 cone reaches 4 tiles on the axis
+  but **7 on the diagonal** (24 vs 42 tiles), because axial depth was counted in lattice steps
+  and a diagonal step is √2 longer. So two things together fix it, and the width ramp alone is
+  **necessary but not sufficient**:
+  1. **Euclidean axial range** (from AIM-METRIC) — a cone of range r reaches r tile-widths in
+     every direction, killing the √2 length inflation.
+  2. **`halfWidth(d) = d`** — a tile is in-cone iff its centre is within axial range **and** its
+     perpendicular distance to the axis is ≤ d tiles at axial depth d. This falls straight out
+     of the measured per-depth widths (3, 5, 7, 9 = `2d+1`) and reproduces the **owner-approved**
+     axis-aligned footprint **3 / 8 / 15 / 24** exactly — **no cone data changes**. No ramp table
+     and no division: the test is **`perp² ≤ d²`** in HITBOX1's ×2 lattice.
+  - **Determinism (hard):** integer half-plane / cross-product perpendicular distance, squared
+    comparison; no trig, no `Math.sqrt` (AIM2 guard holds).
   - **Interaction with HITBOX1:** the wedge defines the continuous cone *region*; HITBOX1's
-    tile-centre circle then decides which tiles that region hits. `expandShape` composes the two
-    — one authority, so UI2's overlay tracks it for free. Ships with a **rotation-invariance
-    test**: a fixed-range cone swept through several quantized directions covers within ±1 tile
-    of the axis-aligned count (was several tiles more off-axis).
-  - The `line` half of the tile-count ruling **stands** (a line is a degenerate zero-width
-    wedge — a range-r line reaches r tiles along its quantized axis, rotation-invariant).
-    `circle`/`square` still use Manhattan to the aimed square. Designer sets the `halfWidth`
-    ramp so the axis-aligned footprint matches today's cones (this is the reach the damage was
-    tuned against — see HITBOX-tune).
+    tile-centre circle decides which tiles it hits; `expandShape` composes the two (one
+    authority — UI2's overlay tracks it for free).
+  - **Acceptance (all three):** axis-aligned counts stay 3/8/15/24; **every quantized rotation
+    lands within ±1** of them; **and** the furthest covered tile is within ±0.5 tile-widths of
+    the axis-aligned figure in every direction (the *reach* check — the one that catches the
+    diagonal-length bug the tile count alone hid). `line` = degenerate zero-width wedge
+    (unchanged in kind, now Euclidean-metered).
+- **RULED — An authored `circle` `radius` is the FINAL footprint radius, not the pre-hitbox
+  region radius (CIRCLE-FIX; Designer 2026-08-14, measured; backlog CIRCLE-FIX; ENGINE ASK).**
+  HITBOX1's half-tile is *added on top of* the authored radius — `radius: 2` is drawn as a disc
+  of radius 2 and then granted another half-tile, for a true reach of 2.5 — which is how thirteen
+  circles silently grew **48–80%** with no data edit (r1 5→9, r2 13→21, r3 25→37). **Ruling:
+  `radius: r` means "this reaches r tiles."** The engine derives the region as **r − 0.5**, so
+  composing HITBOX1's half-tile returns exactly r. Implementation: `circleSquares`' test
+  `4·(dx²+dy²) ≤ (2r+1)²` becomes **`dx² + dy² ≤ r²`** (simpler than what it replaces, still pure
+  integer; scan bound drops from `radius+1` to `radius`). Restores **r1 = 5 and r2 = 13 exactly**
+  (12 of the roster's 13 circles); r3 → 29 (Ravok's ultimate, +4 vs the old 25, accepted — still
+  8 smaller than today). **HITBOX1's rule and its halfway guarantee are untouched** — only what
+  region an authored number *denotes* changes; a tile exactly r away is still included (its
+  hitbox is tangent to the region). **No data changes.** The principle both CIRCLE-FIX and CONE-B
+  establish: **a number in `data/` means the footprint you get** — the engine derives whatever
+  internal region produces it, never the reverse.
+- **RULED — Optional `impact` AoE on dash abilities (DASH-IMPACT; Designer 2026-08-14, owner
+  ask *"some dashes should also have hitboxes… Rask's dash and Garrison's Jump"*; backlog
+  DASH-IMPACT; ENGINE ASK).** Today a dash affects either the **first unit crossed** (walked
+  `path` charge, R1a/`chargeHits`) or **units adjacent to the landing** (`square` teleport-strike,
+  a hardcoded Manhattan-1 special case with exactly one user). Neither expresses "leap into the
+  middle of them and detonate." New optional block on `phase: "dash"` abilities:
+  ```json
+  "impact": { "origin": 1, "destination": 2 }
+  ```
+  - Both members optional, integers ≥ 1, **Euclidean radii** (AIM-METRIC) reusing `circleSquares`
+    — **no new geometry code**. `destination` = AoE centred on the square the dasher comes to
+    rest on (after pass-through/stop for `path`, or the landing for `square`); `origin` = AoE
+    centred on the takeoff square.
+  - **Composes with both dash models** — a walked `path` charge still hits the first unit crossed
+    *and* detonates where it stops; a `square` teleport lands and detonates. **Effects apply to
+    the union, each unit affected at most once.** FF1 polarity filters who each effect touches;
+    energy is still once per use, ≥1 enemy. **Absent `impact` = today's behaviour exactly**
+    (fully backwards compatible).
+  - **Validation:** `impact` legal only on `phase: "dash"`; radii integers ≥ 1; reject otherwise
+    (same shape as `chargeHits` validation). *(Note: current `validateAbility` lets unknown
+    fields pass silently — the suite accepted the three inert `impact` blocks — so this validation
+    is new work, not a tightening of an existing check; add it so a typo'd `impact` can't be
+    ignored.)*
+  - **Architectural win — a special case becomes data.** Shadowstep Strike is the **only**
+    `square` dash in the roster carrying `damage` (audited), so it is the sole user of the
+    hardcoded MET1-tp Manhattan-1 teleport-strike adjacency. Once it carries
+    `impact: { destination: 1 }`, **that branch has no other user and is deleted** — the adjacency
+    becomes a tunable number, not engine trivia. **This closes the MET1-tp backlog item** (its
+    hardcoded branch is removed rather than kept).
+  - **Three abilities carry `impact` in `data/` already** (inert until the engine reads it):
+    Wisp Shadowstep `{destination:1}` (zero behaviour change — formalises the adjacency), Aegis
+    Intercept `{destination:1}` (the 12-shield now lands on allies at the destination — the
+    Bodyguard fantasy), Ravok Bullrush `{destination:2}` with **knockback 2→1** (charge-and-
+    detonate; knockback drops because it now applies to an area, within the kit's displacement
+    budget). Ravok's knockback nerf is live now; the `impact` is inert — **weaker than designed,
+    never stronger** (the `chargeHits`/`free` interim convention).
 - **RULED — Attacking breaks concealment; Reveal lasts 2 turns (confirms Builder OQ,
   review 2026-08-14).** Using an ability that *actually deals damage* reveals the attacker
   "until the end of the next turn" — implemented as a **2-turn** Reveal

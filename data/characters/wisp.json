@@ -64,11 +64,12 @@
     "range": 7,
     "cooldown": 0,
     "energyGain": 0,
+    "impact": { "destination": 1 },
     "effects": [
       { "kind": "teleport" },
       { "kind": "damage", "amount": 40 },
       { "kind": "untargetable", "duration": 1 }
     ],
-    "description": "Untargetable this turn; appear at the aimed square and strike any adjacent enemy for 40. The ultimate read — arrives during Dash, before their Blast lands. (100 energy)"
+    "description": "Untargetable this turn; appear at the aimed square and strike every enemy within 1 square for 40. The ultimate read — arrives during Dash, before their Blast lands. (100 energy)"
   }
 }

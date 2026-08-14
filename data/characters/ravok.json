@@ -23,11 +23,12 @@
       "range": 4,
       "cooldown": 3,
       "energyGain": 8,
+      "impact": { "destination": 2 },
       "effects": [
         { "kind": "damage", "amount": 14 },
-        { "kind": "knockback", "amount": 2 }
+        { "kind": "knockback", "amount": 1 }
       ],
-      "description": "Charge in a straight line: the first enemy hit takes 14 and is knocked back 2 squares, losing their Move."
+      "description": "Charge in a straight line, then slam down where you stop: the first enemy hit and every enemy within 2 squares of the landing take 14 and are knocked back 1 square, losing their Move."
     },
     {
       "id": "blood_frenzy",
