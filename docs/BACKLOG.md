@@ -8,97 +8,117 @@ independently shippable. Each item carries **Spec Notes** (Analyzer's build guid
 
 **Standing directives:** engine iterates unit **lists**; engine is pure/deterministic and
 **dependency-free** (client may depend on Vite/Three.js); every client item consumes
-`TurnEvent[]`. Metric is **Manhattan everywhere**. **Open/update a PR to `main` every
-session** (CLAUDE.md).
+`TurnEvent[]` and the engine's derived queries (vision, reachability) — never recomputes them.
+Metric is **Manhattan everywhere**. **Open/update a PR to `main` every session** (CLAUDE.md).
 
 ## ✅ COMPLETE
 
-- Engine core, teams/formats, M2 client, MV1–MV4, MET1(+tp), FF1(+charge/delayed), BRUSH1,
-  AIM2, RND1, A0(+heal), A1/A2/A3(+re-spec), TT1, C1, MS1, R1–R7, D1(+dash), BUNDLE1.
-- **UI1** (hover range + click-commit), **UI2** (two-layer shape+tiles overlay), **UI3**
-  (persistent HUD), **AIM1+UI4** (move/dash route line, dash yellow), **UI5** (damage/absorb/
-  heal/shield readouts), **UI6** (scrollable combat log). (PR #24)
-- **M1** duel-arena redesign, **M1-4v4** `iron-basin`, **Thorn-dash** (Bramble Stride). (PR #22)
+- Engine core, teams/formats, movement (Manhattan + diagonals cost 2), FF1, AIM2, RND1,
+  A0(+heal), A1/A2/A3, UI1–UI6, D1(+dash), MET1(+tp), BRUSH1, TT1, C1, MS1, R1–R7.
+- **UI1-fix** (board click locks the action), **M1-tests** (both maps validated + roster-derived
+  turn-1 spawn-safety guard + dash guardrail tightened to all archetypes), **RENDER-VERIFY**
+  (headless Playwright render smoke test), **UI-responsive**, **UI6-cap**. (PRs #26/#27)
 
-Current suite: **468 tests** (engine 325 + client 143), typecheck + build clean, purity green.
-
-> The local 2v2 hot-seat is essentially feature-complete. After **UI1-fix** it is
-> playtest-ready; the remaining items are one bug, map guardrails, render verification, and
-> polish. Expect the next real signal to be balance/pacing Dev Notes, not features.
+Current suite: **489 tests** (engine 333 + client 156), typecheck + build clean, purity green.
+The local 2v2 hot-seat is playtest-ready; this batch is bug-fix + AR-fidelity + fog + enablers.
 
 ---
 
 ## Next batch
 
-### UI1-fix. A committed board click must lock the action (stop mouse-follow) — UNBLOCKED (HIGH, first)
-**Addresses Dev Note: "Right now, the attack, dash and prep actions cannot be locked in. As I am
-moving my mouse around the board, the attack action follows my mouse around. I need to be able to
-lock in the action when I click the tile on the board so the action stops following the mouse."**
-Root cause: `onBoardClick` commits `draft.aim` but leaves `mode === 'aim'`, so `onBoardHover`
-keeps re-setting `hover.square` and `previewAim` keeps rendering the mouse-following aim over the
-committed one. *AC: after a board click in aim mode, the aim is fixed at the clicked tile and no
-longer follows the mouse; the same for a move/dash click; re-selecting the ability re-arms aim;
-a client test asserts that a `mousemove` after a committing click does not change the rendered
-aim.*
-**Spec Notes.** Files: `packages/client/src/app.ts` — in `onBoardClick`, after committing in
-**both** the `aim` and `move` branches, set `mode = 'idle'` and `clearHover()` (then `render()`),
-so `previewAim` falls through to the committed `draft.aim` and `onBoardHover` early-returns
-(mode idle). Keep `render()` so the committed layer paints. Out of scope: any change to what a
-click *commits* (that's correct) or to the Lock-In model. Add the regression test noted in the AC.
+### MOVE1. A move click on an occupied/unreachable tile routes to the nearest legal tile (CLIENT) — UNBLOCKED (first, bug)
+**Addresses Dev Note: "When clicking to move on the square an existing character is on, the move
+command is not input and character stays still."** `pathTo` returns `[]` when the target isn't a
+legal stop (occupied → `canStop:false`, out of budget, blocked), so the move silently drops.
+*AC: clicking an occupied/out-of-range/blocked tile moves the unit **as far as legally possible
+toward it** (the reachable tile nearest the clicked target); clicking a normal reachable tile is
+unchanged; a client test covers click-on-occupied → non-empty path ending on the nearest legal
+tile.*
+**Spec Notes.** Files: `packages/client/src/targeting.ts` (`pathTo`) — when `reconstructPath` to
+the exact target is null, pick the reachable square **closest to the target** (min Manhattan to
+target, ties by lowest path cost, then fixed direction order for determinism) and path there.
+Engine unchanged (the "can't end on an occupied square" rule stands). Ruled in edge-cases. Out
+of scope: AR "follow a teammate" (the richer future version — noted, not now).
 
-### M1-tests. Validate the new maps + build the map guardrails — UNBLOCKED (Builder)
-`iron-basin` (4v4) shipped but is not imported by `content.test.ts` (no validation), and
-`maps-v1.md` §6's guardrails are unbuilt. *AC: `content.test.ts` imports and validates
-`iron-basin` (`validateMap` + `validateMapForFormat('4v4')`) and the redesigned `duel-arena`;
-a **roster-derived** test asserts **max turn-1 threat < spawn separation** for each map/format
-(computed from `movementBudget` + each ability's `range` via the engine, not hardcoded); the
-dash-answer guardrail is **tightened to all archetypes** now that Thorn has Bramble Stride.*
-**Spec Notes.** Files: `packages/engine/test/content.test.ts` (+ import the maps). The turn-1
-guard is the point of M2 (range cap) — it must derive the threat from the roster so a future
-long-range character can't silently reintroduce a turn-1 spawn hit. No engine/data change
-expected; if a map fails the guard, that's a Designer fix, not a test relaxation.
+### HITBOX1. Tile coverage → Atlas Reactor central-circular-hitbox (ENGINE) — UNBLOCKED (determinism-critical)
+**Addresses Dev Note: "let's use the same rules as Atlas Reactor… circular hitbox in the middle
+of each tile… nicking the corner doesn't count… if an AoE cuts at least halfway along the edge
+it's guaranteed to hit."** Replace the AIM2 centre-in coverage with the AR hitbox rule. *AC: a
+tile is hit **iff the AoE region intersects a circle of radius half-a-tile at the tile centre**;
+a shape that only nicks a corner (does not reach within half a tile of the centre) does NOT hit;
+a boundary crossing an edge at/after its midpoint DOES hit; coverage stays binary/full-damage;
+existing shape tests updated to the new rule; a **cross-engine determinism regression** asserts a
+fixed shape+aim yields the identical tile set.*
+**Spec Notes.** Files: `packages/engine/src/shapes.ts` (`coneSquares`/`lineSquares`/
+`circleSquares`/`expandShape`), `shapes.test.ts` + the regression. **Determinism (hard):** integer
+only — work in a scaled lattice (e.g. ×2 so the half-tile radius is the integer 1); test
+shape∩circle with **squared distances** and integer half-plane (cross-product) perpendicular
+distances; **no `Math.sqrt`, no trig** (the AIM2 no-trig-in-engine guard must still pass). For a
+`circle` AoE: disk∩disk via squared distance. For `line`/`cone` (quantized-int direction, AIM2):
+perpendicular distance from the tile centre to the ray/edges ≤ radius, plus the axial-range
+bound. `expandShape` stays the single authority — UI2's Layer-2 tiles read it, so the overlay
+tracks the new rule automatically. Out of scope: fractional/partial damage (coverage is binary);
+`path`/`square`/`self` shapes (unaffected). Watch: FF1 + friendly units now sit on more/fewer
+tiles under the new rule — the existing FF1 tests should still pass.
 
-### RENDER-VERIFY. Headless screenshot smoke test for the 3D renderer — UNBLOCKED (recommended)
-Every UI item this session (and the readability batch) was verified only by scripted browser +
-composited screenshots — the sole thing that catches renderer bugs (it caught the
-`transparent/needsUpdate` bug); none of it is reachable from a unit test. *AC: a Playwright
-devDependency + one CI job drives a scripted hot-seat turn and asserts a few composited pixels
-(e.g. a unit rings up, an ability overlay paints, a damage readout appears); runs in CI.*
-**Spec Notes.** Files: `packages/client` (Playwright config + test), `ci.yml`. Chromium +
-Playwright are already in the environment (`PLAYWRIGHT_BROWSERS_PATH`); do not re-download. Keep
-it a thin smoke test (existence/pixel presence), not pixel-perfect goldens (brittle). Renderer
-*inputs* stay unit-covered regardless.
+### VISION1. Fog of war in the client from the engine's vision (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Let's input vision rules and line of sight. Model this after Atlas
+Reactor."** The engine already has AR-style vision (LoS via walls, Manhattan sight radius, brush
+concealment + adjacency, Stealth/Reveal, team-shared sight); the client draws everything.
+*AC: during the **Decision phase**, enemy units the seat-on-the-clock's **team** cannot see are
+hidden and tiles outside team sight are fogged/dimmed (own team always visible); **resolution
+playback reveals** what happens; the client computes nothing about visibility — it consumes
+`canSee`/`visibleEnemiesForTeam`/`visibleSquaresForTeam`; a client test drives a walled/brush
+setup and asserts a hidden enemy is not drawn during Decision and appears in playback.*
+**Spec Notes.** Files: `packages/client/src/renderer3d.ts` (fog/dim + hide hidden units),
+`app.ts` (feed the active team + `visibleEnemiesForTeam`/`visibleSquaresForTeam` into the render
+during Decision; full board during playback), `hotseat.ts` if the active team isn't already to
+hand. Ruled in edge-cases. **Hot-seat fog is a local approximation, NOT the security boundary** —
+true per-team hidden info across the network is M3. Out of scope: last-known-ghost markers
+(optional AR nicety — add only if the owner asks) and any vision-*rule* change (the engine rules
+already match AR; raise rule changes separately).
 
-## Optional / low priority
+### MAPTOGGLE. Dev-only map + format selection (CLIENT) — UNBLOCKED
+`iron-basin` (4v4) and the redesigned `duel-arena` exist but `main.ts` hard-codes `duel-arena`,
+so 4v4 is unplayable/untested before M3. *AC: a dev-only control (query param or a small menu)
+picks the map + format and starts a match on it, seating the right unit count per team;
+`iron-basin` + 4v4 is reachable and playable in hot-seat.*
+**Spec Notes.** Files: `main.ts`, `app.ts`/`hud.ts`. Reuse `createMatch`/`FORMATS`/
+`validateMapForFormat`; no engine change. This is scaffolding for playtest, not the M3 lobby —
+keep it minimal (a `?map=iron-basin&format=4v4` URL is enough). Out of scope: character pick,
+duplicate-pick validation (M3).
 
-- **UI-responsive (optional).** HUD reserves 260px and the log 300px; below ~1100px the board is
-  cramped with no breakpoint. Add a responsive layout only if the owner plays on a laptop.
-  `index.html`, `app.sizeToContainer`.
-- **UI6-cap (optional, playtest).** The combat log is uncapped/unfiltered; add a per-tone filter
-  or max-entry window if 4v4 makes it noisy.
+### CI-decouple. The Pages deploy gates on core CI, not on RENDER-VERIFY (CI) — UNBLOCKED
+A red/flaky render job (CDN browser download + headless GPU) currently blocks all publishing.
+*AC: the Pages deploy fires on success of the **core** checks (engine tests, typecheck, client
+build); RENDER-VERIFY still runs on PRs as a signal but a render-only failure no longer blocks
+the deploy.*
+**Spec Notes.** Files: `.github/workflows/ci.yml`, `deploy-pages.yml`. Cleanest: split
+RENDER-VERIFY into its own workflow (or its own job the deploy `workflow_run` does not depend on).
+Keep "a broken *engine/build* never publishes." Ruled in review 2026-08-25. Owner may override if
+they'd rather a broken renderer also block release.
 
 ## Deferred — do NOT schedule
 
 - **A4** per-ability FX (`"fx"` data blocks; generic consumer via the kept `objectFor()` seam) —
   blocked on **M3 + roster lock**.
-- **CL1** (AR clash co-occupancy), **CL2** (vector-sum displacement), **E2** (cover-corner unify).
+- **CL1** (AR clash co-occupancy), **CL2** (vector-sum displacement), **E2** (cover-corner unify)
+  — deferred; not for v1 without a new decision.
 
-## M3+ — the next milestone (Analyzer expands when playtest settles v1)
+## M3+ — the next milestone
 
-21. Worker + DO rooms; format selection; lobby with team-seat + **duplicate-pick validation
-    (R3)**; per-player hidden submission → per-team orders; per-player timer + Time Bank;
-    **combat log + decoy get the hidden-information treatment** (UI6 currently shows both teams —
-    correct only for hot-seat); reconnect/replay; deploy to Pages + wrangler. Also fold the UI
-    polish deferred from this session: **read-only review of a locked character**, **granular
-    un-commit** (drop just the move, keep the ability).
+21. Worker + DO rooms; **map + format selection lobby** (supersedes MAPTOGGLE); team-seat +
+    **duplicate-pick validation (R3)**; per-player hidden submission → per-team orders;
+    **per-team hidden information for fog (VISION1) and the combat log (UI6)** — the real
+    security boundary the hot-seat only approximates; per-player timer + Time Bank; decoy fog;
+    reconnect/replay; deploy to Pages + wrangler.
 
-## Observed-not-requested (from the reference screenshot; NOT scoped)
+## Observed-not-requested (from the UI reference screenshot; NOT scoped)
 
-Turn countdown timer; top-centre score/objective header; per-unit floating name labels; per-unit
-status icons. Owner has not requested these.
+Turn countdown timer; score/objective header; per-unit name labels; per-unit status icons.
 
 ## Playtest / balance (not Builder-blocking)
 
-- **`MS_PER_BEAT`** pacing (esp. 4v4). **Wisp/Shadowstep** (4-neighbour strike after MET1-tp).
-  **Support anti-stall (R6)** (Lumen+Thorn vs double-Firepower). **Cone raggedness** at shallow
-  angles. **Spotlight** hiding off-actor bars. **UI5** readout stacking in heavy AoE.
+- **Turn-1 spawn margin is one tile** — hold `MAX_ABILITY_RANGE = 8` and the spawn columns.
+- **`MS_PER_BEAT`** pacing (esp. 4v4). **Wisp/Shadowstep** (4-neighbour strike). **Support
+  anti-stall (R6)**. **Cone raggedness** at shallow angles. **UI6** per-tone filter if noisy.
