@@ -148,3 +148,34 @@ export const isFogged = (px: Rgb): boolean => px.r < 18 && px.g < 20 && px.b < 2
 /** The aim overlay's orange: warm, bright, and clearly not the brown of cover. */
 export const isAimOrange = (px: Rgb): boolean =>
   px.r > 150 && px.g > 90 && px.g < px.r - 30 && px.b < px.g - 20;
+
+/**
+ * Brush (`#2e4632`), **lit** — around `40,62,44` once shaded.
+ *
+ * The lower bound is load-bearing, not slop: fogged brush composites to about
+ * `18,27,22`, which is still green-dominant, so without it FOG-ZORDER would
+ * happily "find brush" in squares the seat cannot see and then assert that an
+ * overlay painted on darkness. The upper bound keeps the HP bar's `90,209,127`
+ * out.
+ */
+export const isBrushGreen = (px: Rgb): boolean =>
+  px.g > px.r + 10 && px.g > px.b + 8 && px.g > 44 && px.g < 160 && px.r < 110;
+
+/** Where a predicate matches, in pixel coordinates — for "is it drawn HERE". */
+export function findPixels(image: Image, matches: (px: Rgb) => boolean, step = 3): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  const stride = image.width * image.channels;
+  for (let y = 0; y < image.height; y += step) {
+    for (let x = 0; x < image.width; x += step) {
+      const at = y * stride + x * image.channels;
+      if (matches({ r: image.data[at]!, g: image.data[at + 1]!, b: image.data[at + 2]! })) out.push({ x, y });
+    }
+  }
+  return out;
+}
+
+/** The colour at one pixel — for re-sampling a spot found in an earlier frame. */
+export function pixelAt(image: Image, x: number, y: number): Rgb {
+  const at = y * image.width * image.channels + x * image.channels;
+  return { r: image.data[at]!, g: image.data[at + 1]!, b: image.data[at + 2]! };
+}

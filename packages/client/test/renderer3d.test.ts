@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PITCH, onBoard, squareToWorldXZ, worldXZToSquare } from '../src/renderer3d.js';
+import { LAYER_LIFT, PITCH, SHAPE_LIFT, TERRAIN_HEIGHT, onBoard, squareToWorldXZ, worldXZToSquare } from '../src/renderer3d.js';
 import type { Vec2 } from '@cards/engine';
 
 /**
@@ -55,5 +55,44 @@ describe('projection is a runtime parameter, not a rewrite', () => {
     expect(PITCH.top).toBe(90);
     // arctan(1/√2) in degrees — the true isometric angle, not an eyeballed 30°.
     expect(PITCH.isometric).toBeCloseTo((Math.atan(1 / Math.SQRT2) * 180) / Math.PI, 3);
+  });
+});
+
+/**
+ * FOG-ZORDER — an overlay layer that sits *below* the terrain it is drawn over
+ * loses the depth test and vanishes. That is a numeric relationship between two
+ * constants, so it is checkable here; only whether the pixels then arrive needs
+ * the browser (RENDER-VERIFY covers that half).
+ */
+describe('tile overlays clear the terrain they are drawn over', () => {
+  const LAYERS = Object.keys(LAYER_LIFT) as (keyof typeof LAYER_LIFT)[];
+
+  it('every layer sits above the brush lid — the reported bug, as a number', () => {
+    for (const layer of LAYERS) {
+      expect(LAYER_LIFT[layer], `${layer} is buried under brush`).toBeGreaterThan(TERRAIN_HEIGHT.brush);
+    }
+  });
+
+  it('with enough clearance that a float wobble cannot z-fight it', () => {
+    for (const layer of LAYERS) {
+      expect(LAYER_LIFT[layer] - TERRAIN_HEIGHT.brush).toBeGreaterThanOrEqual(0.004);
+    }
+  });
+
+  it('keeps its bottom-up stacking order, which is the draw order', () => {
+    const order: (keyof typeof LAYER_LIFT)[] = ['fog', 'range', 'reach', 'aim', 'free', 'catalyst', 'select'];
+    expect(LAYERS.length).toBe(order.length); // a new layer must be placed deliberately
+    for (let i = 1; i < order.length; i++) {
+      expect(LAYER_LIFT[order[i]!], `${order[i]} must sit above ${order[i - 1]}`)
+        .toBeGreaterThan(LAYER_LIFT[order[i - 1]!]);
+    }
+  });
+
+  it('and UI2 draws its continuous shape above every tile layer', () => {
+    for (const layer of LAYERS) expect(SHAPE_LIFT).toBeGreaterThan(LAYER_LIFT[layer]);
+  });
+
+  it('leaves the whole band well under a unit, so nothing floats over a body', () => {
+    expect(SHAPE_LIFT).toBeLessThan(0.1);
   });
 });

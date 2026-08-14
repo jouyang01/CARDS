@@ -3,10 +3,13 @@ import {
   countPixels,
   decodePng,
   distinctColours,
+  findPixels,
   isAimOrange,
+  isBrushGreen,
   isFogged,
   isTeamBlue,
   isTeamRed,
+  pixelAt,
   type Image,
 } from './pixels.js';
 
@@ -328,4 +331,73 @@ test.describe('the layout survives a laptop-sized window', () => {
       expect(countPixels(image, isTeamBlue), 'units stopped drawing at this size').toBeGreaterThan(0);
     });
   }
+});
+
+/**
+ * FOG-ZORDER — "the green stealth squares are STILL hiding aoe effect and
+ * movement options".
+ *
+ * The green is brush, drawn as a 0.02-high box, and the highlight layers used to
+ * live at 0.002–0.022 — *under* that lid. So an overlay covering a brush square
+ * lost the depth test and simply did not appear, which to a player reads as the
+ * ability being unable to reach there. Overlays now start above the brush
+ * (`OVERLAY_BASE`), and `renderer3d.test.ts` pins that invariant numerically.
+ *
+ * This is the half a unit test cannot see: whether the pixels arrive. It finds
+ * real lit brush on the composited board, aims at it, and asserts the overlay
+ * shows up **on those same pixels** — not merely somewhere on screen, which is
+ * what a whole-frame colour count would have let through.
+ *
+ * 4v4 on purpose: in the default format the seat's vision never reaches either
+ * brush band, so every green pixel on screen is fogged brush and there is
+ * nothing to prove anything against.
+ */
+test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async ({ page }) => {
+  await page.goto('./?map=duel-arena&format=4v4');
+  await expect(boardCanvas(page)).toBeVisible();
+  await page.waitForTimeout(700);
+
+  const bare = await pixels(page);
+  const brush = findPixels(bare, isBrushGreen, 2);
+  expect(brush.length, 'no lit brush on the board — nothing to test against').toBeGreaterThan(100);
+
+  const box = (await boardCanvas(page).boundingBox())!;
+  const scale = { x: box.width / bare.width, y: box.height / bare.height };
+  const hoverAt = async (p: { x: number; y: number }): Promise<Image> => {
+    await page.mouse.move(box.x + p.x * scale.x, box.y + p.y * scale.y);
+    await page.waitForTimeout(200);
+    return await pixels(page);
+  };
+  /** Brush pixels that are no longer bare brush — i.e. something drew on them. */
+  const covered = (img: Image): number => brush.filter((p) => !isBrushGreen(pixelAt(img, p.x, p.y))).length;
+  const aimed = (img: Image): number => brush.filter((p) => isAimOrange(pixelAt(img, p.x, p.y))).length;
+
+  // Candidates spread across both bands: only one of them is inside any given
+  // ability's range, and which one depends on where the seat's units spawned.
+  const step = Math.max(1, Math.floor(brush.length / 6));
+  const candidates = Array.from({ length: 6 }, (_, i) => brush[i * step]).filter((p) => p !== undefined);
+
+  const abilities = page.locator('.hud-ability:not([disabled])');
+  const count = await abilities.count();
+  expect(count, 'no usable ability to aim with').toBeGreaterThan(0);
+
+  let bestCovered = 0;
+  let bestAimed = 0;
+  for (let i = 0; i < count && bestAimed === 0; i++) {
+    await abilities.nth(i).click();
+    for (const p of candidates) {
+      const img = await hoverAt(p);
+      bestCovered = Math.max(bestCovered, covered(img));
+      bestAimed = Math.max(bestAimed, aimed(img));
+      if (bestAimed > 0) break;
+    }
+  }
+
+  // The hover range envelope reaching brush at all is the coarse half: under the
+  // old lifts every one of these pixels stayed bare green.
+  expect(bestCovered, 'no overlay composited onto brush at all').toBeGreaterThan(brush.length / 4);
+  // And the aimed AoE specifically — the "hiding aoe effect" in the report.
+  // A floor well above one tile's worth of edge pixels, so an antialiased
+  // fringe cannot pass for a painted square.
+  expect(bestAimed, 'the aim overlay did not survive the brush tiles').toBeGreaterThan(20);
 });

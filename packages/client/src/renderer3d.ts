@@ -88,9 +88,31 @@ const PIP_ROW_Y = 0.38;
  */
 export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'free' | 'catalyst' | 'select';
 
+/**
+ * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
+ * its top surface the floor every tile overlay has to clear (FOG-ZORDER).
+ */
+export const TERRAIN_HEIGHT = { brush: 0.02, cover: COVER_HEIGHT, wall: WALL_HEIGHT } as const;
+
+/**
+ * Where the overlay band starts. FOG-ZORDER: the highlight layers used to run
+ * 0.002–0.022, which is *under* the brush box's 0.02-high lid — so every aim,
+ * AoE and move envelope drawn over a green square lost the depth test to the
+ * brush and simply vanished. That reads as "the ability cannot reach there",
+ * which is a rules bug as far as the player is concerned, and it is exactly the
+ * reported one. Overlays now begin above the brush lid with a margin, so no tile
+ * you can stand on can eat a highlight.
+ */
+const OVERLAY_BASE = TERRAIN_HEIGHT.brush + 0.006;
 /** Height above the ground plane per layer, so they never z-fight. */
-const LAYER_LIFT: Record<HighlightLayer, number> = {
-  fog: 0.002, range: 0.006, reach: 0.010, aim: 0.016, free: 0.018, catalyst: 0.019, select: 0.022,
+export const LAYER_LIFT: Record<HighlightLayer, number> = {
+  fog: OVERLAY_BASE,
+  range: OVERLAY_BASE + 0.004,
+  reach: OVERLAY_BASE + 0.008,
+  aim: OVERLAY_BASE + 0.014,
+  free: OVERLAY_BASE + 0.016,
+  catalyst: OVERLAY_BASE + 0.018,
+  select: OVERLAY_BASE + 0.022,
 };
 /**
  * Overlay tiles are inset so the grid reads through them — except fog, which
@@ -101,7 +123,7 @@ const LAYER_INSET: Record<HighlightLayer, number> = {
   fog: 1, range: 0.92, reach: 0.92, aim: 0.92, free: 0.8, catalyst: 0.72, select: 0.92,
 };
 /** UI2's continuous shape sits just above the covered tiles it explains. */
-const SHAPE_LIFT = 0.026;
+export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
 
 /**
  * A decoy, as one viewer should see it (DECOY-RENDER). `asEnemy` decides the
@@ -255,9 +277,9 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   // Faint tile seams so squares are countable — the grid IS the ruleset here.
   for (const [squares, colour, height] of [
-    [map.brush, palette.brush, 0.02],
-    [map.cover, palette.cover, COVER_HEIGHT],
-    [map.walls, palette.wall, WALL_HEIGHT],
+    [map.brush, palette.brush, TERRAIN_HEIGHT.brush],
+    [map.cover, palette.cover, TERRAIN_HEIGHT.cover],
+    [map.walls, palette.wall, TERRAIN_HEIGHT.wall],
   ] as const) {
     for (const p of squares) {
       const box = new Mesh(
