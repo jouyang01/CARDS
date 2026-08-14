@@ -5,6 +5,7 @@ import {
   abilityPreview,
   abilityTooltip,
   aimFor,
+  dashRoute,
   dragToAimStep,
   draftHasOrder,
   isRotatable,
@@ -417,5 +418,48 @@ describe('UI1: draftHasOrder marks a character as having committed something', (
     expect(draftHasOrder({ ...blank, abilityId: 'rail_shot' })).toBe(true);
     expect(draftHasOrder({ ...blank, sprint: true })).toBe(true);
     expect(draftHasOrder({ ...blank, movePath: [{ x: 1, y: 1 }] })).toBe(true);
+  });
+});
+
+/**
+ * AIM1 (+UI4) — a dash gets the same line-and-marker indicator a move gets, in
+ * yellow. It is still a route, so it deserves route geometry; the colour is
+ * what says it resolves in a different phase.
+ */
+describe('UI4: dashRoute gives a drafted dash the same route geometry as a move', () => {
+  const s = state();
+  const u = vexUnit(s);
+  const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!; // dash, path
+
+  it('a PATH dash draws its whole walked route', () => {
+    const aim = aimFor(OPEN, s, u, roll, { x: u.pos.x + 2, y: u.pos.y }).aim;
+    expect(dashRoute(u, roll, aim)).toEqual(aim);
+    expect(dashRoute(u, roll, aim).length).toBeGreaterThan(1);
+  });
+
+  it('a TELEPORTING dash draws a straight segment to where it lands', () => {
+    // Wisp's Blink is a dash that is not a path — it still ends somewhere, and
+    // "you end up there" is the honest indicator.
+    const blink = { ...roll, shape: 'circle' as const, range: 5 };
+    expect(dashRoute(u, blink, [{ x: u.pos.x + 4, y: u.pos.y + 1 }])).toEqual([{ x: u.pos.x + 4, y: u.pos.y + 1 }]);
+  });
+
+  it('is empty for a non-dash ability — the one case the line is suppressed', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    expect(dashRoute(u, rail, [{ x: 9, y: 7 }])).toEqual([]);
+    expect(dashRoute(u, undefined, [{ x: 9, y: 7 }])).toEqual([]);
+  });
+
+  it('is empty for an unaimed dash, and for one aimed at your own square', () => {
+    expect(dashRoute(u, roll, [])).toEqual([]);
+    const blink = { ...roll, shape: 'circle' as const };
+    expect(dashRoute(u, blink, [{ ...u.pos }])).toEqual([]); // a hold, not a route
+  });
+
+  it('copies its squares, so the caller cannot write back into the draft', () => {
+    const aim = [{ x: u.pos.x + 1, y: u.pos.y }];
+    const route = dashRoute(u, roll, aim);
+    route[0]!.x = 99;
+    expect(aim[0]!.x).toBe(u.pos.x + 1);
   });
 });

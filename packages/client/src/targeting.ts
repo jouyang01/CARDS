@@ -261,6 +261,25 @@ export function aimFor(
   }
 }
 
+/**
+ * The squares a drafted **dash** travels through (UI4), so it can be drawn with
+ * the same line-and-marker indicator a move gets — a dash is still a route, and
+ * the owner asked for the same indicator in yellow rather than for nothing.
+ *
+ * A `path` dash carries its whole route in the aim. A teleporting dash carries
+ * only a destination, and a straight segment to it is still the honest
+ * statement: you end up there. Empty only when no dash is drafted, which is the
+ * one case where the line should be suppressed.
+ */
+export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim: readonly Vec2[]): Vec2[] {
+  if (ability === undefined || ability.phase !== 'dash') return [];
+  if (ability.shape === 'path') return aim.map((p) => ({ ...p }));
+  const target = aim[0];
+  if (target === undefined) return [];
+  // A dash aimed at your own square is a hold, not a route.
+  return target.x === unit.pos.x && target.y === unit.pos.y ? [] : [{ ...target }];
+}
+
 /** Does this draft carry an actual order, or is the character holding? */
 export function draftHasOrder(draft: OrderDraft): boolean {
   return draft.abilityId !== undefined || draft.sprint || draft.movePath.length > 0;

@@ -33,6 +33,7 @@ import {
   abilityPreview,
   abilityTooltip,
   aimFor,
+  dashRoute,
   draftAbility,
   draftHasOrder,
   emptyDraft,
@@ -90,9 +91,15 @@ const RANGE = 0x8fb6ff;
 const AIM = 0xff9a3e;
 const SELECT = 0xf0f0f0;
 const IMPACT = 0xffd166;
-/** The drawn move line (AIM1). Sprint is the same hue, dashed and brighter. */
+/**
+ * The drawn movement lines (AIM1/UI4). All three share one geometry — a
+ * polyline through tile centres plus an endpoint marker — and differ only in
+ * colour and dashing, so a player learns the shape once and reads the colour:
+ * blue walks, blue dashed sprints, YELLOW dashes (owner directive).
+ */
 const MOVE_LINE = 0x9fc4ff;
-const SPRINT_LINE = 0xffd166;
+const SPRINT_LINE = 0x8fd6ff;
+const DASH_LINE = 0xffd23f;
 
 /**
  * The single pacing constant: one beat of `choreograph`'s timeline in
@@ -357,14 +364,16 @@ export function startHotSeat(
       0.5,
     );
 
-    // AIM1: the drawn move is a LINE from the unit through its path, with an
-    // endpoint marker. Shaded reachability says where you *could* go; only a
-    // line says which way you actually chose and in what order.
-    const line = previewMovePath(unit, draft);
+    // ── AIM1 (+UI4): the drawn route as a LINE ───────────────────────────────
+    // Shaded reachability says where you *could* go; only a line says which way
+    // you chose and in what order. A DASH is the same indicator in yellow (UI4)
+    // — it is still a route, so it gets route geometry rather than nothing, and
+    // colour carries the fact that it resolves in a different phase.
+    const route = isDash ? dashRoute(unit, chosen, preview.aim) : previewMovePath(unit, draft);
     renderer.drawPath(
-      line.length > 0 ? [unit.pos, ...line] : [],
-      draft.sprint ? SPRINT_LINE : MOVE_LINE,
-      draft.sprint, // sprint is the dashed one, so the two read apart at a glance
+      route.length > 0 ? [unit.pos, ...route] : [],
+      isDash ? DASH_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
+      !isDash && draft.sprint, // sprint is the dashed one; a dash reads by colour
     );
   }
 
