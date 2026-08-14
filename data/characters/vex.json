@@ -45,13 +45,14 @@
       "phase": "prep",
       "shape": "square",
       "range": 4,
-      "cooldown": 3,
-      "energyGain": 5,
+      "cooldown": 4,
+      "energyGain": 0,
+      "free": true,
       "effects": [
         { "kind": "trap", "amount": 20 },
         { "kind": "reveal", "duration": 2 }
       ],
-      "description": "Plants a hidden trap. Triggers on entry: 20 damage and Reveals the victim for 2 turns."
+      "description": "FREE ACTION — costs no ability, so Vex still shoots this turn. Plants a hidden trap: 20 damage on entry and Reveals the victim for 2 turns."
     }
   ],
   "ultimate": {

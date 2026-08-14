@@ -1,0 +1,130 @@
+{
+  "_comment": "Catalyst pool — three per phase, one slot each per character, once per match. Every catalyst is a free action (see docs/design/free-actions-and-catalysts.md). Entries are AbilityDef-shaped so validateAbility can be reused. Selection is an M3 lobby feature; the default triad until then is second_wind / shift / adrenaline.",
+  "prep": [
+    {
+      "id": "second_wind",
+      "name": "Second Wind",
+      "phase": "prep",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [{ "kind": "heal", "amount": 30 }],
+      "description": "Heal 30 immediately. The emergency button: read their burst, survive it, and still take your turn. (Once per match)"
+    },
+    {
+      "id": "ablative_field",
+      "name": "Ablative Field",
+      "phase": "prep",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [{ "kind": "shield", "amount": 35, "duration": 1 }],
+      "description": "A 35-point shield for this turn — larger than any kit's. Pre-empt the burst you predicted. (Once per match)"
+    },
+    {
+      "id": "brainwave",
+      "name": "Brainwave",
+      "phase": "prep",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [{ "kind": "energized", "duration": 3 }],
+      "description": "Energized for 3 turns: +50% energy from everything you do. Buy your ultimate roughly two turns early. (Once per match)"
+    }
+  ],
+  "dash": [
+    {
+      "id": "shift",
+      "name": "Shift",
+      "phase": "dash",
+      "shape": "square",
+      "range": 3,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [{ "kind": "teleport" }],
+      "description": "Blink up to 3 squares, ignoring walls. Does not consume your Move — this is extra distance, not instead of. (Once per match)"
+    },
+    {
+      "id": "fade",
+      "name": "Fade",
+      "phase": "dash",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [{ "kind": "untargetable", "duration": 1 }],
+      "description": "Untargetable for the turn without moving an inch — you keep your position and your attack. The answer to being read. (Once per match)"
+    },
+    {
+      "id": "unshackle",
+      "name": "Unshackle",
+      "phase": "dash",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [{ "kind": "unstoppable", "duration": 2 }],
+      "description": "Unstoppable for 2 turns: walk out of Root and Slow, ignore knockback and pull. The answer to a control kit. (Once per match)"
+    }
+  ],
+  "blast": [
+    {
+      "id": "adrenaline",
+      "name": "Adrenaline",
+      "phase": "blast",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [{ "kind": "might", "duration": 2 }],
+      "description": "Might for 2 turns (+25% damage) — and it lands before this turn's attack, not after. (Once per match)"
+    },
+    {
+      "id": "suppression",
+      "name": "Suppression",
+      "phase": "blast",
+      "shape": "circle",
+      "range": 0,
+      "radius": 2,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [{ "kind": "weaken", "duration": 2 }],
+      "description": "Every enemy within 2 squares is Weakened for 2 turns. Blunt the counter-swing instead of raising your own. (Once per match)"
+    },
+    {
+      "id": "overdrive",
+      "name": "Overdrive",
+      "phase": "blast",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [
+        { "kind": "might", "duration": 1 },
+        { "kind": "haste", "duration": 1 }
+      ],
+      "description": "Might and Haste for a turn. The Might lands on this turn's attack; the Haste lands on the Move right after it. Hit hard, then leave. (Once per match)"
+    }
+  ]
+}

@@ -21,13 +21,14 @@
       "phase": "prep",
       "shape": "square",
       "range": 4,
-      "cooldown": 2,
-      "energyGain": 5,
+      "cooldown": 3,
+      "energyGain": 0,
+      "free": true,
       "effects": [
         { "kind": "trap", "amount": 12 },
         { "kind": "root", "duration": 1 }
       ],
-      "description": "Plants a hidden snare. Triggers on entry in any phase: 12 damage and Root for a turn. A rooted victim loses their Move — and stands in Barbed Sling range."
+      "description": "FREE ACTION — costs no ability, so Thorn still slings this turn. Plants a hidden snare: 12 damage and Root on entry in any phase. A rooted victim loses their Move and stands in Barbed Sling range."
     },
     {
       "id": "bramble_stride",
