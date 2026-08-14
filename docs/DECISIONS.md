@@ -839,3 +839,101 @@ session workflow both require a green suite before pushing, so I re-pointed thos
 assigns (the roster-derived turn-1-threat guard, wiring `iron-basin` into `content.test.ts`,
 and tightening the dash guardrail to all archetypes now that Thorn has one) are left to the
 Builder, with the verified snippets in `maps-v1.md` §6.
+
+## 2026-08-14 — UI batch (A0-heal, UI1–UI6, AIM1/UI4)
+
+**(A0-heal) A self-cast names the caster as its own source.** Making `sourceUnitId`/`abilityId`
+required on `heal`/`statusApplied` forces an answer for self-buffs. "The caster" is not a
+placeholder to satisfy a required field — it is the true answer, and it keeps every consumer on
+one shape instead of branching on "did anyone do this to me". The combat log then special-cases
+only the *wording* ("Aegis healed for 20", not "Aegis healed Aegis"), which is presentation.
+
+**(A0-heal) `dealtDamage` became a Map.** The reveal a damaging attack inflicts on its own
+attacker needed an ability id, and the Blast gather step is the last place that knows which
+attack landed. Keyed by attacker, valued by ability — no new pass, no new state.
+
+**(UI1) Hover state is separate from the draft, and that is the item.** Previously the live
+cone wrote straight into `draft.aimStep`, so looking and choosing were the same action. Now
+pointer state lives in a `Hover` record that `renderPreviews` reads *instead of* the draft when
+present. This is what lets the range envelope, the live cone and the committed order render at
+once. Both hover and click resolve a pointed-at square through one function (`aimFor`), so what
+you saw is what you committed by construction rather than by two code paths agreeing.
+
+**(UI1) The range envelope includes wall squares.** The engine lets you aim a circle at a wall
+(the neighbours still get hit), so an envelope that excluded walls would disagree with legality
+— prettier, and a lie. Directional and area shapes use the Manhattan diamond `aimInRange`
+accepts; a `path` ability's range is a movement-cost budget, so its envelope is
+`reachableSquares`.
+
+**(UI1/UI3) A locked character cannot be re-selected.** The ruling says a player switches freely
+"until all are locked". Read plainly, locking is what ends editing for that character, so a
+locked chip is disabled with a ✓ and Lock In auto-advances to the next unlocked one. If the
+owner wants a read-only review of a locked character, that is a small addition — flagged below.
+
+**(UI3) The HUD is keyed and updated in place for a correctness reason, not a performance one.**
+`replaceChildren` swaps the node under the pointer, so the browser fires `mouseleave` on an
+element that no longer exists and UI1's hover state is wiped by its own repaint. Keyed nodes fix
+it structurally; a test pins node identity across updates.
+
+**(UI6) Two things the log deliberately does not print.** `reveal` fires on every attacker every
+turn they damage someone — a line each would drown the log, and the damage line above already
+says they attacked. Movement, energy and phase events are dropped too: the owner asked for
+damage and healing, and a move-by-move transcript is a different feature. Entries are never
+re-sorted; the log's order is the engine's resolution order, and re-sorting would invent a
+causality the turn did not have.
+
+**(UI2) Directional shapes truncate to what they reached; disks do not.** `lineSquares` stops at
+the first wall, so an untruncated beam carried on through it — visibly claiming shots pass
+walls, the exact two-layer disagreement the item exists to prevent. A circle is different: the
+engine drops a walled tile *without shortening the circle*, so keeping the disk whole is what
+shows a corner was clipped. Depth is recovered as `max(|dx|,|dy|)` over the covered tiles, which
+is exact for any rotation because `alongAxis` divides by the dominant component — no trig, no
+projection error.
+
+**(UI2) The cone's apex sits half a tile in front of the caster.** The engine's half-width at
+depth `d` is `d − 1` tiles, i.e. `d − 0.5` out to the tile edge; that line reaches zero at
+`d = 0.5`. Not an approximation — it is where the widening rule starts.
+
+**(UI5) Readouts are DOM, anchored by projecting the world position to screen.** Sprites would
+need a font atlas and would blur under zoom; `screenPosition` is just the inverse of the picking
+ray the renderer already owns. They live 2.2 beats — longer than the one-beat cue that spawns
+them — which is what makes "a unit that dies later in the phase still shows its numbers" true
+against A2's end-of-phase death cue.
+
+## Open Questions for the Analyzer — 2026-08-14 (UI batch)
+
+- **UI1/UI3: a locked character is not re-selectable.** Ruled above as the plain reading of
+  "switches freely until all are locked". If the owner expects to review (not edit) a locked
+  character before the turn resolves, say so and I will add a read-only selection state.
+  `app.ts` (`lockSelected`, the HUD switcher), `hud.ts`.
+- **UI1: no explicit "un-commit".** Clearing an action is Clear (the old Hold), which blanks the
+  whole draft. There is no way to drop just the move and keep the ability. Wanted?
+  `app.ts` handlers, `targeting.nextDraft`.
+- **UI6: the log has no filter and no cap.** It grows for the whole match. Fine at 15 turns;
+  if 4v4 makes it noisy, the cheap levers are a per-tone filter or a max-entry window. Also,
+  the log currently shows **both teams' events** — correct for hot-seat, but at M3 it will need
+  the same hidden-information treatment as orders. `combat-log.ts`, room layer.
+- **UI2: cone raggedness is now visible, which is a feature and a question.** The continuous
+  wedge sits over tiles that only approximate it, so at shallow angles you can see individual
+  tiles poking out. That is the honest picture; whether it reads as *deliberate* is a playtest
+  call. The old flag about cone geometry stands. `targeting.shapeOutline`, `shapes.coneSquares`.
+- **UI5: readouts do not stack when several land on one unit in one beat.** Each is keyed by
+  (unit, kind, amount) and positioned by age, so two simultaneous same-kind numbers of different
+  amounts overlap slightly rather than queueing. Visible only in heavy 4v4 AoE; say if it
+  matters. `app.showReadouts`.
+- **UI5 covers `damage`/`absorb`/`heal`/`shield` only.** Non-shield statuses (slow, root, might)
+  get a combat-log line but no floating readout, since the AC named three. Status icons were on
+  the observed-not-requested list, so I did not invent one. `animate.sampleFrame`.
+- **HUD reserves a fixed 260px and the log a fixed 300px.** Below ~1100px wide the board gets
+  cramped and there is no responsive breakpoint. Worth an item if the owner plays on a laptop.
+  `index.html`, `app.sizeToContainer`.
+- **RENDER-VERIFY is now clearly worth doing.** Every item this session was checked with a
+  scripted browser run plus composited screenshots — hover envelope, live cone, dash line, both
+  overlay layers, floating readouts, the HUD and the log. None of that is reachable from a unit
+  test. It needs Playwright as a devDependency and one CI job; the harness is already in the
+  environment.
+- **Designer/data items untouched** (M1, M1-4v4, Thorn-dash all landed on main before this
+  session; the follow-up tests `maps-v1.md` §6 assigns to the Builder — the roster-derived
+  turn-1-threat guard, wiring `iron-basin` into `content.test.ts`, and tightening the dash
+  guardrail to all archetypes — were **not** in this session's unblocked backlog set. Add them
+  to BACKLOG if you want them next session.
