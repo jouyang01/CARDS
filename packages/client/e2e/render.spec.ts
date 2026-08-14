@@ -254,6 +254,31 @@ test('a catalyst can be armed without clearing the chosen ability', async ({ pag
 });
 
 /**
+ * CAT-DASH-COST — "Dash Catalysts should not be a free action." The reducer is
+ * unit-covered; what only a browser shows is that the cost is *visible* before
+ * it is paid, which is the difference between a rule and a bug.
+ */
+test('arming the Dash catalyst prices the turn: Sprint greys out, Move reads 0', async ({ page }) => {
+  const slots = page.locator('.hud-catalyst');
+  await expect(slots.nth(1)).toHaveAttribute('data-phase', 'dash');
+  const moveButtons = page.locator('.hud-moves .hud-move');
+  const move = moveButtons.nth(0);
+  const sprint = moveButtons.nth(1);
+  await expect(sprint).toBeEnabled();
+  await expect(move).toHaveText(/Move \([1-9]/);
+
+  await slots.nth(1).click(); // Shift
+  await expect(slots.nth(1)).toHaveClass(/sel/);
+  await expect(sprint, 'Sprint must not stay offered once the Move is spent').toBeDisabled();
+  await expect(move, 'the budget has to say what you will actually get').toHaveText('Move (0)');
+
+  // Handing the slot back gives the Move back with it.
+  await slots.nth(1).click();
+  await expect(sprint).toBeEnabled();
+  await expect(move).toHaveText(/Move \([1-9]/);
+});
+
+/**
  * FREE-UI — the mechanic the engine implemented and the client never exposed.
  * A unit test proves the reducer keeps both slots; only a browser proves the
  * hotbar button is wired to the free slot and not to the normal one.

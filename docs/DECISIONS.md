@@ -1771,3 +1771,57 @@ settled here.
 catalyst clears the drawn move and disables Sprint, the HUD's move budget reads 0, and choosing to
 move or sprint hands the catalyst slot back rather than silently voiding it. The CAT2 separate-slot
 invariant is otherwise intact — a Dash catalyst still never touches the chosen ability or its aim.
+
+## Open Questions for the Analyzer — 2026-08-28
+
+1. **`untargetable` and traps (UNTGT1).** STATUS-AUDIT's AC required a test that `untargetable`
+   blocks being targeted, and writing it found that no damage path read the status at all. It is
+   now enforced across **aimed** offence — Blast, dash crossings and impact blasts, delayed
+   detonations, catalysts — over the whole harmful half of an ability, with no energy for the
+   attacker. **Traps are excluded**, on the reading that edge-cases already holds placed hazards
+   apart from aimed attacks (team-safe, outside friendly fire). If the Designer wants "cannot be
+   hit" to mean "cannot be hurt", the trap path is one `if`. Route it.
+
+2. **CAT-DASH-COST contradicts a shipped ruling the Builder may not edit.** `edge-cases.md` still
+   says *"RULED — A free dash catalyst (Shift) does NOT consume your Move. Genuinely additive."*
+   That is now false in the engine, on the owner's directive and the Analyzer's DO-NOT-HOLD.
+   The Designer needs to retire or rewrite that bullet, and the BACKLOG entry needs to leave
+   "Blocked on Designer". Until then the docs and the code disagree in writing.
+
+3. **CAT-DASH-COST sub-question, still open.** All three Dash catalysts pay the Move, including
+   Fade and Unshackle, which reposition nobody. The directive names the colour rather than Shift,
+   and one rule per colour is what a player can hold in their head — but the Analyzer's PROPOSED
+   version was narrower, and Fade at the cost of a full Move may simply be unplayable. A balance
+   call the Designer owns; the engine change is one condition either way.
+
+4. **`statusRemoved` is a new event kind and the log schema is now wider.** Emitted for Stealth
+   broken early and for every end-of-turn expiry. Nothing in resolution changed, but the combat
+   log (UI6) does not render it and probably should — "Vex's Haste wore off" is exactly the kind
+   of thing a player loses track of. Not scoped; raise it if you agree.
+
+5. **Status pips are not pixel-verified.** The vocabulary (`status-pips.ts`) and the playback fold
+   are unit-covered, and the row's centring maths with them, but nothing asserts the quads
+   composite — they are billboarded meshes, not DOM, so RENDER-VERIFY's pixel families cannot
+   isolate them the way FOG-ZORDER's brush test can. A dedicated colour family per pip would make
+   it testable; worth it only if a pip regression actually happens.
+
+6. **PREVIEW-NUMBERS shows nominal amounts.** Before Might/Weaken, cover, shields and now
+   Untargetable. Deliberate — a plan-time preview cannot know what will be standing at resolution,
+   since Adrenaline resolves at the *start* of Blast, after lock. Cover is the one modifier that is
+   knowable at plan time and would change the number by half; if playtest reports the preview
+   "lying" over a unit in cover, that is the first thing to fold in.
+
+7. **PREVIEW-NUMBERS covers all three armed slots.** Ability, free action and catalyst, summed per
+   unit and colour, on the reading that the player's question is what *their turn* does to a unit.
+   The AC said "the action's area", singular. If the intent was ability-only, it is one argument.
+
+8. **DASH-PREVIEW is a plan-time estimate and can disagree with resolution.** The disc is centred
+   on the *aimed* landing square; a charge stopped short by a body detonates where it stopped.
+   That is the ruled behaviour and the reason the disc is not folded into `expandShape`'s area,
+   but it does mean the preview can be wrong in exactly the case a player most wants it right.
+   Showing the truncated route's real end would need the client to re-run `walkCharge` against
+   post-Dash positions, which it cannot know at plan time. Flagging, not proposing.
+
+9. **Carried over, still open:** the FREE1/CAT1 `free` + `oncePerMatch` conflict resolution, the
+   one-free-action tiebreak, and `AbilityOrder.target` becoming optional (Builder OQ 2026-08-26,
+   1–11). None of this session's work resolved them.
