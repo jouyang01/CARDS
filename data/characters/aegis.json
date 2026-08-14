@@ -35,11 +35,12 @@
       "range": 4,
       "cooldown": 3,
       "energyGain": 5,
+      "impact": { "destination": 1 },
       "effects": [
         { "kind": "teleport" },
         { "kind": "shield", "amount": 12, "duration": 1 }
       ],
-      "description": "Dash to a square within 4 and raise a 12-point shield. Resolves before Blast — arrive at the ally being dived, or leave the trap you're standing in."
+      "description": "Dash to a square within 4; Aegis and every ally within 1 square of the landing gain a 12-point shield. Resolves before Blast — arrive at the ally being dived and cover them, or leave the trap you're standing in."
     },
     {
       "id": "grounding_strike",

@@ -1329,3 +1329,52 @@ whereas a Manhattan diamond bakes in the axis bias we are removing. The alternat
 `|dx| + |dy| ≤ r`) restores all three counts exactly at 5 / 13 / 25 and is the same size of
 change in the other direction. Either way **one of the two rulings must be marked superseded**
 rather than left in quiet conflict.
+
+## 2026-08-14 — Aiming is Euclidean; dashes get impact areas (Designer, owner directives)
+
+Amends the same-day AoE ruling after measuring cone *reach* rather than only tile counts.
+Full workings in `docs/design/aoe-footprints-v1.md`.
+
+**(1) The cone inflation is length, not width — which corrects the ramp guidance I gave.**
+Measured, a range-4 cone reaches **4 tiles on the axis and 7 on the diagonal** (furthest tile
+5.66 vs 7.07 tile-widths). Range is metered as a count of lattice steps along the axis, so a
+diagonal "range 4" is four *diagonal* steps = 5.66 tile-widths; length inflates by √2 and area,
+scaling with length², by ~2× — measured 24 → 42 tiles. So `halfWidth(d) = d` is necessary but
+**not sufficient**: with axial depth still counted in steps, the diagonal cone stays 41% longer
+whatever the width rule says, and CONE-B's ±1 rotation-invariance AC is unreachable. The
+acceptance test needs a *reach* check alongside the tile count — that is the check that would
+have caught this.
+
+**(2) Movement is measured in steps; aiming is measured in distance.** Both the cone and circle
+problems are one root cause: lattice-step metering applied to projected geometry. Ruling: all
+ability geometry is **Euclidean** — `line`/`cone` range, `circle`/`square` aim range, `circle`
+radius, dash impact radii — while **movement, sprint, reachability and `path` dash length stay
+Manhattan (MET1 unchanged)**. The split is principled rather than a compromise: movement is a
+lattice walk where the step is the atom and a step count *is* the rule, whereas aiming projects
+a continuous shape that should describe the same shape whichever way it points. It is also how
+Atlas Reactor works — abilities are authored as continuous shapes (cones in degrees, ranges in
+squares) over a tile grid, so rotation preserves area for free and AR never had this class of
+bug. Determinism is untouched: every test remains an integer squared-distance comparison in the
+existing ×2 lattice. One balance consequence, accepted and flagged: `circle`/`square` aim
+regions become discs rather than diamonds, which is a modest buff at long range (range 6:
+85 → 113 aimable tiles) with identical axial reach; directional shapes move the other way,
+losing the diagonal over-reach that motivated the ruling. Vision is deliberately **not** in
+scope — it is perception, not aiming, and changing it moves concealment balance.
+
+**(3) Dash impact areas: `impact: { origin?, destination? }`.** Today a dash affects either the
+first unit crossed or units adjacent to the landing; neither expresses "leap into the middle of
+them and detonate." The new optional block gives a dash an AoE at its takeoff square, its
+landing square, or both, with **Euclidean radii reusing `circleSquares` — no new geometry
+code**. It composes with both dash models (a walked charge still hits the first body *and*
+detonates where it stops), effects apply to the union with each unit affected at most once, and
+absent `impact` is exactly today's behaviour. The architectural win is that **Shadowstep Strike
+is the only `square` dash in the roster carrying damage** (audited), so it is the sole user of
+the hardcoded Manhattan-1 teleport-strike adjacency; once it carries its own
+`impact: { destination: 1 }` that branch can be deleted and the adjacency becomes a tunable
+number instead of engine trivia. Applied to three abilities: Shadowstep (formalisation, zero
+behaviour change), Aegis's Intercept (the shield now lands on allies at the destination —
+"teleport to the ally being dived" previously arrived with nothing for them, which was the
+Bodyguard hybrid failing at its one job), and Ravok's Bullrush (charge-and-detonate, radius 2,
+knockback 2 → 1 because it now applies to an area and the kit's displacement budget allows one
+displacement ≥2). Escapes were deliberately left alone — an escape that also deals AoE is not
+an escape, it is an engage.
