@@ -32,13 +32,14 @@
       "phase": "prep",
       "shape": "self",
       "range": 0,
-      "cooldown": 4,
-      "energyGain": 6,
+      "cooldown": 5,
+      "energyGain": 0,
+      "free": true,
       "effects": [
         { "kind": "stealth", "duration": 1 },
         { "kind": "decoy", "duration": 1 }
       ],
-      "description": "Vanish for a turn and leave a decoy at your current square. (Decoy behavior: OPEN ruling in edge-cases.md — Designer specs before implementation.)"
+      "description": "FREE ACTION — costs no ability, so Wisp can vanish and still Sprint. Vanish for a turn and leave a decoy at your current square; the decoy shows the enemy team a Wisp that is not there, and dies to any damage."
     },
     {
       "id": "bola",

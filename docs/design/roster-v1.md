@@ -114,21 +114,27 @@ Numbers below are the source-of-truth drafts in `data/characters/`. Format:
 ### Vex — Sharpshooter Firepower (existing, unchanged)
 
 Rail Shot (blast line 8, 26) / Frag Grenade (blast circle, 34, delay 1, cd 3) ·
-Combat Roll (dash 3, cd 2) · Overwatch Trap (prep, 20 + Reveal 2, cd 3) /
+Combat Roll (dash 3, cd 2) · **Overwatch Trap (prep, 20 + Reveal 2, cd 4, FREE)** /
 Lance of Dawn (blast line 99, 45).
 
 - **Wins by:** prediction at range; grenade zoning into rail lanes.
 - **Loses to:** anything that closes the gap while Combat Roll is down (2-turn window).
+- **Free action (2026-08-13):** the trap no longer costs Vex her shot. Cooldown 3→4 and
+  energy 5→0 pay for it — see `free-actions-and-catalysts.md` §1.3.
 
 ### Wisp — Phantom Firepower (existing; archetype relabeled from `trickster`)
 
-Dagger Flurry (blast cone 2, 22) / Blink (dash square 4, cd 2) · Veil & Decoy
-(prep, Stealth + decoy, cd 4) · Bola (blast line 6, 12 + Slow, cd 2) /
+Dagger Flurry (blast cone 2, 22) / Blink (dash square 4, cd 2) · **Veil & Decoy
+(prep, Stealth + decoy, cd 5, FREE)** · Bola (blast line 6, 12 + Slow, cd 2) /
 Shadowstep Strike (dash, teleport 7 + 40 + Untargetable).
 
 - **Wins by:** ambush and evasion; the opponent aiming at yesterday's square.
 - **Loses to:** Reveal (Vex/Cinder), AoE fired at the obvious approach, being read.
-- Decoy semantics remain **OPEN** in edge-cases.md — unchanged by this doc.
+- Decoy semantics were ruled in `rulings-v1-blockers.md` §R2 and shipped (backlog D1).
+- **Free action (2026-08-13):** the kit's biggest change. Vanishing no longer costs the
+  turn, so the real play is **Veil + Sprint 8** — reposition 8 squares while hidden, with
+  a decoy left standing where you were. Free-Veil-plus-attack is self-defeating (attacking
+  breaks Stealth), which is exactly why this is safe to give away. Cooldown 4→5, energy 6→0.
 
 ### Kestrel — Skirmisher Firepower (new)
 
@@ -189,9 +195,11 @@ Fortress Protocol (prep, 50 shield + Unstoppable + Might, 2 turns).
 ### Thorn — Warden Support (new)
 
 - **Auto — Barbed Sling** (blast line 6, 17, e8).
-- **S1 — Snare Bloom** (prep square range 4, trap: 12 + Root 1 on trigger, cd 2,
-  e5). Hidden, triggers on entry in any phase. A rooted victim loses their Move
-  and stands in Barbed Sling range.
+- **S1 — Snare Bloom** (prep square range 4, trap: 12 + Root 1 on trigger, **cd 3,
+  FREE**). Hidden, triggers on entry in any phase. A rooted victim loses their Move
+  and stands in Barbed Sling range. **Free action (2026-08-13):** the single biggest
+  improvement to Thorn — laying the garden no longer competes with her own auto
+  attack. Cooldown 2→3 and energy 5→0 pay for it.
 - **S2 — Bramble Stride** (dash path 3, 10 + Root 1 to the first unit crossed,
   cd 3, e5). *Replaced Lashing Vine 2026-08-13 (backlog Thorn-dash).* Thorn was
   the only kit in the roster with no Dash-phase ability — a gap the edge-cases
