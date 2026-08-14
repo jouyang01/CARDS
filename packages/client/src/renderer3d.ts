@@ -81,10 +81,20 @@ const DIM_ALPHA = 0.22;
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
  * covered tile always reads on top of the envelope that contains it.
  */
-export type HighlightLayer = 'range' | 'reach' | 'aim' | 'select';
+export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'select';
 
 /** Height above the ground plane per layer, so they never z-fight. */
-const LAYER_LIFT: Record<HighlightLayer, number> = { range: 0.006, reach: 0.010, aim: 0.016, select: 0.022 };
+const LAYER_LIFT: Record<HighlightLayer, number> = {
+  fog: 0.002, range: 0.006, reach: 0.010, aim: 0.016, select: 0.022,
+};
+/**
+ * Overlay tiles are inset so the grid reads through them — except fog, which
+ * has to meet its neighbours edge to edge or the darkness comes out as a mesh
+ * of lit seams (VISION1).
+ */
+const LAYER_INSET: Record<HighlightLayer, number> = {
+  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, select: 0.92,
+};
 /** UI2's continuous shape sits just above the covered tiles it explains. */
 const SHAPE_LIFT = 0.026;
 
@@ -106,6 +116,8 @@ export interface Renderer {
   show(units: readonly RenderUnit[], decoys?: readonly Vec2[]): void;
   /**
    * Highlight squares. Layers stack bottom-up in the order listed here:
+   * `fog` is the unseen board (VISION1) and sits underneath everything, so your
+   * own aim still reads over darkness — you may shoot where you cannot see.
    * `range` is the hover envelope (UI1 — where an ability *could* go), `reach`
    * the move envelope, `aim` the tiles an aim actually covers, `select` the
    * current unit and impact flashes.
@@ -533,7 +545,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       disposeChildren(g);
       for (const p of squares) {
         const tile = new Mesh(
-          new PlaneGeometry(TILE * 0.92, TILE * 0.92),
+          new PlaneGeometry(TILE * LAYER_INSET[layer], TILE * LAYER_INSET[layer]),
           new MeshLambertMaterial({ color, transparent: true, opacity }),
         );
         tile.rotation.x = -Math.PI / 2;

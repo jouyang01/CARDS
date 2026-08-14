@@ -4,6 +4,7 @@ import {
   decodePng,
   distinctColours,
   isAimOrange,
+  isFogged,
   isTeamBlue,
   isTeamRed,
   type Image,
@@ -93,16 +94,20 @@ test.beforeEach(async ({ page }) => {
   expect(failures, 'the page must load without throwing').toEqual([]);
 });
 
-test('the board composites an actual scene, with both teams on it', async ({ page }) => {
+test('the board composites an actual scene, fogged to the seat on the clock', async ({ page }) => {
   const image = await pixels(page);
 
   // A renderer that draws nothing composites one flat colour. Hundreds of
   // distinct colours means terrain, units and shading all made it to the screen.
   expect(distinctColours(image), 'the canvas looks flat — nothing was drawn').toBeGreaterThan(MIN_DISTINCT_COLOURS);
 
-  // And they are the right things: two teams, two colours, both present.
+  // And they are the right things. Team 0 has the clock, so its units are on
+  // screen; team 1 spawns further than sight reaches, so under VISION1 it is
+  // not drawn at all. Both halves matter: the first catches "nothing drew", the
+  // second catches fog quietly doing nothing.
   expect(countPixels(image, isTeamBlue), 'team 0 units are missing from the board').toBeGreaterThan(0);
-  expect(countPixels(image, isTeamRed), 'team 1 units are missing from the board').toBeGreaterThan(0);
+  expect(countPixels(image, isTeamRed), 'the unseen enemy team must not be drawn').toBe(0);
+  expect(countPixels(image, isFogged), 'the board is not fogged — VISION1 did not paint').toBeGreaterThan(0);
 
   // The HUD came up with it, so this is a live match rather than a
   // half-initialised page that happened to paint a background.

@@ -139,6 +139,12 @@ export const isTeamBlue = (px: Rgb): boolean => px.b > 130 && px.b - px.r > 50 &
  */
 export const isTeamRed = (px: Rgb): boolean =>
   px.r > 130 && px.r - px.g > 80 && Math.abs(px.g - px.b) < 40;
+/**
+ * Fogged board (VISION1). The fog quad is near-black at 62% over terrain whose
+ * lit floor is already dark, so this is "darker than any lit tile" rather than
+ * a hue — the whole point of the colour is that it carries no information.
+ */
+export const isFogged = (px: Rgb): boolean => px.r < 18 && px.g < 20 && px.b < 26;
 /** The aim overlay's orange: warm, bright, and clearly not the brown of cover. */
 export const isAimOrange = (px: Rgb): boolean =>
   px.r > 150 && px.g > 90 && px.g < px.r - 30 && px.b < px.g - 20;

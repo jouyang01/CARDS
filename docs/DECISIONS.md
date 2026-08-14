@@ -1160,3 +1160,33 @@ generous — the shipped roster's four cones (all `range: 2`) go from 4 tiles to
 circle from 5 to 9, radius-2 from 13 to 21, radius-3 from 25 to 37. Lines are unchanged.
 That is a real balance shift and it belongs to the Designer; it is raised in this session's
 Open Questions rather than absorbed by quietly editing `data/`.
+
+## 2026-08-14 — VISION1 fog of war (Builder)
+
+**(1) The client asks, it never derives.** The engine already models AR-style vision in full —
+line of sight through cover but not walls, a Manhattan sight radius, brush concealment with
+the adjacency exception, Stealth/Reveal, sight shared across a team. `fog.ts` calls
+`visibleEnemiesForTeam` and `visibleSquaresForTeam` and paints the answers. There is
+deliberately nowhere in the client for the vision *rules* to be wrong differently from the
+engine's; if fog looks wrong, the engine is wrong and the fix is an engine test.
+
+**(2) Corpses are not fogged.** A unit that died in front of you was revealed when it died,
+and `teamCanSee` returns false for the dead — so a strict reading would have remains blink
+out on the next turn's fog check. That reads as a rendering bug, not as information you lost,
+so dead units are always drawn. Living enemies are the only thing fog hides.
+
+**(3) Fog sits *under* the aim overlay, not over it.** You may shoot where you cannot see —
+that is the whole tension of a simultaneous-turn game — so the ability preview has to read
+over darkness. The fog layer is therefore the bottom-most tile layer, and it is the one layer
+drawn at full tile size: inset like the others, it came out as a grid of lit seams.
+
+**(4) At turn 1 the enemy team is invisible, on both shipped maps.** Spawn separation is 13
+and sight reaches 6, so the first thing a playtester now sees is an empty half of the board.
+That is faithful to the reference and it is what the Dev Note asked for, but it is a large
+change to how the game *reads* on opening, so it is called out rather than buried — and
+RENDER-VERIFY now asserts it in a real browser, which is where it was first noticed.
+
+**(5) One-slot memo, because mouse-follow aiming repaints per pointer move.** `fogView` walks
+every unit's line of sight, and AIM2-UX re-renders on every `mousemove`. State cannot change
+mid-Decision, so the answer depends only on which seat is looking; caching on
+`(state, team)` identity is exact rather than an approximation.

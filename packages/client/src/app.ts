@@ -20,6 +20,7 @@ import {
   type MapDef,
   type Phase,
   type Roster,
+  type TeamId,
   type UnitOrders,
   type UnitState,
   type Vec2,
@@ -59,6 +60,7 @@ import {
 import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js';
 import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
+import { fogView, revealedView, type FogView } from './fog.js';
 import { type ViewState } from './playback.js';
 
 export interface HotSeatUI {
@@ -83,6 +85,12 @@ const AIM = 0xff9a3e;
 const SHAPE = 0xffc98a;
 const SELECT = 0xf0f0f0;
 const IMPACT = 0xffd166;
+/**
+ * Fog (VISION1). Near-black rather than a tint: unseen board should read as
+ * *absence of information*, and any hue would suggest the terrain underneath
+ * meant something.
+ */
+const FOG = 0x05060a;
 /**
  * The drawn movement lines (AIM1/UI4). All three share one geometry — a
  * polyline through tile centres plus an endpoint marker — and differ only in
@@ -304,7 +312,21 @@ export function startHotSeat(
   const shieldOf = (u: UnitState): number =>
     u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
 
-  const stateUnits = (): RenderUnit[] => state.units.map((u) => ({
+  /**
+   * `fogView` walks every unit's line of sight, and mouse-follow aiming
+   * (AIM2-UX) repaints on every pointer move — but the state cannot change
+   * mid-Decision, so the answer only ever depends on which seat is looking.
+   * One slot is enough: the seat changes far more rarely than the pointer.
+   */
+  let fogMemo: { state: GameState; team: TeamId; view: FogView } | undefined;
+  const currentFog = (team: TeamId): FogView => {
+    if (fogMemo?.state !== state || fogMemo.team !== team) {
+      fogMemo = { state, team, view: fogView(map, state, team) };
+    }
+    return fogMemo.view;
+  };
+
+  const toRenderUnits = (units: readonly UnitState[]): RenderUnit[] => units.map((u) => ({
     unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
     energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
     shield: shieldOf(u),
@@ -367,7 +389,14 @@ export function startHotSeat(
     const draft = draftFor(unit);
     const character = characterFor(unit);
 
-    renderer.show(stateUnits(), state.decoys.map((d) => d.pos));
+    // ── VISION1: fog of war ──────────────────────────────────────────────────
+    // Planning is the only time hiding anything is honest — during playback the
+    // turn is history and everything is shown. The engine answers *what* is
+    // visible; this only paints the answer. Hot-seat fog is an aid for players
+    // sharing a screen, not a security boundary — that is M3.
+    const view = currentFog(currentSeat()?.team ?? unit.owner);
+    renderer.show(toRenderUnits(view.units), state.decoys.map((d) => d.pos));
+    renderer.highlight('fog', view.fogged, FOG, 0.62);
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
     clearReadouts();
@@ -605,7 +634,7 @@ export function startHotSeat(
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
     const player = createTurnPlayer(prev, result.events);
-    for (const layer of ['range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
     renderer.show(viewUnits(player.view), viewDecoys(player.view));
@@ -734,8 +763,8 @@ export function startHotSeat(
   }
 
   function renderGameOver(): void {
-    renderer.show(stateUnits(), []);
-    for (const layer of ['range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    renderer.show(toRenderUnits(revealedView(state).units), []);
+    for (const layer of ['fog', 'range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);
