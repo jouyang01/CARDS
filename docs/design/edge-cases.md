@@ -51,6 +51,15 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   "allies also block in v1" lean is superseded. (Deduped 2026-08-15: the branch merge
   left two Pass-through entries and a redundant contested-square entry; the same-step
   and edge-swap rulings above are the single contested-square authority.)
+- **RULED — A move aimed at an unreachable/occupied tile routes to the nearest legal tile
+  (owner directive 2026-08-25; backlog MOVE1; client targeting).** You cannot *end* on an
+  occupied square (Collisions), but clicking one must not silently drop the whole move — that
+  reads as "the game ignored me." Clicking a tile that is occupied, out of budget, or blocked
+  moves the unit **as far as legally possible toward it** (the nearest reachable tile — prefer
+  the reachable square closest to the clicked target, ties by lowest cost then fixed
+  direction order for determinism). The engine rule is unchanged; this is the **client**
+  choosing a legal path instead of `pathTo` returning `[]`. (AR's full "click an ally to
+  *follow* them" is the richer future version — noted, not required for v1.)
 - **RULED — Atlas Reactor movement model: pass through everyone, never end on an
   occupied square (Dev Notes 1 & 2; implemented MV1/MV2, verified against the AR wiki
   2026-08-17).** The human supplied the AR *Movement* wiki text; these are confirmed:
@@ -185,6 +194,24 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **RULED — Free-aim into fog.** Players may aim any ability at any legal square,
   seen or unseen. Hitting a stealthed/hidden unit works normally — stealth hides
   position, it is not a dodge.
+- **RULED — Client renders fog of war from the engine's existing vision (owner directive
+  2026-08-25; backlog VISION1; client).** The engine already models AR-style vision — LoS
+  blocked by walls (not cover), Manhattan sight radius (MET1), brush concealment with the
+  adjacency exception, Stealth/Reveal, team-shared sight (`canSee`,
+  `visibleEnemiesForTeam`, `visibleSquaresForTeam`) — but the client draws everything, so none
+  of it is felt. VISION1 **surfaces** it, it does not re-derive it:
+  - During the **Decision phase**, apply the vision of the **seat-on-the-clock's team**: enemy
+    units the team cannot see are hidden (or shown only at a last-known ghost per AR), and
+    tiles outside team sight are fogged/dimmed. Own-team units are always shown.
+  - During **resolution playback**, reveal what happens (you learn the enemy's actions that
+    turn — acting reveals, per the existing "attacking breaks concealment" ruling). Full
+    per-team hidden information across the network is an **M3** concern; hot-seat fog is a
+    local approximation of it and is explicitly not the security boundary.
+  - The client must compute nothing about visibility itself — consume the engine's `canSee`/
+    `visibleEnemiesForTeam`/`visibleSquaresForTeam` (golden rule: client is a pure consumer).
+  If the owner wants specific AR vision-*rule* changes after seeing fog rendered (e.g. cover
+  blocking sight, or a different sight radius), those are separate engine rulings — raise them
+  then rather than guessing now; the current rules already match AR closely.
 - **RULED — Free-rotation aiming via a QUANTIZED INTEGER direction (AIM2, owner directive
   2026-08-20; backlog AIM2; scope: `line` and `cone` only).** `cone`/`line` may be rotated
   freely (360°) instead of snapping to 4/8 compass directions. **Determinism (golden rule
@@ -196,10 +223,31 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   **standing test guard** asserts `packages/engine` contains no `Math.cos/sin/atan2/tan`
   (add it regardless of when AIM2 lands). `circle` (target-square Euclidean disk) and `path`
   (dashes) are unaffected.
-- **RULED — Partial-tile coverage = centre-in, binary full damage (AIM2, owner default
-  2026-08-20).** A tile is covered iff its **centre** falls inside the rotated shape;
-  coverage is **binary** — a covered tile takes **full** damage (no partial/fractional
-  damage). "Hit half a tile" is a visual/coverage nuance, not a damage split.
+- **RULED — Tile coverage = Atlas Reactor central-circular-hitbox (owner directive
+  2026-08-25; SUPERSEDES the AIM2 "centre-in" rule below; backlog HITBOX1).** Every tile has a
+  hidden **circular hitbox of radius half a tile, centred on the tile**. A tile is hit **iff
+  the AoE region intersects that hitbox circle** — not iff the shape merely covers the tile's
+  centre point, and not iff it merely touches the tile square. Consequences, per the owner:
+  - **The intersect rule:** "nicking" the sharp outer corner of a tile does **not** count —
+    the AoE must expand deep enough past the corner to clip the central circle.
+  - **The halfway rule (guarantee):** if the AoE boundary cuts at least **halfway along a
+    tile's edge**, it is guaranteed to reach the hitbox (the edge midpoint is exactly half a
+    tile from centre = the hitbox radius) and deals damage.
+  - Coverage stays **binary** (full damage or none) — the hitbox changes *which* tiles are
+    hit, not the damage amount.
+  - **DETERMINISM (golden rule #1, non-negotiable):** compute the shape∩circle test with
+    **integer arithmetic only — no trig, no floats** (the AIM2 no-trig-in-engine guard still
+    holds). Work in a scaled integer lattice (e.g. ×2 so the half-tile radius is the integer
+    1) and compare **squared** distances / integer half-plane (cross-product) perpendicular
+    distances; never `Math.sqrt`. A fixed shape+aim must yield the identical tile set on every
+    engine — ship the cross-engine regression alongside it.
+  This is more generous than centre-in for a shape that reaches within half a tile of a centre
+  without covering it, and stricter for a corner-only nick — exactly AR's feel. `expandShape`
+  is the one authority; UI2's Layer-2 tiles read it, so the overlay stays honest for free.
+- **SUPERSEDED — Partial-tile coverage = centre-in, binary full damage (AIM2, 2026-08-20;
+  superseded by the AR hitbox rule above, 2026-08-25).** Kept as the record of what HITBOX1
+  replaces. The binary-full-damage half survives; the centre-point test is replaced by the
+  hitbox-circle intersection.
 - **RULED — Range definition for rotated shapes under Manhattan (joint AIM2 × MET1, per the
   owner's "rule them together" flag).** To keep a rotated shape's reach consistent under the
   Manhattan metric: **directional shapes (`line`, `cone`) measure range as a TILE COUNT along
