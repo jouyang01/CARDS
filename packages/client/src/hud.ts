@@ -26,6 +26,12 @@ export interface HudAbility {
   reason?: 'cooldown' | 'energy';
   cooldown: number;
   selected: boolean;
+  /**
+   * A **free action** (FREE-UI): additive, so the hotbar has to say so. A
+   * player who cannot tell a free ability from a normal one will spend their
+   * turn on it — which is exactly what the shipped UI made them do.
+   */
+  free: boolean;
   /** The definition itself, so the TT1 tooltip survives into the hotbar. */
   def: AbilityDef;
 }
@@ -256,14 +262,20 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
         const name = el('span', 'hud-ability-name');
         name.textContent = ability.name + (ability.isUlt ? ` ${ULT_MARK}` : '');
         btn.appendChild(name);
-        if (!ability.available) {
-          const note = el('span', 'hud-ability-note');
-          note.textContent = ability.reason === 'cooldown' ? `${ability.cooldown}t` : 'energy';
-          btn.appendChild(note);
+        // Cooldown/energy is the more urgent note when both apply — "free" tells
+        // you how it costs, "3t" tells you that you cannot have it at all.
+        const note = !ability.available
+          ? (ability.reason === 'cooldown' ? `${ability.cooldown}t` : 'energy')
+          : ability.free ? 'free' : '';
+        if (note !== '') {
+          const el2 = el('span', 'hud-ability-note');
+          el2.textContent = note;
+          btn.appendChild(el2);
         }
         btn.disabled = !ability.available;
         btn.classList.toggle('sel', ability.selected);
         btn.classList.toggle('ult', ability.isUlt);
+        btn.classList.toggle('free', ability.free);
       }
       for (const [id, btn] of abilityNodes) {
         if (!model.abilities.some((a) => a.id === id)) { btn.remove(); abilityNodes.delete(id); }

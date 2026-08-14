@@ -75,6 +75,9 @@
       .hud-ability { display: flex; flex-direction: column; align-items: center; gap: 2px;
         min-width: 92px; padding: 8px 10px; font-size: 12px; line-height: 1.25; }
       .hud-ability.ult { border-color: #6b5b8e; }
+      /* A free action is additive, so it reads as its own thing in the hotbar
+         (FREE-UI) — green like the Prep catalyst slot it shares a phase with. */
+      .hud-ability.free { border-left: 3px solid #6fbf73; }
       .hud-ability.sel { border-color: var(--aim); color: var(--aim); }
       .hud-ability-name { font-weight: 600; }
       .hud-ability-note { font-size: 10px; opacity: 0.6; }

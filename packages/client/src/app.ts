@@ -39,6 +39,7 @@ import {
   hoverMove,
   previewAim,
   previewCatalystAim,
+  previewFreeAim,
   previewMovePath,
   type Interaction,
 } from './order-mode.js';
@@ -49,6 +50,8 @@ import {
   aimFor,
   dashRoute,
   draftAbility,
+  draftFreeAbility,
+  isFreeAbility,
   draftHasOrder,
   emptyDraft,
   moveEnvelope,
@@ -95,6 +98,8 @@ const IMPACT = 0xffd166;
 const FOG = 0x05060a;
 /** The catalyst overlay — its own colour, because it is its own decision (CAT2). */
 const CATALYST = 0x9be36b;
+/** The free-action overlay — its own colour, because it is its own decision. */
+const FREE = 0x6fe3c0;
 /** Dark enough to read as "no information", light enough to keep terrain legible. */
 const FOG_OPACITY = 0.62;
 /**
@@ -478,6 +483,19 @@ export function startHotSeat(
       0.16,
     );
 
+    // ── FREE-UI: the free ability's own aim, in its own layer ───────────────
+    // Same reasoning as the catalyst layer below: a trap being placed and a
+    // shot being lined up are two decisions on one turn, and a player has to be
+    // able to see both at once or the additivity is invisible.
+    const freeDef = draftFreeAbility(character, draft);
+    const freeAim = previewFreeAim(map, state, unit, freeDef, draft, interaction);
+    renderer.highlight(
+      'free',
+      freeDef !== undefined && freeAim.length > 0 ? abilityPreview(map, unit, freeDef, freeAim) : [],
+      FREE,
+      0.42,
+    );
+
     // ── CAT2: the catalyst's own aim, in its own layer ──────────────────────
     // A catalyst is a separate slot, so it gets a separate overlay — a Shift's
     // destination and a Rail Shot's beam are two decisions on one turn and have
@@ -558,7 +576,10 @@ export function startHotSeat(
         available: opt.available,
         reason: opt.reason,
         cooldown: opt.cooldown,
-        selected: draft.abilityId === opt.def.id,
+        // A free ability lives in its own slot, so it is "selected" from the
+        // free draft — never from `abilityId`, which it must never occupy.
+        selected: opt.def.free === true ? draft.freeAbilityId === opt.def.id : draft.abilityId === opt.def.id,
+        free: opt.def.free === true,
         def: opt.def,
       })),
       // Three slots, in phase order, read straight off the unit — `catalystsUsed`
@@ -578,7 +599,10 @@ export function startHotSeat(
         budget: movementBudget(unit, draft.sprint),
         drawing: interaction.mode === 'move',
         sprinting: draft.sprint,
-        sprintDisabled: draft.abilityId !== undefined, // Sprint is move-only (GAME_SPEC §2)
+        // Sprint is move-only (GAME_SPEC §2) — but a FREE ability is not the
+        // turn's ability, so it must not disable it. Keying this off the wrong
+        // field is how "I cannot sprint after placing my trap" happened.
+        sprintDisabled: draft.abilityId !== undefined,
       },
       lock: { label: last ? 'Lock In & resolve ⚔' : 'Lock In ▸' },
       view: {
@@ -593,12 +617,27 @@ export function startHotSeat(
   const currentIsDash = (draft: OrderDraft, character: CharacterDef): boolean =>
     draftAbility(character, draft)?.phase === 'dash';
 
+  /**
+   * Arm a **free** ability (FREE-UI): its own slot, its own aim, additive with
+   * everything else the turn does. Mirrors `selectCatalyst` exactly, because
+   * they are the same mechanic — one free action, declared beside your turn
+   * rather than instead of it.
+   */
+  function selectFreeAbility(unit: UnitState, def: AbilityDef): void {
+    const draft = nextDraft(draftFor(unit), { type: 'selectFreeAbility', abilityId: def.id }, false);
+    if (draft.freeAbilityId !== undefined && def.shape === 'self') draft.freeAim = [{ ...unit.pos }];
+    drafts.set(unit.unitId, draft);
+    interaction = arm(draft.freeAbilityId !== undefined && def.shape !== 'self' ? 'free' : 'idle');
+    render();
+  }
+
   function selectAbility(abilityId: string): void {
     const unit = selectedUnit();
     if (unit === undefined) return;
     const character = characterFor(unit);
     const prev = draftFor(unit);
     const chosen = draftAbility(character, { ...prev, abilityId });
+    if (chosen !== undefined && isFreeAbility(chosen)) return void selectFreeAbility(unit, chosen);
     const isDash = chosen?.phase === 'dash';
     // Choosing another ability before Lock In simply replaces the last one
     // (UI1) — `nextDraft` owns the exclusivity rules (sprint, dash-owns-move).
@@ -666,6 +705,12 @@ export function startHotSeat(
       draft.aimStep = aimStep;
       interaction = afterCommit();
       render();
+    } else if (interaction.mode === 'free') {
+      const def = draftFreeAbility(characterFor(unit), draft);
+      if (def === undefined) return;
+      draft.freeAim = aimFor(map, state, unit, def, sq).aim;
+      interaction = afterCommit();
+      render();
     } else if (interaction.mode === 'catalyst') {
       const def = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
       if (def === undefined) return;
@@ -721,7 +766,7 @@ export function startHotSeat(
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
     const player = createTurnPlayer(prev, result.events);
-    for (const layer of ['fog', 'range', 'reach', 'aim', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'range', 'reach', 'aim', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
     renderer.show(viewUnits(player.view), viewDecoys(player.view));
@@ -851,7 +896,7 @@ export function startHotSeat(
 
   function renderGameOver(): void {
     renderer.show(toRenderUnits(revealedView(state).units), []);
-    for (const layer of ['fog', 'range', 'reach', 'aim', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'range', 'reach', 'aim', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);

@@ -22,7 +22,7 @@ const character = (over: Partial<HudCharacter> = {}): HudCharacter => ({
 
 const ability = (id: string, over: Partial<HudAbility> = {}): HudAbility => ({
   id, name: def(id).name, isUlt: id === 'lance_of_dawn', available: true,
-  cooldown: 0, selected: false, def: def(id), ...over,
+  cooldown: 0, selected: false, free: false, def: def(id), ...over,
 });
 
 const model = (over: Partial<HudModel> = {}): HudModel => ({

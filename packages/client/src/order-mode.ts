@@ -22,7 +22,7 @@ import { aimFor, pathTo, type OrderDraft } from './targeting.js';
  * an ability or Move must be armed first, which is the "click the skill to set
  * the mode" half of the owner's note.
  */
-export type Mode = 'idle' | 'aim' | 'move' | 'catalyst';
+export type Mode = 'idle' | 'aim' | 'move' | 'catalyst' | 'free';
 
 /**
  * Purely presentational pointer state. **Nothing here is ever written into a
@@ -127,6 +127,24 @@ export function previewCatalystAim(
     return aimFor(map, state, unit, def, interaction.hover.square).aim;
   }
   return draft.catalystAim;
+}
+
+/**
+ * The free ability's aim to paint (FREE-UI) — its own mode and its own slot, so
+ * aiming a trap never disturbs the attack sitting next to it.
+ */
+export function previewFreeAim(
+  map: MapDef,
+  state: GameState,
+  unit: UnitState,
+  def: AbilityDef | undefined,
+  draft: OrderDraft,
+  interaction: Interaction,
+): Vec2[] {
+  if (def !== undefined && interaction.mode === 'free' && interaction.hover.square !== undefined) {
+    return aimFor(map, state, unit, def, interaction.hover.square).aim;
+  }
+  return draft.freeAim;
 }
 
 /** Likewise for the drawn move: the hovered route while drawing, else committed. */

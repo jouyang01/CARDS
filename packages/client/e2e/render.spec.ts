@@ -251,6 +251,27 @@ test('a catalyst can be armed without clearing the chosen ability', async ({ pag
 });
 
 /**
+ * FREE-UI — the mechanic the engine implemented and the client never exposed.
+ * A unit test proves the reducer keeps both slots; only a browser proves the
+ * hotbar button is wired to the free slot and not to the normal one.
+ */
+test('a free ability arms alongside a normal ability, and does not disable Sprint', async ({ page }) => {
+  // Vex leads the dev draft and carries Overwatch Trap, the free Prep action.
+  const free = page.locator('.hud-ability.free').first();
+  await expect(free).toBeVisible();
+  await expect(free).toContainText('free');
+
+  const normal = page.locator('.hud-ability:not(.free):not([disabled])').first();
+  await normal.click();
+  await expect(normal).toHaveClass(/sel/);
+
+  await free.click();
+  await expect(free).toHaveClass(/sel/);
+  // Both armed at once — the whole point of a separate slot.
+  await expect(normal).toHaveClass(/sel/);
+});
+
+/**
  * MAPTOGGLE — the 4v4 map has been in `data/` and validated by unit tests since
  * M1, and was still unreachable in a browser because the entry point hard-coded
  * `duel-arena`. A unit test cannot tell you the URL boots; this can.

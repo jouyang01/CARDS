@@ -65,6 +65,16 @@ export interface OrderDraft {
    */
   catalystId?: string;
   catalystAim: Vec2[];
+  /**
+   * A **free ability** (FREE-UI) — its own slot, for exactly the same reason a
+   * catalyst has one. The engine has accepted `order.freeAbility` since FREE1;
+   * the client had no reference to it at all, so a `free: true` ability filled
+   * the normal `abilityId` slot, went out as `order.ability`, and disabled
+   * Sprint. The whole mechanic — "place the trap AND take your turn" — was
+   * unreachable through the UI while the engine implemented it correctly.
+   */
+  freeAbilityId?: string;
+  freeAim: Vec2[];
   /** Sprint = move-only, longer range. Ignored once an ability is chosen. */
   sprint: boolean;
   /** Move-phase path; coexists with a non-dash ability, dropped for a dash. */
@@ -73,7 +83,7 @@ export interface OrderDraft {
 
 /** A blank draft for a unit (holds position until the player chooses). */
 export function emptyDraft(unitId: string): OrderDraft {
-  return { unitId, aim: [], catalystAim: [], sprint: false, movePath: [] };
+  return { unitId, aim: [], catalystAim: [], freeAim: [], sprint: false, movePath: [] };
 }
 
 export interface AbilityOption {
@@ -121,6 +131,15 @@ export function abilityTooltip(def: AbilityDef): string[] {
   if (def.effects.length > 0) lines.push(def.effects.map(effectLabel).join(', '));
   lines.push(def.description);
   return lines;
+}
+
+/** Is this a free action — additive, its own slot, never the turn's ability? */
+export const isFreeAbility = (ability: AbilityDef): boolean => ability.free === true;
+
+/** Resolve a draft's FREE ability id against the character (FREE-UI). */
+export function draftFreeAbility(character: CharacterDef, draft: OrderDraft): AbilityDef | undefined {
+  if (draft.freeAbilityId === undefined) return undefined;
+  return findAbility({ [character.id]: character }, character.id, draft.freeAbilityId)?.def;
 }
 
 /** Shapes that can be freely rotated by a drag (AIM2). */
@@ -535,7 +554,7 @@ function diskOutline(centre: Vec2, radius: number): Vec2[] {
 /** Does this draft carry an actual order, or is the character holding? */
 export function draftHasOrder(draft: OrderDraft): boolean {
   return draft.abilityId !== undefined || draft.catalystId !== undefined
-    || draft.sprint || draft.movePath.length > 0;
+    || draft.freeAbilityId !== undefined || draft.sprint || draft.movePath.length > 0;
 }
 
 /** Is a drawn move path legal right now (delegates to the engine)? */
@@ -555,6 +574,11 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
   // it is written first and never gates any of the branches below (CAT2).
   if (draft.catalystId !== undefined) {
     order.catalyst = { abilityId: draft.catalystId, target: draft.catalystAim.map((p) => ({ x: p.x, y: p.y })) };
+  }
+  // A free ability rides alongside everything else — it is written before the
+  // branches below and gates none of them, which is the whole mechanic.
+  if (draft.freeAbilityId !== undefined) {
+    order.freeAbility = { abilityId: draft.freeAbilityId, target: draft.freeAim.map((p) => ({ x: p.x, y: p.y })) };
   }
   if (ability !== undefined) {
     order.ability = { abilityId: ability.id, target: draft.aim.map((p) => ({ x: p.x, y: p.y })) };
@@ -578,6 +602,7 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
 export type DraftAction =
   | { type: 'selectAbility'; abilityId: string; isDash: boolean }
   | { type: 'selectCatalyst'; catalystId: string }
+  | { type: 'selectFreeAbility'; abilityId: string }
   | { type: 'selectMove' }
   | { type: 'selectSprint' }
   | { type: 'clear' };
@@ -594,7 +619,18 @@ export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash:
       // deselects it, so the slot can be given back without clearing the turn.
       return draft.catalystId === action.catalystId
         ? { ...draft, catalystId: undefined, catalystAim: [] }
-        : { ...draft, catalystId: action.catalystId, catalystAim: [] };
+        // The other side of "one free action per turn": a catalyst drops an
+        // armed free ability, symmetrically.
+        : { ...draft, catalystId: action.catalystId, catalystAim: [], freeAbilityId: undefined, freeAim: [] };
+    case 'selectFreeAbility':
+      // A separate slot, exactly like a catalyst: the chosen ability, its aim,
+      // its rotation and any drawn move all survive. Re-picking deselects.
+      // **At most one free action per turn** (edge-cases), counting free
+      // abilities and catalysts together — so arming one drops the other rather
+      // than sending an order the engine will silently reject half of.
+      return draft.freeAbilityId === action.abilityId
+        ? { ...draft, freeAbilityId: undefined, freeAim: [] }
+        : { ...draft, freeAbilityId: action.abilityId, freeAim: [], catalystId: undefined, catalystAim: [] };
     case 'selectMove':
       // "Draw move" keeps a non-dash ability; a dash (or no ability) is replaced.
       return draft.abilityId !== undefined && !currentIsDash

@@ -81,11 +81,11 @@ const DIM_ALPHA = 0.22;
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
  * covered tile always reads on top of the envelope that contains it.
  */
-export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'catalyst' | 'select';
+export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'free' | 'catalyst' | 'select';
 
 /** Height above the ground plane per layer, so they never z-fight. */
 const LAYER_LIFT: Record<HighlightLayer, number> = {
-  fog: 0.002, range: 0.006, reach: 0.010, aim: 0.016, catalyst: 0.019, select: 0.022,
+  fog: 0.002, range: 0.006, reach: 0.010, aim: 0.016, free: 0.018, catalyst: 0.019, select: 0.022,
 };
 /**
  * Overlay tiles are inset so the grid reads through them — except fog, which
@@ -93,7 +93,7 @@ const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, catalyst: 0.72, select: 0.92,
+  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, free: 0.8, catalyst: 0.72, select: 0.92,
 };
 /** UI2's continuous shape sits just above the covered tiles it explains. */
 const SHAPE_LIFT = 0.026;
