@@ -11,6 +11,30 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > (R7). That file stays as the Designer's rationale of record; the RULED text here is
 > authoritative. Engine work created by the rulings is scheduled in BACKLOG (R1c → R1b → D1).
 
+> **⚠ NOT YET FOLDED IN — two new systems, ruled 2026-08-13 (Designer).**
+> `docs/design/free-actions-and-catalysts.md` rules **free actions** (Part 1) and
+> **catalysts** (Part 2) at the owner's direction, and **nothing in BACKLOG covers them yet**.
+> Analyzer: fold the RULED blocks into this file and schedule the engine work — suggested
+> items **FREE1 → CAT1 → CAT2 (client) → M3 lobby selection**, in that order, since catalysts
+> *are* free actions and depend on Part 1's plumbing.
+>
+> The four rulings most likely to be missed, because getting them wrong breaks the systems
+> silently rather than loudly:
+> 1. **A free action never reduces the move budget and never blocks Sprint.** The current
+>    rule is "any ability ⇒ 4-square move", so `movementBudget` must read `ability`/`sprint`
+>    only. This is the single likeliest place to introduce a bug.
+> 2. **Catalysts resolve at the START of their phase, before that phase's abilities** —
+>    otherwise a Blast-phase Might (Adrenaline, Overdrive) boosts nothing until next turn.
+> 3. **A free dash catalyst (Shift) does NOT consume the Move phase.** Additive on purpose;
+>    affordable because it is once per match.
+> 4. **`free: true` requires `energyGain: 0`** as a *validation error*, not a runtime
+>    special case.
+>
+> This **reverses DECISIONS 2026-08-11** ("Catalysts and ability mods deferred to M6+") for
+> catalysts only; ability mods stay deferred. `data/catalysts.json` and the `free: true` flags
+> in `data/characters/{vex,thorn,wisp}.json` are already written against the final design and
+> are inert until the engine reads them.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
