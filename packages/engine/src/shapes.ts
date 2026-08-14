@@ -310,20 +310,33 @@ function nearCap(a: number, b: number, d2: number, range: number): boolean {
 }
 
 /**
- * A Euclidean disk of `radius` centred on `center`, row-major order. Under the
- * half-tile hitbox a tile is covered when its centre is within `radius + ½` —
- * i.e. `4·(dx² + dy²) ≤ (2·radius + 1)²`, integer on both sides, so it is
- * identical on every machine. Wall and out-of-bounds squares are excluded.
+ * A Euclidean disk of `radius` centred on `center`, row-major order.
+ *
+ * **An authored `radius: r` means "this reaches r tiles" (CIRCLE-FIX).** It used
+ * to mean the *region* radius, with HITBOX1's half-tile added on top — so a
+ * `radius: 2` grenade was drawn as a disc of 2 and then granted another half
+ * tile, for a true reach of 2.5. That is how thirteen circles silently grew
+ * 48–80% without a single number changing (r1 5→9, r2 13→21, r3 25→37).
+ *
+ * The fix is at the rule, not in the data: the engine derives the region as
+ * `r − ½`, so composing the hitbox's half-tile returns exactly `r`. Written out,
+ * the whole thing collapses to `dx² + dy² ≤ r²` — simpler than what it replaces,
+ * still pure integer, and the scan box shrinks with it. A tile exactly `r` away
+ * is still in: its hitbox is tangent to the region, which is HITBOX1's halfway
+ * guarantee, untouched.
+ *
+ * The principle CIRCLE-FIX and CONE-B share: **a number in `data/` is the
+ * footprint you get.** The engine derives whatever internal region produces it,
+ * never the reverse. Wall and out-of-bounds squares are excluded.
  */
 export function circleSquares(board: Board, center: Vec2, radius: number): Vec2[] {
   const out: Vec2[] = [];
-  const span = radius + 1; // the hitbox reaches half a tile past the disk
-  const limit = (2 * radius + 1) * (2 * radius + 1);
-  for (let y = center.y - span; y <= center.y + span; y++) {
-    for (let x = center.x - span; x <= center.x + span; x++) {
+  const limit = radius * radius;
+  for (let y = center.y - radius; y <= center.y + radius; y++) {
+    for (let x = center.x - radius; x <= center.x + radius; x++) {
       const dx = x - center.x;
       const dy = y - center.y;
-      if (4 * sqLen(dx, dy) > limit) continue;
+      if (sqLen(dx, dy) > limit) continue;
       const p: Vec2 = { x, y };
       if (!inBounds(board, p)) continue;
       if (terrainAt(board, p) === 'wall') continue;

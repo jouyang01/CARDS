@@ -252,28 +252,31 @@ describe('CONE-B: rotating a cone does not change its size', () => {
   });
 });
 
+/**
+ * CIRCLE-FIX — an authored `radius: r` means "this reaches r tiles".
+ *
+ * It used to mean the *region* radius, with HITBOX1's half-tile added on top, so
+ * every circle in the roster quietly gained 48–80% area with no number changing.
+ * The fix is at the rule: the region is derived as `r − ½`, so composing the
+ * hitbox returns exactly `r`, and the whole test collapses to `dx² + dy² ≤ r²`.
+ */
 describe('circleSquares', () => {
-  it('is a Euclidean disk, grown by the half-tile hitbox', () => {
-    const b = openBoard(11);
-    const out = circleSquares(b, { x: 5, y: 5 }, 2);
-    // A tile is hit when its centre is within r + ½ = 2.5: 21 squares. The
-    // corners (±2,±2) are 2.83 away and still excluded.
-    expect(out).toHaveLength(21);
-    expect(posKeys(out)).not.toContain('7,7');
-    expect(posKeys(out)).toContain('7,6'); // dist² = 5 ≤ 6.25
-    expect(posKeys(out)).toContain('5,7');
-    expect(posKeys(out)).toContain('6,6');
+  it('CIRCLE-FIX: an authored radius is the FOOTPRINT radius — 5 / 13 / 29', () => {
+    const b = openBoard(21);
+    // The Designer's measured figures. 12 of the roster's 13 circles are back
+    // on their pre-HITBOX1 size; r3 (Ravok's ultimate) lands at 29, accepted.
+    expect([1, 2, 3].map((r) => circleSquares(b, { x: 10, y: 10 }, r).length)).toEqual([5, 13, 29]);
   });
 
-  it('HITBOX1: overlapping a tile is not enough — the hitbox must be reached', () => {
-    const b = openBoard(15);
-    const out = posKeys(circleSquares(b, { x: 7, y: 7 }, 3));
-    // (10,8) is 3.16 from the centre — the disk stops 0.16 short of it, well
-    // inside the half-tile hitbox, so it takes the hit.
-    expect(out).toContain('10,8');
-    // (10,9) is 3.61 away. The disk still spills over that tile's near corner
-    // (2.92 < 3), but it never gets within half a tile of the centre.
-    expect(out).not.toContain('10,9');
+  it('reaches exactly r — a tile r away is in, one past it is out', () => {
+    const b = openBoard(11);
+    const out = posKeys(circleSquares(b, { x: 5, y: 5 }, 2));
+    expect(out).toContain('7,5'); // exactly 2 — its hitbox is tangent to the region
+    expect(out).toContain('5,7');
+    expect(out).toContain('6,6'); // 1.41
+    expect(out).not.toContain('8,5'); // 3
+    expect(out).not.toContain('7,6'); // 2.24 — the half-tile that used to be free
+    expect(out).not.toContain('7,7'); // 2.83
   });
 
   it('excludes wall squares and clips at the edge', () => {
@@ -282,15 +285,24 @@ describe('circleSquares', () => {
     // 1..#..  wall at (2,1) is dropped from the disk
     const b = buildBoard(makeMap(['.....', '..#..', '.....', '.....', '.....']));
     const out = circleSquares(b, { x: 2, y: 2 }, 1);
-    // A radius-1 disk now covers the full 3x3 block (the diagonals are 1.41
-    // away, inside r + ½), minus the wall at (2,1).
+    // A radius-1 disk is the plus-shape again (the diagonals are 1.41 away,
+    // past r), minus the wall at (2,1).
     expect(posKeys(out)).toEqual(
-      posKeys([
-        { x: 1, y: 1 }, { x: 3, y: 1 },
-        { x: 1, y: 2 }, { x: 2, y: 2 }, { x: 3, y: 2 },
-        { x: 1, y: 3 }, { x: 2, y: 3 }, { x: 3, y: 3 },
-      ]),
+      posKeys([{ x: 2, y: 2 }, { x: 1, y: 2 }, { x: 3, y: 2 }, { x: 2, y: 3 }]),
     );
+  });
+
+  it('is rotation-proof by construction — a disc has no axis to be biased on', () => {
+    const b = openBoard(21);
+    const out = posKeys(circleSquares(b, { x: 10, y: 10 }, 3));
+    // Every covered tile's four rotations about the centre are covered too.
+    for (const key of out) {
+      const [x, y] = key.split(',').map(Number) as [number, number];
+      const dx = x - 10, dy = y - 10;
+      for (const [rx, ry] of [[-dy, dx], [-dx, -dy], [dy, -dx]] as const) {
+        expect(out, `${key} rotated`).toContain(`${10 + rx},${10 + ry}`);
+      }
+    }
   });
 });
 
@@ -312,11 +324,7 @@ describe('expandShape', () => {
   it('circle uses the ability radius around the aimed centre', () => {
     const out = expandShape(b, ability({ shape: 'circle', range: 6, radius: 1 }), caster, [{ x: 8, y: 5 }]);
     expect(posKeys(out)).toEqual(
-      posKeys([
-        { x: 7, y: 4 }, { x: 8, y: 4 }, { x: 9, y: 4 },
-        { x: 7, y: 5 }, { x: 8, y: 5 }, { x: 9, y: 5 },
-        { x: 7, y: 6 }, { x: 8, y: 6 }, { x: 9, y: 6 },
-      ]),
+      posKeys([{ x: 8, y: 5 }, { x: 7, y: 5 }, { x: 9, y: 5 }, { x: 8, y: 4 }, { x: 8, y: 6 }]),
     );
   });
 
@@ -397,7 +405,7 @@ describe('HITBOX1: cross-engine determinism', () => {
   }
 
   it('every shape, every aim step, every range folds to a fixed value', () => {
-    expect(signature()).toBe(271561358);
+    expect(signature()).toBe(-1082420298);
   });
 
   it('is stable across repeated calls (no hidden state, no ordering drift)', () => {

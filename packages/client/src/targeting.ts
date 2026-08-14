@@ -379,8 +379,9 @@ export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim:
  *   a distance, not a tile count, which is what stops a rotated cone growing).
  *   Pushing its edges out half a tile widens each row by 0.71 (½ / cos 45°) and
  *   pulls the drawn apex that far back behind the caster.
- * - a **circle** is a genuine disk of radius `r`; `r + 0.5` is where the hitbox
- *   of the outermost covered tile is reached.
+ * - a **circle** reaches exactly its authored `radius` (CIRCLE-FIX), so `r + 0.5`
+ *   is the outer edge of the outermost covered tile — the tile whose centre sits
+ *   exactly `r` out.
  *
  * `path` and `self` return no outline: a route already draws as a line (AIM1),
  * and a self-cast has no projected shape.
