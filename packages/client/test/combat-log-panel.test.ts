@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createCombatLog, type LogNames } from '../src/combat-log.js';
+import { MAX_LOG_LINES, createCombatLog, type LogNames } from '../src/combat-log.js';
 import type { TurnEvent } from '@cards/engine';
 
 /**
@@ -54,5 +54,41 @@ describe('UI6: the panel accumulates across turns', () => {
     ], names);
     expect([...root.querySelectorAll('.log-line')].map((n) => n.className))
       .toEqual(['log-line damage', 'log-line heal', 'log-line death']);
+  });
+});
+
+describe('UI6-cap: the panel is bounded so a long session cannot grow forever', () => {
+  it('keeps the most recent lines and drops the oldest', () => {
+    const log = createCombatLog(root);
+    // Two lines per turn, well past the cap.
+    const turns = MAX_LOG_LINES; // → 2x MAX_LOG_LINES lines before trimming
+    for (let t = 1; t <= turns; t++) log.appendTurn(t, [hit('a', 'e', t), hit('e', 'a', t)], names);
+
+    expect(root.querySelectorAll('.log-line').length + root.querySelectorAll('.log-turn').length)
+      .toBeLessThanOrEqual(MAX_LOG_LINES);
+    // The newest turn survives; the first does not.
+    expect(separators()).toContain(`Turn ${turns}`);
+    expect(separators()).not.toContain('Turn 1');
+    expect(log.entries().length).toBeLessThanOrEqual(MAX_LOG_LINES);
+  });
+
+  it('never leaves a turn separator with nothing under it', () => {
+    const log = createCombatLog(root);
+    for (let t = 1; t <= MAX_LOG_LINES; t++) log.appendTurn(t, [hit('a', 'e', t)], names);
+    const kinds = [...root.querySelectorAll('.log-list > *')].map((n) => n.className);
+    for (const [i, kind] of kinds.entries()) {
+      if (kind !== 'log-turn') continue;
+      expect(kinds[i + 1], 'a separator must be followed by at least one line').not.toBe('log-turn');
+    }
+  });
+
+  it('leaves a normal match untouched — the cap is a backstop, not a feature', () => {
+    // A 20-turn 4v4 is a couple of hundred lines; nothing should be trimmed.
+    const log = createCombatLog(root);
+    for (let t = 1; t <= 20; t++) {
+      log.appendTurn(t, Array.from({ length: 8 }, (_, i) => hit(`a${i}`, `e${i}`, 10)), names);
+    }
+    expect(separators()).toContain('Turn 1');
+    expect(log.entries()).toHaveLength(160);
   });
 });
