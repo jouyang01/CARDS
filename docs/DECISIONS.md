@@ -1190,3 +1190,28 @@ RENDER-VERIFY now asserts it in a real browser, which is where it was first noti
 every unit's line of sight, and AIM2-UX re-renders on every `mousemove`. State cannot change
 mid-Decision, so the answer depends only on which seat is looking; caching on
 `(state, team)` identity is exact rather than an approximation.
+
+## 2026-08-14 — MAPTOGGLE (Builder)
+
+**(1) A typo is an error, not a fallback.** `?map=iron-bason` renders "unknown map — try one
+of: duel-arena, iron-basin" and refuses to start. Quietly loading `duel-arena` because you
+mistyped the map you wanted to test is the one behaviour a dev toggle must not have: you get
+a whole playtest session's data about the wrong map. Every problem is reported at once
+rather than the first, so one reload fixes a URL with two mistakes in it.
+
+**(2) Teams are dealt alternately from one catalogue.** `dealTeams` gives team 0 the even
+indices and team 1 the odd. That reproduces the shipped 2v2 demo exactly (Vex + Wisp vs
+Bastion + Aegis) from the same list that yields a mixed 4v4, so there is one ordering to
+maintain instead of a table per format. Kestrel is the odd one out at nine characters and is
+simply left off the dev list — deciding who plays is the M3 lobby's job, not a constant's.
+
+**(3) Default seating is per format, and 2v2's stays asymmetric.** 2v2 keeps `[2, 1]`, the
+three-player split this entry point has always shipped, because a seat handover only has a
+bug to have when the two teams are seated differently — it is the arrangement most worth
+exercising. Everything else takes the fewest seats the format allows so a solo playtester
+does the fewest handovers. `?players=a,b` overrides either way.
+
+**(4) Both shipped maps already seat 4v4.** `duel-arena` carries four spawn squares per team,
+not two, so `?format=4v4` works on it as well — worth knowing, because the review framed
+4v4 as an `iron-basin` feature. The map/format validation is still checked (and unit-tested
+against a synthetic one-spawn map), because the next map added is the one that forgets.

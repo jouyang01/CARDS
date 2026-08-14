@@ -1,29 +1,49 @@
 /**
- * M2 client entry: launch a local hot-seat 2v2 duel driven entirely by
- * `@cards/engine`. Order entry (item 18), turn resolution + event-log playback
- * (item 19), and per-player→per-team seating (item 20) all live in the tested
- * pure modules; this file just picks the match setup and mounts the controller.
+ * Client entry: launch a local hot-seat duel driven entirely by `@cards/engine`.
+ * Order entry, turn resolution + event-log playback, and per-player→per-team
+ * seating all live in the tested pure modules; this file picks the match setup
+ * and mounts the controller.
+ *
+ * MAPTOGGLE: the setup is no longer hard-coded. `?map=…&format=…&players=…`
+ * chooses it, `parseSetup` validates it, and the default is the 2v2 demo this
+ * file used to spell out inline. The real lobby is M3.
  */
-import { buildRoster, validateMap, validateMapForFormat, type CharacterDef, type MapDef } from '@cards/engine';
+import { buildRoster, type CharacterDef, type MapDef } from '@cards/engine';
 import { startHotSeat, type HotSeatUI } from './app.js';
+import { describeSetup, parseSetup } from './match-setup.js';
 import duelArena from '../../../data/maps/duel-arena.json';
+import ironBasin from '../../../data/maps/iron-basin.json';
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
 import wisp from '../../../data/characters/wisp.json';
 import aegis from '../../../data/characters/aegis.json';
+import cinder from '../../../data/characters/cinder.json';
+import lumen from '../../../data/characters/lumen.json';
+import ravok from '../../../data/characters/ravok.json';
+import thorn from '../../../data/characters/thorn.json';
 
-const map = duelArena as unknown as MapDef;
-const VEX = vex as unknown as CharacterDef;
-const BASTION = bastion as unknown as CharacterDef;
-const WISP = wisp as unknown as CharacterDef;
-const AEGIS = aegis as unknown as CharacterDef;
+/** The first map is the default; the rest are reachable via `?map=<id>`. */
+const MAPS = [duelArena, ironBasin] as unknown as MapDef[];
 
-const errors = [...validateMap(map), ...validateMapForFormat(map, '2v2')];
-if (errors.length > 0) {
-  document.getElementById('app')!.innerHTML = `<pre style="color:#ff6b5e">Setup failed:\n${errors.join('\n')}</pre>`;
+/**
+ * The dev draft order. Dealt alternately (`dealTeams`), so the first four give
+ * the 2v2 demo this file has always shipped — Vex + Wisp against Bastion +
+ * Aegis — and all eight give a 4v4 with a comparable archetype mix on each
+ * side. Kestrel is left out: 4v4 needs exactly eight, and picking who plays is
+ * the M3 lobby's job, not a constant's.
+ */
+const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn] as unknown as CharacterDef[];
+
+const app = document.getElementById('app')!;
+const result = parseSetup(window.location.search, MAPS, CATALOG);
+
+if ('errors' in result) {
+  const lines = result.errors.join('\n');
+  app.innerHTML = `<pre style="color:#ff6b5e;white-space:pre-wrap">Setup failed:\n${lines}</pre>`;
   throw new Error('invalid setup');
 }
 
+const { setup } = result;
 const ui: HotSeatUI = {
   board: document.getElementById('board')!,
   status: document.getElementById('status')!,
@@ -31,7 +51,18 @@ const ui: HotSeatUI = {
   log: document.getElementById('log') ?? undefined,
 };
 
-// A demo 2v2: Team 1 = Vex + Wisp, Team 2 = Bastion + Aegis. Team 1 is split
-// across two players (one character each); Team 2 is one player running both —
-// the asymmetric 3-player hot-seat.
-startHotSeat(ui, map, buildRoster([VEX, BASTION, WISP, AEGIS]), [[VEX, WISP], [BASTION, AEGIS]], '2v2', [2, 1]);
+// Name the loaded setup in the title bar: a dev toggle nobody can see is a
+// trap, and "am I actually on iron-basin?" is the first question a playtester
+// asks. The status line is rewritten by the controller every render.
+const title = document.querySelector('#app h1');
+if (title !== null) title.setAttribute('title', describeSetup(setup));
+ui.status.textContent = `Loading ${describeSetup(setup)}…`;
+
+startHotSeat(
+  ui,
+  setup.map,
+  buildRoster(setup.teams.flat()),
+  setup.teams,
+  setup.format,
+  setup.playersPerTeam,
+);
