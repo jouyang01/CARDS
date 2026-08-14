@@ -91,6 +91,8 @@ const IMPACT = 0xffd166;
  * meant something.
  */
 const FOG = 0x05060a;
+/** Dark enough to read as "no information", light enough to keep terrain legible. */
+const FOG_OPACITY = 0.62;
 /**
  * The drawn movement lines (AIM1/UI4). All three share one geometry — a
  * polyline through tile centres plus an endpoint marker — and differ only in
@@ -154,7 +156,44 @@ export function startHotSeat(
   let interaction: Interaction = IDLE;
   let projection: ProjectionName = 'isometric';
 
+  /** The shield pool `initView` sums, so board and HUD never disagree. */
+  const shieldOf = (u: UnitState): number =>
+    u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
+
+  /**
+   * `fogView` walks every unit's line of sight, and mouse-follow aiming
+   * (AIM2-UX) repaints on every pointer move — but the state cannot change
+   * mid-Decision, so the answer only ever depends on which seat is looking.
+   * One slot is enough: the seat changes far more rarely than the pointer.
+   */
+  let fogMemo: { state: GameState; team: TeamId; view: FogView } | undefined;
+  const currentFog = (team: TeamId): FogView => {
+    if (fogMemo?.state !== state || fogMemo.team !== team) {
+      fogMemo = { state, team, view: fogView(map, state, team) };
+    }
+    return fogMemo.view;
+  };
+
+  const toRenderUnits = (units: readonly UnitState[]): RenderUnit[] => units.map((u) => ({
+    unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
+    energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
+    shield: shieldOf(u),
+  }));
+
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
+
+  // ── VISION1-opening ───────────────────────────────────────────────────────
+  // Paint the fogged board NOW, before the render loop starts, so the very
+  // first composited frame already hides the enemy team. There is no turn-1
+  // grace reveal and no full-board flash to fog out of.
+  //
+  // This held by accident before: `beginTurn()` runs at the end of this
+  // function, still inside the same task, so it beat the first animation frame.
+  // Anything asynchronous landing in between — a font, an asset, a lobby
+  // handshake — would have reintroduced the leak silently. Painting it here
+  // makes it a property of the code rather than of the scheduler.
+  paintFog(seats[0]?.team ?? 0);
+
   const fitCamera = (): void => renderer.fitBoard();
   // Size from the VIEWPORT, never from the container: the canvas is the
   // container's only child, so measuring the container would feed the canvas its
@@ -308,30 +347,6 @@ export function startHotSeat(
     return fresh;
   };
 
-  /** The shield pool `initView` sums, so board and HUD never disagree. */
-  const shieldOf = (u: UnitState): number =>
-    u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
-
-  /**
-   * `fogView` walks every unit's line of sight, and mouse-follow aiming
-   * (AIM2-UX) repaints on every pointer move — but the state cannot change
-   * mid-Decision, so the answer only ever depends on which seat is looking.
-   * One slot is enough: the seat changes far more rarely than the pointer.
-   */
-  let fogMemo: { state: GameState; team: TeamId; view: FogView } | undefined;
-  const currentFog = (team: TeamId): FogView => {
-    if (fogMemo?.state !== state || fogMemo.team !== team) {
-      fogMemo = { state, team, view: fogView(map, state, team) };
-    }
-    return fogMemo.view;
-  };
-
-  const toRenderUnits = (units: readonly UnitState[]): RenderUnit[] => units.map((u) => ({
-    unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
-    energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
-    shield: shieldOf(u),
-  }));
-
   const viewUnits = (view: ViewState): RenderUnit[] => [...view.units.values()].map((v) => ({
     unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
     energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
@@ -378,6 +393,18 @@ export function startHotSeat(
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   /**
+   * Draw the board as `team` sees it: its own units plus whatever it can see of
+   * the enemy, with everything outside team sight darkened. The one place fog
+   * is applied, so the opening frame and every later Decision frame cannot
+   * disagree about what is hidden.
+   */
+  function paintFog(team: TeamId): void {
+    const view = currentFog(team);
+    renderer.show(toRenderUnits(view.units), state.decoys.map((d) => d.pos));
+    renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
+  }
+
+  /**
    * The board half of a decision-phase render. Split out from `render()` because
    * mouse-follow aiming (AIM2-UX) repaints on every pointer move — rebuilding
    * the control buttons at that rate would tear the DOM out from under the
@@ -394,9 +421,7 @@ export function startHotSeat(
     // turn is history and everything is shown. The engine answers *what* is
     // visible; this only paints the answer. Hot-seat fog is an aid for players
     // sharing a screen, not a security boundary — that is M3.
-    const view = currentFog(currentSeat()?.team ?? unit.owner);
-    renderer.show(toRenderUnits(view.units), state.decoys.map((d) => d.pos));
-    renderer.highlight('fog', view.fogged, FOG, 0.62);
+    paintFog(currentSeat()?.team ?? unit.owner);
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
     clearReadouts();

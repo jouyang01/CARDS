@@ -1336,3 +1336,28 @@ mismatches**. Largest intermediate 3.7e13, comfortably below 2^53. Every compari
 **(6) The HITBOX1 cross-engine signature changed on purpose.** It is a golden value over every
 shape at every aim; a deliberate change to the cone rule moves it. Regenerated in the same
 commit, which is the point of having it — the number moving is the review signal.
+
+## 2026-08-26 — VISION1-opening (Builder)
+
+**The leak was not reproducible on any reachable configuration — but the code only avoided it
+by accident, so it is now avoided on purpose.** Driving the shipped build in a real browser
+and sampling the canvas from the first drawn frame onward, the enemy team never appeared:
+zero team-1 pixels at every sample, on `duel-arena` 2v2/4v4 and `iron-basin` 4v4 (spawn
+separation 13, `VISION_RANGE` 6, so no seat can see the other team at open). The reason it
+held is worth writing down, because it is not a reason to rely on: `startHotSeat` runs
+`renderer.start()` and `beginTurn()` inside the **same task**, so the first Decision frame was
+painted before the first `requestAnimationFrame` ever fired. Any `await` landing between them
+— a font, an asset, an M3 lobby handshake — would have reintroduced the full-board flash
+silently, and nothing would have caught it.
+
+So VISION1-opening ships as a structural fix rather than a bug fix: one `paintFog(team)` is
+now the single place fog is applied, and it is called explicitly **before the render loop
+starts**, so the opening frame is correct by construction rather than by scheduling. Tests
+pin both halves — a client test that turn 1 with no orders hides exactly what a later turn
+hides (and that both shipped maps open with the enemy team invisible in every format), and an
+e2e that samples from the first drawn frame instead of settling for 600ms first, which is
+precisely long enough to miss a one-frame flash.
+
+If the owner saw the enemy team on open, the most likely explanation is a Pages build from
+before VISION1 — worth confirming with them rather than assuming, since a fix for a bug that
+was never there is a fix that can regress unnoticed. Raised in Open Questions.

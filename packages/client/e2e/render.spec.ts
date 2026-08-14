@@ -115,6 +115,34 @@ test('the board composites an actual scene, fogged to the seat on the clock', as
   await expect(lockIn(page)).toBeVisible();
 });
 
+/**
+ * VISION1-opening — the enemy team must be absent from the FIRST frame, not
+ * from the frame after fog engages. `beforeEach` settles for 600ms before it
+ * looks, which is exactly long enough to miss a one-frame flash, so this test
+ * navigates itself and starts sampling the moment the canvas exists.
+ */
+test('the opening frame is already fogged — no turn-1 grace reveal', async ({ page }) => {
+  await page.goto('./', { waitUntil: 'commit' });
+  await expect(boardCanvas(page)).toBeVisible();
+
+  let sampled = 0;
+  for (let i = 0; i < 8; i++) {
+    const box = await boardCanvas(page).boundingBox();
+    if (box !== null && box.width > 0) {
+      const image = decodePng(await page.screenshot({ clip: box }));
+      // Only judge frames that have actually drawn something — an empty canvas
+      // before the first composite is not evidence either way.
+      if (countPixels(image, isTeamBlue) > 0) {
+        sampled += 1;
+        expect(countPixels(image, isTeamRed), `frame ${i} flashed the enemy team`).toBe(0);
+        expect(countPixels(image, isFogged), `frame ${i} drew before fog engaged`).toBeGreaterThan(0);
+      }
+    }
+    await page.waitForTimeout(60);
+  }
+  expect(sampled, 'never caught a drawn frame to judge').toBeGreaterThan(0);
+});
+
 test('arming an ability paints an overlay that follows the pointer', async ({ page }) => {
   const before = await frame(page);
 
