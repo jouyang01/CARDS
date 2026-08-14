@@ -16,6 +16,7 @@ import {
   nextDraft,
   pathValid,
   rangeEnvelope,
+  shapeOutline,
   sprintAllowed,
   toUnitOrders,
   toUnitOrdersFor,
@@ -461,5 +462,125 @@ describe('UI4: dashRoute gives a drafted dash the same route geometry as a move'
     const route = dashRoute(u, roll, aim);
     route[0]!.x = 99;
     expect(aim[0]!.x).toBe(u.pos.x + 1);
+  });
+});
+
+/**
+ * UI2 — Layer 1, the continuous shape. The tests that matter check it is built
+ * from the ENGINE's numbers rather than an eyeballed silhouette: every covered
+ * tile's centre must fall inside the polygon, or the fiction and the truth
+ * disagree and a clipped corner reads as a bug.
+ */
+describe('UI2: shapeOutline is the continuous shape the covered tiles approximate', () => {
+  const s = state();
+  const u = vexUnit(s);
+
+  /** Even-odd point-in-polygon, in board coordinates. */
+  const inside = (poly: { x: number; y: number }[], p: { x: number; y: number }): boolean => {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i]!, b = poly[j]!;
+      if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+    }
+    return hit;
+  };
+
+  it('a LINE beam contains the centre of every tile the engine says it hits', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    for (const step of [0, 17, 64, 130, 200]) {
+      const covered = abilityPreview(OPEN, u, rail, [], step);
+      const poly = shapeOutline(u, rail, [], step, covered);
+      expect(poly.length, `step ${step}`).toBe(4);
+      for (const tile of covered) expect(inside(poly, tile), `step ${step} tile ${tile.x},${tile.y}`).toBe(true);
+    }
+  });
+
+  it('a CONE wedge contains every tile it hits, and its apex is at the caster', () => {
+    // Bastion's Crushing Slam is the cone in the shipped roster.
+    const cone = [...BASTION.abilities, BASTION.ultimate].find((a) => a.shape === 'cone');
+    if (cone === undefined) return; // roster has no cone: nothing to assert
+    const bast = state().units.find((x) => x.characterId === 'bastion')!;
+    for (const step of [0, 64, 128, 192]) {
+      const covered = abilityPreview(OPEN, bast, cone, [], step);
+      const poly = shapeOutline(bast, cone, [], step, covered);
+      expect(poly).toHaveLength(3); // a wedge is a triangle
+      for (const tile of covered) expect(inside(poly, tile), `step ${step} tile ${tile.x},${tile.y}`).toBe(true);
+      // The apex sits half a tile in front of the caster — where the engine's
+      // own "half-width is d-1" rule reaches zero, not at the caster's centre.
+      const apex = poly[0]!;
+      expect(Math.hypot(apex.x - bast.pos.x, apex.y - bast.pos.y)).toBeCloseTo(0.5, 6);
+    }
+  });
+
+  it('a CIRCLE disk encloses every covered tile centre and matches radius + half a tile', () => {
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    const target = { x: u.pos.x + 4, y: u.pos.y };
+    const covered = abilityPreview(OPEN, u, grenade, [target]);
+    const poly = shapeOutline(u, grenade, [target], undefined, covered);
+    for (const tile of covered) expect(inside(poly, tile), `${tile.x},${tile.y}`).toBe(true);
+    const radii = poly.map((p) => Math.hypot(p.x - target.x, p.y - target.y));
+    for (const r of radii) expect(r).toBeCloseTo((grenade.radius ?? 1) + 0.5, 6);
+  });
+
+  it('a SQUARE outlines exactly its one tile', () => {
+    const square = { ...VEX.abilities[0]!, shape: 'square' as const, range: 6 };
+    const poly = shapeOutline(u, square, [{ x: 5, y: 5 }], undefined, [{ x: 5, y: 5 }]);
+    expect(poly).toEqual([
+      { x: 4.5, y: 4.5 }, { x: 5.5, y: 4.5 }, { x: 5.5, y: 5.5 }, { x: 4.5, y: 5.5 },
+    ]);
+  });
+
+  it('has no outline for a path or a self-cast — a route draws as a line instead', () => {
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!;
+    expect(shapeOutline(u, roll, [{ x: u.pos.x + 1, y: u.pos.y }], undefined, [{ x: u.pos.x + 1, y: u.pos.y }])).toEqual([]);
+    expect(shapeOutline(u, { ...roll, shape: 'self' }, [], undefined, [])).toEqual([]);
+  });
+
+  it('has no outline for an unaimed directional shape', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    expect(shapeOutline(u, rail, [], undefined, [])).toEqual([]);
+    expect(shapeOutline(u, rail, [{ ...u.pos }], undefined, [])).toEqual([]); // aimed at yourself: no direction
+  });
+
+  it('rotates with the aim step rather than snapping — same rule as the tiles', () => {
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const east = shapeOutline(u, rail, [], 0, abilityPreview(OPEN, u, rail, [], 0));
+    const askew = shapeOutline(u, rail, [], 30, abilityPreview(OPEN, u, rail, [], 30));
+    expect(askew).not.toEqual(east);
+  });
+});
+
+describe('UI2: Layer 1 stops where Layer 2 stops', () => {
+  it('a beam blocked by a wall does not carry on past it', () => {
+    // The disagreement UI2 exists to prevent: `lineSquares` stops at the first
+    // wall, so an untruncated beam would read as "the shot goes through walls".
+    const WALLED: MapDef = { ...OPEN, walls: [{ x: 5, y: 7 }] };
+    const s = createMatch(WALLED, '1v1', [[VEX], [BASTION]]);
+    const u = s.units.find((x) => x.characterId === 'vex')!;
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const covered = abilityPreview(WALLED, u, rail, [], 0); // due east, into the wall
+    expect(covered.length).toBeLessThan(rail.range); // the wall really did stop it
+
+    const poly = shapeOutline(u, rail, [], 0, covered);
+    const reach = Math.max(...poly.map((p) => p.x)) - u.pos.x;
+    const unblocked = shapeOutline(u, rail, [], 0, abilityPreview(OPEN, u, rail, [], 0));
+    expect(reach).toBeLessThan(Math.max(...unblocked.map((p) => p.x)) - u.pos.x);
+    // It still encloses everything it did hit.
+    expect(reach).toBeGreaterThanOrEqual(covered.length);
+  });
+
+  it('a disk keeps its shape when walls punch tiles out of it — that is the point', () => {
+    // Unlike a beam, the engine does not shorten a circle for a wall; it drops
+    // the tile. Truncating the disk would hide that a corner was clipped.
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    const target = { x: 6, y: 7 };
+    const WALLED: MapDef = { ...OPEN, walls: [{ x: 6, y: 6 }] };
+    const s = createMatch(WALLED, '1v1', [[VEX], [BASTION]]);
+    const u = s.units.find((x) => x.characterId === 'vex')!;
+    const clipped = abilityPreview(WALLED, u, grenade, [target]);
+    const whole = abilityPreview(OPEN, u, grenade, [target]);
+    expect(clipped.length).toBeLessThan(whole.length); // a tile really was dropped
+    expect(shapeOutline(u, grenade, [target], undefined, clipped))
+      .toEqual(shapeOutline(u, grenade, [target], undefined, whole));
   });
 });

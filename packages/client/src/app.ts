@@ -41,6 +41,7 @@ import {
   nextDraft,
   pathTo,
   rangeEnvelope,
+  shapeOutline,
   toUnitOrders,
   type OrderDraft,
 } from './targeting.js';
@@ -89,6 +90,8 @@ const REACH = 0x4f8cff;
 /** The hover range envelope (UI1) — dimmer than anything committed. */
 const RANGE = 0x8fb6ff;
 const AIM = 0xff9a3e;
+/** UI2's continuous shape — the same family as the tiles, deliberately paler. */
+const SHAPE = 0xffc98a;
 const SELECT = 0xf0f0f0;
 const IMPACT = 0xffd166;
 /**
@@ -357,11 +360,18 @@ export function startHotSeat(
     // HOVERED aim; otherwise it shows what has been committed. Same `aimFor`
     // either way, so the preview and the commit can never disagree.
     const preview = previewAim(unit, chosen, draft);
-    renderer.highlight(
-      'aim',
-      chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [],
-      AIM,
-      0.5,
+    const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
+    renderer.highlight('aim', covered, AIM, 0.5);
+
+    // ── UI2 Layer 1: the continuous shape over Layer 2's tiles ───────────────
+    // The tiles are the truth (centre-in binary, AIM2); the wedge/beam/disk is
+    // the fiction they approximate. Showing only the tiles makes a clipped
+    // corner look like a bug; showing only the shape hides what actually gets
+    // hit. Both, from the same numbers.
+    renderer.drawShape(
+      chosen !== undefined && covered.length > 0 ? shapeOutline(unit, chosen, preview.aim, preview.aimStep, covered) : [],
+      SHAPE,
+      0.16,
     );
 
     // ── AIM1 (+UI4): the drawn route as a LINE ───────────────────────────────
@@ -573,8 +583,9 @@ export function startHotSeat(
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
     const player = createTurnPlayer(prev, result.events);
-    for (const layer of ['reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
+    renderer.drawShape([], SHAPE);
     renderer.show(viewUnits(player.view), viewDecoys(player.view));
 
     let skipped = false;
@@ -660,8 +671,9 @@ export function startHotSeat(
 
   function renderGameOver(): void {
     renderer.show(stateUnits(), []);
-    for (const layer of ['reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
+    renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);
     renderer.fitBoard();
     hud.clear();

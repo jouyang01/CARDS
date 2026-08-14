@@ -14,9 +14,12 @@ import {
   ULT_COST,
   aimInRange,
   buildBoard,
+  direction8,
+  dominantCardinal,
   expandShape,
   findAbility,
   isAimStep,
+  stepToVector,
   movementBudget,
   reachableSquares,
   reconstructPath,
@@ -278,6 +281,157 @@ export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim:
   if (target === undefined) return [];
   // A dash aimed at your own square is a hold, not a route.
   return target.x === unit.pos.x && target.y === unit.pos.y ? [] : [{ ...target }];
+}
+
+/**
+ * A closed polygon in **board coordinates** (fractional squares) outlining the
+ * continuous geometric shape an ability projects — UI2's Layer 1.
+ *
+ * Layer 2 is the truth (`expandShape`'s tiles, centre-in binary). Layer 1 is the
+ * fiction: the smooth cone/beam/disk the tiles approximate. Drawing only the
+ * tiles makes a clipped corner read as a bug; drawing only the shape hides which
+ * squares actually take the hit. So both, and **from the same numbers** — every
+ * dimension below is the engine's own rule, not an eyeballed silhouette:
+ *
+ * - a **line** reaches `range` tiles along its axis (`alongAxis`), and covers a
+ *   tile whose centre is nearest the ray — so the beam is a half-tile-wide band.
+ * - a **cone**'s half-width at depth `d` is `d − 1` tiles, i.e. `d − 0.5` from
+ *   centre to outer tile edge. That line hits zero at `d = 0.5`, so the true
+ *   apex sits half a tile in front of the caster. Not an approximation — it is
+ *   where the engine's own widening rule starts.
+ * - a **circle** is `dx² + dy² ≤ r²`, a genuine disk; `r + 0.5` reaches the
+ *   outer edge of the last covered tile.
+ *
+ * `path` and `self` return no outline: a route already draws as a line (AIM1),
+ * and a self-cast has no projected shape.
+ */
+export function shapeOutline(
+  unit: UnitState,
+  ability: AbilityDef,
+  aim: readonly Vec2[],
+  aimStep: number | undefined,
+  covered: readonly Vec2[],
+): Vec2[] {
+  const from = unit.pos;
+  const target = aim[0];
+  const dir = directionOf(from, ability, aim, aimStep);
+  // A directional shape is truncated to what it ACTUALLY reached. `lineSquares`
+  // stops at the first wall, so an untruncated beam would carry on through it —
+  // which reads as "the shot goes through walls", the exact disagreement between
+  // the two layers this item exists to prevent. A disk is different: the engine
+  // drops wall tiles from it without shortening it, so the disk stays whole and
+  // the missing tiles beneath it are the point.
+  const reach = Math.min(ability.range, depthReached(from, covered));
+
+  switch (ability.shape) {
+    case 'square':
+      return target === undefined ? [] : tileOutline(target);
+    case 'circle':
+      return target === undefined ? [] : diskOutline(target, (ability.radius ?? 1) + HALF_TILE);
+    case 'line': {
+      if (dir === undefined || reach < 1) return [];
+      // The far end reaches the OUTER EDGE of the last covered tile, not its
+      // centre — a beam that stopped at the centre would leave the tile it hits
+      // half outside the shape that is supposed to explain it.
+      const end = alongAxis(dir, reach + HALF_TILE);
+      const n = perpUnit(dir);
+      // A band, not a hairline: the beam covers the tiles whose centres it runs
+      // through, so it is drawn a tile wide.
+      return [
+        { x: from.x - n.x * HALF_TILE, y: from.y - n.y * HALF_TILE },
+        { x: from.x + end.x - n.x * HALF_TILE, y: from.y + end.y - n.y * HALF_TILE },
+        { x: from.x + end.x + n.x * HALF_TILE, y: from.y + end.y + n.y * HALF_TILE },
+        { x: from.x + n.x * HALF_TILE, y: from.y + n.y * HALF_TILE },
+      ];
+    }
+    case 'cone': {
+      if (dir === undefined || reach < 1) return [];
+      const axis = unitVector(dir);
+      const n = perpUnit(dir);
+      // Half-width grows as `d − 0.5` (the engine's `d − 1` tiles, plus the half
+      // tile out to the edge), so the wedge is the exact triangle through
+      // (0.5, 0) and (range + 0.5, range): apex half a tile ahead of the
+      // caster, far edge past the last covered row.
+      const apex = { x: from.x + axis.x * HALF_TILE, y: from.y + axis.y * HALF_TILE };
+      const far = alongAxis(dir, reach + HALF_TILE);
+      const half = reach;
+      return [
+        apex,
+        { x: from.x + far.x - n.x * half, y: from.y + far.y - n.y * half },
+        { x: from.x + far.x + n.x * half, y: from.y + far.y + n.y * half },
+      ];
+    }
+    case 'path':
+    case 'self':
+      return [];
+  }
+}
+
+/**
+ * How far a directional shape got, in tiles along its axis. `alongAxis` divides
+ * by the dominant component, so a covered tile at depth `d` always sits exactly
+ * `d` away on that component — `max(|dx|, |dy|)` recovers the depth exactly,
+ * for any rotation, with no trig and no projection error.
+ */
+function depthReached(from: Vec2, covered: readonly Vec2[]): number {
+  let deepest = 0;
+  for (const p of covered) deepest = Math.max(deepest, Math.abs(p.x - from.x), Math.abs(p.y - from.y));
+  return deepest;
+}
+
+/** Half a board square, in board units — the distance from tile centre to edge. */
+const HALF_TILE = 0.5;
+/** Segments used to approximate a disk. Enough that the seams do not read. */
+const DISK_SEGMENTS = 48;
+
+/**
+ * The direction a directional shape points, resolved exactly as the engine
+ * resolves it: a quantized step wins, otherwise the caster→target fallback,
+ * which differs between line (`direction8`) and cone (`dominantCardinal`).
+ */
+function directionOf(from: Vec2, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number): Vec2 | undefined {
+  if (ability.shape !== 'line' && ability.shape !== 'cone') return undefined;
+  if (isAimStep(aimStep)) return stepToVector(aimStep);
+  const target = aim[0];
+  if (target === undefined) return undefined;
+  const v = ability.shape === 'line' ? direction8(from, target) : dominantCardinal(from, target);
+  return v.x === 0 && v.y === 0 ? undefined : v;
+}
+
+/** `d` tiles along `v`, measured on the dominant axis — the engine's metering. */
+function alongAxis(v: Vec2, d: number): Vec2 {
+  const m = Math.max(Math.abs(v.x), Math.abs(v.y));
+  return m === 0 ? { x: 0, y: 0 } : { x: (d * v.x) / m, y: (d * v.y) / m };
+}
+
+/** `v` scaled to length 1 — for the apex offset, where direction alone matters. */
+function unitVector(v: Vec2): Vec2 {
+  const len = Math.hypot(v.x, v.y);
+  return len === 0 ? { x: 0, y: 0 } : { x: v.x / len, y: v.y / len };
+}
+
+/** The unit normal to `v` — the width direction of a beam or wedge. */
+function perpUnit(v: Vec2): Vec2 {
+  const u = unitVector(v);
+  return { x: -u.y, y: u.x };
+}
+
+/** The four corners of one tile. */
+function tileOutline(p: Vec2): Vec2[] {
+  return [
+    { x: p.x - HALF_TILE, y: p.y - HALF_TILE },
+    { x: p.x + HALF_TILE, y: p.y - HALF_TILE },
+    { x: p.x + HALF_TILE, y: p.y + HALF_TILE },
+    { x: p.x - HALF_TILE, y: p.y + HALF_TILE },
+  ];
+}
+
+/** A regular polygon standing in for a disk of `radius` around `centre`. */
+function diskOutline(centre: Vec2, radius: number): Vec2[] {
+  return Array.from({ length: DISK_SEGMENTS }, (_, i) => {
+    const a = (i / DISK_SEGMENTS) * Math.PI * 2;
+    return { x: centre.x + Math.cos(a) * radius, y: centre.y + Math.sin(a) * radius };
+  });
 }
 
 /** Does this draft carry an actual order, or is the character holding? */

@@ -22,6 +22,7 @@ import {
   BoxGeometry,
   BufferGeometry,
   Color,
+  DoubleSide,
   DirectionalLight,
   Group,
   Line,
@@ -34,6 +35,8 @@ import {
   PlaneGeometry,
   Raycaster,
   Scene,
+  Shape,
+  ShapeGeometry,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -82,6 +85,8 @@ export type HighlightLayer = 'range' | 'reach' | 'aim' | 'select';
 
 /** Height above the ground plane per layer, so they never z-fight. */
 const LAYER_LIFT: Record<HighlightLayer, number> = { range: 0.006, reach: 0.010, aim: 0.016, select: 0.022 };
+/** UI2's continuous shape sits just above the covered tiles it explains. */
+const SHAPE_LIFT = 0.026;
 
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
@@ -135,6 +140,12 @@ export interface Renderer {
   focusOn(squares: readonly Vec2[]): void;
   /** A stroked path through tile centres plus an endpoint marker (AIM1). */
   drawPath(squares: readonly Vec2[], color: number, dashed: boolean): void;
+  /**
+   * UI2 Layer 1: fill a closed polygon given in **fractional board coordinates**
+   * on the ground plane — the continuous cone/beam/disk the covered tiles
+   * approximate. Empty clears it.
+   */
+  drawShape(outline: readonly Vec2[], color: number, opacity?: number): void;
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
@@ -650,6 +661,30 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       marker.rotation.z = Math.PI / 4; // a diamond, so the endpoint reads as an endpoint
       marker.position.copy(toWorld(map, last)).setY(0.09);
       g.add(marker);
+    },
+
+    drawShape(outline, color, opacity = 0.18) {
+      const g = layerGroup('shape');
+      disposeChildren(g);
+      if (outline.length < 3) return;
+      // Built in the XY plane from board coordinates, then laid flat — the same
+      // squareToWorldXZ mapping picking uses, so the fiction and the truth are
+      // registered to the same grid and a clipped corner reads as geometry
+      // rather than as a bug.
+      const shape = new Shape();
+      outline.forEach((p, i) => {
+        const w = squareToWorldXZ(map, p);
+        if (i === 0) shape.moveTo(w.x, w.z);
+        else shape.lineTo(w.x, w.z);
+      });
+      shape.closePath();
+      const mesh = new Mesh(
+        new ShapeGeometry(shape),
+        new MeshBasicMaterial({ color, transparent: true, opacity, side: DoubleSide, depthWrite: false }),
+      );
+      mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
+      mesh.position.y = SHAPE_LIFT;
+      g.add(mesh);
     },
 
     start() {
