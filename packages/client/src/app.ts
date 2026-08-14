@@ -43,6 +43,7 @@ import {
   toUnitOrders,
   type OrderDraft,
 } from './targeting.js';
+import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js';
 import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { type ViewState } from './playback.js';
@@ -51,6 +52,8 @@ export interface HotSeatUI {
   board: HTMLElement;
   status: HTMLElement;
   controls: HTMLElement;
+  /** The right-side combat log panel (UI6). Optional so tests can omit it. */
+  log?: HTMLElement;
 }
 
 /**
@@ -146,6 +149,23 @@ export function startHotSeat(
   globalThis.addEventListener('resize', () => { sizeToContainer(); fitCamera(); });
   ui.board.addEventListener('click', onBoardClick);
   ui.board.addEventListener('mousemove', onBoardHover);
+
+  // UI6: the right-side combat log accumulates for the whole match. It is a
+  // pure `TurnEvent[]` consumer — same contract as playback.
+  const combatLog: CombatLog | undefined = ui.log !== undefined ? createCombatLog(ui.log) : undefined;
+  const logNames: LogNames = {
+    unit: (unitId) => {
+      const unit = unitById(unitId);
+      return unit === undefined ? unitId : characterFor(unit).name;
+    },
+    ability: (abilityId) => {
+      for (const character of Object.values(roster)) {
+        const found = [...character.abilities, character.ultimate].find((a) => a.id === abilityId);
+        if (found !== undefined) return found.name;
+      }
+      return abilityId;
+    },
+  };
 
   // Persistent corner phase label (A3): it stays put and changes text, so the
   // eye never has to hunt for which phase is playing.
@@ -535,6 +555,9 @@ export function startHotSeat(
     }
     const prev = state;
     const result = resolveTurn(prev, map, mergeSeatOrders(seats, ordersBySeat), roster);
+    // The log is written from the resolved event list up front, so it is
+    // complete whether the player watches the animation or skips it.
+    combatLog?.appendTurn(prev.turn, result.events, logNames);
 
     // The player owns state — its fold IS the board, so skipping and watching
     // agree by construction. Everything below only *decorates* that fold:

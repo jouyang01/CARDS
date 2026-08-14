@@ -29,7 +29,7 @@
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
         font-family: system-ui, -apple-system, sans-serif; }
       #app { display: flex; flex-direction: column; align-items: center; gap: 12px;
-        padding: 20px 24px 190px; }
+        padding: 20px 316px 190px 24px; }
       h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: 0.5px; }
       #board { position: relative; background: var(--panel); border-radius: 8px;
         box-shadow: 0 4px 24px rgb(0 0 0 / 0.4); }
@@ -87,6 +87,24 @@
       .hud-lock { background: var(--reach); color: #fff; border-color: var(--reach);
         font-weight: 700; font-size: 14px; padding: 10px 20px; }
       .hud-playback { grid-column: 1 / -1; display: flex; justify-content: center; }
+
+      /* ── UI6: the combat log, right side, independently scrollable ───────── */
+      .log { position: fixed; top: 0; right: 0; bottom: 0; width: 300px; z-index: 4;
+        overflow-y: auto; overscroll-behavior: contain;
+        padding: 16px 14px 200px; font-size: 12px; line-height: 1.5;
+        background: rgb(16 18 24 / 0.92); border-left: 1px solid var(--grid-line); }
+      .log-list { display: flex; flex-direction: column; gap: 2px; }
+      .log-turn { margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid var(--grid-line);
+        font-size: 10px; letter-spacing: 2px; text-transform: uppercase; opacity: 0.5; }
+      .log-turn:first-child { margin-top: 0; border-top: none; padding-top: 0; }
+      .log-line { opacity: 0.9; }
+      .log-line.damage { color: #ff9b90; }
+      .log-line.heal { color: var(--hp); }
+      .log-line.shield { color: var(--shield); }
+      .log-line.status { color: var(--aim); opacity: 0.85; }
+      .log-line.death { color: #ff6b5e; font-weight: 700; }
+      .log-line.respawn { color: var(--reach); }
+      .log-line.neutral { color: var(--text); font-weight: 700; }
       button { background: var(--open); color: var(--text); border: 1px solid var(--grid-line);
         border-radius: 6px; padding: 5px 10px; font-size: 13px; cursor: pointer; }
       button:hover:not(:disabled) { border-color: var(--reach); }
@@ -101,6 +119,7 @@
     </style>
   </head>
   <body>
+    <aside id="log"></aside>
     <div id="app">
       <h1>CARDS — Duel Arena</h1>
       <div id="status"></div>
