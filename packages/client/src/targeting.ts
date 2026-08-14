@@ -14,6 +14,7 @@ import {
   ULT_COST,
   aimInRange,
   buildBoard,
+  circleSquares,
   direction8,
   distance,
   dominantCardinal,
@@ -195,6 +196,54 @@ export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef
   // Same call the engine makes, same step — so the preview is exactly the tile
   // set that will be hit, rotation included.
   return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
+}
+
+/**
+ * DASH-PREVIEW — the impact disc(s) a dash carrying `impact` would detonate.
+ *
+ * "Shadowstep Strike needs to show what boxes are being hit, not just the box of
+ * arrival." DASH-IMPACT shipped the mechanic without the preview, so a dash with
+ * a destination blast looked exactly like a dash that only moves you.
+ *
+ * Deliberately **not** folded into `expandShape`'s `a.area`. That field means
+ * "the aimed area" at plan time, but the engine detonates from the square the
+ * dasher actually comes to rest on — a charge stopped short blasts where it
+ * stopped. Merging the two would make one of them lie. This is a plan-time
+ * estimate at the *aimed* landing square, and resolution playback still shows
+ * the true detonation.
+ *
+ * `origin` is the takeoff disc (Ravok's Bullrush shoves off the square it left),
+ * `destination` the landing disc. Either is empty when the ability declares no
+ * radius for it, so a dash with no `impact` previews nothing new.
+ */
+export interface ImpactPreview {
+  origin: Vec2[];
+  destination: Vec2[];
+}
+
+export function impactPreview(
+  map: MapDef,
+  unit: UnitState,
+  ability: AbilityDef | undefined,
+  aim: readonly Vec2[],
+  aimStep?: number,
+): ImpactPreview {
+  const none: ImpactPreview = { origin: [], destination: [] };
+  if (ability?.impact === undefined || ability.phase !== 'dash') return none;
+  if (!aimLegal(unit, ability, aim, aimStep)) return none;
+  // Where the dash is *aimed* to end: the last square of a charge's route, or
+  // the teleport's target. `dashRoute` already makes that one decision.
+  const route = dashRoute(unit, ability, aim);
+  const landing = route[route.length - 1];
+  if (landing === undefined) return none;
+
+  const board = buildBoard(map);
+  const disc = (centre: Vec2, radius: number | undefined): Vec2[] =>
+    radius === undefined || radius < 1 ? [] : circleSquares(board, centre, radius);
+  return {
+    origin: disc(unit.pos, ability.impact.origin),
+    destination: disc(landing, ability.impact.destination),
+  };
 }
 
 /**

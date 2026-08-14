@@ -46,6 +46,7 @@ import {
 import {
   abilityOptions,
   abilityPreview,
+  impactPreview,
   abilityTooltip,
   aimFor,
   dashRoute,
@@ -495,6 +496,15 @@ export function startHotSeat(
     const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
     renderer.highlight('aim', covered, AIM, 0.5);
 
+    // ── DASH-PREVIEW: a dash's impact disc(s) ────────────────────────────────
+    // "Shadowstep Strike needs to show what boxes are being hit, not just the
+    // box of arrival." Its own layer rather than more tiles in `covered`: the
+    // aimed area is where the dash GOES, the disc is what the arrival DOES, and
+    // a player choosing between two landing squares is reading the second.
+    // Plan-time only — the engine detonates from wherever the dash really stops.
+    const impact = impactPreview(map, unit, chosen, preview.aim, preview.aimStep);
+    renderer.highlight('impact', [...impact.origin, ...impact.destination], IMPACT, 0.4);
+
     // ── UI2 Layer 1: the continuous shape over Layer 2's tiles ───────────────
     // The tiles are the truth (centre-in binary, AIM2); the wedge/beam/disk is
     // the fiction they approximate. Showing only the tiles makes a clipped
@@ -789,7 +799,7 @@ export function startHotSeat(
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
     const player = createTurnPlayer(prev, result.events);
-    for (const layer of ['fog', 'range', 'reach', 'aim', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
     renderer.show(viewUnits(player.view), viewDecoys(player.view));
@@ -919,7 +929,7 @@ export function startHotSeat(
 
   function renderGameOver(): void {
     renderer.show(toRenderUnits(revealedView(state, currentSeat()?.team ?? 0).units), []);
-    for (const layer of ['fog', 'range', 'reach', 'aim', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);

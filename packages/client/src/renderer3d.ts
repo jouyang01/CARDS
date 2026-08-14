@@ -86,7 +86,7 @@ const PIP_ROW_Y = 0.38;
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
  * covered tile always reads on top of the envelope that contains it.
  */
-export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'free' | 'catalyst' | 'select';
+export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
 
 /**
  * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
@@ -110,9 +110,10 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
   range: OVERLAY_BASE + 0.004,
   reach: OVERLAY_BASE + 0.008,
   aim: OVERLAY_BASE + 0.014,
-  free: OVERLAY_BASE + 0.016,
-  catalyst: OVERLAY_BASE + 0.018,
-  select: OVERLAY_BASE + 0.022,
+  impact: OVERLAY_BASE + 0.016,
+  free: OVERLAY_BASE + 0.018,
+  catalyst: OVERLAY_BASE + 0.020,
+  select: OVERLAY_BASE + 0.024,
 };
 /**
  * Overlay tiles are inset so the grid reads through them — except fog, which
@@ -120,7 +121,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, free: 0.8, catalyst: 0.72, select: 0.92,
+  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
 };
 /** UI2's continuous shape sits just above the covered tiles it explains. */
 export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
@@ -164,8 +165,9 @@ export interface Renderer {
    * `fog` is the unseen board (VISION1) and sits underneath everything, so your
    * own aim still reads over darkness — you may shoot where you cannot see.
    * `range` is the hover envelope (UI1 — where an ability *could* go), `reach`
-   * the move envelope, `aim` the tiles an aim actually covers, `select` the
-   * current unit and impact flashes.
+   * the move envelope, `aim` the tiles an aim actually covers, `impact` a dash's
+   * previewed blast discs (DASH-PREVIEW), `select` the current unit and impact
+   * flashes.
    */
   highlight(layer: HighlightLayer, squares: readonly Vec2[], color: number, opacity?: number): void;
   /** The board square under a client-space point, via a ray/plane intersection. */
