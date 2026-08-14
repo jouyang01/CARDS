@@ -39,7 +39,6 @@
 
 import {
   type Board,
-  distance,
   inBounds,
   terrainAt,
   vecKey,
