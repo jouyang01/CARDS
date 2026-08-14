@@ -8,149 +8,97 @@ independently shippable. Each item carries **Spec Notes** (Analyzer's build guid
 
 **Standing directives:** engine iterates unit **lists**; engine is pure/deterministic and
 **dependency-free** (client may depend on Vite/Three.js); every client item consumes
-`TurnEvent[]` — never recomputes game rules. Metric is **Manhattan everywhere** (MET1).
-**Open/update a PR to `main` every session** (CLAUDE.md).
+`TurnEvent[]`. Metric is **Manhattan everywhere**. **Open/update a PR to `main` every
+session** (CLAUDE.md).
 
 ## ✅ COMPLETE
 
-- Engine core, teams/formats, M2 client, S1, MV1–MV4, TT1, C1, MS1, R1–R7, D1 (+dash),
-  A0/A1/A2/A3, M2 range cap; **MET1** (Manhattan incl. vision), **FF1** (friendly fire —
-  Blast + charges + delayed), **MET1-tp** (teleport-strike Manhattan-1), **BRUSH1** (brush a
-  legal destination), **AIM2** (quantized-int free aiming + no-trig guard), **RND1**
-  (orthographic 3D renderer), **A1/A2/A3 re-spec** (tweened playback, spotlight, free orbit),
-  **BUNDLE1** (CI fails >300 kB gzipped). (through PR #21)
+- Engine core, teams/formats, M2 client, MV1–MV4, MET1(+tp), FF1(+charge/delayed), BRUSH1,
+  AIM2, RND1, A0(+heal), A1/A2/A3(+re-spec), TT1, C1, MS1, R1–R7, D1(+dash), BUNDLE1.
+- **UI1** (hover range + click-commit), **UI2** (two-layer shape+tiles overlay), **UI3**
+  (persistent HUD), **AIM1+UI4** (move/dash route line, dash yellow), **UI5** (damage/absorb/
+  heal/shield readouts), **UI6** (scrollable combat log). (PR #24)
+- **M1** duel-arena redesign, **M1-4v4** `iron-basin`, **Thorn-dash** (Bramble Stride). (PR #22)
 
-Current suite: **399 tests** (engine 316 + client 83), typecheck + build clean, purity green.
+Current suite: **468 tests** (engine 325 + client 143), typecheck + build clean, purity green.
+
+> The local 2v2 hot-seat is essentially feature-complete. After **UI1-fix** it is
+> playtest-ready; the remaining items are one bug, map guardrails, render verification, and
+> polish. Expect the next real signal to be balance/pacing Dev Notes, not features.
 
 ---
 
-# UI batch (owner directive 2026-08-23) — the Decision-phase HUD + previews
+## Next batch
 
-**RND1 dependency split (parallelise on this):** *screen-space DOM, renderer-agnostic* →
-**UI1, UI3, UI6**; *world-space, uses the renderer (already built)* → **UI2, UI5, AIM1(+UI4)**.
-**Cross-cutting:** UI1's Lock-In ruling shapes UI3 (settle first); UI4 folds into AIM1; UI5 folds
-into A3; UI2 needs AIM2's coverage rule (settled: centre-in binary) + RND1 (both landed).
+### UI1-fix. A committed board click must lock the action (stop mouse-follow) — UNBLOCKED (HIGH, first)
+**Addresses Dev Note: "Right now, the attack, dash and prep actions cannot be locked in. As I am
+moving my mouse around the board, the attack action follows my mouse around. I need to be able to
+lock in the action when I click the tile on the board so the action stops following the mouse."**
+Root cause: `onBoardClick` commits `draft.aim` but leaves `mode === 'aim'`, so `onBoardHover`
+keeps re-setting `hover.square` and `previewAim` keeps rendering the mouse-following aim over the
+committed one. *AC: after a board click in aim mode, the aim is fixed at the clicked tile and no
+longer follows the mouse; the same for a move/dash click; re-selecting the ability re-arms aim;
+a client test asserts that a `mousemove` after a committing click does not change the rendered
+aim.*
+**Spec Notes.** Files: `packages/client/src/app.ts` — in `onBoardClick`, after committing in
+**both** the `aim` and `move` branches, set `mode = 'idle'` and `clearHover()` (then `render()`),
+so `previewAim` falls through to the committed `draft.aim` and `onBoardHover` early-returns
+(mode idle). Keep `render()` so the committed layer paints. Out of scope: any change to what a
+click *commits* (that's correct) or to the Lock-In model. Add the regression test noted in the AC.
 
-## Next batch — engine (small, first)
+### M1-tests. Validate the new maps + build the map guardrails — UNBLOCKED (Builder)
+`iron-basin` (4v4) shipped but is not imported by `content.test.ts` (no validation), and
+`maps-v1.md` §6's guardrails are unbuilt. *AC: `content.test.ts` imports and validates
+`iron-basin` (`validateMap` + `validateMapForFormat('4v4')`) and the redesigned `duel-arena`;
+a **roster-derived** test asserts **max turn-1 threat < spawn separation** for each map/format
+(computed from `movementBudget` + each ability's `range` via the engine, not hardcoded); the
+dash-answer guardrail is **tightened to all archetypes** now that Thorn has Bramble Stride.*
+**Spec Notes.** Files: `packages/engine/test/content.test.ts` (+ import the maps). The turn-1
+guard is the point of M2 (range cap) — it must derive the threat from the roster so a future
+long-range character can't silently reintroduce a turn-1 spawn hit. No engine/data change
+expected; if a map fails the guard, that's a Designer fix, not a test relaxation.
 
-### A0-heal. Widen source attribution to `heal` + `statusApplied` (ENGINE) — UNBLOCKED (blocks UI6)
-**Addresses Dev Note (UI6): "This log should show damage and healing done to and from
-characters."** `damage` already carries `sourceUnitId`/`abilityId` (A0); `heal` and
-`statusApplied` do not, so "Aegis shielded Lumen for 30" isn't expressible. *AC: `heal` and
-`statusApplied` events carry `sourceUnitId` + `abilityId` (the caster + ability); purely additive,
-no outcome/state change; tests asserting those event shapes updated; determinism harness passes.*
-**Spec Notes.** Files: `types.ts` (`heal`, `statusApplied` variants), `resolve.ts` (the `heal`
-emit in `applySelfEffects`/Blast benefits loop, the `statusApplied` emits — thread caster+ability
-through), `resolve.test.ts`. Trap/dash riders: source = the placing/casting unit + ability. Out
-of scope: any value/coverage change — attribution only.
+### RENDER-VERIFY. Headless screenshot smoke test for the 3D renderer — UNBLOCKED (recommended)
+Every UI item this session (and the readability batch) was verified only by scripted browser +
+composited screenshots — the sole thing that catches renderer bugs (it caught the
+`transparent/needsUpdate` bug); none of it is reachable from a unit test. *AC: a Playwright
+devDependency + one CI job drives a scripted hot-seat turn and asserts a few composited pixels
+(e.g. a unit rings up, an ability overlay paints, a damage readout appears); runs in CI.*
+**Spec Notes.** Files: `packages/client` (Playwright config + test), `ci.yml`. Chromium +
+Playwright are already in the environment (`PLAYWRIGHT_BROWSERS_PATH`); do not re-download. Keep
+it a thin smoke test (existence/pixel presence), not pixel-perfect goldens (brittle). Renderer
+*inputs* stay unit-covered regardless.
 
-## Next batch — client, screen-space DOM (renderer-agnostic, parallel)
+## Optional / low priority
 
-### UI1. Hover previews range; click on the board confirms; commit ≠ lock (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "All actions should show you the effective range when mousing over the
-board, including dashes, prep, and aoe… click the skill to set the mode, hover over the board to
-see its effective range (not just the tiles it affects), and then click the tile on the board to
-confirm the action… (still need to click end turn)."** Also subsumes the earlier **AIM2-UX**
-(mouse-follow aiming for cone/line). *AC: hovering an ability control paints that ability's
-**effective-range envelope** on the board, non-committal, cleared on mouse-out, for **every**
-phase (prep, dash, blast, AoE); a board click **commits** that character's action and it stays
-visibly indicated; choosing another ability before Lock In replaces it; nothing is mutated by
-hover; a cone/line ability tracks the mouse live between click-to-set-mode and click-to-confirm.*
-**Spec Notes.** Files: `app.ts` (the `'idle'|'aim'|'move'` mode machine gains a **hover** stage
-before commit; the click becomes commit, not lock), `targeting.ts`, `renderer3d.ts` (range
-envelope + live cone/line preview via `expandShape` at the quantized step — engine unchanged).
-**Lock-In ruling (settle before UI3):** **Lock In commits the currently-selected character; the
-player switches freely between their 1–2 characters until all are locked; committing an action
-does NOT end the turn** (replaces the per-character `lockStep` walk). Out of scope: HUD layout
-(UI3), the shape/tile overlay geometry (UI2).
+- **UI-responsive (optional).** HUD reserves 260px and the log 300px; below ~1100px the board is
+  cramped with no breakpoint. Add a responsive layout only if the owner plays on a laptop.
+  `index.html`, `app.sizeToContainer`.
+- **UI6-cap (optional, playtest).** The combat log is uncapped/unfiltered; add a per-tone filter
+  or max-entry window if 4v4 makes it noisy.
 
-### UI3. HUD layout: portrait+HP+Energy · hotbar · Lock In (CLIENT) — BLOCKED BY UI1 (ruling)
-**Addresses Dev Note: "skills on the bottom, lock in to the right of skills, character
-information on the bottom left including HP and Energy."** *AC: a **persistent, viewport-anchored**
-HUD — bottom-left active-character panel (portrait/identity, HP, Energy bars), bottom-centre
-ability hotbar (one control per ability + ultimate, showing availability/cooldown), bottom-right
-Lock In immediately right of the hotbar; the HUD is **updated in place, not rebuilt per render**
-(so it doesn't fight UI1 hover state); the TT1 ability tooltip survives into the hotbar.*
-**Spec Notes.** Files: `app.ts` (`renderControls` → a persistent keyed HUD subtree, same
-principle as A1's keyed nodes — do not `replaceChildren` each frame), CSS. Reuse
-`abilityOptions` (already returns available + reason — don't re-derive) and the existing bar
-treatment (HP/energy already in `UnitState`). Screen-space DOM — **independent of RND1**. Out of
-scope: the turn timer / score header (observed-not-requested).
+## Deferred — do NOT schedule
 
-### UI6. Scrollable combat log, right side (CLIENT) — BLOCKED BY A0-heal
-**Addresses Dev Note: "Create a log on the right that you can scroll through. This log should show
-damage and healing done to and from characters."** *AC: a persistent, independently-scrollable
-right-side panel accumulating across turns with a per-turn separator; entries name **both actor
-and target** where the event has both (damage, heal, shield — using A0/A0-heal source); entries
-are ordered by the log and never re-sorted; deaths and respawns appear; pure consumer of
-`TurnEvent[]` (no game logic).* **Spec Notes.** Files: new client log module, `app.ts`. Same
-contract as `playback.ts`. Screen-space DOM — **independent of RND1**. Needs **A0-heal** for the
-"from" on heals/shields.
+- **A4** per-ability FX (`"fx"` data blocks; generic consumer via the kept `objectFor()` seam) —
+  blocked on **M3 + roster lock**.
+- **CL1** (AR clash co-occupancy), **CL2** (vector-sum displacement), **E2** (cover-corner unify).
 
-## Next batch — client, world-space (renderer already built)
+## M3+ — the next milestone (Analyzer expands when playtest settles v1)
 
-### AIM1 (+UI4). Move & dash drawn as a line + endpoint marker (CLIENT) — UNBLOCKED
-**Addresses Dev Notes: "Move commands should be a thin line ending in a marker of the final
-location"** and (UI4) **"Dashes should have the same movement indicator as movement, but in
-yellow."** *AC: a drawn move renders as a **stroked polyline through tile centres + a distinct
-endpoint marker** (renderer geometry, not filled tiles); a drawn **dash** uses identical
-line+marker geometry, **yellow**; reachability tiles unchanged; sprint vs normal move visually
-distinct; the dash line is suppressed only when no dash is drafted.* **Spec Notes.** Files:
-`renderer3d.ts`, `app.ts` (**the `if (!isDash …)` branch at ~:121 that currently suppresses the
-dash preview must now draw a yellow dash line instead of nothing**), `targeting.ts`. World-space
-(renderer). Out of scope: the AoE shape overlay (UI2).
+21. Worker + DO rooms; format selection; lobby with team-seat + **duplicate-pick validation
+    (R3)**; per-player hidden submission → per-team orders; per-player timer + Time Bank;
+    **combat log + decoy get the hidden-information treatment** (UI6 currently shows both teams —
+    correct only for hot-seat); reconnect/replay; deploy to Pages + wrangler. Also fold the UI
+    polish deferred from this session: **read-only review of a locked character**, **granular
+    un-commit** (drop just the move, keep the ability).
 
-### UI2. Two-layer ability overlay — continuous shape + affected tiles (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "Every action should show you the area in which it affects, not just the
-squares affected… the blue cones indicate actions."** *AC: render BOTH — **Layer 1** the
-continuous geometric shape (cone wedge / line beam / circle) projected on the ground plane, and
-**Layer 2** the resolved affected tiles highlighted beneath it (exactly the engine's coverage:
-centre-in binary, AIM2); the two are visually distinct; multiple ability previews can show at
-once.* **Spec Notes.** Files: `renderer3d.ts`, `targeting.ts`. Layer 2 = `expandShape` output
-(the truth); Layer 1 = the smooth shape from the same quantized-step geometry (the fiction).
-**Render the same rule Layer 2 uses** so a clipped-corner never reads as a bug. World-space,
-needs RND1 (landed) + AIM2's coverage ruling (settled). Out of scope: engine changes.
+## Observed-not-requested (from the reference screenshot; NOT scoped)
 
-### UI5. Damage, shield-absorb and heal readouts during resolution (CLIENT) — UNBLOCKED (folds into A3)
-**Addresses Dev Note: "Damage, shields, heals all should show up during the resolution phase."**
-A3 already ships a hit flash + floating damage number; extend to all three. *AC: damage, shield
-absorption, and healing each surface as **visually distinct** readouts (not three identical white
-numbers) anchored to the unit; values read from the log (`damage.amount`/`damage.absorbed`,
-`heal.amount`, `statusApplied` shield `amount`) and **never recomputed**; a unit that dies later
-in the phase still shows its numbers before the deferred-death fall (A2 rule).* **Spec Notes.**
-Files: the A3 playback/`stage` path in `renderer3d.ts`. No engine change (log carries the values).
-World-space anchor only (project unit → screen).
-
-## Data / Designer (parallel — pending the Designer)
-
-### M1 / M1-4v4 / Thorn-dash — UNBLOCKED
-M1: map redesign (spawn separation ≥13, ~4–6 multi-square formations, roster-derived turn-1
-test). M1-4v4: a dedicated 4v4 map. Thorn-dash: remove one Thorn ability, add a dash, then
-tighten the dash guardrail to all archetypes. Ruled previously. Files: `data/…`, `content.test.ts`.
-
-## Optional / deferred
-
-- **RENDER-VERIFY (optional).** A Playwright devDependency + one CI job driving a scripted turn
-  and asserting a few composited pixels — the batch's screenshot method that caught a real bug,
-  made standing. Env has Chromium/Playwright. Renderer inputs stay unit-covered regardless.
-- **A4** per-ability FX (`"fx"` data blocks, generic consumer via the unused `objectFor()` seam
-  — keep it) — blocked on **M3 + roster lock**.
-- **CL1 / CL2 / E2** — deferred; not for v1 without a new decision.
-
-## Observed-not-requested (recorded from the reference screenshot; NOT scoped)
-
-Turn countdown timer bar (flowing into Lock In); top-centre score/objective header ("1 … 1",
-"Five kills or most kills after 15 turns wins"); per-unit floating name labels; per-unit status
-icons. The owner did not request these — do not build until asked.
-
-## M3+ — placeholder
-
-21. Worker + DO rooms; format selection; lobby with team-seat + **duplicate-pick validation (R3)**;
-    per-player hidden submission → per-team orders; per-player timer + Time Bank; **decoy fog
-    rendering**; reconnect/replay; deploy to Pages + wrangler.
+Turn countdown timer; top-centre score/objective header; per-unit floating name labels; per-unit
+status icons. Owner has not requested these.
 
 ## Playtest / balance (not Builder-blocking)
 
-- **Wisp/Shadowstep** (4-neighbour strike after MET1-tp). **Support anti-stall (R6).**
-  **`MS_PER_BEAT`** pacing (4v4). **Cone raggedness** at shallow angles. **Spotlight** hiding
-  off-actor bars.
+- **`MS_PER_BEAT`** pacing (esp. 4v4). **Wisp/Shadowstep** (4-neighbour strike after MET1-tp).
+  **Support anti-stall (R6)** (Lumen+Thorn vs double-Firepower). **Cone raggedness** at shallow
+  angles. **Spotlight** hiding off-actor bars. **UI5** readout stacking in heavy AoE.
