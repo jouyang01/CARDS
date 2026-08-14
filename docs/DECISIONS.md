@@ -1096,3 +1096,67 @@ stops a single turn dumping a whole kit. Flagged as the designed first lever to 
 abilities read as ordinary Prep abilities on a longer cooldown with no energy — weaker than
 they are today and weaker than designed, never stronger. That is the safe direction to fail
 in, and it is the convention `chargeHits` already shipped under.
+
+## 2026-08-14 — MOVE1 and HITBOX1 (Builder)
+
+**(1) A move click that cannot be honoured routes as far as it legally can (MOVE1).** The
+Dev Note reported that clicking an occupied square does nothing. Two different mechanisms
+produced that one symptom: an occupied square *is* reachable but has `canStop: false`, so
+`reconstructPath` returned a path ending on it and the engine rejected the whole order; an
+out-of-budget square is simply unreachable and returned `null`. Both now fall back to the
+**nearest legal stop** — minimum Manhattan distance to the click, ties broken by lowest path
+cost, then y, then x, so the choice is total and deterministic. Clicking your own square
+stays a deliberate hold. The engine rule ("you may not end your move on an occupied square")
+is untouched; this is purely the client deciding what an unhonourable click *meant*.
+
+**(2) A dash aim still requires an exactly reachable target.** Applying the same forgiveness
+to charges would change **who they ram**, which is the whole decision a charge is. So
+`pathTo` (forgiving, for the Move order) and `pathToExact` (strict, for `path`-shaped
+ability aims) are now separate functions and the dash path uses the strict one.
+
+**(3) HITBOX1 needed the *area* of each shape spelled out, not just the coverage rule.**
+"A tile is hit iff the area intersects a half-tile circle at its centre" is only answerable
+once you say what the area is. The three continuous regions chosen are the ones the old
+discrete rules were approximating, so nothing about a shape's character changes — only which
+tiles at its fringe count:
+- **line** — the segment from the caster's centre to the point `range` tiles along the axis.
+  A zero-width ray, so the covered band comes out exactly one tile wide.
+- **cone** — a 45° wedge with its **apex half a tile in front of the caster**, capped `range`
+  tiles along the axis. That apex is not a choice: the old "half-width is `d − 1` tiles"
+  rule reaches zero width at `d = 0.5`, so it is where the engine's own widening already
+  started (the client's Layer-1 outline has drawn it there since UI2).
+- **circle** — a true disk of the ability's radius.
+
+**(4) The boundary is inclusive: exactly half a tile away is a hit.** The Dev Note is
+explicit ("if an AoE cuts at least halfway along the edge it's guaranteed to hit"), and an
+inclusive `≤` also keeps the arithmetic integral — a strict `<` would make the answer depend
+on ties that only exist because the lattice is exact. Cardinal cones sit on that boundary at
+every row, so this is not a corner case: it is what makes a range-3 cone 3/5/7 tiles wide
+instead of 3/5/5.
+
+**(5) The whole predicate is squared-integer, never a distance.** Square roots and float
+compares are exactly where two machines disagree, and a shape that covers one extra tile on
+one machine desynchronises a match. So every test is a comparison of two squared quantities
+scaled by a common integer factor. The cone needed the most care: shifting the origin to the
+apex and scaling by `2m` turns the wedge into the triangle `(0,0) → (cap, ±cap)`, whose 45°
+edges have direction `(1, 1)` — which is why distances are carried as **twice** the squared
+distance, so `2·(perp/√2)²` is the plain integer `perp²`. Every predicate was cross-checked
+against an exact floating-point reference over all 256 aim steps × the 8 compass directions ×
+ranges 1–8 × the full offset box: **2,078,208 comparisons, zero mismatches**, with the 1,152
+exact-boundary cases all resolving to "hit". Largest intermediate is 1.9e11, four orders
+below 2^53, so nothing can silently lose precision. A `shapes.test.ts` signature folds every
+shape at every aim into one `Math.imul` checksum, which is the cross-engine regression: no
+refactor can move a single tile anywhere without changing that number.
+
+**(6) A wall stops a line at its depth, and ties settle y-then-x.** Coverage is no longer
+computed by walking outward one step at a time, so "stops at the first wall" needed
+restating: candidates are sorted by their projection along the axis and the ray ends at the
+first wall in that order. Two tiles the beam grazes at the same depth are ordered y then x —
+arbitrary, but fixed, which is all determinism asks. Cones still drop wall squares without
+occluding what is behind them (unchanged).
+
+**(7) Coverage grew, and rebalancing is not mine to do.** The new rule is strictly more
+generous — the shipped roster's four cones (all `range: 2`) go from 4 tiles to 8, a radius-1
+circle from 5 to 9, radius-2 from 13 to 21, radius-3 from 25 to 37. Lines are unchanged.
+That is a real balance shift and it belongs to the Designer; it is raised in this session's
+Open Questions rather than absorbed by quietly editing `data/`.

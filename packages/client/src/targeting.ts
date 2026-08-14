@@ -351,20 +351,23 @@ export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim:
  * A closed polygon in **board coordinates** (fractional squares) outlining the
  * continuous geometric shape an ability projects — UI2's Layer 1.
  *
- * Layer 2 is the truth (`expandShape`'s tiles, centre-in binary). Layer 1 is the
- * fiction: the smooth cone/beam/disk the tiles approximate. Drawing only the
- * tiles makes a clipped corner read as a bug; drawing only the shape hides which
- * squares actually take the hit. So both, and **from the same numbers** — every
- * dimension below is the engine's own rule, not an eyeballed silhouette:
+ * Layer 2 is the truth (`expandShape`'s tiles, binary). Layer 1 is the fiction:
+ * the smooth cone/beam/disk the tiles approximate. Drawing only the tiles makes
+ * a clipped corner read as a bug; drawing only the shape hides which squares
+ * actually take the hit. So both, and **from the same numbers** — every
+ * dimension below is the engine's own rule, not an eyeballed silhouette.
  *
- * - a **line** reaches `range` tiles along its axis (`alongAxis`), and covers a
- *   tile whose centre is nearest the ray — so the beam is a half-tile-wide band.
- * - a **cone**'s half-width at depth `d` is `d − 1` tiles, i.e. `d − 0.5` from
- *   centre to outer tile edge. That line hits zero at `d = 0.5`, so the true
- *   apex sits half a tile in front of the caster. Not an approximation — it is
- *   where the engine's own widening rule starts.
- * - a **circle** is `dx² + dy² ≤ r²`, a genuine disk; `r + 0.5` reaches the
- *   outer edge of the last covered tile.
+ * Under HITBOX1 a tile is covered when the ability's area comes within half a
+ * tile of its centre, so each outline is that area pushed out by half a tile —
+ * which makes Layer 1 exactly the boundary Layer 2 is testing against:
+ *
+ * - a **line** is a ray `range` tiles along its axis (`alongAxis`), so the beam
+ *   draws as a band half a tile to each side of it.
+ * - a **cone** is a 45° wedge whose apex sits half a tile ahead of the caster.
+ *   Pushing its edges out half a tile widens each row by 0.71 (½ / cos 45°) and
+ *   pulls the apex back behind the caster.
+ * - a **circle** is a genuine disk of radius `r`; `r + 0.5` is where the hitbox
+ *   of the outermost covered tile is reached.
  *
  * `path` and `self` return no outline: a route already draws as a line (AIM1),
  * and a self-cast has no projected shape.
@@ -412,13 +415,18 @@ export function shapeOutline(
       if (dir === undefined || reach < 1) return [];
       const axis = unitVector(dir);
       const n = perpUnit(dir);
-      // Half-width grows as `d − 0.5` (the engine's `d − 1` tiles, plus the half
-      // tile out to the edge), so the wedge is the exact triangle through
-      // (0.5, 0) and (range + 0.5, range): apex half a tile ahead of the
-      // caster, far edge past the last covered row.
-      const apex = { x: from.x + axis.x * HALF_TILE, y: from.y + axis.y * HALF_TILE };
+      // The engine's wedge has its apex half a tile ahead and 45° edges. Under
+      // HITBOX1 a tile is covered when that wedge comes within half a tile of
+      // its centre, so the silhouette is the wedge pushed out by half a tile:
+      // sliding a 45° edge sideways by ½ moves it ½/cos45° = 0.71 across, which
+      // widens every row by that much and drags the apex back behind the caster.
+      const grow = HALF_TILE * Math.SQRT2;
+      const apex = {
+        x: from.x + axis.x * (HALF_TILE - grow),
+        y: from.y + axis.y * (HALF_TILE - grow),
+      };
       const far = alongAxis(dir, reach + HALF_TILE);
-      const half = reach;
+      const half = reach + grow;
       return [
         apex,
         { x: from.x + far.x - n.x * half, y: from.y + far.y - n.y * half },

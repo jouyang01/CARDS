@@ -121,22 +121,31 @@ describe('AIM2: rotated shapes keep their reach (range = tiles along the axis)',
   });
 
   it('a cone keeps its depth and widening at any rotation', () => {
-    for (const s of [0, 16, 32, 64, 100, 192]) {
-      const wedge = coneSquares(board(), CENTRE, stepToVector(s), 4);
-      // Depth 1..4 with half-widths 0..3 → at most 1+3+5+7 = 16 tiles.
-      expect(wedge.length, `step ${s}`).toBeGreaterThan(0);
-      expect(wedge.length, `step ${s}`).toBeLessThanOrEqual(16);
-      expect(new Set(posKeys(wedge)).size).toBe(wedge.length); // no duplicates
+    for (let s = 0; s < AIM_STEPS; s++) {
+      const dir = stepToVector(s);
+      const wedge = coneSquares(board(), CENTRE, dir, 4);
+      expect(new Set(posKeys(wedge)).size, `step ${s}`).toBe(wedge.length); // no duplicates
+      // "Reaches as far when rotated" (MET1 x AIM2) means the tile `range`
+      // steps along the axis is covered whichever way the cone points.
+      const m = Math.max(Math.abs(dir.x), Math.abs(dir.y));
+      const tip = `${CENTRE.x + Math.round((4 * dir.x) / m)},${CENTRE.y + Math.round((4 * dir.y) / m)}`;
+      expect(posKeys(wedge), `step ${s}`).toContain(tip);
+      // …and it is a wedge, not a beam: it always widens beyond 4 tiles.
+      expect(wedge.length, `step ${s}`).toBeGreaterThan(4);
     }
   });
 
-  it('a cardinal cone is unchanged from before AIM2', () => {
+  it('a cardinal cone is the wedge the half-tile hitbox covers (HITBOX1)', () => {
     const wedge = posKeys(coneSquares(board(), CENTRE, stepToVector(0), 2));
-    expect(wedge).toEqual(['11,10', '12,10', '12,11', '12,9']); // posKeys sorts lexically
+    // depth 1: (11, 9..11); depth 2: (12, 8..12). posKeys sorts lexically.
+    expect(wedge).toEqual([
+      '11,10', '11,11', '11,9',
+      '12,10', '12,11', '12,12', '12,8', '12,9',
+    ]);
   });
 });
 
-describe('AIM2: coverage is centre-in and binary', () => {
+describe('HITBOX1: coverage is the central hitbox, and binary', () => {
   it('a covered tile takes FULL damage — never a fraction', () => {
     const caster = makeUnit('a', 0, { x: 10, y: 10 });
     const victim = makeUnit('e', 1, { x: 13, y: 10 });
