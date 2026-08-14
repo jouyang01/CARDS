@@ -22,7 +22,7 @@ import { aimFor, pathTo, type OrderDraft } from './targeting.js';
  * an ability or Move must be armed first, which is the "click the skill to set
  * the mode" half of the owner's note.
  */
-export type Mode = 'idle' | 'aim' | 'move';
+export type Mode = 'idle' | 'aim' | 'move' | 'catalyst';
 
 /**
  * Purely presentational pointer state. **Nothing here is ever written into a
@@ -109,6 +109,24 @@ export function previewAim(
     return aimFor(map, state, unit, ability, interaction.hover.square);
   }
   return { aim: draft.aim, aimStep: draft.aimStep };
+}
+
+/**
+ * The catalyst's aim to paint (CAT2) — its own mode and its own slot, so
+ * aiming a Shift never disturbs the ability aim sitting next to it.
+ */
+export function previewCatalystAim(
+  map: MapDef,
+  state: GameState,
+  unit: UnitState,
+  def: AbilityDef | undefined,
+  draft: OrderDraft,
+  interaction: Interaction,
+): Vec2[] {
+  if (def !== undefined && interaction.mode === 'catalyst' && interaction.hover.square !== undefined) {
+    return aimFor(map, state, unit, def, interaction.hover.square).aim;
+  }
+  return draft.catalystAim;
 }
 
 /** Likewise for the drawn move: the hovered route while drawing, else committed. */

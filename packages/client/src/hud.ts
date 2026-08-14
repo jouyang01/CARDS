@@ -30,6 +30,21 @@ export interface HudAbility {
   def: AbilityDef;
 }
 
+/**
+ * One catalyst slot (CAT2). `spent` is read from the engine's `catalystsUsed`,
+ * never inferred from the log — a slot greyed out by a missed event would be a
+ * lie the player cannot argue with.
+ */
+export interface HudCatalyst {
+  id: string;
+  name: string;
+  /** The phase it fires in — the slot's colour, in the Prep/Dash/Blast order. */
+  phase: string;
+  spent: boolean;
+  selected: boolean;
+  def: AbilityDef;
+}
+
 export interface HudCharacter {
   unitId: string;
   name: string;
@@ -50,6 +65,8 @@ export interface HudModel {
   /** Every character this seat controls, in seat order (the switcher). */
   roster: HudCharacter[];
   abilities: HudAbility[];
+  /** The three catalyst slots, in phase order. Empty if the match has no pool. */
+  catalysts: HudCatalyst[];
   move: { budget: number; drawing: boolean; sprinting: boolean; sprintDisabled: boolean };
   lock: { label: string };
   view: { projection: string; orbit: boolean };
@@ -58,6 +75,7 @@ export interface HudModel {
 export interface HudHandlers {
   selectCharacter(unitId: string): void;
   selectAbility(abilityId: string): void;
+  selectCatalyst(catalystId: string): void;
   hoverAbility(abilityId: string | undefined, control?: HTMLElement, def?: AbilityDef): void;
   selectMove(sprint: boolean): void;
   hoverMove(kind: 'move' | 'sprint' | undefined): void;
@@ -132,6 +150,9 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   // ── bottom-centre: the hotbar ─────────────────────────────────────────────
   const centre = el('div', 'hud-centre');
   const hotbar = el('div', 'hud-hotbar');
+  // The catalyst row sits above the hotbar: three slots, once per match, so they
+  // read as a resource rather than as four more abilities.
+  const catalystRow = el('div', 'hud-catalysts');
   const moveRow = el('div', 'hud-moves');
   const moveBtn = el('button', 'hud-move');
   moveBtn.textContent = 'Move';
@@ -140,7 +161,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const holdBtn = el('button', 'hud-move');
   holdBtn.textContent = 'Clear';
   moveRow.append(moveBtn, sprintBtn, holdBtn);
-  centre.append(hotbar, moveRow);
+  centre.append(catalystRow, hotbar, moveRow);
 
   moveBtn.onclick = () => handlers.selectMove(false);
   sprintBtn.onclick = () => handlers.selectMove(true);
@@ -174,6 +195,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   // Keyed nodes: an ability button and a character chip are looked up by id and
   // REUSED, never recreated, so the pointer never loses the element under it.
   const abilityNodes = new Map<string, HTMLButtonElement>();
+  const catalystNodes = new Map<string, HTMLButtonElement>();
   const chipNodes = new Map<string, HTMLButtonElement>();
 
   const setOrdering = (visible: boolean): void => {
@@ -248,6 +270,36 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
       }
       // Keep the hotbar in model order even as characters change.
       for (const ability of model.abilities) hotbar.appendChild(abilityNodes.get(ability.id)!);
+
+      catalystRow.style.display = model.catalysts.length > 0 ? '' : 'none';
+      for (const catalyst of model.catalysts) {
+        let btn = catalystNodes.get(catalyst.id);
+        if (btn === undefined) {
+          btn = el('button', 'hud-catalyst');
+          btn.onclick = () => handlers.selectCatalyst(catalyst.id);
+          btn.addEventListener('mouseenter', () => handlers.hoverAbility(catalyst.id, btn, catalyst.def));
+          btn.addEventListener('mouseleave', () => handlers.hoverAbility(undefined));
+          catalystNodes.set(catalyst.id, btn);
+          catalystRow.appendChild(btn);
+        }
+        btn.replaceChildren();
+        const name = el('span', 'hud-ability-name');
+        // Spent slots keep their name and go dim: an empty box tells you nothing
+        // about what you spent, which is the thing you want to remember.
+        name.textContent = catalyst.name;
+        btn.appendChild(name);
+        const note = el('span', 'hud-ability-note');
+        note.textContent = catalyst.spent ? 'spent' : catalyst.phase;
+        btn.appendChild(note);
+        btn.disabled = catalyst.spent;
+        btn.classList.toggle('spent', catalyst.spent);
+        btn.classList.toggle('sel', catalyst.selected);
+        btn.dataset['phase'] = catalyst.phase;
+      }
+      for (const [id, btn] of catalystNodes) {
+        if (!model.catalysts.some((c) => c.id === id)) { btn.remove(); catalystNodes.delete(id); }
+      }
+      for (const catalyst of model.catalysts) catalystRow.appendChild(catalystNodes.get(catalyst.id)!);
 
       moveBtn.textContent = `Move (${model.move.budget})`;
       moveBtn.classList.toggle('sel', model.move.drawing && !model.move.sprinting);

@@ -1417,3 +1417,29 @@ slightly weaker than its description ("the Haste lands on the Move that follows 
 it means validating moves optimistically and letting the Move-phase clamp be the only
 enforcement, which changes move semantics for every ability — out of scope for CAT1 and not
 the Builder's call. Pinned by a test so the behaviour is stated rather than discovered.
+
+## 2026-08-26 — CAT2 catalyst UI (Builder)
+
+**(1) A catalyst has its own draft slot, its own aim and its own overlay layer.** The MS1 trap
+one layer up: if selecting a catalyst cleared the chosen ability, a catalyst could only be
+used *instead of* your turn, which is the opposite of a free action — and it would look like
+a working feature the whole way through, because the button highlights, the order sends and
+the engine accepts it. So `OrderDraft` gains `catalystId` + `catalystAim` beside `abilityId` +
+`aim`, `interaction.mode` gains a `'catalyst'` value, and the board paints a separate green
+overlay. A Shift's destination and a Rail Shot's beam are two decisions on one turn and have
+to be readable at the same time.
+
+**(2) Re-picking the selected catalyst gives the slot back.** There is no other way to change
+your mind: a catalyst is once per match, so a player who armed the wrong one needs to
+un-arm it without clearing the rest of the turn. Swapping to a different one clears the old
+aim, so a Shift destination can never be sent with an Adrenaline.
+
+**(3) Spent slots keep their name and go dim rather than disappearing.** An empty box tells
+you nothing about what you spent, and "what did I already use" is exactly the question a
+once-per-match resource makes you ask. `spent` is read from the engine's `catalystsUsed`, not
+inferred from the event log — a slot greyed out because an event was missed would be a lie
+the player cannot argue with.
+
+**(4) The pool is validated at startup like the map is.** `main.ts` runs `validateCatalysts`
+and refuses to start on a bad pool, listing the problems. A catalyst that silently fails to
+resolve is the worst outcome for a once-per-match resource, and the check costs nothing.

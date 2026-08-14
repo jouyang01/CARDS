@@ -8,9 +8,17 @@
  * chooses it, `parseSetup` validates it, and the default is the 2v2 demo this
  * file used to spell out inline. The real lobby is M3.
  */
-import { buildRoster, type CharacterDef, type MapDef } from '@cards/engine';
+import {
+  buildCatalystPool,
+  buildRoster,
+  validateCatalysts,
+  type CatalystData,
+  type CharacterDef,
+  type MapDef,
+} from '@cards/engine';
 import { startHotSeat, type HotSeatUI } from './app.js';
 import { describeSetup, parseSetup } from './match-setup.js';
+import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
 import vex from '../../../data/characters/vex.json';
@@ -34,8 +42,15 @@ const MAPS = [duelArena, ironBasin] as unknown as MapDef[];
  */
 const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn] as unknown as CharacterDef[];
 
+/** The nine catalysts (CAT1). Validated here for the same reason the map is. */
+const CATALYSTS = catalystData as unknown as CatalystData;
+
 const app = document.getElementById('app')!;
-const result = parseSetup(window.location.search, MAPS, CATALOG);
+const setupResult = parseSetup(window.location.search, MAPS, CATALOG);
+const catalystErrors = validateCatalysts(CATALYSTS);
+const result = catalystErrors.length > 0
+  ? { errors: [...('errors' in setupResult ? setupResult.errors : []), ...catalystErrors] }
+  : setupResult;
 
 if ('errors' in result) {
   const lines = result.errors.join('\n');
@@ -65,4 +80,5 @@ startHotSeat(
   setup.teams,
   setup.format,
   setup.playersPerTeam,
+  buildCatalystPool(CATALYSTS),
 );

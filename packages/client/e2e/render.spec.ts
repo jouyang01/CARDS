@@ -229,6 +229,28 @@ test('the camera responds to a right-drag orbit', async ({ page }) => {
 });
 
 /**
+ * CAT2 — the catalyst row exists in the real bundle and a slot can be armed
+ * without losing the ability underneath it. A unit test proves the draft
+ * reducer keeps both; only a browser proves the two controls are wired to it.
+ */
+test('a catalyst can be armed without clearing the chosen ability', async ({ page }) => {
+  const slots = page.locator('.hud-catalyst');
+  await expect(slots).toHaveCount(3);
+  // Prep / Dash / Blast — one per phase, the ruling's shape.
+  await expect(slots.nth(0)).toHaveAttribute('data-phase', 'prep');
+  await expect(slots.nth(2)).toHaveAttribute('data-phase', 'blast');
+
+  const ability = page.locator('.hud-ability:not([disabled])').first();
+  await ability.click();
+  await expect(ability).toHaveClass(/sel/);
+
+  await slots.nth(0).click(); // Second Wind: a self-cast, so it commits at once
+  await expect(slots.nth(0)).toHaveClass(/sel/);
+  // The ability is still selected — the whole point of a separate slot.
+  await expect(ability).toHaveClass(/sel/);
+});
+
+/**
  * MAPTOGGLE — the 4v4 map has been in `data/` and validated by unit tests since
  * M1, and was still unreachable in a browser because the entry point hard-coded
  * `duel-arena`. A unit test cannot tell you the URL boots; this can.

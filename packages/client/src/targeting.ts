@@ -56,6 +56,15 @@ export interface OrderDraft {
    * sees this integer. Absent for click-to-aim and for other shapes.
    */
   aimStep?: number;
+  /**
+   * A **catalyst** (CAT2) — a separate slot from `abilityId`, never a
+   * replacement for it. Selecting one must not clear the normal ability, which
+   * is the same mutual-exclusivity trap MS1 fixed for move-and-shoot: the two
+   * are additive, and treating them as one choice makes the mechanic
+   * unreachable. `catalystAim` is its target where the shape needs one.
+   */
+  catalystId?: string;
+  catalystAim: Vec2[];
   /** Sprint = move-only, longer range. Ignored once an ability is chosen. */
   sprint: boolean;
   /** Move-phase path; coexists with a non-dash ability, dropped for a dash. */
@@ -64,7 +73,7 @@ export interface OrderDraft {
 
 /** A blank draft for a unit (holds position until the player chooses). */
 export function emptyDraft(unitId: string): OrderDraft {
-  return { unitId, aim: [], sprint: false, movePath: [] };
+  return { unitId, aim: [], catalystAim: [], sprint: false, movePath: [] };
 }
 
 export interface AbilityOption {
@@ -509,7 +518,8 @@ function diskOutline(centre: Vec2, radius: number): Vec2[] {
 
 /** Does this draft carry an actual order, or is the character holding? */
 export function draftHasOrder(draft: OrderDraft): boolean {
-  return draft.abilityId !== undefined || draft.sprint || draft.movePath.length > 0;
+  return draft.abilityId !== undefined || draft.catalystId !== undefined
+    || draft.sprint || draft.movePath.length > 0;
 }
 
 /** Is a drawn move path legal right now (delegates to the engine)? */
@@ -525,6 +535,11 @@ export function pathValid(map: MapDef, state: GameState, unit: UnitState, path: 
 export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOrders {
   const ability = draftAbility(character, draft);
   const order: UnitOrders = { unitId: draft.unitId };
+  // A catalyst rides alongside whatever else the turn does — it is additive, so
+  // it is written first and never gates any of the branches below (CAT2).
+  if (draft.catalystId !== undefined) {
+    order.catalyst = { abilityId: draft.catalystId, target: draft.catalystAim.map((p) => ({ x: p.x, y: p.y })) };
+  }
   if (ability !== undefined) {
     order.ability = { abilityId: ability.id, target: draft.aim.map((p) => ({ x: p.x, y: p.y })) };
     // Only directional shapes rotate; sending a step for a circle would be noise
@@ -546,6 +561,7 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
  */
 export type DraftAction =
   | { type: 'selectAbility'; abilityId: string; isDash: boolean }
+  | { type: 'selectCatalyst'; catalystId: string }
   | { type: 'selectMove' }
   | { type: 'selectSprint' }
   | { type: 'clear' };
@@ -556,13 +572,21 @@ export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash:
       // Choosing an ability clears sprint and re-aims; a dash owns the movement
       // so it drops any drawn move, a non-dash ability keeps it (move AND shoot).
       return { ...draft, abilityId: action.abilityId, sprint: false, aim: [], movePath: action.isDash ? [] : draft.movePath };
+    case 'selectCatalyst':
+      // A catalyst is a SEPARATE slot: everything else in the draft survives,
+      // including the chosen ability and its aim. Re-picking the same one
+      // deselects it, so the slot can be given back without clearing the turn.
+      return draft.catalystId === action.catalystId
+        ? { ...draft, catalystId: undefined, catalystAim: [] }
+        : { ...draft, catalystId: action.catalystId, catalystAim: [] };
     case 'selectMove':
       // "Draw move" keeps a non-dash ability; a dash (or no ability) is replaced.
       return draft.abilityId !== undefined && !currentIsDash
         ? { ...draft, sprint: false, movePath: [] }
         : { ...draft, abilityId: undefined, aim: [], sprint: false, movePath: [] };
     case 'selectSprint':
-      // Sprint is move-only (8) and clears any ability.
+      // Sprint is move-only (8) and clears any ability — but NOT the catalyst,
+      // which never prices the turn (FREE1 budget independence).
       return { ...draft, abilityId: undefined, aim: [], sprint: true, movePath: [] };
     case 'clear':
       return emptyDraft(draft.unitId);
