@@ -158,12 +158,20 @@ describe('coneSquares', () => {
  * CONE-B — a cone is a fixed Euclidean triangle that rotates, not a shape whose
  * size depends on which way you point it.
  *
- * Before this, a cone's depth was a *tile count* along its axis, so at 45° one
- * tile of depth was a diagonal step — √2 longer in real distance, and area goes
- * as the square. A range-8 cone covered 80 tiles pointed east and 150 pointed
- * north-east. Measuring every dimension in Euclidean tiles fixes that at the
- * source: the region can only rotate, so its area is constant and what is left
- * is the lattice sampling its boundary.
+ * Two things together, and the width ramp alone is **necessary but not
+ * sufficient**: the inflation was in the *length*. A cone's depth used to be a
+ * tile count along its axis, so at 45° one tile of depth was a diagonal step —
+ * √2 longer in real distance, and area goes as the square. A range-4 cone
+ * reached 4 tiles east and 7 north-east (24 tiles against 42).
+ *
+ *   1. **Euclidean axial range** (AIM-METRIC) kills the length inflation.
+ *   2. **`halfWidth(d) = d`** — `perp² ≤ d²` — sets the width, and reproduces
+ *      the owner-approved axis-aligned 3 / 8 / 15 / 24 exactly.
+ *
+ * The wedge is the continuous region; HITBOX1's tile-centre circle decides
+ * which tiles it hits. That composition is what makes the *reach* check below
+ * pass to within half a tile — the check that catches the length bug the tile
+ * count alone hid.
  */
 describe('CONE-B: rotating a cone does not change its size', () => {
   const b = openBoard(41);
@@ -178,6 +186,27 @@ describe('CONE-B: rotating a cone does not change its size', () => {
     // vector and the quantized step for the same direction agree.
     for (const [dir, step] of [[{ x: 1, y: 0 }, 0], [{ x: 0, y: 1 }, 64], [{ x: -1, y: 0 }, 128]] as const) {
       expect(count(dir, 4)).toBe(count(stepToVector(step), 4));
+    }
+  });
+
+  it('CONE-B: the reach is within half a tile-width of axis-aligned, at EVERY rotation', () => {
+    // The acceptance check the tile count misses. A cone's reach is how far its
+    // furthest covered tile sits ALONG THE AXIS — project onto the aim, do not
+    // measure a radius (the far corner of an east cone is 5.66 away but only 4
+    // deep). This is what went from 4-vs-7 to 4-vs-4.
+    const axialReach = (dir: Vec2, range: number): number => {
+      const len = Math.hypot(dir.x, dir.y);
+      const squares = coneSquares(b, centre, dir, range);
+      return Math.max(0, ...squares.map((p) =>
+        ((p.x - centre.x) * dir.x + (p.y - centre.y) * dir.y) / len));
+    };
+    for (const range of [1, 2, 3, 4, 6, 8]) {
+      const axis = axialReach({ x: 1, y: 0 }, range);
+      expect(axis, `range ${range}`).toBe(range);
+      for (let step = 0; step < AIM_STEPS; step++) {
+        const got = axialReach(stepToVector(step), range);
+        expect(Math.abs(got - axis), `range ${range} step ${step} reached ${got}`).toBeLessThanOrEqual(0.5);
+      }
     }
   });
 

@@ -203,20 +203,27 @@ export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number):
 //
 // A cone is the triangle with its apex at the caster's centre, edges at 45°,
 // capped `range` tiles out — and **every one of those measurements is a
-// Euclidean distance in tiles**. That is the whole of CONE-B. Under the older
-// reading, a cone's depth was a *tile count* along its axis, so at 45° one tile
-// of depth was a diagonal step: √2 longer in real distance, and since area goes
-// as the square, a rotated cone quietly covered up to 88% more tiles than the
-// same cone pointed east. Measuring in tiles instead makes the region a fixed
-// shape that merely rotates, so its area cannot breathe with the aim.
+// Euclidean distance in tiles** (AIM-METRIC). Two things together, and the
+// width ramp alone would not have been enough, because the inflation was in the
+// LENGTH: a cone's depth used to be a *tile count* along its axis, so at 45°
+// one tile of depth was a diagonal step, √2 longer in real distance. Area goes
+// as the square, so a range-4 cone reached 4 tiles east and 7 north-east — 24
+// tiles against 42.
 //
-// The axis-aligned footprint is deliberately unchanged, tile for tile — that is
-// the reach the damage numbers were tuned against. What moves is off-axis.
+//   1. Euclidean axial range kills the length inflation.
+//   2. `halfWidth(d) = d` — the test below is `perp² ≤ d²` — sets the width.
 //
-// The ramp is fixed at **one tile of half-width per tile of axial depth** (the
-// 45° edges). That value is what reproduces the axis-aligned footprint exactly;
-// changing it is an ENGINE ASK, not a data tweak, because the edge direction is
-// baked into the integer predicate below.
+// Together they reproduce the owner-approved axis-aligned footprint exactly
+// (3 / 8 / 15 / 24 at ranges 1–4, the reach the damage was tuned against) and
+// make the region a fixed shape that merely rotates, so its area cannot breathe
+// with the aim. A test asserts the *reach* is within half a tile-width of
+// axis-aligned at every one of the 256 quantized rotations — the check the tile
+// count alone misses, and the one that caught the length bug.
+//
+// `halfWidth(d) = d` is the Designer's measured ramp: the axis-aligned per-depth
+// widths are 3, 5, 7, 9 = 2d+1, which is exactly "perpendicular ≤ depth". No
+// ramp table and no division. Changing the ramp is an ENGINE ASK rather than a
+// data tweak, because the 45° edge direction is baked into the predicate below.
 //
 // **The frame.** For a tile offset P and aim vector V, write
 //
