@@ -337,6 +337,12 @@ export type TurnEvent =
   // `amount` carries the shield pool when `status === 'shield'` (undefined otherwise),
   // so the client can track shields from the log (edge-cases "Rendering contract").
   | { type: 'statusApplied'; unitId: string; status: EffectKind; duration: number; amount?: number; sourceUnitId: string; abilityId: string }
+  // …and its counterpart: a status has left, either broken early (Stealth, on
+  // attacking or on taking damage) or expired at the end-of-turn tick. Emitted
+  // only when a status really was there. Without it the client would have to
+  // *derive* when a buff wore off, which the rendering contract forbids —
+  // status indicators (STATUS-AUDIT) are folded from these two events alone.
+  | { type: 'statusRemoved'; unitId: string; status: EffectKind; reason: 'broken' | 'expired' }
   | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }

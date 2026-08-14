@@ -1708,3 +1708,35 @@ fixture at once, so it is a separate item rather than a rider on this one.
 8. **Ravok's Bullrush is un-nerfed now.** Its `impact:{destination:2}` is live, so the playtest
    note "Ravok is temporarily undertuned" no longer applies — the knockback is still 2→1 as the
    Designer set it, but the AoE it was traded for now exists.
+
+---
+
+## 2026-08-28 — Builder: `untargetable` is enforced against aimed offence only (UNTGT1)
+
+STATUS-AUDIT's AC required a regression test proving `untargetable` "blocks being targeted".
+Writing it revealed that no damage path read the status at all: Fade and Shadowstep applied it,
+`fireCatalyst` was the only reader, and a Blast aimed at an Untargetable unit did full damage.
+GAME_SPEC §6 says "cannot be hit this phase/turn", so the rule exists — the engine simply never
+implemented it, and the audit's job is to reveal exactly that. Fixed rather than reported,
+because the AC asks for a passing test and a rule change was never involved.
+
+The judgment call the docs do not cover is **scope**. Ruled: a unit carrying `untargetable` is
+skipped by the entire HARMFUL half of an **aimed** ability — direct Blast, a dash's crossed
+targets and `impact` blasts, a delayed detonation, and a catalyst — damage, displacement riders
+and debuffs together, and the attacker earns no energy from it because nothing was hit. Splitting
+that (blocking damage but landing the knockback) is not "untargetable", it is "half targetable".
+Beneficial effects still reach it: hiding from attacks is not hiding from your own support.
+**Traps are excluded** — edge-cases already holds placed hazards apart from directly aimed
+attacks (they are team-safe and outside friendly fire), so an Untargetable unit that walks onto a
+mine still takes it. That carve-out is the part worth a second opinion; see Open Questions.
+
+## 2026-08-28 — Builder: status removals are logged, not derived (`statusRemoved`)
+
+STATUS-AUDIT's client half needs an indicator that goes away when the status does. The event log
+had `statusApplied` and no counterpart, so a client folding the log could only learn that Stealth
+broke by re-implementing "taking damage breaks Stealth" — deriving game logic, which the
+rendering contract forbids. Added `statusRemoved { unitId, status, reason: 'broken' | 'expired' }`,
+emitted when Stealth is actually broken and for each status that expires at the end-of-turn tick,
+and only when the status was really present. `removeStatus` now returns whether it removed
+anything and `tickStatuses` returns the expired kinds, so neither caller has to re-inspect the
+unit. This is additive to the log; no state, no ordering and no resolution outcome changed.

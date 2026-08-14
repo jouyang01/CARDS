@@ -67,6 +67,7 @@ import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js'
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { fogView, revealedView, type FogView } from './fog.js';
 import { type ViewState } from './playback.js';
+import { statusPips } from './status-pips.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -188,6 +189,9 @@ export function startHotSeat(
     unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
     energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
     shield: shieldOf(u),
+    // STATUS-AUDIT: read straight off engine state during Decision. An active
+    // status is one with turns left — an expired instance is not a status.
+    pips: statusPips(u.statuses.filter((s) => s.remaining > 0)),
   }));
 
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
@@ -361,6 +365,8 @@ export function startHotSeat(
   const viewUnits = (view: ViewState): RenderUnit[] => [...view.units.values()].map((v) => ({
     unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
     energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
+    // …and during playback, off the folded event log — same pips, same order.
+    pips: statusPips([...v.statuses].map((kind) => ({ kind }))),
   }));
 
   /**

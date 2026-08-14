@@ -44,6 +44,7 @@ import {
 } from 'three';
 import type { MapDef, Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
+import { PIP_GAP, PIP_SIZE, pipOffsets, type StatusPip } from './status-pips.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -78,6 +79,8 @@ const AUTO_ZOOM_FLOOR = 0.85;
 const DIM_ALPHA = 0.22;
 /** A decoy, seen by its OWNER: unmistakably theirs, unmistakably not a unit. */
 const DECOY_PURPLE = 0xa06bd6;
+/** The status row sits just above the shield bar; its size/gap are shared. */
+const PIP_ROW_Y = 0.38;
 
 /**
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
@@ -123,6 +126,12 @@ export interface RenderUnit {
   alive: boolean;
   label: string;
   shield?: number;
+  /**
+   * Statuses to show as pips above the bars (STATUS-AUDIT). Already ordered and
+   * coloured by `status-pips.ts` — the renderer draws what it is handed and
+   * decides nothing about which statuses matter.
+   */
+  pips?: readonly StatusPip[];
 }
 
 export interface Renderer {
@@ -279,7 +288,35 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     bar('hp', 0.12, 0x5ad17f);
     bar('shield', 0.24, 0x62d0e0);
     bar('energy', 0, 0xe0c04f);
+    // The status row rides inside `bars`, so it billboards and cancels zoom for
+    // free — a pip is only useful if it is the same legible size at any framing.
+    const pips = new Group();
+    pips.name = 'pips';
+    pips.position.y = PIP_ROW_Y;
+    bars.add(pips);
     return bars;
+  };
+
+  /**
+   * Rebuild a unit's status row. Cheap enough to redo per `show()` (at most
+   * eleven 0.09-wide quads per unit) and rebuilding avoids a second reconcile
+   * path — the pips are the one part of a unit that legitimately changes shape
+   * turn to turn.
+   */
+  const setPips = (bars: Group, pips: readonly StatusPip[]): void => {
+    const row = bars.getObjectByName('pips');
+    if (!(row instanceof Group)) return;
+    disposeChildren(row);
+    const offsets = pipOffsets(pips.length);
+    pips.forEach((pip, i) => {
+      const quad = new Mesh(
+        new PlaneGeometry(PIP_SIZE, PIP_SIZE),
+        new MeshBasicMaterial({ color: pip.color }),
+      );
+      quad.name = pip.kind;
+      quad.position.set(offsets[i] ?? 0, 0, 0);
+      row.add(quad);
+    });
   };
 
   const buildUnit = (unit: RenderUnit): Group => {
@@ -536,6 +573,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           setBar(bars, 'hp', unit.hp / Math.max(1, unit.maxHp), true);
           setBar(bars, 'energy', unit.energy / 100, true);
           setBar(bars, 'shield', (unit.shield ?? 0) / Math.max(1, unit.maxHp), (unit.shield ?? 0) > 0);
+          setPips(bars, unit.alive ? (unit.pips ?? []) : []); // a corpse carries nothing
         }
         refreshOpacity(unit.unitId);
         live.add(unit.unitId);

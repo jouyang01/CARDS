@@ -154,6 +154,36 @@ export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'trap',
 ]);
 
+/**
+ * UNTGT1 — Untargetable is "cannot be hit this phase/turn" (GAME_SPEC §6), and
+ * until now it was the one status that changed no resolved outcome: Fade and
+ * Shadowstep applied it, nothing read it back except `fireCatalyst`.
+ *
+ * A unit carrying it is skipped by the whole HARMFUL half of an aimed ability —
+ * damage, displacement and debuffs alike, because a hit that lands its knockback
+ * but not its damage is not "untargetable", it is "half targetable". Beneficial
+ * effects still reach it: hiding from attacks is not hiding from your medic.
+ *
+ * Scope is aimed offence — Blast, Dash impact/charge, a delayed detonation and a
+ * catalyst. Traps are placed hazards, which edge-cases already holds apart from
+ * aimed attacks (they are team-safe and outside friendly fire), so stepping on
+ * one still hurts; DECISIONS 2026-08-28 records that carve-out.
+ */
+const isUntargetable = (u: UnitState): boolean => hasStatus(u, 'untargetable');
+
+/**
+ * Stealth broken — by attacking, or by taking damage (GAME_SPEC §6). Logged as
+ * well as applied: the client's status indicators are folded from the event log
+ * during playback and are forbidden from deriving when a status went away, so a
+ * removal that is silent in the log is a pip that stays lit over a unit that is
+ * standing in plain sight.
+ */
+function breakStealth(unit: UnitState, events: TurnEvent[]): void {
+  if (removeStatus(unit, 'stealth')) {
+    events.push({ type: 'statusRemoved', unitId: unit.unitId, status: 'stealth', reason: 'broken' });
+  }
+}
+
 /** Does using this ability grant its energy even without hitting an enemy? */
 function isSelfOrUtility(def: AbilityDef): boolean {
   return (
@@ -300,7 +330,7 @@ function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: Planne
   const area = new Set(c.area.map(vecKey));
   for (const victim of draft.units) {
     if (!victim.alive || victim.owner === unit.owner || !area.has(vecKey(victim.pos))) continue;
-    if (hasStatus(victim, 'untargetable')) continue;
+    if (isUntargetable(victim)) continue; // UNTGT1
     for (const e of harmful) {
       applyStatus(victim, e.kind, e.duration ?? 1);
       events.push({
@@ -444,7 +474,7 @@ function triggerTrapsOnEntry(draft: GameState, unit: UnitState, events: TurnEven
     events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
     const res = applyDamage(unit, trap.damage);
     events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: trap.ownerUnitId, abilityId: trap.abilityId });
-    removeStatus(unit, 'stealth'); // taking damage breaks Stealth
+    breakStealth(unit, events); // taking damage breaks Stealth
     for (const e of trap.onTrigger) {
       if (isStatusKind(e.kind)) {
         applyStatus(unit, e.kind, e.duration ?? 1);
@@ -817,10 +847,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       for (const { unit: victim, from } of [...crossedVictims, ...blasted]) {
         if (struck.has(victim.unitId)) continue;
         struck.add(victim.unitId);
+        if (isUntargetable(victim)) continue; // UNTGT1 — no damage, no rider, no energy
         const behindCover = isBehindCover(board, from, victim.pos, a.def.range);
         const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
         events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
-        removeStatus(victim, 'stealth');
+        breakStealth(victim, events);
         if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
         else collectDisplacement(pending, a.def.effects, victim, from, plan.unit.unitId);
@@ -858,7 +889,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
     if (hitEnemy) {
-      removeStatus(plan.unit, 'stealth');
+      breakStealth(plan.unit, events);
       applyStatus(plan.unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
       events.push({ type: 'statusApplied', unitId: plan.unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
     }
@@ -992,8 +1023,10 @@ function runBlast(
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
       const enemy = target.owner !== plan.unit.owner;
+      const untargetable = isUntargetable(target); // UNTGT1
       for (const e of a.def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
+          if (untargetable) continue; // the whole harmful half is skipped, energy included
           // Energy stays enemy-only, so splashing an ally pays nothing.
           if (enemy) hitEnemy = true;
           if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw: e.amount ?? 0, range: a.def.range });
@@ -1024,7 +1057,7 @@ function runBlast(
       hit.fixedDamage ?? computeDamage(hit.raw, hit.attacker, isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range));
     const res = applyDamage(hit.victim, final);
     events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: hit.attacker.unitId, abilityId: hit.abilityId });
-    removeStatus(hit.victim, 'stealth'); // taking damage breaks Stealth
+    breakStealth(hit.victim, events); // taking damage breaks Stealth
     if (!hit.delayed) dealtDamage.set(hit.attacker.unitId, hit.abilityId);
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
@@ -1050,7 +1083,7 @@ function runBlast(
   for (const unit of draft.units) {
     const abilityId = dealtDamage.get(unit.unitId);
     if (abilityId === undefined) continue;
-    removeStatus(unit, 'stealth');
+    breakStealth(unit, events);
     applyStatus(unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
     events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS, sourceUnitId: unit.unitId, abilityId });
   }
@@ -1091,8 +1124,10 @@ function detonateDelayedBlasts(
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
       const enemy = target.owner !== caster.owner;
+      const untargetable = isUntargetable(target); // UNTGT1
       for (const e of def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
+          if (untargetable) continue;
           if (enemy) hitEnemy = true; // energy stays enemy-only
           if (e.kind === 'damage') hits.push({ attacker: caster, victim: target, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
           else if (isStatusKind(e.kind)) debuffs.push({ victim: target, effect: e, source: sourceOf(caster, def.id) });
@@ -1238,9 +1273,14 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
       u.cooldowns[id] = Math.max(0, (u.cooldowns[id] ?? 0) - 1);
     }
   }
-  // Status durations tick for the living.
+  // Status durations tick for the living. What expired is logged, in
+  // `unit.statuses` order, so the client can retire an indicator without
+  // re-deriving durations of its own.
   for (const u of draft.units) {
-    if (u.alive) tickStatuses(u);
+    if (!u.alive) continue;
+    for (const kind of tickStatuses(u)) {
+      events.push({ type: 'statusRemoved', unitId: u.unitId, status: kind, reason: 'expired' });
+    }
   }
   // Delayed abilities count down (resolution attaches at BACKLOG item 12).
   for (const d of draft.delayed) d.turnsRemaining -= 1;
