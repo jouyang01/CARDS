@@ -31,44 +31,10 @@ jobs:
             exit 1
           fi
 
-  # RENDER-VERIFY: the only check that can see what the renderer composited.
-  # `gl.readPixels`/`toDataURL` come back all-black off the WebGL canvas, so the
-  # rendered output is unreachable from a unit test — a real browser taking real
-  # screenshots is the only thing that catches "it drew nothing". Separate job so
-  # a browser install never slows the fast feedback above.
-  render:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      # Cache the browser binaries — ~280 MB per run otherwise. This job gates
-      # the Pages deploy (deploy-pages.yml only fires when CI concludes
-      # success), so a CDN hiccup here stops the site publishing; fewer
-      # downloads is fewer chances to be blocked by someone else's outage.
-      #
-      # The install below still runs unconditionally rather than being skipped
-      # on a cache hit: with a warm cache it is a fast no-op, and a stale or
-      # mis-keyed cache then costs time instead of correctness.
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: playwright-${{ runner.os }}-
-      # Only Chromium: the suite asserts composited colours, not cross-browser
-      # behaviour, so the other engines would cost minutes and prove nothing.
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-        working-directory: packages/client
-      - name: Render smoke test
-        run: npm run test:e2e
-        working-directory: packages/client
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: render-verify-trace
-          path: packages/client/test-results/
-          retention-days: 7
+# RENDER-VERIFY lives in its own workflow (render-verify.yml), NOT here.
+# `deploy-pages.yml` fires on this workflow concluding success, so anything in
+# this file is a release gate. The render job needs a ~280 MB CDN browser
+# download and a headless GPU stack, and an outage in either would have blocked
+# publishing an urgent engine or docs fix. It still runs on every PR as a
+# pre-merge signal — a red check there is the guardrail; it just no longer holds
+# the release hostage. Ruled in docs/reviews/2026-08-25.md.

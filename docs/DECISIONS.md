@@ -1215,3 +1215,19 @@ does the fewest handovers. `?players=a,b` overrides either way.
 not two, so `?format=4v4` works on it as well — worth knowing, because the review framed
 4v4 as an `iron-basin` feature. The map/format validation is still checked (and unit-tested
 against a synthetic one-spawn map), because the next map added is the one that forgets.
+
+## 2026-08-14 — CI-decouple (Builder)
+
+**RENDER-VERIFY moved to its own workflow rather than being reordered inside CI.** The
+Analyzer's ruling was "the Pages deploy gates on core CI, not on the render smoke test", and
+the cleanest way to make that structurally true is for the render job not to be in the
+workflow the deploy watches at all. `deploy-pages.yml` still fires on `workflow_run: [CI]`
+concluding success — unchanged, no new gate to get wrong — and `CI` now contains only the
+release gates: engine tests, typecheck, client build, bundle budget, determinism guard. A
+comment in each of the three files says which side of the line it is on, because the failure
+mode this fixes was invisible (a red render job **skipped** the deploy silently) and the next
+person adding a job to `ci.yml` needs to know they are adding a release gate.
+
+RENDER-VERIFY still runs on every PR and on `main`; a red check there is the guardrail. What
+it no longer does is let a 280 MB browser download or a headless GPU hiccup stop an urgent
+engine fix from shipping.
