@@ -597,9 +597,42 @@ function firePrep(draft: GameState, unit: UnitState, a: PlannedAbility, events: 
   if (trapEffect !== undefined) {
     placeTraps(draft, unit, a, trapEffect, events);
   } else {
-    applySelfEffects(draft, unit, a.def.effects, sourceOf(unit, a.def.id), events);
+    // PREP-AOE: a beneficial AREA ability reaches every ally standing in it,
+    // not just the caster. This branch used to apply the effects to `unit`
+    // alone and ignore `a.area` entirely, so Aegis's Barrier Pulse — a `circle`
+    // radius 1 — only ever shielded Aegis. A self-cast still lands on the
+    // caster because `a.area` for a `self` shape *is* the caster's square, so
+    // there is no special case here and no way for the two to disagree.
+    applyAreaBoons(draft, unit, a, sourceOf(unit, a.def.id), events);
   }
   grantUseEnergy(unit, a.def, false, events);
+}
+
+/**
+ * Apply an ability's beneficial effects to every ally standing in its area,
+ * **and to the caster exactly once** whether or not it is standing in it.
+ *
+ * The caster is unconditional because an ability's self-effects are not an area
+ * question — Untargetable on a dash, Might on an ult, a shield the caster grants
+ * itself — while the area half is FF1 polarity: beneficial effects reach your
+ * own team only. Both meet in one pass so nobody is shielded twice.
+ */
+function applyAreaBoons(
+  draft: GameState,
+  caster: UnitState,
+  a: PlannedAbility,
+  source: Source,
+  events: TurnEvent[],
+): void {
+  applySelfEffects(draft, caster, a.def.effects, source, events);
+  const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
+  if (boons.length === 0) return;
+  const area = new Set(a.area.map(vecKey));
+  for (const ally of draft.units) {
+    if (!ally.alive || ally.owner !== caster.owner || ally.unitId === caster.unitId) continue;
+    if (!area.has(vecKey(ally.pos))) continue;
+    applySelfEffects(draft, ally, boons, source, events);
+  }
 }
 
 /**
