@@ -1045,3 +1045,54 @@ to reduce that.
 - **The Pages site is currently one merge behind** (the #26 deploy was skipped). Merging the fix
   PR re-runs CI on main and the deploy fires normally; no manual step needed, but if you want it
   sooner, `deploy-pages.yml` still accepts `workflow_dispatch`.
+
+## 2026-08-13 — Free actions and catalysts (Designer, owner directive)
+
+Two new systems specced in `docs/design/free-actions-and-catalysts.md`; data written against
+the final design and inert until the engine reads it. **Pulls catalysts forward from M6+**,
+reversing DECISIONS 2026-08-11 — ability *mods* stay deferred, only catalysts move.
+
+**(1) Free actions are defined by a rule, not a list.** An ability may be free only if it is
+Prep phase, deals no immediate damage and grants no immediate HP, and has a deferred or
+conditional payoff. The mechanic exists to make setup plays viable without losing tempo — a
+trap turn is currently a turn you do not shoot, for a payoff that may never arrive — so
+anything that decides the *current* exchange fails the test. Applied exhaustively to all ten
+Prep abilities in the roster, exactly three qualify: **Vex's Overwatch Trap, Thorn's Snare
+Bloom, and Wisp's Veil & Decoy** — the two trap layers and the stealth ambusher, which are
+precisely the kits that pay a tempo tax to do the thing they are built around. Everything
+else is excluded for granting immediate HP (Bulwark, Barrier Pulse, Mending Light, Verdant
+Veil, Blood Frenzy) or immediate combat power (Stoke the Flame's Might, Slipstream's Haste).
+
+**(2) Free is paid for in cooldown and energy, not left free.** Each converted ability takes
+a cooldown increase (3→4, 2→3, 4→5) and drops to `energyGain: 0`, with "`free: true` requires
+`energyGain: 0`" ruled as a **validation error** rather than a runtime special case — without
+it a free action is strictly better in every dimension at once, and the ult clock accelerates
+for nothing. All three remain clear net buffs; the cooldown is the honest tax. Wisp changes
+most: free Veil means **Veil + Sprint 8**, repositioning while hidden. That is safe to give
+away precisely because free-Veil-plus-attack is self-defeating — attacking breaks Stealth.
+
+**(3) Catalysts: three slots, one per phase, once per match, all free actions.** Nine
+catalysts, three per colour, each colour offering the same three-way choice — survive / deny /
+accelerate — so the pick is a read on the matchup rather than a power ranking. **The whole
+system needs no new `EFFECT_KIND`**: every catalyst is built from effects the engine already
+implements. The one place that tempted a new kind was a flat energy grant (AR's Brain Juice);
+`Brainwave` uses `Energized 3` instead — the same idea at zero engine cost, with the flat
+grant left as an optional ask if playtests want it punchier. Catalysts are chosen, not bound
+to a character, so selection belongs to the M3 lobby; until it exists every character gets
+the default triad (Second Wind / Shift / Adrenaline) so the system is playable the moment the
+engine lands.
+
+**(4) Two ordering rulings the engine must get right, or the design silently breaks.**
+Catalysts resolve at the **start** of their phase, before that phase's abilities — otherwise
+a Blast-phase Might (Adrenaline, Overdrive) boosts nothing until next turn and the catalyst
+is simply broken. And a free dash catalyst (Shift) does **not** consume the Move phase; it is
+genuinely additive, which is affordable exactly because it happens once per match.
+
+**(5) One free action per turn, counting free abilities and catalysts together.** The
+conservative v1 call: it keeps a turn readable (one free action, one ability, one move) and
+stops a single turn dumping a whole kit. Flagged as the designed first lever to relax.
+
+**(6) Interim, documented not silent.** Until `free` is implemented the three converted
+abilities read as ordinary Prep abilities on a longer cooldown with no energy — weaker than
+they are today and weaker than designed, never stronger. That is the safe direction to fail
+in, and it is the convention `chargeHits` already shipped under.
