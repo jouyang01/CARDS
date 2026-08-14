@@ -11,29 +11,16 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > (R7). That file stays as the Designer's rationale of record; the RULED text here is
 > authoritative. Engine work created by the rulings is scheduled in BACKLOG (R1c → R1b → D1).
 
-> **⚠ NOT YET FOLDED IN — two new systems, ruled 2026-08-13 (Designer).**
-> `docs/design/free-actions-and-catalysts.md` rules **free actions** (Part 1) and
-> **catalysts** (Part 2) at the owner's direction, and **nothing in BACKLOG covers them yet**.
-> Analyzer: fold the RULED blocks into this file and schedule the engine work — suggested
-> items **FREE1 → CAT1 → CAT2 (client) → M3 lobby selection**, in that order, since catalysts
-> *are* free actions and depend on Part 1's plumbing.
->
-> The four rulings most likely to be missed, because getting them wrong breaks the systems
-> silently rather than loudly:
-> 1. **A free action never reduces the move budget and never blocks Sprint.** The current
->    rule is "any ability ⇒ 4-square move", so `movementBudget` must read `ability`/`sprint`
->    only. This is the single likeliest place to introduce a bug.
-> 2. **Catalysts resolve at the START of their phase, before that phase's abilities** —
->    otherwise a Blast-phase Might (Adrenaline, Overdrive) boosts nothing until next turn.
-> 3. **A free dash catalyst (Shift) does NOT consume the Move phase.** Additive on purpose;
->    affordable because it is once per match.
-> 4. **`free: true` requires `energyGain: 0`** as a *validation error*, not a runtime
->    special case.
->
-> This **reverses DECISIONS 2026-08-11** ("Catalysts and ability mods deferred to M6+") for
-> catalysts only; ability mods stay deferred. `data/catalysts.json` and the `free: true` flags
-> in `data/characters/{vex,thorn,wisp}.json` are already written against the final design and
-> are inert until the engine reads them.
+> **Folded in 2026-08-26 (Analyzer).** The two Designer systems in
+> `docs/design/free-actions-and-catalysts.md` — **free actions** (Part 1) and **catalysts**
+> (Part 2), ruled 2026-08-13 at the owner's direction — are now merged into this file under
+> **"Free actions & catalysts"** below, and scheduled in BACKLOG as **FREE1 → CAT1 → CAT2
+> (client) → M3 lobby selection** (catalysts *are* free actions, so Part 1's plumbing is a
+> prerequisite). That spec file stays as the Designer's rationale of record; the RULED text
+> here is authoritative. This **reverses DECISIONS 2026-08-11** ("Catalysts and ability mods
+> deferred to M6+") for **catalysts only** — ability mods stay deferred.
+> `data/catalysts.json` and the `free: true` flags in `data/characters/{vex,thorn,wisp}.json`
+> are already written against the final design and are inert until the engine reads them.
 
 ## Combat simultaneity
 
@@ -231,6 +218,16 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     turn — acting reveals, per the existing "attacking breaks concealment" ruling). Full
     per-team hidden information across the network is an **M3** concern; hot-seat fog is a
     local approximation of it and is explicitly not the security boundary.
+  - **The OPENING frame is fogged too (owner directive 2026-08-26, "enemy team should be
+    removed from opening frame"; backlog VISION1-opening).** The very first render — the initial
+    board before any turn is planned — must already apply the seat-on-the-clock team's vision:
+    enemy units the team cannot see are **not drawn at match start**, exactly as during any
+    later Decision phase. There is **no turn-1 grace reveal** — do not flash the full board on
+    open and then fog it. On the standard maps spawns are out of mutual sight, so at open each
+    team sees only its own units until someone advances into vision. This is the same
+    `visibleEnemiesForTeam`/`visibleSquaresForTeam` consumption applied to the initial frame;
+    the client still computes nothing (golden rule: pure consumer). Fixes the leak where the
+    opposing team was visible on the opening frame before fog engaged.
   - The client must compute nothing about visibility itself — consume the engine's `canSee`/
     `visibleEnemiesForTeam`/`visibleSquaresForTeam` (golden rule: client is a pure consumer).
   If the owner wants specific AR vision-*rule* changes after seeing fog rendered (e.g. cover
@@ -268,6 +265,19 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   This is more generous than centre-in for a shape that reaches within half a tile of a centre
   without covering it, and stricter for a corner-only nick — exactly AR's feel. `expandShape`
   is the one authority; UI2's Layer-2 tiles read it, so the overlay stays honest for free.
+- **RULED — Tune ability ranges DOWN now that HITBOX1 enlarged every footprint (owner
+  directive 2026-08-26, "tune the range a little lower"; backlog HITBOX-tune; Designer/data,
+  NOT engine).** HITBOX1 replaced centre-in with hitbox-circle intersection, which is *net more
+  generous* for area shapes (a shape now hits any tile it reaches within half a tile of, not
+  only tiles whose centre it covers) — so every `cone`/`circle`/`line` grew its real footprint
+  without any `range`/`radius` number changing. The owner playtested this (OQ1) and wants the
+  footprints brought back toward their pre-HITBOX1 size, **because the damage numbers were tuned
+  against the old, smaller areas.** The fix is **data, not engine**: the Designer lowers the
+  offending `range`/`radius` values in `data/characters/*.json` so the post-HITBOX1 footprint ≈
+  the old centre-in footprint. Keep it conservative — "a little lower" — and verify against the
+  `content.test.ts` turn-1 spawn-safety guard (a range cut only *loosens* it, so it stays safe).
+  This is the reach the CONE-B `halfWidth` ramp should also match. Engine and HITBOX1 rule
+  unchanged; this only retunes the numbers the rule operates on.
 - **SUPERSEDED — Partial-tile coverage = centre-in, binary full damage (AIM2, 2026-08-20;
   superseded by the AR hitbox rule above, 2026-08-25).** Kept as the record of what HITBOX1
   replaces. The binary-full-damage half survives; the centre-point test is replaced by the
@@ -280,6 +290,35 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   envelope. **Target-square shapes (`circle`, `square`) use MANHATTAN** distance to the aimed
   square (MET1). This is the single consistent definition the owner asked be ruled before
   AIM2 builds; adjust only with a new owner decision.
+- **RULED — Rotated cone area is metered by a EUCLIDEAN wedge half-width, restoring
+  near-rotation-invariance (owner directive 2026-08-26, "go with option b"; SUPERSEDES the
+  cone half of the tile-count reading above; backlog CONE-B; ENGINE ASK).** The Builder found
+  (OQ2) that a freely-rotated `cone` covers **more** tiles at 45° than axis-aligned, because
+  the current cone test admits a tile whenever its centre falls inside the angular wedge and
+  within the axial range — an angular half-width sweeps a wider arc off-axis, so the footprint
+  breathes with rotation. The owner chose **option b**: keep coverage binary and integer, but
+  define a cone as a **wedge of fixed half-width measured as a perpendicular EUCLIDEAN distance
+  in tiles from the cone's axis, growing linearly with axial depth** — i.e. a tile at axial
+  depth *d* is in-cone iff its centre is within axial range **and** its perpendicular (integer
+  cross-product) distance to the axis ≤ `halfWidth(d)`, where `halfWidth` is a fixed
+  tiles-per-depth ramp, not an angle. Because the half-width is a distance (not a swept angle),
+  the covered area is **near-identical under every rotation** — the option-a alternative
+  (snap-metering by re-projecting onto Manhattan) was rejected as it re-introduces the axis
+  bias this fixes.
+  - **Determinism (hard, golden rule #1):** no trig, no float — the wedge is an **integer
+    half-plane / cross-product perpendicular-distance** test in the same ×2 scaled lattice as
+    HITBOX1, comparing **squared** distances against a squared/integer `halfWidth(d)` ramp. The
+    AIM2 no-trig-in-engine guard must still pass.
+  - **Interaction with HITBOX1:** the wedge defines the continuous cone *region*; HITBOX1's
+    tile-centre circle then decides which tiles that region hits. `expandShape` composes the two
+    — one authority, so UI2's overlay tracks it for free. Ships with a **rotation-invariance
+    test**: a fixed-range cone swept through several quantized directions covers within ±1 tile
+    of the axis-aligned count (was several tiles more off-axis).
+  - The `line` half of the tile-count ruling **stands** (a line is a degenerate zero-width
+    wedge — a range-r line reaches r tiles along its quantized axis, rotation-invariant).
+    `circle`/`square` still use Manhattan to the aimed square. Designer sets the `halfWidth`
+    ramp so the axis-aligned footprint matches today's cones (this is the reach the damage was
+    tuned against — see HITBOX-tune).
 - **RULED — Attacking breaks concealment; Reveal lasts 2 turns (confirms Builder OQ,
   review 2026-08-14).** Using an ability that *actually deals damage* reveals the attacker
   "until the end of the next turn" — implemented as a **2-turn** Reveal
@@ -463,6 +502,86 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **OPEN — Simultaneous disconnect/timeout handling** (matters at M3): if a player
   never submits, does their character sprint-hold or full-hold? Current lean: hold
   position, no ability. Decide when building the server.
+
+## Free actions & catalysts (folded in from `free-actions-and-catalysts.md`, 2026-08-13)
+
+Two systems the engine does not yet support. Full rationale in the source spec; the RULED text
+here is authoritative. Scheduled in BACKLOG as **FREE1 → CAT1 → CAT2 → M3 lobby**.
+
+### Free actions
+
+- **RULED — A free action does not consume your turn.** An ability marked `free: true` may be
+  used **in addition to** a normal ability, and **never reduces the move budget or blocks
+  Sprint**. Legal turn shapes: free action + normal ability + 4-move ✅; free action + Sprint 8
+  ✅; free action + dash ability ✅; free action alone + 4-move ✅; **two free actions in one
+  turn ❌** (§ one-per-turn). "Free" is about what it costs to *declare*, not how it resolves —
+  a free action resolves in its own phase like any ability.
+- **RULED — Which abilities may be `free: true` — a rule, not a list.** All three must hold:
+  (1) **Prep phase only** (repeatable free Dash/Blast actions are the catalysts' job —
+  once-per-match, self-limiting); (2) **no immediate `damage`/`heal`/`shield`**; (3) **payoff
+  is deferred or conditional** (does not decide *this* turn's exchange). Applied to the roster,
+  exactly three qualify — the three setup kits: **Vex Overwatch Trap**, **Thorn Snare Bloom**,
+  **Wisp Veil & Decoy**. The mechanic exists to make setup plays viable without losing tempo.
+- **RULED — A free action grants no energy and pays for itself in cooldown.** `free: true`
+  **requires `energyGain: 0` as a VALIDATION ERROR** (not a runtime special-case) — otherwise a
+  free action is strictly better in every dimension. Each converted ability also takes a
+  cooldown tax: Vex Overwatch Trap 3→**4**, Thorn Snare Bloom 2→**3**, Wisp Veil & Decoy 4→**5**
+  (all `energyGain`→0). The cooldown is the honest tax; the energy loss protects the ult clock.
+  *(These three edits are already in `data/characters/{vex,thorn,wisp}.json`; until FREE1 lands
+  the abilities read as ordinary Prep abilities on a longer cooldown with no energy — weaker
+  than designed, never stronger. Safe direction to fail.)*
+- **RULED (v1, conservative) — At most one free action per turn per character**, counting free
+  abilities **and** catalysts together (a Vex places her trap *or* fires a catalyst, not both).
+  Keeps a turn readable (≤3 declared things: one free action, one ability, one move) and stops a
+  single turn dumping a whole kit. **First lever to relax** if playtests find setup kits
+  catalyst-starved — "one free ability + one catalyst" is a one-line change to the same check.
+- **ENGINE ASK (FREE1).** (1) `free?: boolean` on `AbilityDef` (absent/false = today). (2)
+  `freeAbility?: AbilityOrder` on `UnitOrders`, parallel to `ability` — the referenced ability
+  must have `free: true`, be off cooldown, belong to the unit; at most one of
+  `freeAbility`/`catalyst` per unit per turn. (3) **Budget independence — the single likeliest
+  bug:** `movementBudget` must be computed from `ability`/`sprint` **only**; a `freeAbility`
+  never reduces it and never invalidates Sprint (the current rule is "any ability ⇒ 4"). (4)
+  Validation: `free: true` requires `phase === 'prep'` **and** `energyGain === 0`; reject
+  otherwise so no future kit can quietly grant a free Blast.
+
+### Catalysts
+
+- **RULED — Three catalyst slots, one per phase, each once per match.** Every character carries
+  exactly three catalysts — one **Prep (Green)**, one **Dash (Yellow)**, one **Blast (Red)**.
+  Each is **consumed on use and gone for the rest of the match** (not a cooldown), is a **free
+  action** (grants no energy), and every catalyst uses effect kinds the engine already
+  implements — **no new `EFFECT_KIND`**. Death does not refund a spent catalyst; unused
+  catalysts survive death/respawn.
+- **RULED — Catalysts are chosen, not fixed to a character.** All nine are available to every
+  character (the customization layer). Selection belongs to the **M3 lobby** (item 21); until it
+  exists, `createMatch` assigns the **default triad: Second Wind / Shift / Adrenaline**.
+- **The nine** (`data/catalysts.json`, all from existing effect kinds): **Prep** — Second Wind
+  (heal 30 self) · Ablative Field (shield 35, 1 turn) · Brainwave (Energized 3). **Dash** —
+  Shift (teleport ≤3, `square` shape, ignores walls) · Fade (Untargetable 1) · Unshackle
+  (Unstoppable 2). **Blast** — Adrenaline (Might 2) · Suppression (Weaken 2 to enemies within 2,
+  `circle` self r2) · Overdrive (Might 1 + Haste 1).
+- **RULED — Catalysts resolve at the START of their phase, before that phase's abilities.**
+  Uniform across all three colours. This is what makes **Adrenaline and Overdrive do what they
+  say** — a Blast-phase Might must land before the Blast damage step, or the catalyst boosts
+  nothing until next turn and is simply broken. Ablative Field's shield is likewise up before any
+  Prep-phase trap damage; a Shift resolves before a dash ability the same unit declared.
+- **RULED — A free dash catalyst (Shift) does NOT consume your Move.** Genuinely additive: a
+  unit may Shift 3 in Dash **and** walk its normal 4 in Move (or dash *and* Shift). A real burst
+  of mobility, affordable because it is once per match. Precedent: Overdrive's Haste already
+  boosts the same turn's Move (the "debuff-now-bites-now" reading of Blast-applied statuses).
+- **ENGINE ASK (CAT1).** (1) Catalyst defs: `data/catalysts.json` is `{prep,dash,blast}`, each
+  entry an `AbilityDef` with `cooldown:0, energyGain:0, free:true, oncePerMatch:true` (reuse
+  `validateAbility`). (2) `UnitState` gains `catalysts: string[]` (length 3, one per phase) and
+  `catalystsUsed: string[]` — **arrays, not Sets** (`structuredClone`/determinism hash assume
+  plain JSON). (3) `UnitOrders` gains `catalyst?: AbilityOrder` — id must be one of the unit's
+  three, not already spent, ≤1 of `catalyst`/`freeAbility` per unit per turn. (4) Resolution:
+  in each phase resolve catalysts first, then abilities; mark spent **when it resolves**, not
+  when ordered (a unit killed in Prep does not spend its Blast catalyst). (5) A `catalystUsed`
+  event (unit, catalystId) for playback + the HUD's spent-slot greying. (6) Selection is M3 —
+  fold the per-player picks into item 21.
+- **NOTE — Brainwave is Energized 3, not a flat energy grant.** We have no `energy` effect
+  kind; Energized 3 ≈ +12–15 energy over its life at zero engine cost. A flat `energy` kind is
+  an optional future ENGINE ASK only if playtests want the punchier version.
 
 ## Rendering contract (the event log)
 
