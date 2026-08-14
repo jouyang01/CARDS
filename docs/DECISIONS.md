@@ -1443,3 +1443,73 @@ the player cannot argue with.
 **(4) The pool is validated at startup like the map is.** `main.ts` runs `validateCatalysts`
 and refuses to start on a bad pool, listing the problems. A catalyst that silently fails to
 resolve is the worst outcome for a once-per-match resource, and the check costs nothing.
+
+## Open Questions for the Analyzer — 2026-08-26 (CONE-B / VISION1-opening / FREE1 / CAT1 / CAT2)
+
+1. **HITBOX-tune was NOT done — it is routed to the Designer, per your own note.** The item is
+   `data/characters/*.json` only and both the Analyzer Note and the Spec Notes say the Builder
+   must not set the numbers. Nothing in `data/characters/` was touched. The reach CONE-B
+   preserves is today's axis-aligned cone footprint (3/8/15/24 tiles at ranges 1–4), so the
+   Designer's cone retune should be measured against those, not against the inflated off-axis
+   numbers. Circles are untouched by CONE-B and still carry the full HITBOX1 growth (r1 5→9,
+   r2 13→21, r3 25→37) — they are the bigger half of the retune.
+
+2. **CONE-B cannot hit "±1 of the axis-aligned count" and the test says what it does hit.**
+   The region's *area* is now exactly rotation-invariant; what varies is how the lattice
+   samples the half-tile boundary band, which scales with the perimeter and so with range. The
+   axis-aligned case sits at the **bottom** of that distribution because the lattice lines up
+   with the edges, so it is not the centre to be ±1 of. Measured over all 256 rotations: range
+   2 → 8..10 (was 6..12), range 4 → 24..29 (was 20..42), range 8 → 80..88 (was 74..150). The
+   shipped test asserts `[axis − 1, axis + range + 1]`, verified for every rotation at ranges
+   1–8. Confirm or re-spec the tolerance.
+
+3. **The cone half-width ramp is a fixed 45°, in the engine, not in data.** It is the value
+   that leaves the axis-aligned footprint untouched, so it was not a balance pick — but the
+   edge direction is baked into the integer predicate, and a different slope needs its own
+   overflow audit (the squared intermediates scale as k⁴). If the Designer wants a tunable
+   ramp, that is an **ENGINE ASK**, not a data change.
+
+4. **VISION1-opening: I could not reproduce the leak.** Sampling a real browser from the first
+   drawn frame, the enemy team never appears on any reachable config. The old code held only
+   because `beginTurn()` ran in the same task as `renderer.start()`; it is now explicit, so it
+   holds on purpose. Worth confirming with the owner whether they saw it on a Pages build from
+   before VISION1 — a fix for a bug that was never there is a fix that can regress unnoticed.
+
+5. **`free: true` + non-Prep now requires `oncePerMatch`.** FREE1's ruling says free abilities
+   are Prep-only; CAT1 ships three free Dash/Blast catalysts. Both are in edge-cases, so the
+   conflict is real. Resolved with the reason FREE1 itself gives — the restriction exists
+   because a *repeatable* free attack is too strong — so the check is "Prep unless
+   oncePerMatch". `energyGain: 0` stays unconditional. Please ratify or re-word the ruling.
+
+6. **`data/catalysts.json` was authored by the Builder as a transcription.** The CAT1 AC names
+   the file and assigns the item to me, but `data/` is the Designer's. Every value is copied
+   verbatim from `docs/design/free-actions-and-catalysts.md` §2.2 and the file says so. The
+   Designer should own it from here.
+
+7. **The one-free-action tiebreak is mine and needs ratifying.** When a unit orders both a free
+   ability and a catalyst, the ruling says at most one may resolve but does not say which. The
+   catalyst yields and stays **unspent** — it is once per match, so burning it is the worse
+   mistake to make on the player's behalf. CAT2's UI does not yet prevent ordering both.
+
+8. **A Blast-applied Haste cannot extend the same turn's walk.** Move paths are validated
+   against the pre-turn budget and only re-clamped downward at Move time, so Overdrive's Haste
+   can offset a Slow but cannot buy squares — which makes Overdrive read weaker than "the Haste
+   lands on the Move that follows it". Fixing it means validating moves optimistically and
+   letting the Move-phase clamp be the only enforcement, changing move semantics for every
+   ability. Out of scope here; pinned by a test so it is stated, not discovered.
+
+9. **Shift changes where the rest of your turn happens, and that needed a rule.** A dash/blast
+   ability and the move path are now planned from the Shift's landing square (only Prep keeps
+   the original), because "a Shift resolves before a dash ability the same unit declared" means
+   nothing otherwise. A blocked teleport discards those plans. **CAT2 does not yet preview
+   this** — the client still aims the ability from the unit's current square, so a Shift +
+   dash combination is orderable but not previewable. Flagging as the natural CAT2 follow-up.
+
+10. **`AbilityOrder.target` is now optional** (a `self` shape has nothing to aim at). Strict
+    widening, no caller changed — noting it because it is a schema change M3's wire format
+    inherits.
+
+11. **Catalyst selection is still the default triad for everyone.** `createMatch` assigns
+    Second Wind / Shift / Adrenaline; the other six are shipped, validated and unreachable
+    until the M3 lobby. Worth confirming that is still the plan rather than, say, a dev URL
+    param in the meantime.
