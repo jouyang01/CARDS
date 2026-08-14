@@ -87,7 +87,7 @@ describe('AIM2: the quantized direction is pure integer, both ways', () => {
   });
 });
 
-describe('AIM2: rotated shapes keep their reach (range = tiles along the axis)', () => {
+describe('AIM2: rotated shapes keep their reach (line = tiles along the axis; cone = CONE-B)', () => {
   it('a line covers `range` tiles whichever way it points', () => {
     for (let s = 0; s < AIM_STEPS; s += 8) {
       const squares = lineSquares(board(), CENTRE, stepToVector(s), 8);
@@ -125,11 +125,13 @@ describe('AIM2: rotated shapes keep their reach (range = tiles along the axis)',
       const dir = stepToVector(s);
       const wedge = coneSquares(board(), CENTRE, dir, 4);
       expect(new Set(posKeys(wedge)).size, `step ${s}`).toBe(wedge.length); // no duplicates
-      // "Reaches as far when rotated" (MET1 x AIM2) means the tile `range`
-      // steps along the axis is covered whichever way the cone points.
-      const m = Math.max(Math.abs(dir.x), Math.abs(dir.y));
-      const tip = `${CENTRE.x + Math.round((4 * dir.x) / m)},${CENTRE.y + Math.round((4 * dir.y) / m)}`;
-      expect(posKeys(wedge), `step ${s}`).toContain(tip);
+      // CONE-B: a cone reaches `range` tiles as a **distance**, so its furthest
+      // point is a far corner at range·√2 whichever way it points. Under the old
+      // tile-count metering a rotated cone stretched a further √2 past that —
+      // which is exactly why it covered more tiles. Within one tile of the
+      // corner distance, at every one of the 256 rotations.
+      const furthest = Math.max(...wedge.map((p) => Math.hypot(p.x - CENTRE.x, p.y - CENTRE.y)));
+      expect(Math.abs(furthest - 4 * Math.SQRT2), `step ${s} reached ${furthest}`).toBeLessThanOrEqual(1);
       // …and it is a wedge, not a beam: it always widens beyond 4 tiles.
       expect(wedge.length, `step ${s}`).toBeGreaterThan(4);
     }

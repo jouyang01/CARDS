@@ -100,8 +100,8 @@ describe('coneSquares', () => {
   it('is a 45° wedge widened by the half-tile hitbox (east)', () => {
     const b = openBoard(11);
     const out = coneSquares(b, { x: 5, y: 5 }, { x: 1, y: 0 }, 2);
-    // The wedge's apex is half a tile ahead, so its half-width at depth d is
-    // d − ½; the hitbox reaches one tile further out on each side.
+    // The wedge is 45° from the caster, so its half-width at depth d is d; the
+    // hitbox catches the row that sits half a tile outside the edge.
     // depth 1: (6,4..6); depth 2: (7,3..7)
     expect(posKeys(out)).toEqual(
       posKeys([
@@ -149,6 +149,73 @@ describe('coneSquares', () => {
     // (10,11) is 4 out: the wedge crosses its corner but never reaches within
     // half a tile of its centre.
     expect(out).not.toContain('10,11');
+  });
+});
+
+/**
+ * CONE-B — a cone is a fixed Euclidean triangle that rotates, not a shape whose
+ * size depends on which way you point it.
+ *
+ * Before this, a cone's depth was a *tile count* along its axis, so at 45° one
+ * tile of depth was a diagonal step — √2 longer in real distance, and area goes
+ * as the square. A range-8 cone covered 80 tiles pointed east and 150 pointed
+ * north-east. Measuring every dimension in Euclidean tiles fixes that at the
+ * source: the region can only rotate, so its area is constant and what is left
+ * is the lattice sampling its boundary.
+ */
+describe('CONE-B: rotating a cone does not change its size', () => {
+  const b = openBoard(41);
+  const centre: Vec2 = { x: 20, y: 20 };
+  const count = (dir: Vec2, range: number): number => coneSquares(b, centre, dir, range).length;
+
+  it('the axis-aligned footprint is exactly what it was before CONE-B', () => {
+    // The reach the damage numbers were tuned against. CONE-B moves off-axis
+    // cones toward this, and must not move this itself.
+    expect([1, 2, 3, 4].map((r) => count({ x: 1, y: 0 }, r))).toEqual([3, 8, 15, 24]);
+    // …and it is the same wedge whichever way it is spelled: a compass unit
+    // vector and the quantized step for the same direction agree.
+    for (const [dir, step] of [[{ x: 1, y: 0 }, 0], [{ x: 0, y: 1 }, 64], [{ x: -1, y: 0 }, 128]] as const) {
+      expect(count(dir, 4)).toBe(count(stepToVector(step), 4));
+    }
+  });
+
+  it('every one of the 256 rotations lands within a boundary tile of the axis count', () => {
+    // The covered set is the lattice points within half a tile of the region.
+    // Its area is now rotation-invariant, so all that varies is how the lattice
+    // samples the boundary band — an effect that scales with the perimeter, and
+    // therefore with range. `axis + range + 1` is that bound; the axis-aligned
+    // case sits at the bottom of it because the lattice lines up with the edges.
+    for (const range of [2, 3, 4, 6, 8]) {
+      const axis = count({ x: 1, y: 0 }, range);
+      for (let step = 0; step < AIM_STEPS; step++) {
+        const n = count(stepToVector(step), range);
+        expect(n, `range ${range} step ${step}`).toBeGreaterThanOrEqual(axis - 1);
+        expect(n, `range ${range} step ${step}`).toBeLessThanOrEqual(axis + range + 1);
+      }
+    }
+  });
+
+  it('the worst rotation is nowhere near the old inflation', () => {
+    // Concretely: range 4 used to reach 42 tiles off-axis against 24 on-axis,
+    // and range 8 reached 150 against 80. Those are the numbers this replaces.
+    const worst = (range: number): number => {
+      let most = 0;
+      for (let step = 0; step < AIM_STEPS; step++) most = Math.max(most, count(stepToVector(step), range));
+      return most;
+    };
+    expect(worst(4)).toBeLessThan(42);
+    expect(worst(8)).toBeLessThan(150);
+    // Not a vacuous bound — a rotated cone is still a real cone, not a sliver.
+    expect(worst(4)).toBeGreaterThanOrEqual(count({ x: 1, y: 0 }, 4));
+  });
+
+  it('a cone reaches `range` tiles as a DISTANCE, so a diagonal one is shorter in steps', () => {
+    // The trade CONE-B makes, stated out loud: a 45° cone no longer stretches
+    // √2 further than an axis-aligned one. `line` keeps the tile-count reading.
+    const diagonal = coneSquares(b, centre, { x: 1, y: 1 }, 4);
+    const deepest = Math.max(...diagonal.map((p) => Math.abs(p.x - centre.x) + Math.abs(p.y - centre.y)));
+    expect(deepest).toBeLessThanOrEqual(8); // 4 tiles of distance, not 4 diagonal steps
+    expect(lineSquares(b, centre, { x: 1, y: 1 }, 4)).toHaveLength(4); // line unchanged
   });
 });
 
@@ -297,7 +364,7 @@ describe('HITBOX1: cross-engine determinism', () => {
   }
 
   it('every shape, every aim step, every range folds to a fixed value', () => {
-    expect(signature()).toBe(1641177238);
+    expect(signature()).toBe(-736229090);
   });
 
   it('is stable across repeated calls (no hidden state, no ordering drift)', () => {
@@ -309,8 +376,9 @@ describe('HITBOX1: cross-engine determinism', () => {
     // step 40 of 256 points south-south-east — a genuinely rotated aim, where
     // rounding differences would show up first.
     expect(posKeys(coneSquares(b, { x: 20, y: 20 }, stepToVector(40), 3))).toEqual([
-      '19,24', '20,21', '20,22', '20,23', '20,24', '21,21', '21,22', '21,23',
-      '21,24', '22,21', '22,22', '22,23', '23,21', '23,22', '24,21', '24,22',
+      '19,22', '19,23', '19,24', '20,21', '20,22', '20,23', '20,24', '21,20',
+      '21,21', '21,22', '21,23', '22,20', '22,21', '22,22', '23,21', '23,22',
+      '24,21',
     ]);
   });
 });

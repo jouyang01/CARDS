@@ -363,9 +363,10 @@ export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim:
  *
  * - a **line** is a ray `range` tiles along its axis (`alongAxis`), so the beam
  *   draws as a band half a tile to each side of it.
- * - a **cone** is a 45° wedge whose apex sits half a tile ahead of the caster.
+ * - a **cone** is a 45° wedge from the caster, `range` **tiles** deep (CONE-B —
+ *   a distance, not a tile count, which is what stops a rotated cone growing).
  *   Pushing its edges out half a tile widens each row by 0.71 (½ / cos 45°) and
- *   pulls the apex back behind the caster.
+ *   pulls the drawn apex that far back behind the caster.
  * - a **circle** is a genuine disk of radius `r`; `r + 0.5` is where the hitbox
  *   of the outermost covered tile is reached.
  *
@@ -415,22 +416,22 @@ export function shapeOutline(
       if (dir === undefined || reach < 1) return [];
       const axis = unitVector(dir);
       const n = perpUnit(dir);
-      // The engine's wedge has its apex half a tile ahead and 45° edges. Under
-      // HITBOX1 a tile is covered when that wedge comes within half a tile of
-      // its centre, so the silhouette is the wedge pushed out by half a tile:
-      // sliding a 45° edge sideways by ½ moves it ½/cos45° = 0.71 across, which
-      // widens every row by that much and drags the apex back behind the caster.
+      // The engine's wedge (CONE-B) starts at the caster with 45° edges and is
+      // capped `reach` tiles out — all of it measured in **tiles**, which is why
+      // the far end is a plain step along the unit axis and not `alongAxis`'s
+      // dominant-axis metering. Under HITBOX1 a tile is covered when that wedge
+      // comes within half a tile of its centre, so the silhouette is the wedge
+      // pushed out by half a tile: sliding a 45° edge sideways by ½ moves it
+      // ½/cos 45° = 0.71 across, widening every row by that much and dragging
+      // the drawn apex that far back behind the caster.
       const grow = HALF_TILE * Math.SQRT2;
-      const apex = {
-        x: from.x + axis.x * (HALF_TILE - grow),
-        y: from.y + axis.y * (HALF_TILE - grow),
-      };
-      const far = alongAxis(dir, reach + HALF_TILE);
-      const half = reach + grow;
+      const apex = { x: from.x - axis.x * grow, y: from.y - axis.y * grow };
+      const far = reach + HALF_TILE;
+      const half = far + grow;
       return [
         apex,
-        { x: from.x + far.x - n.x * half, y: from.y + far.y - n.y * half },
-        { x: from.x + far.x + n.x * half, y: from.y + far.y + n.y * half },
+        { x: from.x + axis.x * far - n.x * half, y: from.y + axis.y * far - n.y * half },
+        { x: from.x + axis.x * far + n.x * half, y: from.y + axis.y * far + n.y * half },
       ];
     }
     case 'path':

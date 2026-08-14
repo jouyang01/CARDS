@@ -1283,3 +1283,56 @@ engine fix from shipping.
    backlog and the review rather than in edge-cases, and that file is the Designer's. The
    rulings as implemented are written up in this file under today's entries — they should
    probably be mirrored there by whoever owns it.
+
+## 2026-08-26 — CONE-B (Builder)
+
+**(1) The ramp is one tile of half-width per tile of axial depth, and that value is not a
+balance call.** The ruling asks the Designer to set `halfWidth` so the axis-aligned footprint
+matches the reach the damage was tuned against. A 45° ramp is exactly that value: with it,
+an axis-aligned cone covers 3 / 8 / 15 / 24 tiles at ranges 1–4 — **tile for tile what it
+covered before CONE-B**. So the Builder did not pick a number; it picked the one that changes
+nothing on-axis, which is what the ruling asked for. A test pins those four counts.
+
+**(2) The ramp is fixed in the engine, not a data field — retuning it is an ENGINE ASK.** The
+45° edge direction is baked into the integer predicate (the `(1,1)` edge, the `2·perp² ≤ d2`
+comparison, the corner at `(range, range)`). A general slope is derivable but pushes the
+squared intermediates up by a factor of k⁴, which needs its own overflow audit. Nobody has
+asked for a different cone angle, so the minimal compliant version hard-codes 45° and says so.
+Raised in Open Questions.
+
+**(3) A cone's range is now a Euclidean distance; a line's is still a tile count.** That
+asymmetry is the ruling ("the `line` half stands"), and it is worth stating plainly because it
+is the visible trade: a 45° cone no longer stretches √2 further than an axis-aligned one, so
+it reaches fewer diagonal *steps* than it used to. That is the point — the extra reach was
+where the extra area came from.
+
+**(4) "Within ±1 of the axis-aligned count" is not attainable, and the test says what is.**
+The AC asks for ±1. The covered set is the lattice points within half a tile of the region;
+the region's area is now exactly rotation-invariant, so what remains is how the lattice
+samples the **boundary band**, whose area scales with the perimeter and therefore with range.
+The axis-aligned case is not the mean of that distribution — it is the bottom of it, because
+the lattice lines up with the edges. Measured over all 256 quantized rotations:
+
+| range | before: axis → worst | after: axis → worst |
+|---|---|---|
+| 2 | 8 → 12 (+50%) | 8 → 10 (+25%) |
+| 3 | 15 → 25 (+67%) | 15 → 19 (+27%) |
+| 4 | 24 → 42 (+75%) | 24 → 29 (+21%) |
+| 8 | 80 → 150 (+88%) | 80 → 88 (+10%) |
+
+The old excess grew **quadratically** with range; the new one grows with the perimeter. The
+shipped roster's cones are all `range: 2`, where the spread is now +2/−0 tiles. The test
+asserts the derived bound `[axis − 1, axis + range + 1]`, verified to hold for every one of
+the 256 rotations at ranges 1–8, rather than a ±1 it cannot honestly claim. Flagged for the
+Analyzer to confirm or re-spec.
+
+**(5) Verification.** The integer predicate was cross-checked against an exact floating-point
+reference (distance from the tile centre to the triangle) over all 256 aim steps × the 8
+compass directions × ranges 1–8 × the full offset box: **582,912 comparisons, zero
+mismatches**. Largest intermediate 3.7e13, comfortably below 2^53. Every comparison against
+`|V| = √d2` is resolved by a sign guard plus a squared comparison, so there is still no
+`Math.sqrt` and no trig anywhere in the engine.
+
+**(6) The HITBOX1 cross-engine signature changed on purpose.** It is a golden value over every
+shape at every aim; a deliberate change to the cone rule moves it. Regenerated in the same
+commit, which is the point of having it — the number moving is the review signal.
