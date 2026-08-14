@@ -26,7 +26,7 @@ import {
   type UnitState,
   type Vec2,
 } from '@cards/engine';
-import { createRenderer, type ProjectionName, type RenderUnit, type Renderer } from './renderer3d.js';
+import { createRenderer, type ProjectionName, type RenderDecoy, type RenderUnit, type Renderer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { type Cue } from './choreograph.js';
@@ -363,7 +363,20 @@ export function startHotSeat(
     energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
   }));
 
-  const viewDecoys = (view: ViewState): Vec2[] => [...view.decoys.values()].map((d) => ({ ...d.pos }));
+  /**
+   * Playback decoys, seen from the seat that just planned (DECOY-RENDER).
+   * The turn is history so nothing is hidden, but "revealed" is not "identical
+   * for everyone" — a decoy still draws as an enemy to the team it fooled and
+   * as its owner's purple marker to the team that placed it.
+   */
+  const viewDecoys = (view: ViewState): RenderDecoy[] => {
+    const viewer = currentSeat()?.team ?? 0;
+    return [...view.decoys.values()].map((d) => ({
+      id: d.id,
+      pos: { ...d.pos },
+      asEnemy: d.teamId !== viewer,
+    }));
+  };
 
   function beginTurn(): void {
     drafts = new Map();
@@ -411,7 +424,11 @@ export function startHotSeat(
    */
   function paintFog(team: TeamId): void {
     const view = currentFog(team);
-    renderer.show(toRenderUnits(view.units), state.decoys.map((d) => d.pos));
+    // Decoys come from the same view as the units (DECOY-RENDER): fogged by the
+    // same rule, and tagged with how *this* viewer should see them. Drawing
+    // `state.decoys` directly is what showed every decoy to both teams, through
+    // walls, in a colour that announced it was fake.
+    renderer.show(toRenderUnits(view.units), view.decoys);
     renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
   }
 
@@ -813,7 +830,7 @@ export function startHotSeat(
     cues: readonly Cue[],
     phase: Phase,
     units: RenderUnit[],
-    decoys: Vec2[],
+    decoys: RenderDecoy[],
     cancelled: () => boolean,
   ): Promise<void> {
     const { start, end } = phaseWindow(cues, phase);
@@ -895,7 +912,7 @@ export function startHotSeat(
   }
 
   function renderGameOver(): void {
-    renderer.show(toRenderUnits(revealedView(state).units), []);
+    renderer.show(toRenderUnits(revealedView(state, currentSeat()?.team ?? 0).units), []);
     for (const layer of ['fog', 'range', 'reach', 'aim', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);

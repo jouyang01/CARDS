@@ -30,10 +30,25 @@ import {
   type Vec2,
 } from '@cards/engine';
 
+/**
+ * A decoy as one viewer sees it (DECOY-RENDER). `asEnemy` is the whole point:
+ * a decoy exists to be mistaken for Wisp, so to the other team it must render
+ * *as a normal enemy unit* — same model, same colour — and to Wisp's own team
+ * it must be obviously fake, or its owner cannot plan around it.
+ */
+export interface FogDecoy {
+  id: string;
+  pos: Vec2;
+  /** True for the team being fooled: draw it exactly like an enemy unit. */
+  asEnemy: boolean;
+}
+
 /** What a renderer should draw for one viewer. */
 export interface FogView {
   /** The units to draw — hidden enemies are simply absent. */
   units: UnitState[];
+  /** The decoys to draw, styled for this viewer. Hidden ones are absent. */
+  decoys: FogDecoy[];
   /** Squares outside the team's sight, to darken. Empty when nothing is hidden. */
   fogged: Vec2[];
 }
@@ -59,8 +74,28 @@ export function fogView(map: MapDef, state: GameState, team: TeamId): FogView {
   }
   return {
     units: state.units.filter((u) => u.owner === team || !u.alive || seen.has(u.unitId)),
+    decoys: visibleDecoys(state, team, lit),
     fogged,
   };
+}
+
+/**
+ * The decoys this team may see, tagged with how to draw them.
+ *
+ * An enemy decoy is fogged **exactly like an enemy unit**: a decoy visible
+ * through the fog on an otherwise dark square would announce itself as fake by
+ * being the only thing you could see, which is the opposite of its job. A
+ * decoy's own team always sees its own.
+ *
+ * The decoy list is not `state.units`, so it has no `canSee` of its own — a
+ * decoy is a static object with no Stealth, no brush concealment and nothing to
+ * reveal, so plain square visibility is the whole question. That is a narrower
+ * rule than `visibleEnemiesForTeam`, and deliberately so.
+ */
+function visibleDecoys(state: GameState, team: TeamId, lit: ReadonlySet<string>): FogDecoy[] {
+  return state.decoys
+    .filter((d) => d.teamId === team || lit.has(vecKey(d.pos)))
+    .map((d) => ({ id: d.id, pos: { ...d.pos }, asEnemy: d.teamId !== team }));
 }
 
 /**
@@ -73,6 +108,12 @@ export function fogView(map: MapDef, state: GameState, team: TeamId): FogView {
  * the turn player's folded view, which was never filtered — so this is the
  * explicit form, for the board states that are drawn straight from `GameState`.
  */
-export function revealedView(state: GameState): FogView {
-  return { units: [...state.units], fogged: [] };
+export function revealedView(state: GameState, team: TeamId): FogView {
+  return {
+    units: [...state.units],
+    // Even revealed, a decoy is still drawn from a viewpoint — "everyone sees
+    // it" is not the same as "everyone sees it as the same thing".
+    decoys: state.decoys.map((d) => ({ id: d.id, pos: { ...d.pos }, asEnemy: d.teamId !== team })),
+    fogged: [],
+  };
 }

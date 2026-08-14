@@ -76,6 +76,8 @@ const AUTO_PAN = 0.35;
 const AUTO_ZOOM_FLOOR = 0.85;
 /** Alpha applied to everything outside a spotlight. */
 const DIM_ALPHA = 0.22;
+/** A decoy, seen by its OWNER: unmistakably theirs, unmistakably not a unit. */
+const DECOY_PURPLE = 0xa06bd6;
 
 /**
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
@@ -98,6 +100,18 @@ const LAYER_INSET: Record<HighlightLayer, number> = {
 /** UI2's continuous shape sits just above the covered tiles it explains. */
 const SHAPE_LIFT = 0.026;
 
+/**
+ * A decoy, as one viewer should see it (DECOY-RENDER). `asEnemy` decides the
+ * whole appearance: a decoy's job is to be mistaken for a real Wisp, so to the
+ * team being fooled it is drawn exactly like an enemy unit — same box, same
+ * team colour, same solidity. Only its owner sees the purple ghost.
+ */
+export interface RenderDecoy {
+  id: string;
+  pos: Vec2;
+  asEnemy: boolean;
+}
+
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
   unitId: string;
@@ -113,7 +127,7 @@ export interface RenderUnit {
 
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
-  show(units: readonly RenderUnit[], decoys?: readonly Vec2[]): void;
+  show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[]): void;
   /**
    * Highlight squares. Layers stack bottom-up in the order listed here:
    * `fog` is the unseen board (VISION1) and sits underneath everything, so your
@@ -530,12 +544,23 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
       const decoyLayer = layerGroup('decoy');
       disposeChildren(decoyLayer);
-      for (const p of decoys) {
+      for (const decoy of decoys) {
+        // To the team being fooled: a normal enemy unit, indistinguishable —
+        // same geometry and colour a real one gets, fully opaque. Drawing it as
+        // a translucent ghost is what gave every decoy away for free.
+        // To its owner: a solid purple marker, obviously theirs and obviously
+        // not a unit, so they can plan around it.
         const ghost = new Mesh(
-          new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-          new MeshLambertMaterial({ color: palette.team1, transparent: true, opacity: 0.35 }),
+          decoy.asEnemy
+            ? new BoxGeometry(TILE * 0.7, UNIT_HEIGHT, TILE * 0.7)
+            : new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
+          new MeshLambertMaterial(
+            decoy.asEnemy
+              ? { color: palette.team1 }
+              : { color: DECOY_PURPLE, transparent: true, opacity: 0.55 },
+          ),
         );
-        ghost.position.copy(toWorld(map, p)).setY(UNIT_HEIGHT / 2);
+        ghost.position.copy(toWorld(map, decoy.pos)).setY(UNIT_HEIGHT / 2);
         decoyLayer.add(ghost);
       }
     },
