@@ -57,6 +57,43 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
     }
     if (a.shape !== 'path') errs.push(`${path}: chargeHits is only valid on a "path" (charge) ability`);
   }
+  // FREE1: `free` is only ever safe under both of these. A free Dash/Blast
+  // would be a repeatable extra attack (that job belongs to catalysts, which are
+  // once per match); a free ability that also granted energy would be strictly
+  // better than a normal one in every dimension and would accelerate the ult
+  // clock for nothing. Both are validation errors, not runtime special cases.
+  if (a.free === true) {
+    // …except a catalyst, which is consumed rather than cooled down. The reason
+    // the restriction exists is that a *repeatable* free attack is too strong;
+    // `oncePerMatch` is exactly the property that removes that (CAT1).
+    if (a.phase !== 'prep' && a.oncePerMatch !== true) {
+      errs.push(`${path}: free abilities must be phase "prep" unless oncePerMatch (got "${a.phase}")`);
+    }
+    if (a.energyGain !== 0) errs.push(`${path}: free abilities must have energyGain 0 (got ${a.energyGain})`);
+  }
+  if (a.free !== undefined && typeof a.free !== 'boolean') {
+    errs.push(`${path}: free must be a boolean when present`);
+  }
+  // DASH-IMPACT. Worth spelling out because `validateAbility` lets unknown keys
+  // through: the three staged `impact` blocks sat in `data/` for a session and
+  // the suite accepted them silently. A typo'd radius must not do the same.
+  if (a.impact !== undefined) {
+    if (typeof a.impact !== 'object' || Array.isArray(a.impact)) {
+      errs.push(`${path}: impact must be an object with origin/destination radii`);
+    } else {
+      if (a.phase !== 'dash') errs.push(`${path}: impact is only valid on a "dash" ability (got "${a.phase}")`);
+      const { origin, destination, ...rest } = a.impact;
+      for (const key of Object.keys(rest)) errs.push(`${path}: unknown impact member "${key}"`);
+      if (origin === undefined && destination === undefined) {
+        errs.push(`${path}: impact must declare at least one of origin/destination`);
+      }
+      for (const [name, r] of [['origin', origin], ['destination', destination]] as const) {
+        if (r !== undefined && (!isInt(r) || r < 1)) {
+          errs.push(`${path}: impact.${name} must be an integer >= 1 (got ${String(r)})`);
+        }
+      }
+    }
+  }
   if (!Array.isArray(a.effects) || a.effects.length === 0) {
     errs.push(`${path}: must declare at least one effect`);
   } else {

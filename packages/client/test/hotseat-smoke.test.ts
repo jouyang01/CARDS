@@ -29,7 +29,7 @@ const char: CharacterDef = {
 const roster: Roster = { 'test-char': char };
 
 const mkUnit = (unitId: string, owner: 0 | 1, x: number, y: number) =>
-  ({ unitId, characterId: 'test-char', owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [] });
+  ({ unitId, characterId: 'test-char', owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], catalysts: [], catalystsUsed: [] });
 
 describe('C1: a full hot-seat turn, playback board == engine board', () => {
   it('builds orders per seat, resolves, and the reconstructed view matches the engine', () => {

@@ -28,7 +28,9 @@ const char: CharacterDef = {
     ability({ id: 'shoot', phase: 'blast', shape: 'line', range: 8, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }] }),
     ability({ id: 'roll', shape: 'path', range: 3, energyGain: 4, effects: [{ kind: 'teleport' }] }),
   ],
-  ultimate: ability({ id: 'shadowstep', shape: 'square', range: 7, energyGain: 0, effects: [{ kind: 'teleport' }, { kind: 'damage', amount: 40 }, { kind: 'untargetable', duration: 2 }] }),
+  // DASH-IMPACT: the adjacency that used to be hardcoded in the resolver is
+  // now this number, exactly as the shipped Wisp carries it.
+  ultimate: ability({ id: 'shadowstep', shape: 'square', range: 7, energyGain: 0, impact: { destination: 1 }, effects: [{ kind: 'teleport' }, { kind: 'damage', amount: 40 }, { kind: 'untargetable', duration: 2 }] }),
 };
 const roster: Roster = { 'test-char': char };
 const OPEN = () => makeMap(Array.from({ length: 9 }, () => '.'.repeat(9)));
@@ -325,10 +327,10 @@ describe('FF1-charge: a charge strikes the first UNIT crossed, ally or enemy', (
   });
 });
 
-describe('MET1-tp: a teleport-strike hits the 4 orthogonal neighbours only', () => {
+describe('DASH-IMPACT: a teleport-strike is `impact: { destination: 1 }`, not a special case', () => {
   it('strikes an orthogonal neighbour but spares the diagonal one', () => {
-    // Landing on (3,4): (4,4) is Manhattan 1, (4,5) is Manhattan 2 (it was
-    // Chebyshev 1 and would have been struck before MET1-tp).
+    // Landing on (3,4): (4,4) is 1 away, (4,5) is 1.41 — outside a radius-1
+    // Euclidean blast, the same tiles the hardcoded Manhattan-1 branch caught.
     const u = makeUnit('u', 0, { x: 0, y: 0 }, { energy: 100 });
     const orth = makeUnit('orth', 1, { x: 4, y: 4 });
     const diag = makeUnit('diag', 1, { x: 4, y: 5 });
@@ -340,13 +342,16 @@ describe('MET1-tp: a teleport-strike hits the 4 orthogonal neighbours only', () 
     expect(unit(state, 'diag').hp).toBe(100); // the corner is distance 2 now
   });
 
-  it('catches an adjacent ALLY too (FF1), without paying energy for it', () => {
+  it('spares an adjacent ALLY — an impact is an area, so FF1 polarity applies', () => {
+    // The behaviour change the deletion brings, stated out loud. The old
+    // hardcoded branch was a "directly aimed" strike and hit allies; a blast
+    // radius is an area, and harmful area effects reach enemies only (FF1).
     const u = makeUnit('u', 0, { x: 0, y: 0 }, { energy: 100 });
     const ally = makeUnit('ally', 0, { x: 4, y: 4 });
     const { state } = run(makeState([u, ally, makeUnit('e', 1, { x: 8, y: 8 })]), [
       { unitId: 'u', ability: { abilityId: 'shadowstep', target: [{ x: 3, y: 4 }] } },
     ], []);
-    expect(unit(state, 'ally').hp).toBe(60); // a directly aimed area does not filter by team
-    expect(unit(state, 'u').energy).toBe(5); // ult reset to 0, +5 passive — no on-hit energy
+    expect(unit(state, 'ally').hp).toBe(100);
+    expect(unit(state, 'u').energy).toBe(5); // ult reset to 0, +5 passive — nothing hit
   });
 });

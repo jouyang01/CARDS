@@ -2,6 +2,7 @@ export * from './types.js';
 export * from './constants.js';
 export * from './formats.js';
 export * from './validate.js';
+export * from './catalysts.js';
 export * from './board.js';
 export * from './status.js';
 export * from './movement.js';

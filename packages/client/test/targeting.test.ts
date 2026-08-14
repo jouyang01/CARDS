@@ -507,11 +507,11 @@ describe('UI2: shapeOutline is the continuous shape the covered tiles approximat
       const poly = shapeOutline(bast, cone, [], step, covered);
       expect(poly).toHaveLength(3); // a wedge is a triangle
       for (const tile of covered) expect(inside(poly, tile), `step ${step} tile ${tile.x},${tile.y}`).toBe(true);
-      // The engine's wedge starts half a tile in front of the caster; growing it
-      // by the half-tile hitbox drags the drawn apex 0.71 back along the axis,
-      // so it ends up just *behind* the caster's centre (HITBOX1).
+      // The engine's wedge (CONE-B) starts AT the caster; growing it by the
+      // half-tile hitbox drags the drawn apex 0.71 back along the axis, so it
+      // sits just behind the caster's centre (HITBOX1).
       const apex = poly[0]!;
-      expect(Math.hypot(apex.x - bast.pos.x, apex.y - bast.pos.y)).toBeCloseTo(Math.SQRT1_2 - 0.5, 6);
+      expect(Math.hypot(apex.x - bast.pos.x, apex.y - bast.pos.y)).toBeCloseTo(Math.SQRT1_2, 6);
     }
   });
 

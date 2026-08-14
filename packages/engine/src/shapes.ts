@@ -24,20 +24,21 @@
  *   without a step it falls back to the 8 compass directions derived from
  *   caster→aim. It pierces and stops at the first wall (cover does not stop it —
  *   cover blocks movement, not line of sight, GAME_SPEC §3).
- * - **cone** is a 45° wedge along its aim direction (quantized step, or the
- *   dominant cardinal of caster→aim) whose apex sits half a tile in front of the
- *   caster — the geometry the old "half-width = depth − 1" rule approximated.
+ * - **cone** is a 45° wedge from the caster along its aim direction (quantized
+ *   step, or the dominant cardinal of caster→aim), with **every dimension
+ *   measured in Euclidean tiles** (CONE-B) so rotating it cannot change its
+ *   area.
  * - **circle** is a true Euclidean disk of the ability's radius centred on the
  *   aimed square — round, not a Chebyshev block.
- * - directional reach (`line`/`cone`) is a TILE COUNT along the axis, so a
- *   rotated shape reaches as far as an axis-aligned one; aimed-square reach
- *   (`square`/`circle` centre) is MANHATTAN (MET1, GAME_SPEC §3).
+ * - **every ability range is a EUCLIDEAN tile distance** (AIM-METRIC): the axial
+ *   depth of a `line`/`cone`, the aim range of a `square`/`circle`, and a
+ *   `circle`'s radius. Movement, sprint, `path` dash length and vision stay
+ *   MANHATTAN (MET1) — steps for walking, distance for aiming.
  * Walls and out-of-bounds squares are excluded from every area.
  */
 
 import {
   type Board,
-  distance,
   inBounds,
   terrainAt,
   vecKey,
@@ -152,18 +153,21 @@ export function dominantCardinal(from: Vec2, to: Vec2): Vec2 {
 /**
  * Squares a ray covers, caster excluded, stopping at the first wall.
  *
- * The area is the segment from the caster's centre out to `range` tiles along
- * the axis; a tile is covered when that segment passes within half a tile of
- * its centre, so the beam reads as a one-tile-wide band. `dir` may be a compass
- * unit step or a quantized aim vector from `stepToVector`; `range` is a tile
- * count along the axis, so a rotated line reaches as far as an axis-aligned one.
+ * The area is the segment from the caster's centre out to `range` **tile-widths**
+ * along the axis (AIM-METRIC); a tile is covered when that segment passes within
+ * half a tile of its centre, so the beam reads as a one-tile-wide band. `dir` may
+ * be a compass unit step or a quantized aim vector from `stepToVector`.
+ *
+ * Because the reach is a distance rather than a step count, a diagonal beam
+ * covers fewer *tiles* than an axis-aligned one of the same range — its tiles
+ * are √2 apart. That is the nerf, not a bug: a range-8 line used to reach 11.3
+ * tiles on the diagonal and now reaches 8 whichever way it points.
  */
 export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number): Vec2[] {
-  const m = Math.max(Math.abs(dir.x), Math.abs(dir.y));
-  if (m === 0 || range < 1) return [];
   const d2 = dir.x * dir.x + dir.y * dir.y;
-  // The far end sits `range` tiles along the dominant axis, so no covered tile
-  // is further than that on either axis; +1 for the hitbox, +1 for headroom.
+  if (d2 === 0 || range < 1) return [];
+  // The beam ends `range` tile-widths out, so nothing beyond that box can be in
+  // it; +1 for the half-tile band, +1 for headroom.
   const reach = range + 2;
   const hits: { readonly p: Vec2; readonly depth: number }[] = [];
   for (let dy = -reach; dy <= reach; dy++) {
@@ -172,13 +176,12 @@ export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number):
       const dot = dir.x * dx + dir.y * dy;
       if (dot <= 0) continue; // level with or behind the caster
       const cross = dir.x * dy - dir.y * dx;
-      const covered = dot * m <= range * d2
-        // Alongside the beam: within half a tile of the axis.
-        ? 4 * cross * cross <= d2
-        // Past its end: within half a tile of the endpoint itself. This is what
-        // lets a rotated line reach its full tile count — the endpoint rarely
-        // lands on a lattice point, and the tile it lands *in* still takes it.
-        : sqLen(2 * m * dx - 2 * range * dir.x, 2 * m * dy - 2 * range * dir.y) <= m * m;
+      // Alongside the beam (within half a tile of the axis, HITBOX1) and inside
+      // its **Euclidean** reach (AIM-METRIC). Both sides squared: `dot / |dir|`
+      // is the axial distance in tiles, so `dot² ≤ range²·|dir|²` is "within
+      // `range` tile-widths" with no square root. Metering this in lattice steps
+      // is what used to let a range-8 line reach 11.3 tiles on the diagonal.
+      const covered = 4 * cross * cross <= d2 && dot * dot <= range * range * d2;
       if (covered) hits.push({ p: { x: from.x + dx, y: from.y + dy }, depth: dot });
     }
   }
@@ -195,39 +198,64 @@ export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number):
   return out;
 }
 
+// ── The cone wedge, metered in Euclidean tiles (CONE-B) ─────────────────────
+//
+// A cone is the triangle with its apex at the caster's centre, edges at 45°,
+// capped `range` tiles out — and **every one of those measurements is a
+// Euclidean distance in tiles** (AIM-METRIC). Two things together, and the
+// width ramp alone would not have been enough, because the inflation was in the
+// LENGTH: a cone's depth used to be a *tile count* along its axis, so at 45°
+// one tile of depth was a diagonal step, √2 longer in real distance. Area goes
+// as the square, so a range-4 cone reached 4 tiles east and 7 north-east — 24
+// tiles against 42.
+//
+//   1. Euclidean axial range kills the length inflation.
+//   2. `halfWidth(d) = d` — the test below is `perp² ≤ d²` — sets the width.
+//
+// Together they reproduce the owner-approved axis-aligned footprint exactly
+// (3 / 8 / 15 / 24 at ranges 1–4, the reach the damage was tuned against) and
+// make the region a fixed shape that merely rotates, so its area cannot breathe
+// with the aim. A test asserts the *reach* is within half a tile-width of
+// axis-aligned at every one of the 256 quantized rotations — the check the tile
+// count alone misses, and the one that caught the length bug.
+//
+// `halfWidth(d) = d` is the Designer's measured ramp: the axis-aligned per-depth
+// widths are 3, 5, 7, 9 = 2d+1, which is exactly "perpendicular ≤ depth". No
+// ramp table and no division. Changing the ramp is an ENGINE ASK rather than a
+// data tweak, because the 45° edge direction is baked into the predicate below.
+//
+// **The frame.** For a tile offset P and aim vector V, write
+//
+//   a = P · V     (axial, × |V|)      b = V × P     (lateral, × |V|)
+//
+// Both carry the *same* scale factor |V|, so `(a, b)` is tile space rotated and
+// uniformly scaled — which is exactly why the test is rotation-invariant. The
+// triangle becomes `{ |b| ≤ a ≤ range·|V| }`. `|V|` is irrational, so every
+// comparison against it is resolved by a sign guard plus a squared comparison:
+// still integers, still no `Math.sqrt`, still identical on every machine.
+
 /**
  * The squares a cone covers, caster excluded, in row-major order.
  *
- * The area is a 45° wedge with its apex half a tile in front of the caster,
- * capped `range` tiles along the axis — the continuous shape the old
- * "half-width = depth − 1" rule was approximating. A tile is covered when that
- * wedge comes within half a tile of its centre, which widens each row by one
- * tile on each side compared with the old centre-in rule. Wall squares in the
- * wedge are dropped but do not occlude squares behind them (v1 keeps cones
- * simple; see DECISIONS.md).
+ * A tile is covered when the wedge comes within half a tile of its centre
+ * (HITBOX1) — the wedge is the region, the hitbox decides which tiles it takes.
+ * Wall squares in the wedge are dropped but do not occlude squares behind them
+ * (v1 keeps cones simple; see DECISIONS.md).
  */
 export function coneSquares(board: Board, from: Vec2, dir: Vec2, range: number): Vec2[] {
-  const m = Math.max(Math.abs(dir.x), Math.abs(dir.y));
-  if (m === 0 || range < 1) return [];
   const d2 = dir.x * dir.x + dir.y * dir.y;
-  // Working frame: shift the origin to the apex and scale by 2m, so the wedge
-  // becomes the triangle (0,0) → (cap, ±cap) in (along-axis, off-axis) units.
-  const cap = (2 * range - 1) * d2;
-  // Half a tile, squared and doubled, in that same frame.
-  const hitbox = 2 * m * m * d2;
-  // The far corners sit `range` tiles out and nearly as far to the side, and a
-  // rotated wedge spreads that across both axes; 2·range+2 covers every case.
+  if (d2 === 0 || range < 1) return [];
+  // The far corners sit `range` tiles out and as far again to the side, so no
+  // covered tile is more than range·√2 away; +2 for the hitbox and headroom.
   const reach = 2 * range + 2;
   const out: Vec2[] = [];
   for (let dy = -reach; dy <= reach; dy++) {
     for (let dx = -reach; dx <= reach; dx++) {
-      if (dx === 0 && dy === 0) continue;
+      if (dx === 0 && dy === 0) continue; // the caster's own square is never hit
       const p: Vec2 = { x: from.x + dx, y: from.y + dy };
       if (!inBounds(board, p)) continue;
       if (terrainAt(board, p) === 'wall') continue;
-      const along = 2 * m * (dir.x * dx + dir.y * dy) - d2;
-      const off = 2 * m * (dir.x * dy - dir.y * dx);
-      if (wedgeCovers(along, off, cap, hitbox)) out.push(p);
+      if (wedgeCovers(dir.x * dx + dir.y * dy, dir.x * dy - dir.y * dx, d2, range)) out.push(p);
     }
   }
   return out;
@@ -239,52 +267,75 @@ function sqLen(x: number, y: number): number {
 }
 
 /**
- * Does a tile at `(along, off)` fall inside the wedge triangle, or within half
- * a tile of it? Inside is a pair of comparisons; outside is the nearest of the
- * triangle's three edges. Distances are carried as **2× the squared distance**
- * so the 45° edges — whose direction is (1, 1) — stay integral.
+ * Is the tile at `(a, b)` inside the wedge, or within half a tile of it?
+ *
+ * Inside is two comparisons. Outside, it is the distance to the nearest of the
+ * triangle's three edges — the two 45° sides and the flat cap — each of which
+ * is its own segment-distance case.
  */
-function wedgeCovers(along: number, off: number, cap: number, hitbox: number): boolean {
-  if (along >= Math.abs(off) && along <= cap) return true;
-  const nearest = Math.min(
-    edgeDist2(along, off, cap), // apex → far corner, one side…
-    edgeDist2(along, -off, cap), // …and the mirror of it, the other side
-    capDist2(along, off, cap), // the flat far end
-  );
-  return nearest <= hitbox;
-}
-
-/** 2× the squared distance to the wedge edge from (0,0) to (cap, cap). */
-function edgeDist2(along: number, off: number, cap: number): number {
-  const t = along + off; // twice the projection along the edge's (1,1) direction
-  if (t <= 0) return 2 * sqLen(along, off); // nearest point is the apex
-  if (t >= 2 * cap) return 2 * sqLen(along - cap, off - cap); // …the far corner
-  const perp = off - along;
-  return perp * perp; // …the edge itself: 2·(perp/√2)² = perp²
-}
-
-/** 2× the squared distance to the flat cap, from (cap, −cap) to (cap, cap). */
-function capDist2(along: number, off: number, cap: number): number {
-  if (off <= -cap) return 2 * sqLen(along - cap, off + cap);
-  if (off >= cap) return 2 * sqLen(along - cap, off - cap);
-  return 2 * (along - cap) * (along - cap);
+function wedgeCovers(a: number, b: number, d2: number, range: number): boolean {
+  if (a <= 0) return false; // level with or behind the caster
+  const far = range * range * d2; // (range · |V|)²
+  if (b * b <= a * a && a * a <= far) return true;
+  // `b` and `-b` are the same point reflected across the axis, so one edge test
+  // run twice covers both sides.
+  return nearEdge(a, b, d2, range) || nearEdge(a, -b, d2, range) || nearCap(a, b, d2, range);
 }
 
 /**
- * A Euclidean disk of `radius` centred on `center`, row-major order. Under the
- * half-tile hitbox a tile is covered when its centre is within `radius + ½` —
- * i.e. `4·(dx² + dy²) ≤ (2·radius + 1)²`, integer on both sides, so it is
- * identical on every machine. Wall and out-of-bounds squares are excluded.
+ * Within half a tile of the side running from the apex `(0,0)` out to the far
+ * corner `(range, range)`?
+ */
+function nearEdge(a: number, b: number, d2: number, range: number): boolean {
+  const t = a + b; // twice the projection along the edge's (1,1) direction, × |V|
+  if (t <= 0) return 4 * sqLen(a, b) <= d2; // nearest point is the apex
+  if (t * t >= 4 * range * range * d2) {
+    // Nearest point is the far corner C = range·(û + n̂). Expanding |P − C|² ≤ ¼
+    // and clearing denominators leaves one term carrying |V|; `t > 0` above is
+    // the sign guard that makes squaring it safe.
+    const lhs = 4 * sqLen(a, b) + d2 * (8 * range * range - 1);
+    return lhs <= 0 || lhs * lhs <= 64 * range * range * t * t * d2;
+  }
+  // Nearest point is the edge itself: distance = |b − a| / (|V|·√2).
+  return 2 * (b - a) * (b - a) <= d2;
+}
+
+/** Within half a tile of the flat cap, the segment `(range, ±range)`? */
+function nearCap(a: number, b: number, d2: number, range: number): boolean {
+  const far = range * range * d2;
+  if (a * a <= far) return false; // short of the cap — a side is nearer
+  if (b * b > far) return false; // out past a corner — `nearEdge` owns that case
+  return 4 * a * a <= (2 * range + 1) * (2 * range + 1) * d2;
+}
+
+/**
+ * A Euclidean disk of `radius` centred on `center`, row-major order.
+ *
+ * **An authored `radius: r` means "this reaches r tiles" (CIRCLE-FIX).** It used
+ * to mean the *region* radius, with HITBOX1's half-tile added on top — so a
+ * `radius: 2` grenade was drawn as a disc of 2 and then granted another half
+ * tile, for a true reach of 2.5. That is how thirteen circles silently grew
+ * 48–80% without a single number changing (r1 5→9, r2 13→21, r3 25→37).
+ *
+ * The fix is at the rule, not in the data: the engine derives the region as
+ * `r − ½`, so composing the hitbox's half-tile returns exactly `r`. Written out,
+ * the whole thing collapses to `dx² + dy² ≤ r²` — simpler than what it replaces,
+ * still pure integer, and the scan box shrinks with it. A tile exactly `r` away
+ * is still in: its hitbox is tangent to the region, which is HITBOX1's halfway
+ * guarantee, untouched.
+ *
+ * The principle CIRCLE-FIX and CONE-B share: **a number in `data/` is the
+ * footprint you get.** The engine derives whatever internal region produces it,
+ * never the reverse. Wall and out-of-bounds squares are excluded.
  */
 export function circleSquares(board: Board, center: Vec2, radius: number): Vec2[] {
   const out: Vec2[] = [];
-  const span = radius + 1; // the hitbox reaches half a tile past the disk
-  const limit = (2 * radius + 1) * (2 * radius + 1);
-  for (let y = center.y - span; y <= center.y + span; y++) {
-    for (let x = center.x - span; x <= center.x + span; x++) {
+  const limit = radius * radius;
+  for (let y = center.y - radius; y <= center.y + radius; y++) {
+    for (let x = center.x - radius; x <= center.x + radius; x++) {
       const dx = x - center.x;
       const dy = y - center.y;
-      if (4 * sqLen(dx, dy) > limit) continue;
+      if (sqLen(dx, dy) > limit) continue;
       const p: Vec2 = { x, y };
       if (!inBounds(board, p)) continue;
       if (terrainAt(board, p) === 'wall') continue;
@@ -360,11 +411,21 @@ export function expandShape(
 }
 
 /**
- * Reach of an *aimed square* from the caster: MANHATTAN (MET1, GAME_SPEC §3).
- * This is the target-square rule, used by `circle`/`square`. Directional shapes
- * (`line`/`cone`) measure range as a tile count along their axis instead, so
- * rotating one does not change how far it reaches (joint AIM2 x MET1 ruling).
+ * Reach of an *aimed square* from the caster: **EUCLIDEAN** (AIM-METRIC).
+ *
+ * Movement is measured in steps, aiming is measured in distance. This is the
+ * target-square rule (`circle`/`square`), and it makes the aimable region a
+ * **disc, not a diamond** — the arbitrary Manhattan restriction is what made a
+ * shot down the row reach further than the same shot on the diagonal. Squared
+ * on both sides, so it stays exact integer arithmetic with no square root, and
+ * a tile exactly `range` away is included.
+ *
+ * Supersedes MET1's circle/square clause. Movement, sprint, `path` dash length
+ * and vision are untouched — MET1 still governs everything that walks, and
+ * vision is perception rather than aiming (a separate owner call).
  */
 export function aimInRange(casterPos: Vec2, target: Vec2, range: number): boolean {
-  return distance(casterPos, target) <= range;
+  const dx = target.x - casterPos.x;
+  const dy = target.y - casterPos.y;
+  return dx * dx + dy * dy <= range * range;
 }

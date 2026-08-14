@@ -48,15 +48,18 @@ import {
 } from './constants.js';
 import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, stepCost, validateMovePath } from './movement.js';
-import { aimInRange, direction8, expandShape, isAimStep } from './shapes.js';
+import { aimInRange, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
 import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
+import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
   AbilityEffect,
+  AbilityPhase,
   CharacterDef,
   DecoyState,
   EffectKind,
   GameState,
+  AbilityOrder,
   MapDef,
   PlayerOrders,
   TeamId,
@@ -97,6 +100,21 @@ interface PlannedAbility {
 interface UnitPlan {
   unit: UnitState;
   ability?: PlannedAbility;
+  /**
+   * A free action (FREE1) declared **alongside** `ability`. Kept in its own
+   * field for exactly the reason the mechanic exists: everything that reads
+   * `ability` to decide what a turn costs — the Sprint exclusion above all —
+   * must not see this one.
+   */
+  freeAbility?: PlannedAbility;
+  /** A catalyst (CAT1), likewise additive and likewise invisible to pricing. */
+  catalyst?: PlannedAbility;
+  /**
+   * Where a Shift will drop this unit, when it declared one. Everything from
+   * Dash onward was planned from that square, so if the teleport turns out to be
+   * blocked those plans no longer describe anything and are discarded.
+   */
+  shiftTo?: Vec2;
   movePath: Vec2[];
   sprint: boolean;
 }
@@ -154,29 +172,40 @@ function planUnit(
   board: Board,
   draft: GameState,
   roster: Roster,
+  catalysts: CatalystPool,
   team: TeamId,
   order: UnitOrders,
 ): UnitPlan | undefined {
   const unit = draft.units.find((u) => u.unitId === order.unitId);
   if (unit === undefined || unit.owner !== team || !unit.alive) return undefined;
 
-  let ability: PlannedAbility | undefined;
-  const found = order.ability !== undefined ? findAbility(roster, unit.characterId, order.ability.abilityId) : undefined;
-  if (order.ability !== undefined && found !== undefined) {
-    const { def, isUlt } = found;
-    const aim = order.ability.target ?? [];
-    const onCooldown = (unit.cooldowns[def.id] ?? 0) > 0;
-    const canAfford = !isUlt || unit.energy >= ULT_COST;
-    const aimStep = order.ability.aimStep;
-    // An out-of-range aim step is rejected like any other illegal component:
-    // the ability is dropped, deterministically, never thrown on (AIM2).
-    const stepLegal = aimStep === undefined || isAimStep(aimStep);
-    if (!onCooldown && canAfford && stepLegal && aimIsLegal(board, unit, def, aim, aimStep)) {
-      ability = { def, aim, area: expandShape(board, def, unit.pos, aim, aimStep), isUlt };
-    }
-  }
+  // A Shift (CAT1) resolves at the START of Dash, so everything the unit does
+  // from Dash onward happens at its landing square — a dash ability aimed from
+  // where it used to stand would be nonsense, and the ruling that "a Shift
+  // resolves before a dash ability the same unit declared" only means anything
+  // if that ability can be aimed from where the Shift puts you. Prep is the
+  // exception: it has already happened by then.
+  const catalyst = planCatalyst(board, unit, catalysts, order.catalyst);
+  const shiftTo = teleportDestination(catalyst);
+  const after = shiftTo === undefined ? unit : { ...unit, pos: shiftTo };
 
-  // Sprint is "move only": it is ignored the moment a real ability is used.
+  const declared = planAbility(board, unit, roster, order.ability);
+  const ability = declared?.def.phase === 'prep'
+    ? declared
+    : planAbility(board, after, roster, order.ability);
+
+  // FREE1 — a free action is declared in addition to the normal one. It must
+  // name an ability that is actually `free: true`, and it may not simply repeat
+  // the normal slot: ordering the same trap twice would fire it twice off one
+  // cooldown, which is the one way this slot could be abused.
+  let freeAbility = planAbility(board, unit, roster, order.freeAbility);
+  if (freeAbility?.def.free !== true || freeAbility.def.id === ability?.def.id) freeAbility = undefined;
+
+
+  // Sprint is "move only": it is ignored the moment a real ability is used —
+  // and a free action is **not** one. Reading `ability` alone here is the whole
+  // of FREE1's budget independence: `movementBudget` takes only the unit and
+  // this flag, so a free action can never shrink a move or cancel a Sprint.
   const sprint = ability === undefined && order.sprint === true;
 
   // A dash ability IS the unit's movement this turn; a separate Move path is
@@ -184,11 +213,142 @@ function planUnit(
   let movePath: Vec2[] = [];
   const dashing = ability?.def.phase === 'dash';
   if (!dashing && order.movePath !== undefined && order.movePath.length > 0) {
-    const check = validateMovePath(board, draft, unit, order.movePath, sprint);
+    // A Shift resolves in Dash and does NOT consume the Move (CAT1), so the walk
+    // that follows it starts from where it lands — validate from there, not from
+    // where the unit is standing now. If the teleport turns out to be blocked,
+    // Move re-checks that the first step is actually adjacent and drops the walk.
+    const check = validateMovePath(board, draft, after, order.movePath, sprint);
     if (check.valid) movePath = order.movePath.map((p) => ({ x: p.x, y: p.y }));
   }
 
-  return { unit, ability, movePath, sprint };
+  // **At most one free action per turn** (edge-cases, the conservative v1
+  // reading) counts catalysts and free abilities together. The catalyst yields:
+  // it is the scarcer resource, so burning one by accident on a turn that also
+  // declared a free ability is the worse of the two mistakes.
+  return {
+    unit,
+    ability,
+    freeAbility,
+    catalyst: freeAbility === undefined ? catalyst : undefined,
+    shiftTo: freeAbility === undefined ? shiftTo : undefined,
+    movePath,
+    sprint,
+  };
+}
+
+/** Where a teleport catalyst will put its caster, if it is one. */
+function teleportDestination(catalyst: PlannedAbility | undefined): Vec2 | undefined {
+  if (catalyst === undefined) return undefined;
+  return catalyst.def.effects.some((e) => e.kind === 'teleport') ? catalyst.aim[0] : undefined;
+}
+
+/**
+ * Validate a catalyst order. Unlike an ability it is looked up in the catalyst
+ * pool rather than on the character, and it must be one of the three this unit
+ * carries and still unspent.
+ */
+function planCatalyst(
+  board: Board,
+  unit: UnitState,
+  catalysts: CatalystPool,
+  order: AbilityOrder | undefined,
+): PlannedAbility | undefined {
+  if (order === undefined) return undefined;
+  if (!unit.catalysts.includes(order.abilityId)) return undefined;
+  if (unit.catalystsUsed.includes(order.abilityId)) return undefined;
+  const def = catalysts[order.abilityId];
+  if (def === undefined || def.oncePerMatch !== true) return undefined;
+  // A range-0 shape can only ever be aimed at the caster's own square, so an
+  // absent aim is filled in rather than rejected — otherwise Suppression, whose
+  // circle is centred on its caster, would be silently undeclarable.
+  const aim = order.target !== undefined && order.target.length > 0 ? order.target
+    : def.range === 0 && def.shape !== 'self' ? [{ x: unit.pos.x, y: unit.pos.y }]
+    : [];
+  const aimStep = order.aimStep;
+  if (aimStep !== undefined && !isAimStep(aimStep)) return undefined;
+  if (!aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
+  return { def, aim, area: expandShape(board, def, unit.pos, aim, aimStep), isUlt: false };
+}
+
+/**
+ * Fire a catalyst: mark it spent, then apply its effects.
+ *
+ * Spending happens **here**, when it resolves, not when it was ordered — a unit
+ * killed in Prep keeps its Blast catalyst, because that catalyst never went off.
+ *
+ * The effect application is deliberately generic rather than a branch per
+ * catalyst: a teleport moves the caster, everything beneficial or neutral lands
+ * on the caster, and anything harmful lands on the enemies inside the area. All
+ * nine of the shipped catalysts fall out of those three rules, and so will any
+ * the Designer adds, because none of them needs a new `EFFECT_KIND`.
+ */
+function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: PlannedAbility, events: TurnEvent[]): void {
+  if (!unit.alive) return;
+  unit.catalystsUsed.push(c.def.id);
+  events.push({ type: 'catalystUsed', unitId: unit.unitId, catalystId: c.def.id });
+  events.push({ type: 'abilityFired', unitId: unit.unitId, abilityId: c.def.id, area: c.area });
+
+  const source = sourceOf(unit, c.def.id);
+  if (c.def.effects.some((e) => e.kind === 'teleport')) {
+    teleport(draft, board, unit, c.aim[0], events);
+  }
+  const onSelf = c.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind) || e.kind === 'decoy');
+  if (onSelf.length > 0) applySelfEffects(draft, unit, onSelf, source, events);
+
+  const harmful = c.def.effects.filter((e) => HARMFUL_KINDS.has(e.kind) && isStatusKind(e.kind));
+  if (harmful.length === 0) return;
+  const area = new Set(c.area.map(vecKey));
+  for (const victim of draft.units) {
+    if (!victim.alive || victim.owner === unit.owner || !area.has(vecKey(victim.pos))) continue;
+    if (hasStatus(victim, 'untargetable')) continue;
+    for (const e of harmful) {
+      applyStatus(victim, e.kind, e.duration ?? 1);
+      events.push({
+        type: 'statusApplied', unitId: victim.unitId, status: e.kind,
+        duration: e.duration ?? 1, sourceUnitId: source.unitId, abilityId: source.abilityId,
+      });
+    }
+  }
+}
+
+/**
+ * Every catalyst declared for `phase`, resolved before that phase's abilities.
+ *
+ * The ordering is the whole point (edge-cases): a Blast-phase Might that landed
+ * *after* the Blast damage step would boost nothing until next turn, which makes
+ * Adrenaline and Overdrive simply broken. Uniform across all three colours, so
+ * there is one rule rather than three.
+ */
+function runCatalysts(draft: GameState, board: Board, plans: UnitPlan[], phase: AbilityPhase, events: TurnEvent[]): void {
+  for (const plan of orderedPlans(draft, plans)) {
+    const c = plan.catalyst;
+    if (c !== undefined && c.def.phase === phase) fireCatalyst(draft, board, plan.unit, c, events);
+  }
+}
+
+/**
+ * Validate one ability order into a plan, or `undefined` if any part of it is
+ * illegal. Every rejection is a silent drop rather than a throw, so a malformed
+ * order costs the player that component and nothing else — deterministically.
+ */
+function planAbility(
+  board: Board,
+  unit: UnitState,
+  roster: Roster,
+  order: AbilityOrder | undefined,
+): PlannedAbility | undefined {
+  if (order === undefined) return undefined;
+  const found = findAbility(roster, unit.characterId, order.abilityId);
+  if (found === undefined) return undefined;
+  const { def, isUlt } = found;
+  const aim = order.target ?? [];
+  if ((unit.cooldowns[def.id] ?? 0) > 0) return undefined;
+  if (isUlt && unit.energy < ULT_COST) return undefined;
+  // An out-of-range aim step is rejected like any other illegal component (AIM2).
+  const aimStep = order.aimStep;
+  if (aimStep !== undefined && !isAimStep(aimStep)) return undefined;
+  if (!aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
+  return { def, aim, area: expandShape(board, def, unit.pos, aim, aimStep), isUlt };
 }
 
 /** Is an ability's aim geometrically legal for its shape and range? */
@@ -413,20 +573,33 @@ function grantUseEnergy(unit: UnitState, def: AbilityDef, hitEnemy: boolean, eve
 
 function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'prep' });
+  runCatalysts(draft, board, plans, 'prep', events);
+  // Free actions resolve next (FREE1). Validation pins them to Prep, so this is
+  // the only phase that needs the pass — and going first is the ordering
+  // catalysts will need, so there is one rule rather than two.
+  for (const plan of orderedPlans(draft, plans)) {
+    if (plan.freeAbility !== undefined) firePrep(draft, plan.unit, plan.freeAbility, events);
+  }
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
-    if (a === undefined || a.def.phase !== 'prep' || !plan.unit.alive) continue;
-    events.push({ type: 'abilityFired', unitId: plan.unit.unitId, abilityId: a.def.id, area: a.area });
-    markAbilityUsed(plan.unit, a, events);
-
-    const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
-    if (trapEffect !== undefined) {
-      placeTraps(draft, plan.unit, a, trapEffect, events);
-    } else {
-      applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
-    }
-    grantUseEnergy(plan.unit, a.def, false, events);
+    if (a === undefined || a.def.phase !== 'prep') continue;
+    firePrep(draft, plan.unit, a, events);
   }
+}
+
+/** Resolve one Prep-phase ability for `unit`: traps place, everything else self-applies. */
+function firePrep(draft: GameState, unit: UnitState, a: PlannedAbility, events: TurnEvent[]): void {
+  if (!unit.alive) return;
+  events.push({ type: 'abilityFired', unitId: unit.unitId, abilityId: a.def.id, area: a.area });
+  markAbilityUsed(unit, a, events);
+
+  const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
+  if (trapEffect !== undefined) {
+    placeTraps(draft, unit, a, trapEffect, events);
+  } else {
+    applySelfEffects(draft, unit, a.def.effects, sourceOf(unit, a.def.id), events);
+  }
+  grantUseEnergy(unit, a.def, false, events);
 }
 
 /**
@@ -509,6 +682,38 @@ function placeTraps(
   }
 }
 
+/** `"x,y"` back to a `Vec2` — the inverse of `vecKey`, for blast bookkeeping. */
+function unkey(key: string): Vec2 {
+  const [x, y] = key.split(',');
+  return { x: Number(x), y: Number(y) };
+}
+
+/**
+ * The squares an `impact` covers (DASH-IMPACT), one entry per blast so each
+ * victim can be pushed away from the centre that actually caught it.
+ *
+ * Radii are Euclidean and expand through `circleSquares`, so this reuses the
+ * fixed circle rather than adding geometry. `destination` is the square the
+ * dasher came to rest on — the real one, not the aimed one, so a charge stopped
+ * early detonates where it stopped.
+ */
+function impactBlasts(
+  board: Board,
+  def: AbilityDef,
+  origin: Vec2,
+  restedAt: Vec2,
+): { centre: Vec2; area: Set<string> }[] {
+  if (def.impact === undefined) return [];
+  const out: { centre: Vec2; area: Set<string> }[] = [];
+  const add = (centre: Vec2, radius: number | undefined): void => {
+    if (radius === undefined || radius < 1) return;
+    out.push({ centre, area: new Set(circleSquares(board, centre, radius).map(vecKey)) });
+  };
+  add(restedAt, def.impact.destination);
+  add(origin, def.impact.origin);
+  return out;
+}
+
 // ── Dash ────────────────────────────────────────────────────────────────────
 
 /**
@@ -521,6 +726,19 @@ function placeTraps(
  */
 function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'dash' });
+  // Shift resolves before a dash ability the same unit declared, and — the
+  // ruling that fails silently — it does NOT consume the Move: nothing here
+  // touches `plan.movePath`, and Move reads only `plan.sprint` for its budget.
+  runCatalysts(draft, board, plans, 'dash', events);
+  // A blocked Shift leaves the unit where it started, and everything it planned
+  // from the landing square now describes nothing. Dropping those is the safe
+  // reading — a plan is never allowed to act from a square its owner is not on.
+  for (const plan of plans) {
+    if (plan.shiftTo !== undefined && !vecEq(plan.unit.pos, plan.shiftTo)) {
+      plan.ability = plan.ability?.def.phase === 'prep' ? plan.ability : undefined;
+      plan.movePath = [];
+    }
+  }
   const repositioned: UnitState[] = []; // units that actually moved under their own power (D1-dash)
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
@@ -537,37 +755,71 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     if (a.def.shape === 'path') crossed = walkCharge(draft, plan.unit, a.aim, events);
     else teleport(draft, board, plan.unit, a.aim[0], events);
 
-    // Damage: a charge hits the UNITS it crossed — the first only (R1a's shape,
+    // DASH-IMPACT: an optional AoE at takeoff and/or landing, expanded from the
+    // square the dasher actually came to rest on rather than the one it aimed
+    // at — a charge that is stopped early detonates where it stopped.
+    const blasts = impactBlasts(board, a.def, origin, plan.unit.pos);
+
+    // Damage. A charge hits the UNITS it crossed — the first only (R1a's shape,
     // now "first unit" under FF1-charge) or every one (`chargeHits: "all"`, e.g.
-    // Tempest Run); a teleport-strike hits everyone adjacent to where it landed.
-    // Both include allies: a directly aimed attack does not filter by team (FF1).
+    // Tempest Run) — and those include allies, because a directly aimed attack
+    // does not filter by team (FF1). An `impact` is an **area**, so FF1 polarity
+    // does apply to it: harmful effects reach enemies only.
+    //
+    // A `square` dash has no crossed units at all now. Its old Manhattan-1
+    // teleport-strike adjacency was a hardcoded special case with exactly one
+    // user; Shadowstep's `impact: { destination: 1 }` says the same thing in
+    // data, so the branch is gone (closes MET1-tp).
     const dmg = a.def.effects.find((e) => e.kind === 'damage');
     let hitEnemy = false;
+    const struck = new Set<string>(); // each unit is affected at most once
     if (dmg !== undefined) {
-      const victims =
-        a.def.shape === 'path'
-          ? a.def.chargeHits === 'all'
-            ? crossed
-            : crossed.slice(0, 1)
-          // Adjacency is MANHATTAN-1 — the 4 orthogonal neighbours (MET1-tp).
-          // It used to be the 8 surrounding squares; under a Manhattan world a
-          // diagonal neighbour is distance 2, so a teleport-strike no longer
-          // catches the corners. (Wisp rebalance is a Designer/playtest call.)
-          : draft.units.filter((u) => u.alive && u.unitId !== plan.unit.unitId && distance(plan.unit.pos, u.pos) === 1);
-      const source = a.def.shape === 'path' ? origin : plan.unit.pos;
-      for (const victim of victims) {
-        const behindCover = isBehindCover(board, source, victim.pos, a.def.range);
+      const crossedVictims = a.def.shape === 'path'
+        ? (a.def.chargeHits === 'all' ? crossed : crossed.slice(0, 1)).map((u) => ({ unit: u, from: origin }))
+        : [];
+      const blasted = blasts.flatMap(({ centre, area }) =>
+        draft.units
+          .filter((u) => u.alive && u.owner !== plan.unit.owner && area.has(vecKey(u.pos)))
+          .map((u) => ({ unit: u, from: centre })));
+      for (const { unit: victim, from } of [...crossedVictims, ...blasted]) {
+        if (struck.has(victim.unitId)) continue;
+        struck.add(victim.unitId);
+        const behindCover = isBehindCover(board, from, victim.pos, a.def.range);
         const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
         events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
         removeStatus(victim, 'stealth');
         if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
-        else collectDisplacement(pending, a.def.effects, victim, source, plan.unit.unitId);
+        else collectDisplacement(pending, a.def.effects, victim, from, plan.unit.unitId);
       }
     }
 
-    // A decoy in a damaging dash's area/path is destroyed too (R2) — no energy.
-    if (dmg !== undefined) destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
+    // Beneficial effects reach ALLIES standing in the blast — the half of
+    // `impact` that makes Aegis's Intercept a bodyguard tool rather than a
+    // teleport that arrives with nothing for the person being dived. The caster
+    // is excluded here and picked up by `applySelfEffects` below, so nobody is
+    // shielded twice.
+    const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
+    if (boons.length > 0) {
+      const helped = new Set<string>();
+      for (const { area } of blasts) {
+        for (const ally of draft.units) {
+          if (!ally.alive || ally.owner !== plan.unit.owner || ally.unitId === plan.unit.unitId) continue;
+          if (!area.has(vecKey(ally.pos)) || helped.has(ally.unitId)) continue;
+          helped.add(ally.unitId);
+          applySelfEffects(draft, ally, boons, sourceOf(plan.unit, a.def.id), events);
+        }
+      }
+    }
+
+    // A decoy in a damaging dash's area/path — or its blast — is destroyed too
+    // (R2), no energy.
+    if (dmg !== undefined) {
+      destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
+      for (const { area } of blasts) {
+        destroyDecoysInArea(draft, [...area].map(unkey), plan.unit.owner, events);
+      }
+    }
 
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
     applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
@@ -669,6 +921,10 @@ function runBlast(
   const debuffs: { victim: UnitState; effect: AbilityEffect; source: Source }[] = [];
   const benefits: { target: UnitState; effect: AbilityEffect; source: Source }[] = [];
   const displacers: { effects: readonly AbilityEffect[]; victim: UnitState; source: Vec2; attackerId: string }[] = [];
+
+  // Adrenaline and Overdrive have to land BEFORE the damage below is computed —
+  // a Might applied after the fact would boost nothing until next turn.
+  runCatalysts(draft, board, plans, 'blast', events);
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
   // their locked squares, folded into this turn's simultaneous damage.
@@ -835,6 +1091,11 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
     if (plan.movePath.length === 0 || !plan.unit.alive) continue;
     if (displaced.has(plan.unit.unitId)) continue; // knocked back/pulled → loses Move
     if (hasStatus(plan.unit, 'root')) continue; // rooted (incl. in Blast) loses Move
+    // The path may have been validated from a Shift's landing square (CAT1); if
+    // that teleport was blocked the unit is still standing where it started, and
+    // the walk no longer connects. Dropping it is the safe reading — a Move is
+    // never allowed to become a second teleport.
+    if (!isAdjacentStep(plan.unit.pos, plan.movePath[0]!)) continue;
     const budget = movementBudget(plan.unit, plan.sprint);
     // Re-clamp by *cost* (a Blast-phase Slow may have shrunk the budget since the
     // path was validated in Prep); diagonals cost 1/2/1/2… (MV3).
@@ -1039,6 +1300,7 @@ export function resolveTurn(
   map: MapDef,
   orders: readonly [PlayerOrders, PlayerOrders],
   roster: Roster,
+  catalysts: CatalystPool = {},
 ): TurnResult {
   const draft: GameState = structuredClone(state) as GameState;
   const board = buildBoard(map);
@@ -1051,7 +1313,7 @@ export function resolveTurn(
   const plans: UnitPlan[] = [];
   for (const po of orders) {
     for (const uo of po.units) {
-      const plan = planUnit(board, draft, roster, po.team, uo);
+      const plan = planUnit(board, draft, roster, catalysts, po.team, uo);
       if (plan !== undefined) plans.push(plan);
     }
   }

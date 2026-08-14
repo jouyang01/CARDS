@@ -19,6 +19,7 @@ import {
   type GameState,
   type MapDef,
   type Phase,
+  type CatalystPool,
   type Roster,
   type TeamId,
   type UnitOrders,
@@ -37,6 +38,7 @@ import {
   hoverBoard,
   hoverMove,
   previewAim,
+  previewCatalystAim,
   previewMovePath,
   type Interaction,
 } from './order-mode.js';
@@ -91,6 +93,10 @@ const IMPACT = 0xffd166;
  * meant something.
  */
 const FOG = 0x05060a;
+/** The catalyst overlay — its own colour, because it is its own decision (CAT2). */
+const CATALYST = 0x9be36b;
+/** Dark enough to read as "no information", light enough to keep terrain legible. */
+const FOG_OPACITY = 0.62;
 /**
  * The drawn movement lines (AIM1/UI4). All three share one geometry — a
  * polyline through tile centres plus an endpoint marker — and differ only in
@@ -138,6 +144,7 @@ export function startHotSeat(
   teams: [CharacterDef[], CharacterDef[]],
   format: FormatId,
   playersPerTeam: [number, number],
+  catalysts: CatalystPool = {},
 ): void {
   let state = createMatch(map, format, teams);
   const seats = deriveSeats(state, playersPerTeam);
@@ -154,7 +161,44 @@ export function startHotSeat(
   let interaction: Interaction = IDLE;
   let projection: ProjectionName = 'isometric';
 
+  /** The shield pool `initView` sums, so board and HUD never disagree. */
+  const shieldOf = (u: UnitState): number =>
+    u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
+
+  /**
+   * `fogView` walks every unit's line of sight, and mouse-follow aiming
+   * (AIM2-UX) repaints on every pointer move — but the state cannot change
+   * mid-Decision, so the answer only ever depends on which seat is looking.
+   * One slot is enough: the seat changes far more rarely than the pointer.
+   */
+  let fogMemo: { state: GameState; team: TeamId; view: FogView } | undefined;
+  const currentFog = (team: TeamId): FogView => {
+    if (fogMemo?.state !== state || fogMemo.team !== team) {
+      fogMemo = { state, team, view: fogView(map, state, team) };
+    }
+    return fogMemo.view;
+  };
+
+  const toRenderUnits = (units: readonly UnitState[]): RenderUnit[] => units.map((u) => ({
+    unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
+    energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
+    shield: shieldOf(u),
+  }));
+
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
+
+  // ── VISION1-opening ───────────────────────────────────────────────────────
+  // Paint the fogged board NOW, before the render loop starts, so the very
+  // first composited frame already hides the enemy team. There is no turn-1
+  // grace reveal and no full-board flash to fog out of.
+  //
+  // This held by accident before: `beginTurn()` runs at the end of this
+  // function, still inside the same task, so it beat the first animation frame.
+  // Anything asynchronous landing in between — a font, an asset, a lobby
+  // handshake — would have reintroduced the leak silently. Painting it here
+  // makes it a property of the code rather than of the scheduler.
+  paintFog(seats[0]?.team ?? 0);
+
   const fitCamera = (): void => renderer.fitBoard();
   // Size from the VIEWPORT, never from the container: the canvas is the
   // container's only child, so measuring the container would feed the canvas its
@@ -213,7 +257,7 @@ export function startHotSeat(
         const found = [...character.abilities, character.ultimate].find((a) => a.id === abilityId);
         if (found !== undefined) return found.name;
       }
-      return abilityId;
+      return catalysts[abilityId]?.name ?? abilityId;
     },
   };
 
@@ -237,6 +281,7 @@ export function startHotSeat(
   const hud: Hud = createHud(ui.controls, {
     selectCharacter: selectUnit,
     selectAbility,
+    selectCatalyst,
     hoverAbility: (abilityId, control, def) => {
       if (abilityId === undefined || control === undefined || def === undefined) hideTip();
       else showTip(control, def);
@@ -308,30 +353,6 @@ export function startHotSeat(
     return fresh;
   };
 
-  /** The shield pool `initView` sums, so board and HUD never disagree. */
-  const shieldOf = (u: UnitState): number =>
-    u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
-
-  /**
-   * `fogView` walks every unit's line of sight, and mouse-follow aiming
-   * (AIM2-UX) repaints on every pointer move — but the state cannot change
-   * mid-Decision, so the answer only ever depends on which seat is looking.
-   * One slot is enough: the seat changes far more rarely than the pointer.
-   */
-  let fogMemo: { state: GameState; team: TeamId; view: FogView } | undefined;
-  const currentFog = (team: TeamId): FogView => {
-    if (fogMemo?.state !== state || fogMemo.team !== team) {
-      fogMemo = { state, team, view: fogView(map, state, team) };
-    }
-    return fogMemo.view;
-  };
-
-  const toRenderUnits = (units: readonly UnitState[]): RenderUnit[] => units.map((u) => ({
-    unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
-    energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
-    shield: shieldOf(u),
-  }));
-
   const viewUnits = (view: ViewState): RenderUnit[] => [...view.units.values()].map((v) => ({
     unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
     energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
@@ -378,6 +399,18 @@ export function startHotSeat(
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   /**
+   * Draw the board as `team` sees it: its own units plus whatever it can see of
+   * the enemy, with everything outside team sight darkened. The one place fog
+   * is applied, so the opening frame and every later Decision frame cannot
+   * disagree about what is hidden.
+   */
+  function paintFog(team: TeamId): void {
+    const view = currentFog(team);
+    renderer.show(toRenderUnits(view.units), state.decoys.map((d) => d.pos));
+    renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
+  }
+
+  /**
    * The board half of a decision-phase render. Split out from `render()` because
    * mouse-follow aiming (AIM2-UX) repaints on every pointer move — rebuilding
    * the control buttons at that rate would tear the DOM out from under the
@@ -394,9 +427,7 @@ export function startHotSeat(
     // turn is history and everything is shown. The engine answers *what* is
     // visible; this only paints the answer. Hot-seat fog is an aid for players
     // sharing a screen, not a security boundary — that is M3.
-    const view = currentFog(currentSeat()?.team ?? unit.owner);
-    renderer.show(toRenderUnits(view.units), state.decoys.map((d) => d.pos));
-    renderer.highlight('fog', view.fogged, FOG, 0.62);
+    paintFog(currentSeat()?.team ?? unit.owner);
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
     clearReadouts();
@@ -445,6 +476,21 @@ export function startHotSeat(
       chosen !== undefined && covered.length > 0 ? shapeOutline(unit, chosen, preview.aim, preview.aimStep, covered) : [],
       SHAPE,
       0.16,
+    );
+
+    // ── CAT2: the catalyst's own aim, in its own layer ──────────────────────
+    // A catalyst is a separate slot, so it gets a separate overlay — a Shift's
+    // destination and a Rail Shot's beam are two decisions on one turn and have
+    // to be readable at the same time.
+    const catalystDef = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
+    const catalystAim = previewCatalystAim(map, state, unit, catalystDef, draft, interaction);
+    renderer.highlight(
+      'catalyst',
+      catalystDef !== undefined && catalystAim.length > 0
+        ? abilityPreview(map, unit, catalystDef, catalystAim)
+        : [],
+      CATALYST,
+      0.42,
     );
 
     // ── AIM1 (+UI4): the drawn route as a LINE ───────────────────────────────
@@ -515,6 +561,19 @@ export function startHotSeat(
         selected: draft.abilityId === opt.def.id,
         def: opt.def,
       })),
+      // Three slots, in phase order, read straight off the unit — `catalystsUsed`
+      // is the engine's answer, so a slot can never grey out for the wrong reason.
+      catalysts: unit.catalysts.flatMap((id) => {
+        const def = catalysts[id];
+        return def === undefined ? [] : [{
+          id,
+          name: def.name,
+          phase: def.phase,
+          spent: unit.catalystsUsed.includes(id),
+          selected: draft.catalystId === id,
+          def,
+        }];
+      }),
       move: {
         budget: movementBudget(unit, draft.sprint),
         drawing: interaction.mode === 'move',
@@ -553,6 +612,28 @@ export function startHotSeat(
     render();
   }
 
+  /**
+   * Pick (or un-pick) a catalyst. It is a **separate slot** from the normal
+   * ability — selecting one leaves the chosen ability, its aim and any drawn
+   * move exactly where they were. Treating the two as one choice is the same
+   * mutual-exclusivity trap MS1 fixed for move-and-shoot, and it would make the
+   * mechanic unreachable: a catalyst you can only use *instead* of your turn is
+   * not a free action.
+   */
+  function selectCatalyst(catalystId: string): void {
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    const def = catalysts[catalystId];
+    if (def === undefined || unit.catalystsUsed.includes(catalystId)) return;
+    const draft = nextDraft(draftFor(unit), { type: 'selectCatalyst', catalystId }, false);
+    // A self-cast has nowhere to point; a Shift or a Suppression needs a square,
+    // so the board click that follows lands in the catalyst's own aim slot.
+    if (draft.catalystId !== undefined && def.shape === 'self') draft.catalystAim = [{ ...unit.pos }];
+    drafts.set(unit.unitId, draft);
+    interaction = arm(draft.catalystId !== undefined && def.shape !== 'self' ? 'catalyst' : 'idle');
+    render();
+  }
+
   function selectMove(sprint: boolean): void {
     const unit = selectedUnit();
     if (unit === undefined) return;
@@ -583,6 +664,12 @@ export function startHotSeat(
       const { aim, aimStep } = aimFor(map, state, unit, ability, sq);
       draft.aim = aim;
       draft.aimStep = aimStep;
+      interaction = afterCommit();
+      render();
+    } else if (interaction.mode === 'catalyst') {
+      const def = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
+      if (def === undefined) return;
+      draft.catalystAim = aimFor(map, state, unit, def, sq).aim;
       interaction = afterCommit();
       render();
     } else if (interaction.mode === 'move' || draft.sprint) {
@@ -624,7 +711,7 @@ export function startHotSeat(
       if (units.length > 0) ordersBySeat.set(seat.seatId, units);
     }
     const prev = state;
-    const result = resolveTurn(prev, map, mergeSeatOrders(seats, ordersBySeat), roster);
+    const result = resolveTurn(prev, map, mergeSeatOrders(seats, ordersBySeat), roster, catalysts);
     // The log is written from the resolved event list up front, so it is
     // complete whether the player watches the animation or skips it.
     combatLog?.appendTurn(prev.turn, result.events, logNames);
@@ -634,7 +721,7 @@ export function startHotSeat(
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
     const player = createTurnPlayer(prev, result.events);
-    for (const layer of ['fog', 'range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'range', 'reach', 'aim', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
     renderer.show(viewUnits(player.view), viewDecoys(player.view));
@@ -764,7 +851,7 @@ export function startHotSeat(
 
   function renderGameOver(): void {
     renderer.show(toRenderUnits(revealedView(state).units), []);
-    for (const layer of ['fog', 'range', 'reach', 'aim', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'range', 'reach', 'aim', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);

@@ -10,6 +10,7 @@
 
 import type { CharacterDef, GameState, MapDef, TeamId, UnitState } from './types.js';
 import { type Format, type FormatId, getFormat } from './formats.js';
+import { DEFAULT_CATALYSTS } from './catalysts.js';
 import type { Roster } from './resolve.js';
 
 /** Index characters by id for the pipeline's ability lookups. */
@@ -33,6 +34,10 @@ export function spawnUnit(character: CharacterDef, unitId: string, owner: TeamId
     respawnIn: 0,
     cooldowns: {},
     statuses: [],
+    // Until the M3 lobby lets players pick, everyone gets the neutral triad
+    // (edge-cases: "Catalysts are chosen, not fixed to a character").
+    catalysts: [...DEFAULT_CATALYSTS],
+    catalystsUsed: [],
   };
 }
 

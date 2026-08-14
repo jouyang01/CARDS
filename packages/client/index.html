@@ -78,6 +78,17 @@
       .hud-ability.sel { border-color: var(--aim); color: var(--aim); }
       .hud-ability-name { font-weight: 600; }
       .hud-ability-note { font-size: 10px; opacity: 0.6; }
+      /* Catalysts (CAT2): once per match, so they read as a resource strip —
+         smaller than the hotbar, colour-coded by the phase they fire in. */
+      .hud-catalysts { display: flex; gap: 6px; justify-content: center; }
+      .hud-catalyst { display: flex; flex-direction: column; align-items: center; gap: 1px;
+        min-width: 84px; padding: 4px 8px; font-size: 11px; line-height: 1.2;
+        border-color: #4a4a52; }
+      .hud-catalyst[data-phase="prep"] { border-left: 3px solid #6fbf73; }
+      .hud-catalyst[data-phase="dash"] { border-left: 3px solid #e0c04a; }
+      .hud-catalyst[data-phase="blast"] { border-left: 3px solid #e0664a; }
+      .hud-catalyst.sel { border-color: var(--aim); color: var(--aim); }
+      .hud-catalyst.spent { opacity: 0.35; text-decoration: line-through; }
       .hud-moves { display: flex; gap: 6px; }
       .hud-move { font-size: 11px; padding: 3px 10px; }
 
@@ -137,6 +148,7 @@
         .log { width: 240px; }
         #app { padding-right: 256px; }
         .hud-ability { min-width: 78px; padding: 7px 8px; font-size: 11px; }
+        .hud-catalyst { min-width: 70px; padding: 3px 6px; font-size: 10px; }
       }
       @media (max-width: 1100px) {
         /* The log stops being a column and becomes a short strip above the HUD,

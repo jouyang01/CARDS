@@ -95,6 +95,46 @@ export interface AbilityDef {
    * any non-`path` shape (validate.ts).
    */
   chargeHits?: 'first' | 'all';
+  /**
+   * A **free action** (FREE1): may be declared *in addition to* a normal
+   * ability, and never reduces the move budget or blocks Sprint. Absent/false is
+   * today's behaviour.
+   *
+   * Which abilities may carry it is a rule, not a list (edge-cases): Prep phase
+   * only, no immediate damage/heal/shield, payoff deferred or conditional — the
+   * point is to make a setup play affordable without losing tempo. Two of those
+   * three are machine-checkable and `validateAbility` enforces them: `free`
+   * requires `phase === 'prep'` and `energyGain === 0`, as errors rather than
+   * runtime special cases, so no future kit can quietly grant a free Blast or a
+   * free action that is strictly better in every dimension.
+   */
+  free?: boolean;
+  /**
+   * A **catalyst** (CAT1): consumed on use and gone for the rest of the match,
+   * rather than put on cooldown. Death does not refund one; unused catalysts
+   * survive death and respawn.
+   *
+   * This is also what lets a catalyst be a free Dash or Blast action, which
+   * `free` alone may not be: the reason `free` is Prep-only is that a repeatable
+   * free attack is too strong, and a once-per-match one is self-limiting.
+   */
+  oncePerMatch?: boolean;
+  /**
+   * An **area of effect at takeoff and/or landing**, for `phase: "dash"` only
+   * (DASH-IMPACT). Radii are **Euclidean** (AIM-METRIC) and expand through
+   * `circleSquares`, so this adds no new geometry.
+   *
+   * `destination` is centred on the square the dasher comes to rest on (after
+   * pass-through or an early stop for a `path` charge; the landing square for a
+   * `square` teleport). `origin` is centred on the square it left. Both compose
+   * with the existing dash models: a charge still hits the first body it crosses
+   * *and* detonates where it stops.
+   *
+   * Absent = today's behaviour exactly. This is also what let the hardcoded
+   * teleport-strike adjacency be deleted: it was a Manhattan-1 special case with
+   * exactly one user, and `{ destination: 1 }` says the same thing in data.
+   */
+  impact?: { origin?: number; destination?: number };
   effects: AbilityEffect[];
   description: string;
 }
@@ -156,6 +196,14 @@ export interface UnitState {
   /** abilityId → turns remaining. */
   cooldowns: Record<string, number>;
   statuses: StatusInstance[];
+  /**
+   * The three catalysts this unit carries, one per phase (CAT1). Plain string
+   * **arrays**, not Sets, on purpose: `structuredClone` and the determinism hash
+   * both assume `GameState` is plain JSON, and a Set survives neither.
+   */
+  catalysts: string[];
+  /** Catalyst ids already spent this match. Consumed, not cooled down. */
+  catalystsUsed: string[];
 }
 
 export interface TrapState {
@@ -215,8 +263,12 @@ export interface GameState {
 
 export interface AbilityOrder {
   abilityId: string;
-  /** Meaning depends on shape: aimed square, direction endpoint, or path. */
-  target: Vec2[];
+  /**
+   * Meaning depends on shape: aimed square, direction endpoint, or path.
+   * Optional because a `self` shape has nothing to aim at — a self-cast or a
+   * self-centred catalyst should not have to carry an empty array to be legal.
+   */
+  target?: Vec2[];
   /**
    * Free-rotation aim for `line`/`cone` (AIM2): a QUANTIZED INTEGER direction in
    * [0, AIM_STEPS), never a float or a radian — the client does the mouse→step
@@ -230,9 +282,25 @@ export interface AbilityOrder {
 export interface UnitOrders {
   unitId: string;
   ability?: AbilityOrder;
+  /**
+   * A **free action** declared alongside `ability` (FREE1) — it must name an
+   * ability the unit owns that is `free: true` and off cooldown.
+   *
+   * This is a separate slot on purpose: a free action is additive, so putting it
+   * in `ability` would make it compete with the normal one and defeat the whole
+   * mechanic. At most one free action per unit per turn (edge-cases, the
+   * conservative v1 reading), counting this and `catalyst` together.
+   */
+  freeAbility?: AbilityOrder;
+  /**
+   * A **catalyst** (CAT1) — one of the three this unit carries, not already
+   * spent. Like `freeAbility` it is additive and never prices the turn; at most
+   * one of the two per unit per turn (edge-cases, the conservative v1 reading).
+   */
+  catalyst?: AbilityOrder;
   /** Move-phase path, first square = first step. Empty/absent = hold. */
   movePath?: Vec2[];
-  /** True = no ability, extended move range. */
+  /** True = no ability, extended move range. A free action never blocks it. */
   sprint?: boolean;
 }
 
@@ -272,6 +340,8 @@ export type TurnEvent =
   | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
+  // A catalyst is spent (CAT1) — playback and the HUD's spent-slot greying.
+  | { type: 'catalystUsed'; unitId: string; catalystId: string }
   | { type: 'trapTriggered'; trapId: string; unitId: string }
   // A decoy appears (rendered to the enemy team as Wisp) / is revealed & removed.
   | { type: 'decoySpawned'; decoyId: string; pos: Vec2; teamId: TeamId }

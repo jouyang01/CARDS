@@ -115,6 +115,34 @@ test('the board composites an actual scene, fogged to the seat on the clock', as
   await expect(lockIn(page)).toBeVisible();
 });
 
+/**
+ * VISION1-opening — the enemy team must be absent from the FIRST frame, not
+ * from the frame after fog engages. `beforeEach` settles for 600ms before it
+ * looks, which is exactly long enough to miss a one-frame flash, so this test
+ * navigates itself and starts sampling the moment the canvas exists.
+ */
+test('the opening frame is already fogged — no turn-1 grace reveal', async ({ page }) => {
+  await page.goto('./', { waitUntil: 'commit' });
+  await expect(boardCanvas(page)).toBeVisible();
+
+  let sampled = 0;
+  for (let i = 0; i < 8; i++) {
+    const box = await boardCanvas(page).boundingBox();
+    if (box !== null && box.width > 0) {
+      const image = decodePng(await page.screenshot({ clip: box }));
+      // Only judge frames that have actually drawn something — an empty canvas
+      // before the first composite is not evidence either way.
+      if (countPixels(image, isTeamBlue) > 0) {
+        sampled += 1;
+        expect(countPixels(image, isTeamRed), `frame ${i} flashed the enemy team`).toBe(0);
+        expect(countPixels(image, isFogged), `frame ${i} drew before fog engaged`).toBeGreaterThan(0);
+      }
+    }
+    await page.waitForTimeout(60);
+  }
+  expect(sampled, 'never caught a drawn frame to judge').toBeGreaterThan(0);
+});
+
 test('arming an ability paints an overlay that follows the pointer', async ({ page }) => {
   const before = await frame(page);
 
@@ -198,6 +226,28 @@ test('the camera responds to a right-drag orbit', async ({ page }) => {
   await page.mouse.up({ button: 'right' });
   await page.waitForTimeout(300);
   expect(same(await frame(page), before), 'a right-drag must orbit the camera').toBe(false);
+});
+
+/**
+ * CAT2 — the catalyst row exists in the real bundle and a slot can be armed
+ * without losing the ability underneath it. A unit test proves the draft
+ * reducer keeps both; only a browser proves the two controls are wired to it.
+ */
+test('a catalyst can be armed without clearing the chosen ability', async ({ page }) => {
+  const slots = page.locator('.hud-catalyst');
+  await expect(slots).toHaveCount(3);
+  // Prep / Dash / Blast — one per phase, the ruling's shape.
+  await expect(slots.nth(0)).toHaveAttribute('data-phase', 'prep');
+  await expect(slots.nth(2)).toHaveAttribute('data-phase', 'blast');
+
+  const ability = page.locator('.hud-ability:not([disabled])').first();
+  await ability.click();
+  await expect(ability).toHaveClass(/sel/);
+
+  await slots.nth(0).click(); // Second Wind: a self-cast, so it commits at once
+  await expect(slots.nth(0)).toHaveClass(/sel/);
+  // The ability is still selected — the whole point of a separate slot.
+  await expect(ability).toHaveClass(/sel/);
 });
 
 /**

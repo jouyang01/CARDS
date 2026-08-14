@@ -64,13 +64,15 @@ describe('lineSquares', () => {
     ]);
   });
 
-  it('walks diagonals too', () => {
+  it('AIM-METRIC: a diagonal beam reaches `range` tile-WIDTHS, so fewer tiles', () => {
     const b = openBoard(11);
-    const out = lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 1 }, 2);
-    expect(out).toEqual([
-      { x: 6, y: 6 },
-      { x: 7, y: 7 },
-    ]);
+    // Range 2 on the diagonal is 2 tile-widths ≈ 1.41 diagonal steps, so it
+    // covers one tile. Under the old step-count metering it covered two and
+    // reached 2.83 tiles — the over-reach AIM-METRIC removes.
+    expect(lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 1 }, 2)).toEqual([{ x: 6, y: 6 }]);
+    expect(lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 1 }, 3)).toEqual([{ x: 6, y: 6 }, { x: 7, y: 7 }]);
+    // …while the same range pointed east is unchanged: 3 tiles, reaching 3.
+    expect(lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 0 }, 3)).toHaveLength(3);
   });
 
   it('stops before the first wall but passes over cover', () => {
@@ -92,7 +94,7 @@ describe('lineSquares', () => {
     // A due-SE beam runs exactly through the shared corner of (5,6) and (6,5).
     // Nicking a corner is not a hit — their centres are 0.71 from the beam.
     const out = posKeys(lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 1 }, 3));
-    expect(out).toEqual(posKeys([{ x: 6, y: 6 }, { x: 7, y: 7 }, { x: 8, y: 8 }]));
+    expect(out).toEqual(posKeys([{ x: 6, y: 6 }, { x: 7, y: 7 }]));
   });
 });
 
@@ -100,8 +102,8 @@ describe('coneSquares', () => {
   it('is a 45° wedge widened by the half-tile hitbox (east)', () => {
     const b = openBoard(11);
     const out = coneSquares(b, { x: 5, y: 5 }, { x: 1, y: 0 }, 2);
-    // The wedge's apex is half a tile ahead, so its half-width at depth d is
-    // d − ½; the hitbox reaches one tile further out on each side.
+    // The wedge is 45° from the caster, so its half-width at depth d is d; the
+    // hitbox catches the row that sits half a tile outside the edge.
     // depth 1: (6,4..6); depth 2: (7,3..7)
     expect(posKeys(out)).toEqual(
       posKeys([
@@ -152,28 +154,129 @@ describe('coneSquares', () => {
   });
 });
 
-describe('circleSquares', () => {
-  it('is a Euclidean disk, grown by the half-tile hitbox', () => {
-    const b = openBoard(11);
-    const out = circleSquares(b, { x: 5, y: 5 }, 2);
-    // A tile is hit when its centre is within r + ½ = 2.5: 21 squares. The
-    // corners (±2,±2) are 2.83 away and still excluded.
-    expect(out).toHaveLength(21);
-    expect(posKeys(out)).not.toContain('7,7');
-    expect(posKeys(out)).toContain('7,6'); // dist² = 5 ≤ 6.25
-    expect(posKeys(out)).toContain('5,7');
-    expect(posKeys(out)).toContain('6,6');
+/**
+ * CONE-B — a cone is a fixed Euclidean triangle that rotates, not a shape whose
+ * size depends on which way you point it.
+ *
+ * Two things together, and the width ramp alone is **necessary but not
+ * sufficient**: the inflation was in the *length*. A cone's depth used to be a
+ * tile count along its axis, so at 45° one tile of depth was a diagonal step —
+ * √2 longer in real distance, and area goes as the square. A range-4 cone
+ * reached 4 tiles east and 7 north-east (24 tiles against 42).
+ *
+ *   1. **Euclidean axial range** (AIM-METRIC) kills the length inflation.
+ *   2. **`halfWidth(d) = d`** — `perp² ≤ d²` — sets the width, and reproduces
+ *      the owner-approved axis-aligned 3 / 8 / 15 / 24 exactly.
+ *
+ * The wedge is the continuous region; HITBOX1's tile-centre circle decides
+ * which tiles it hits. That composition is what makes the *reach* check below
+ * pass to within half a tile — the check that catches the length bug the tile
+ * count alone hid.
+ */
+describe('CONE-B: rotating a cone does not change its size', () => {
+  const b = openBoard(41);
+  const centre: Vec2 = { x: 20, y: 20 };
+  const count = (dir: Vec2, range: number): number => coneSquares(b, centre, dir, range).length;
+
+  it('the axis-aligned footprint is exactly what it was before CONE-B', () => {
+    // The reach the damage numbers were tuned against. CONE-B moves off-axis
+    // cones toward this, and must not move this itself.
+    expect([1, 2, 3, 4].map((r) => count({ x: 1, y: 0 }, r))).toEqual([3, 8, 15, 24]);
+    // …and it is the same wedge whichever way it is spelled: a compass unit
+    // vector and the quantized step for the same direction agree.
+    for (const [dir, step] of [[{ x: 1, y: 0 }, 0], [{ x: 0, y: 1 }, 64], [{ x: -1, y: 0 }, 128]] as const) {
+      expect(count(dir, 4)).toBe(count(stepToVector(step), 4));
+    }
   });
 
-  it('HITBOX1: overlapping a tile is not enough — the hitbox must be reached', () => {
-    const b = openBoard(15);
-    const out = posKeys(circleSquares(b, { x: 7, y: 7 }, 3));
-    // (10,8) is 3.16 from the centre — the disk stops 0.16 short of it, well
-    // inside the half-tile hitbox, so it takes the hit.
-    expect(out).toContain('10,8');
-    // (10,9) is 3.61 away. The disk still spills over that tile's near corner
-    // (2.92 < 3), but it never gets within half a tile of the centre.
-    expect(out).not.toContain('10,9');
+  it('CONE-B: the reach is within half a tile-width of axis-aligned, at EVERY rotation', () => {
+    // The acceptance check the tile count misses. A cone's reach is how far its
+    // furthest covered tile sits ALONG THE AXIS — project onto the aim, do not
+    // measure a radius (the far corner of an east cone is 5.66 away but only 4
+    // deep). This is what went from 4-vs-7 to 4-vs-4.
+    const axialReach = (dir: Vec2, range: number): number => {
+      const len = Math.hypot(dir.x, dir.y);
+      const squares = coneSquares(b, centre, dir, range);
+      return Math.max(0, ...squares.map((p) =>
+        ((p.x - centre.x) * dir.x + (p.y - centre.y) * dir.y) / len));
+    };
+    for (const range of [1, 2, 3, 4, 6, 8]) {
+      const axis = axialReach({ x: 1, y: 0 }, range);
+      expect(axis, `range ${range}`).toBe(range);
+      for (let step = 0; step < AIM_STEPS; step++) {
+        const got = axialReach(stepToVector(step), range);
+        expect(Math.abs(got - axis), `range ${range} step ${step} reached ${got}`).toBeLessThanOrEqual(0.5);
+      }
+    }
+  });
+
+  it('every one of the 256 rotations lands within a boundary tile of the axis count', () => {
+    // The covered set is the lattice points within half a tile of the region.
+    // Its area is now rotation-invariant, so all that varies is how the lattice
+    // samples the boundary band — an effect that scales with the perimeter, and
+    // therefore with range. `axis + range + 1` is that bound; the axis-aligned
+    // case sits at the bottom of it because the lattice lines up with the edges.
+    for (const range of [2, 3, 4, 6, 8]) {
+      const axis = count({ x: 1, y: 0 }, range);
+      for (let step = 0; step < AIM_STEPS; step++) {
+        const n = count(stepToVector(step), range);
+        expect(n, `range ${range} step ${step}`).toBeGreaterThanOrEqual(axis - 1);
+        expect(n, `range ${range} step ${step}`).toBeLessThanOrEqual(axis + range + 1);
+      }
+    }
+  });
+
+  it('the worst rotation is nowhere near the old inflation', () => {
+    // Concretely: range 4 used to reach 42 tiles off-axis against 24 on-axis,
+    // and range 8 reached 150 against 80. Those are the numbers this replaces.
+    const worst = (range: number): number => {
+      let most = 0;
+      for (let step = 0; step < AIM_STEPS; step++) most = Math.max(most, count(stepToVector(step), range));
+      return most;
+    };
+    expect(worst(4)).toBeLessThan(42);
+    expect(worst(8)).toBeLessThan(150);
+    // Not a vacuous bound — a rotated cone is still a real cone, not a sliver.
+    expect(worst(4)).toBeGreaterThanOrEqual(count({ x: 1, y: 0 }, 4));
+  });
+
+  it('a cone reaches `range` tiles as a DISTANCE, so a diagonal one is shorter in steps', () => {
+    // The trade CONE-B makes, stated out loud: a 45° cone no longer stretches
+    // √2 further than an axis-aligned one. AIM-METRIC gives `line` the same
+    // reading, so a diagonal range-4 beam is 2 tiles, not 4.
+    const diagonal = coneSquares(b, centre, { x: 1, y: 1 }, 4);
+    const deepest = Math.max(...diagonal.map((p) => Math.hypot(p.x - centre.x, p.y - centre.y)));
+    // Its far corner sits at range·√2, plus the half-tile hitbox — and no more.
+    expect(deepest).toBeLessThanOrEqual(4 * Math.SQRT2 + 0.5);
+    expect(lineSquares(b, centre, { x: 1, y: 1 }, 4)).toHaveLength(2);
+  });
+});
+
+/**
+ * CIRCLE-FIX — an authored `radius: r` means "this reaches r tiles".
+ *
+ * It used to mean the *region* radius, with HITBOX1's half-tile added on top, so
+ * every circle in the roster quietly gained 48–80% area with no number changing.
+ * The fix is at the rule: the region is derived as `r − ½`, so composing the
+ * hitbox returns exactly `r`, and the whole test collapses to `dx² + dy² ≤ r²`.
+ */
+describe('circleSquares', () => {
+  it('CIRCLE-FIX: an authored radius is the FOOTPRINT radius — 5 / 13 / 29', () => {
+    const b = openBoard(21);
+    // The Designer's measured figures. 12 of the roster's 13 circles are back
+    // on their pre-HITBOX1 size; r3 (Ravok's ultimate) lands at 29, accepted.
+    expect([1, 2, 3].map((r) => circleSquares(b, { x: 10, y: 10 }, r).length)).toEqual([5, 13, 29]);
+  });
+
+  it('reaches exactly r — a tile r away is in, one past it is out', () => {
+    const b = openBoard(11);
+    const out = posKeys(circleSquares(b, { x: 5, y: 5 }, 2));
+    expect(out).toContain('7,5'); // exactly 2 — its hitbox is tangent to the region
+    expect(out).toContain('5,7');
+    expect(out).toContain('6,6'); // 1.41
+    expect(out).not.toContain('8,5'); // 3
+    expect(out).not.toContain('7,6'); // 2.24 — the half-tile that used to be free
+    expect(out).not.toContain('7,7'); // 2.83
   });
 
   it('excludes wall squares and clips at the edge', () => {
@@ -182,15 +285,24 @@ describe('circleSquares', () => {
     // 1..#..  wall at (2,1) is dropped from the disk
     const b = buildBoard(makeMap(['.....', '..#..', '.....', '.....', '.....']));
     const out = circleSquares(b, { x: 2, y: 2 }, 1);
-    // A radius-1 disk now covers the full 3x3 block (the diagonals are 1.41
-    // away, inside r + ½), minus the wall at (2,1).
+    // A radius-1 disk is the plus-shape again (the diagonals are 1.41 away,
+    // past r), minus the wall at (2,1).
     expect(posKeys(out)).toEqual(
-      posKeys([
-        { x: 1, y: 1 }, { x: 3, y: 1 },
-        { x: 1, y: 2 }, { x: 2, y: 2 }, { x: 3, y: 2 },
-        { x: 1, y: 3 }, { x: 2, y: 3 }, { x: 3, y: 3 },
-      ]),
+      posKeys([{ x: 2, y: 2 }, { x: 1, y: 2 }, { x: 3, y: 2 }, { x: 2, y: 3 }]),
     );
+  });
+
+  it('is rotation-proof by construction — a disc has no axis to be biased on', () => {
+    const b = openBoard(21);
+    const out = posKeys(circleSquares(b, { x: 10, y: 10 }, 3));
+    // Every covered tile's four rotations about the centre are covered too.
+    for (const key of out) {
+      const [x, y] = key.split(',').map(Number) as [number, number];
+      const dx = x - 10, dy = y - 10;
+      for (const [rx, ry] of [[-dy, dx], [-dx, -dy], [dy, -dx]] as const) {
+        expect(out, `${key} rotated`).toContain(`${10 + rx},${10 + ry}`);
+      }
+    }
   });
 });
 
@@ -212,11 +324,7 @@ describe('expandShape', () => {
   it('circle uses the ability radius around the aimed centre', () => {
     const out = expandShape(b, ability({ shape: 'circle', range: 6, radius: 1 }), caster, [{ x: 8, y: 5 }]);
     expect(posKeys(out)).toEqual(
-      posKeys([
-        { x: 7, y: 4 }, { x: 8, y: 4 }, { x: 9, y: 4 },
-        { x: 7, y: 5 }, { x: 8, y: 5 }, { x: 9, y: 5 },
-        { x: 7, y: 6 }, { x: 8, y: 6 }, { x: 9, y: 6 },
-      ]),
+      posKeys([{ x: 8, y: 5 }, { x: 7, y: 5 }, { x: 9, y: 5 }, { x: 8, y: 4 }, { x: 8, y: 6 }]),
     );
   });
 
@@ -297,7 +405,7 @@ describe('HITBOX1: cross-engine determinism', () => {
   }
 
   it('every shape, every aim step, every range folds to a fixed value', () => {
-    expect(signature()).toBe(1641177238);
+    expect(signature()).toBe(-1082420298);
   });
 
   it('is stable across repeated calls (no hidden state, no ordering drift)', () => {
@@ -309,18 +417,74 @@ describe('HITBOX1: cross-engine determinism', () => {
     // step 40 of 256 points south-south-east — a genuinely rotated aim, where
     // rounding differences would show up first.
     expect(posKeys(coneSquares(b, { x: 20, y: 20 }, stepToVector(40), 3))).toEqual([
-      '19,24', '20,21', '20,22', '20,23', '20,24', '21,21', '21,22', '21,23',
-      '21,24', '22,21', '22,22', '22,23', '23,21', '23,22', '24,21', '24,22',
+      '19,22', '19,23', '19,24', '20,21', '20,22', '20,23', '20,24', '21,20',
+      '21,21', '21,22', '21,23', '22,20', '22,21', '22,22', '23,21', '23,22',
+      '24,21',
     ]);
   });
 });
 
-describe('aimInRange', () => {
-  it('measures MANHATTAN distance to the aimed square (MET1)', () => {
-    expect(aimInRange({ x: 0, y: 0 }, { x: 4, y: 0 }, 4)).toBe(true); // straight out
-    expect(aimInRange({ x: 0, y: 0 }, { x: 2, y: 2 }, 4)).toBe(true); // 2+2 = 4
-    expect(aimInRange({ x: 0, y: 0 }, { x: 5, y: 0 }, 4)).toBe(false);
-    // The diagonal corner the old Chebyshev metric allowed is now distance 8.
-    expect(aimInRange({ x: 0, y: 0 }, { x: 4, y: 4 }, 4)).toBe(false);
+/**
+ * AIM-METRIC — movement is measured in steps, aiming is measured in distance.
+ *
+ * Both of the geometry bugs this batch fixes had one root cause: lattice-step
+ * metering applied to projected geometry. A step count is the right rule for
+ * *walking*, where the step is the atom; it is the wrong rule for *aiming*,
+ * where the shape has to describe the same thing whichever way it points.
+ */
+describe('AIM-METRIC: an aimed square is EUCLIDEAN, and the region is a disc', () => {
+  const from = { x: 0, y: 0 };
+
+  it('a tile exactly `range` away is in, one past it is out', () => {
+    expect(aimInRange(from, { x: 4, y: 0 }, 4)).toBe(true);
+    expect(aimInRange(from, { x: 0, y: -4 }, 4)).toBe(true);
+    expect(aimInRange(from, { x: 5, y: 0 }, 4)).toBe(false);
+  });
+
+  it('the diagonal is a distance, not a step count — the diamond is gone', () => {
+    // (3,3) is 4.24 away: Manhattan called it 6 and refused it, Euclidean
+    // refuses it for the honest reason. (2,3) is 3.61 — inside, and Manhattan
+    // called it 5 and refused it too.
+    expect(aimInRange(from, { x: 2, y: 3 }, 4)).toBe(true);
+    expect(aimInRange(from, { x: 3, y: 3 }, 4)).toBe(false);
+    expect(aimInRange(from, { x: 2, y: 2 }, 4)).toBe(true);
+  });
+
+  it('the aimable region grows from a diamond to a disc, by the ruled figures', () => {
+    const count = (range: number): number => {
+      let n = 0;
+      for (let dy = -range; dy <= range; dy++) {
+        for (let dx = -range; dx <= range; dx++) if (aimInRange(from, { x: dx, y: dy }, range)) n += 1;
+      }
+      return n;
+    };
+    // The Designer's measured numbers (aoe-footprints §2.1): 85→113, 145→197.
+    expect(count(6)).toBe(113);
+    expect(count(8)).toBe(197);
+  });
+
+  it('is symmetric and integer-exact — no rounding to disagree about', () => {
+    for (let dy = -9; dy <= 9; dy++) {
+      for (let dx = -9; dx <= 9; dx++) {
+        expect(aimInRange(from, { x: dx, y: dy }, 6)).toBe(aimInRange({ x: dx, y: dy }, from, 6));
+      }
+    }
+  });
+});
+
+describe('AIM-METRIC: movement is untouched — steps for walking', () => {
+  it('a directional shape reaches `range` tile-widths, not `range` steps', () => {
+    const b = openBoard(41);
+    const centre: Vec2 = { x: 20, y: 20 };
+    const axialReach = (dir: Vec2, squares: readonly Vec2[]): number => {
+      const len = Math.hypot(dir.x, dir.y);
+      return Math.max(...squares.map((p) => ((p.x - centre.x) * dir.x + (p.y - centre.y) * dir.y) / len));
+    };
+    // East and south-east both stop at 8 tile-widths. The diagonal used to run
+    // to 11.3 — a 41% longer shot for aiming at a corner.
+    for (const dir of [{ x: 1, y: 0 }, { x: 1, y: 1 }, { x: -1, y: 1 }] as const) {
+      expect(axialReach(dir, lineSquares(b, centre, dir, 8))).toBeLessThanOrEqual(8);
+    }
+    expect(lineSquares(b, centre, { x: 1, y: 1 }, 8).length).toBeLessThan(8);
   });
 });

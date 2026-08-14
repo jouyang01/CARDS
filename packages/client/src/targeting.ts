@@ -56,6 +56,15 @@ export interface OrderDraft {
    * sees this integer. Absent for click-to-aim and for other shapes.
    */
   aimStep?: number;
+  /**
+   * A **catalyst** (CAT2) — a separate slot from `abilityId`, never a
+   * replacement for it. Selecting one must not clear the normal ability, which
+   * is the same mutual-exclusivity trap MS1 fixed for move-and-shoot: the two
+   * are additive, and treating them as one choice makes the mechanic
+   * unreachable. `catalystAim` is its target where the shape needs one.
+   */
+  catalystId?: string;
+  catalystAim: Vec2[];
   /** Sprint = move-only, longer range. Ignored once an ability is chosen. */
   sprint: boolean;
   /** Move-phase path; coexists with a non-dash ability, dropped for a dash. */
@@ -64,7 +73,7 @@ export interface OrderDraft {
 
 /** A blank draft for a unit (holds position until the player chooses). */
 export function emptyDraft(unitId: string): OrderDraft {
-  return { unitId, aim: [], sprint: false, movePath: [] };
+  return { unitId, aim: [], catalystAim: [], sprint: false, movePath: [] };
 }
 
 export interface AbilityOption {
@@ -181,10 +190,11 @@ export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef
  * The rules are the engine's own, not a client approximation:
  * - `path` (dashes/charges) — `range` is a **movement-cost budget** (MET1), so
  *   the envelope is `reachableSquares`, walls and units accounted for.
- * - everything else — `range` is a Manhattan radius, so the envelope is the
- *   diamond `aimInRange` accepts. Wall squares stay in: the engine lets you aim
- *   at one (a circle centred on a wall still catches its neighbours), and an
- *   envelope that quietly disagreed with legality would be a lie.
+ * - everything else — `range` is a **Euclidean** radius (AIM-METRIC), so the
+ *   envelope is the disc `aimInRange` accepts. Wall squares stay in: the engine
+ *   lets you aim at one (a circle centred on a wall still catches its
+ *   neighbours), and an envelope that quietly disagreed with legality would be
+ *   a lie. It reads the engine's predicate, so the disc arrives for free.
  * - `self` — the caster's own square, which is exactly where it lands.
  */
 export function rangeEnvelope(map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef): Vec2[] {
@@ -361,13 +371,17 @@ export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim:
  * tile of its centre, so each outline is that area pushed out by half a tile —
  * which makes Layer 1 exactly the boundary Layer 2 is testing against:
  *
- * - a **line** is a ray `range` tiles along its axis (`alongAxis`), so the beam
- *   draws as a band half a tile to each side of it.
- * - a **cone** is a 45° wedge whose apex sits half a tile ahead of the caster.
+ * - a **line** is a ray `range` **tile-widths** along its axis (AIM-METRIC), so
+ *   the beam draws as a band half a tile to each side of it. The far end is a
+ *   plain step along the unit axis — `alongAxis`'s dominant-axis metering is
+ *   what used to make a diagonal beam 41% too long.
+ * - a **cone** is a 45° wedge from the caster, `range` **tiles** deep (CONE-B —
+ *   a distance, not a tile count, which is what stops a rotated cone growing).
  *   Pushing its edges out half a tile widens each row by 0.71 (½ / cos 45°) and
- *   pulls the apex back behind the caster.
- * - a **circle** is a genuine disk of radius `r`; `r + 0.5` is where the hitbox
- *   of the outermost covered tile is reached.
+ *   pulls the drawn apex that far back behind the caster.
+ * - a **circle** reaches exactly its authored `radius` (CIRCLE-FIX), so `r + 0.5`
+ *   is the outer edge of the outermost covered tile — the tile whose centre sits
+ *   exactly `r` out.
  *
  * `path` and `self` return no outline: a route already draws as a line (AIM1),
  * and a self-cast has no projected shape.
@@ -388,7 +402,10 @@ export function shapeOutline(
   // the two layers this item exists to prevent. A disk is different: the engine
   // drops wall tiles from it without shortening it, so the disk stays whole and
   // the missing tiles beneath it are the point.
-  const reach = Math.min(ability.range, depthReached(from, covered));
+  // Nothing covered means nothing to outline. Asking "is the reach at least a
+  // tile" instead would be wrong now that reach is a projected distance: a beam
+  // that covers exactly one tile can project to 0.9995 of a tile-width.
+  const reach = dir === undefined ? 0 : Math.min(ability.range, depthReached(from, dir, covered));
 
   switch (ability.shape) {
     case 'square':
@@ -396,11 +413,13 @@ export function shapeOutline(
     case 'circle':
       return target === undefined ? [] : diskOutline(target, (ability.radius ?? 1) + HALF_TILE);
     case 'line': {
-      if (dir === undefined || reach < 1) return [];
+      if (dir === undefined || covered.length === 0) return [];
       // The far end reaches the OUTER EDGE of the last covered tile, not its
       // centre — a beam that stopped at the centre would leave the tile it hits
       // half outside the shape that is supposed to explain it.
-      const end = alongAxis(dir, reach + HALF_TILE);
+      const axis = unitVector(dir);
+      const far = reach + HALF_TILE;
+      const end = { x: axis.x * far, y: axis.y * far };
       const n = perpUnit(dir);
       // A band, not a hairline: the beam covers the tiles whose centres it runs
       // through, so it is drawn a tile wide.
@@ -412,25 +431,25 @@ export function shapeOutline(
       ];
     }
     case 'cone': {
-      if (dir === undefined || reach < 1) return [];
+      if (dir === undefined || covered.length === 0) return [];
       const axis = unitVector(dir);
       const n = perpUnit(dir);
-      // The engine's wedge has its apex half a tile ahead and 45° edges. Under
-      // HITBOX1 a tile is covered when that wedge comes within half a tile of
-      // its centre, so the silhouette is the wedge pushed out by half a tile:
-      // sliding a 45° edge sideways by ½ moves it ½/cos45° = 0.71 across, which
-      // widens every row by that much and drags the apex back behind the caster.
+      // The engine's wedge (CONE-B) starts at the caster with 45° edges and is
+      // capped `reach` tiles out — all of it measured in **tiles**, which is why
+      // the far end is a plain step along the unit axis and not `alongAxis`'s
+      // dominant-axis metering. Under HITBOX1 a tile is covered when that wedge
+      // comes within half a tile of its centre, so the silhouette is the wedge
+      // pushed out by half a tile: sliding a 45° edge sideways by ½ moves it
+      // ½/cos 45° = 0.71 across, widening every row by that much and dragging
+      // the drawn apex that far back behind the caster.
       const grow = HALF_TILE * Math.SQRT2;
-      const apex = {
-        x: from.x + axis.x * (HALF_TILE - grow),
-        y: from.y + axis.y * (HALF_TILE - grow),
-      };
-      const far = alongAxis(dir, reach + HALF_TILE);
-      const half = reach + grow;
+      const apex = { x: from.x - axis.x * grow, y: from.y - axis.y * grow };
+      const far = reach + HALF_TILE;
+      const half = far + grow;
       return [
         apex,
-        { x: from.x + far.x - n.x * half, y: from.y + far.y - n.y * half },
-        { x: from.x + far.x + n.x * half, y: from.y + far.y + n.y * half },
+        { x: from.x + axis.x * far - n.x * half, y: from.y + axis.y * far - n.y * half },
+        { x: from.x + axis.x * far + n.x * half, y: from.y + axis.y * far + n.y * half },
       ];
     }
     case 'path':
@@ -440,14 +459,21 @@ export function shapeOutline(
 }
 
 /**
- * How far a directional shape got, in tiles along its axis. `alongAxis` divides
- * by the dominant component, so a covered tile at depth `d` always sits exactly
- * `d` away on that component — `max(|dx|, |dy|)` recovers the depth exactly,
- * for any rotation, with no trig and no projection error.
+ * How far a directional shape actually got, in **tile-widths along its axis**
+ * (AIM-METRIC). Truncation is the only reason to ask: a beam stopped by a wall
+ * must not be drawn carrying on through it.
+ *
+ * Projecting onto the axis is the honest measure now that reach is a distance —
+ * `max(|dx|, |dy|)` was right only while depth was metered on the dominant
+ * component, and would over-report a rotated shape's reach by up to √2.
  */
-function depthReached(from: Vec2, covered: readonly Vec2[]): number {
+function depthReached(from: Vec2, dir: Vec2, covered: readonly Vec2[]): number {
+  const len = Math.hypot(dir.x, dir.y);
+  if (len === 0) return 0;
   let deepest = 0;
-  for (const p of covered) deepest = Math.max(deepest, Math.abs(p.x - from.x), Math.abs(p.y - from.y));
+  for (const p of covered) {
+    deepest = Math.max(deepest, ((p.x - from.x) * dir.x + (p.y - from.y) * dir.y) / len);
+  }
   return deepest;
 }
 
@@ -508,7 +534,8 @@ function diskOutline(centre: Vec2, radius: number): Vec2[] {
 
 /** Does this draft carry an actual order, or is the character holding? */
 export function draftHasOrder(draft: OrderDraft): boolean {
-  return draft.abilityId !== undefined || draft.sprint || draft.movePath.length > 0;
+  return draft.abilityId !== undefined || draft.catalystId !== undefined
+    || draft.sprint || draft.movePath.length > 0;
 }
 
 /** Is a drawn move path legal right now (delegates to the engine)? */
@@ -524,6 +551,11 @@ export function pathValid(map: MapDef, state: GameState, unit: UnitState, path: 
 export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOrders {
   const ability = draftAbility(character, draft);
   const order: UnitOrders = { unitId: draft.unitId };
+  // A catalyst rides alongside whatever else the turn does — it is additive, so
+  // it is written first and never gates any of the branches below (CAT2).
+  if (draft.catalystId !== undefined) {
+    order.catalyst = { abilityId: draft.catalystId, target: draft.catalystAim.map((p) => ({ x: p.x, y: p.y })) };
+  }
   if (ability !== undefined) {
     order.ability = { abilityId: ability.id, target: draft.aim.map((p) => ({ x: p.x, y: p.y })) };
     // Only directional shapes rotate; sending a step for a circle would be noise
@@ -545,6 +577,7 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
  */
 export type DraftAction =
   | { type: 'selectAbility'; abilityId: string; isDash: boolean }
+  | { type: 'selectCatalyst'; catalystId: string }
   | { type: 'selectMove' }
   | { type: 'selectSprint' }
   | { type: 'clear' };
@@ -555,13 +588,21 @@ export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash:
       // Choosing an ability clears sprint and re-aims; a dash owns the movement
       // so it drops any drawn move, a non-dash ability keeps it (move AND shoot).
       return { ...draft, abilityId: action.abilityId, sprint: false, aim: [], movePath: action.isDash ? [] : draft.movePath };
+    case 'selectCatalyst':
+      // A catalyst is a SEPARATE slot: everything else in the draft survives,
+      // including the chosen ability and its aim. Re-picking the same one
+      // deselects it, so the slot can be given back without clearing the turn.
+      return draft.catalystId === action.catalystId
+        ? { ...draft, catalystId: undefined, catalystAim: [] }
+        : { ...draft, catalystId: action.catalystId, catalystAim: [] };
     case 'selectMove':
       // "Draw move" keeps a non-dash ability; a dash (or no ability) is replaced.
       return draft.abilityId !== undefined && !currentIsDash
         ? { ...draft, sprint: false, movePath: [] }
         : { ...draft, abilityId: undefined, aim: [], sprint: false, movePath: [] };
     case 'selectSprint':
-      // Sprint is move-only (8) and clears any ability.
+      // Sprint is move-only (8) and clears any ability — but NOT the catalyst,
+      // which never prices the turn (FREE1 budget independence).
       return { ...draft, abilityId: undefined, aim: [], sprint: true, movePath: [] };
     case 'clear':
       return emptyDraft(draft.unitId);

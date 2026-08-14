@@ -1284,6 +1284,235 @@ engine fix from shipping.
    rulings as implemented are written up in this file under today's entries — they should
    probably be mirrored there by whoever owns it.
 
+## 2026-08-26 — CONE-B (Builder)
+
+**(1) The ramp is one tile of half-width per tile of axial depth, and that value is not a
+balance call.** The ruling asks the Designer to set `halfWidth` so the axis-aligned footprint
+matches the reach the damage was tuned against. A 45° ramp is exactly that value: with it,
+an axis-aligned cone covers 3 / 8 / 15 / 24 tiles at ranges 1–4 — **tile for tile what it
+covered before CONE-B**. So the Builder did not pick a number; it picked the one that changes
+nothing on-axis, which is what the ruling asked for. A test pins those four counts.
+
+**(2) The ramp is fixed in the engine, not a data field — retuning it is an ENGINE ASK.** The
+45° edge direction is baked into the integer predicate (the `(1,1)` edge, the `2·perp² ≤ d2`
+comparison, the corner at `(range, range)`). A general slope is derivable but pushes the
+squared intermediates up by a factor of k⁴, which needs its own overflow audit. Nobody has
+asked for a different cone angle, so the minimal compliant version hard-codes 45° and says so.
+Raised in Open Questions.
+
+**(3) A cone's range is now a Euclidean distance; a line's is still a tile count.** That
+asymmetry is the ruling ("the `line` half stands"), and it is worth stating plainly because it
+is the visible trade: a 45° cone no longer stretches √2 further than an axis-aligned one, so
+it reaches fewer diagonal *steps* than it used to. That is the point — the extra reach was
+where the extra area came from.
+
+**(4) "Within ±1 of the axis-aligned count" is not attainable, and the test says what is.**
+The AC asks for ±1. The covered set is the lattice points within half a tile of the region;
+the region's area is now exactly rotation-invariant, so what remains is how the lattice
+samples the **boundary band**, whose area scales with the perimeter and therefore with range.
+The axis-aligned case is not the mean of that distribution — it is the bottom of it, because
+the lattice lines up with the edges. Measured over all 256 quantized rotations:
+
+| range | before: axis → worst | after: axis → worst |
+|---|---|---|
+| 2 | 8 → 12 (+50%) | 8 → 10 (+25%) |
+| 3 | 15 → 25 (+67%) | 15 → 19 (+27%) |
+| 4 | 24 → 42 (+75%) | 24 → 29 (+21%) |
+| 8 | 80 → 150 (+88%) | 80 → 88 (+10%) |
+
+The old excess grew **quadratically** with range; the new one grows with the perimeter. The
+shipped roster's cones are all `range: 2`, where the spread is now +2/−0 tiles. The test
+asserts the derived bound `[axis − 1, axis + range + 1]`, verified to hold for every one of
+the 256 rotations at ranges 1–8, rather than a ±1 it cannot honestly claim. Flagged for the
+Analyzer to confirm or re-spec.
+
+**(5) Verification.** The integer predicate was cross-checked against an exact floating-point
+reference (distance from the tile centre to the triangle) over all 256 aim steps × the 8
+compass directions × ranges 1–8 × the full offset box: **582,912 comparisons, zero
+mismatches**. Largest intermediate 3.7e13, comfortably below 2^53. Every comparison against
+`|V| = √d2` is resolved by a sign guard plus a squared comparison, so there is still no
+`Math.sqrt` and no trig anywhere in the engine.
+
+**(6) The HITBOX1 cross-engine signature changed on purpose.** It is a golden value over every
+shape at every aim; a deliberate change to the cone rule moves it. Regenerated in the same
+commit, which is the point of having it — the number moving is the review signal.
+
+## 2026-08-26 — VISION1-opening (Builder)
+
+**The leak was not reproducible on any reachable configuration — but the code only avoided it
+by accident, so it is now avoided on purpose.** Driving the shipped build in a real browser
+and sampling the canvas from the first drawn frame onward, the enemy team never appeared:
+zero team-1 pixels at every sample, on `duel-arena` 2v2/4v4 and `iron-basin` 4v4 (spawn
+separation 13, `VISION_RANGE` 6, so no seat can see the other team at open). The reason it
+held is worth writing down, because it is not a reason to rely on: `startHotSeat` runs
+`renderer.start()` and `beginTurn()` inside the **same task**, so the first Decision frame was
+painted before the first `requestAnimationFrame` ever fired. Any `await` landing between them
+— a font, an asset, an M3 lobby handshake — would have reintroduced the full-board flash
+silently, and nothing would have caught it.
+
+So VISION1-opening ships as a structural fix rather than a bug fix: one `paintFog(team)` is
+now the single place fog is applied, and it is called explicitly **before the render loop
+starts**, so the opening frame is correct by construction rather than by scheduling. Tests
+pin both halves — a client test that turn 1 with no orders hides exactly what a later turn
+hides (and that both shipped maps open with the enemy team invisible in every format), and an
+e2e that samples from the first drawn frame instead of settling for 600ms first, which is
+precisely long enough to miss a one-frame flash.
+
+If the owner saw the enemy team on open, the most likely explanation is a Pages build from
+before VISION1 — worth confirming with them rather than assuming, since a fix for a bug that
+was never there is a fix that can regress unnoticed. Raised in Open Questions.
+
+## 2026-08-26 — CAT1 catalysts (Builder)
+
+**(1) `free: true` outside Prep is legal exactly when `oncePerMatch` is set.** FREE1's
+validation says free abilities must be Prep; CAT1 says every catalyst is `free: true` and
+three of them are Dash/Blast. Both texts are in edge-cases, so this is a genuine conflict and
+the minimal compliant resolution is the one the FREE1 ruling gives its own reason for: the
+restriction exists because a *repeatable* free attack is too strong, and `oncePerMatch` is
+precisely the property that removes that ("repeatable free Dash/Blast actions are the
+catalysts' job — once-per-match, self-limiting"). So the check is now "Prep **unless**
+oncePerMatch", `energyGain: 0` stays unconditional, and nothing else relaxed.
+
+**(2) The catalyst pool reaches the engine as an optional fifth argument to `resolveTurn`.**
+Catalysts are content, so they cannot live in `GameState`, and they are not on any character,
+so `Roster` cannot find them. Widening `Roster` into an object would have touched 25 call
+sites across 20 files and buried the actual change; an additive parameter touches none. With
+no pool passed, a `catalyst` order is dropped exactly like any other unusable component —
+deterministic, never a throw — so an older caller keeps working and simply has no catalysts.
+A test pins that.
+
+**(3) `data/catalysts.json` is a transcription, not a design.** The AC names the file and
+assigns CAT1 to the Builder, but `data/` is the Designer's. Every value in it — the nine
+catalysts, their effects, amounts and durations — is copied verbatim from
+`docs/design/free-actions-and-catalysts.md` §2.2, and the file says so at the top. The
+Designer owns any change. Flagged in Open Questions.
+
+**(4) A range-0 catalyst with no aim targets its own caster.** Suppression is a `circle` of
+range 0 centred on the caster, so the caster's square is the *only* legal aim — rejecting an
+absent one would make it undeclarable, which is the kind of silent nothing this batch exists
+to avoid. Scoped to catalyst planning; ordinary abilities are untouched.
+
+**(5) A Shift is planned for, not planned around.** A Shift resolves at the start of Dash, so
+everything the unit does from Dash onward happens at its landing square: the dash/blast
+ability and the move path are validated from there, and only the Prep ability keeps the
+original square. The ruling ("a Shift resolves before a dash ability the same unit declared")
+means nothing otherwise — the dash would simply be dropped as non-adjacent. Because a
+teleport can be blocked, `runDash` then checks the unit actually arrived and discards those
+plans if it did not; and `runMove` re-checks that the first step is adjacent to where the unit
+really is, so a Move can never become a second teleport.
+
+**(6) When a free ability and a catalyst are ordered together, the catalyst yields.** The
+one-free-action-per-turn rule needs a tiebreak and the ruling does not give one. A catalyst is
+once per match and a free ability is on cooldown, so burning the catalyst is the worse of the
+two mistakes to make on the player's behalf. It stays unspent.
+
+**(7) `AbilityOrder.target` is now optional.** A `self` shape has nothing to aim at, and the
+resolver already read it as `order.target ?? []`. Requiring an empty array to declare Fade or
+Adrenaline was a papercut with no upside. Strict widening — no existing caller changes.
+
+**(8) A Blast-applied Haste cannot extend the same turn's walk — flagged, not fixed.** Move
+paths are validated against the pre-turn budget and only re-clamped *downward* at Move time,
+so Overdrive's Haste can offset a Slow but cannot buy squares. That makes Overdrive read
+slightly weaker than its description ("the Haste lands on the Move that follows it"). Fixing
+it means validating moves optimistically and letting the Move-phase clamp be the only
+enforcement, which changes move semantics for every ability — out of scope for CAT1 and not
+the Builder's call. Pinned by a test so the behaviour is stated rather than discovered.
+
+## 2026-08-26 — CAT2 catalyst UI (Builder)
+
+**(1) A catalyst has its own draft slot, its own aim and its own overlay layer.** The MS1 trap
+one layer up: if selecting a catalyst cleared the chosen ability, a catalyst could only be
+used *instead of* your turn, which is the opposite of a free action — and it would look like
+a working feature the whole way through, because the button highlights, the order sends and
+the engine accepts it. So `OrderDraft` gains `catalystId` + `catalystAim` beside `abilityId` +
+`aim`, `interaction.mode` gains a `'catalyst'` value, and the board paints a separate green
+overlay. A Shift's destination and a Rail Shot's beam are two decisions on one turn and have
+to be readable at the same time.
+
+**(2) Re-picking the selected catalyst gives the slot back.** There is no other way to change
+your mind: a catalyst is once per match, so a player who armed the wrong one needs to
+un-arm it without clearing the rest of the turn. Swapping to a different one clears the old
+aim, so a Shift destination can never be sent with an Adrenaline.
+
+**(3) Spent slots keep their name and go dim rather than disappearing.** An empty box tells
+you nothing about what you spent, and "what did I already use" is exactly the question a
+once-per-match resource makes you ask. `spent` is read from the engine's `catalystsUsed`, not
+inferred from the event log — a slot greyed out because an event was missed would be a lie
+the player cannot argue with.
+
+**(4) The pool is validated at startup like the map is.** `main.ts` runs `validateCatalysts`
+and refuses to start on a bad pool, listing the problems. A catalyst that silently fails to
+resolve is the worst outcome for a once-per-match resource, and the check costs nothing.
+
+## Open Questions for the Analyzer — 2026-08-26 (CONE-B / VISION1-opening / FREE1 / CAT1 / CAT2)
+
+1. **HITBOX-tune was NOT done — it is routed to the Designer, per your own note.** The item is
+   `data/characters/*.json` only and both the Analyzer Note and the Spec Notes say the Builder
+   must not set the numbers. Nothing in `data/characters/` was touched. The reach CONE-B
+   preserves is today's axis-aligned cone footprint (3/8/15/24 tiles at ranges 1–4), so the
+   Designer's cone retune should be measured against those, not against the inflated off-axis
+   numbers. Circles are untouched by CONE-B and still carry the full HITBOX1 growth (r1 5→9,
+   r2 13→21, r3 25→37) — they are the bigger half of the retune.
+
+2. **CONE-B cannot hit "±1 of the axis-aligned count" and the test says what it does hit.**
+   The region's *area* is now exactly rotation-invariant; what varies is how the lattice
+   samples the half-tile boundary band, which scales with the perimeter and so with range. The
+   axis-aligned case sits at the **bottom** of that distribution because the lattice lines up
+   with the edges, so it is not the centre to be ±1 of. Measured over all 256 rotations: range
+   2 → 8..10 (was 6..12), range 4 → 24..29 (was 20..42), range 8 → 80..88 (was 74..150). The
+   shipped test asserts `[axis − 1, axis + range + 1]`, verified for every rotation at ranges
+   1–8. Confirm or re-spec the tolerance.
+
+3. **The cone half-width ramp is a fixed 45°, in the engine, not in data.** It is the value
+   that leaves the axis-aligned footprint untouched, so it was not a balance pick — but the
+   edge direction is baked into the integer predicate, and a different slope needs its own
+   overflow audit (the squared intermediates scale as k⁴). If the Designer wants a tunable
+   ramp, that is an **ENGINE ASK**, not a data change.
+
+4. **VISION1-opening: I could not reproduce the leak.** Sampling a real browser from the first
+   drawn frame, the enemy team never appears on any reachable config. The old code held only
+   because `beginTurn()` ran in the same task as `renderer.start()`; it is now explicit, so it
+   holds on purpose. Worth confirming with the owner whether they saw it on a Pages build from
+   before VISION1 — a fix for a bug that was never there is a fix that can regress unnoticed.
+
+5. **`free: true` + non-Prep now requires `oncePerMatch`.** FREE1's ruling says free abilities
+   are Prep-only; CAT1 ships three free Dash/Blast catalysts. Both are in edge-cases, so the
+   conflict is real. Resolved with the reason FREE1 itself gives — the restriction exists
+   because a *repeatable* free attack is too strong — so the check is "Prep unless
+   oncePerMatch". `energyGain: 0` stays unconditional. Please ratify or re-word the ruling.
+
+6. **`data/catalysts.json` was authored by the Builder as a transcription.** The CAT1 AC names
+   the file and assigns the item to me, but `data/` is the Designer's. Every value is copied
+   verbatim from `docs/design/free-actions-and-catalysts.md` §2.2 and the file says so. The
+   Designer should own it from here.
+
+7. **The one-free-action tiebreak is mine and needs ratifying.** When a unit orders both a free
+   ability and a catalyst, the ruling says at most one may resolve but does not say which. The
+   catalyst yields and stays **unspent** — it is once per match, so burning it is the worse
+   mistake to make on the player's behalf. CAT2's UI does not yet prevent ordering both.
+
+8. **A Blast-applied Haste cannot extend the same turn's walk.** Move paths are validated
+   against the pre-turn budget and only re-clamped downward at Move time, so Overdrive's Haste
+   can offset a Slow but cannot buy squares — which makes Overdrive read weaker than "the Haste
+   lands on the Move that follows it". Fixing it means validating moves optimistically and
+   letting the Move-phase clamp be the only enforcement, changing move semantics for every
+   ability. Out of scope here; pinned by a test so it is stated, not discovered.
+
+9. **Shift changes where the rest of your turn happens, and that needed a rule.** A dash/blast
+   ability and the move path are now planned from the Shift's landing square (only Prep keeps
+   the original), because "a Shift resolves before a dash ability the same unit declared" means
+   nothing otherwise. A blocked teleport discards those plans. **CAT2 does not yet preview
+   this** — the client still aims the ability from the unit's current square, so a Shift +
+   dash combination is orderable but not previewable. Flagging as the natural CAT2 follow-up.
+
+10. **`AbilityOrder.target` is now optional** (a `self` shape has nothing to aim at). Strict
+    widening, no caller changed — noting it because it is a schema change M3's wire format
+    inherits.
+
+11. **Catalyst selection is still the default triad for everyone.** `createMatch` assigns
+    Second Wind / Shift / Adrenaline; the other six are shipped, validated and unreachable
+    until the M3 lobby. Worth confirming that is still the plan rather than, say, a dev URL
+    param in the meantime.
 ## 2026-08-14 — AoE footprints: CONE-B ramp, and circles fixed at the rule (Designer)
 
 Answers backlog HITBOX-tune and supplies CONE-B's ramp. Every number measured against the
@@ -1378,3 +1607,104 @@ Bodyguard hybrid failing at its one job), and Ravok's Bullrush (charge-and-deton
 knockback 2 → 1 because it now applies to an area and the kit's displacement budget allows one
 displacement ≥2). Escapes were deliberately left alone — an escape that also deals AoE is not
 an escape, it is an engage.
+
+## 2026-08-27 — Track A geometry: AIM-METRIC, CONE-B, CIRCLE-FIX, DASH-IMPACT (Builder)
+
+**(1) The line keeps its half-tile band; only its range becomes a distance.** AIM-METRIC makes
+`line` axial depth Euclidean, and CONE-B's `perp² ≤ d²` would make a line (a zero-width wedge)
+cover only tiles exactly on the axis — a rotated beam would hit almost nothing. So the band is
+HITBOX1's, unchanged, and only the cap moved. The visible consequence, asserted rather than
+left to be found: a **diagonal beam covers fewer tiles** than an axis-aligned one of the same
+range, because its tiles are √2 apart. Reach is the invariant; count is not.
+
+**(2) CONE-B needed no geometry change — the predicate already shipped in this branch was
+exactly the re-spec.** `b² ≤ a²` with `a² ≤ range²·|V|²` in the `(a = P·V, b = V×P)` frame *is*
+`perp² ≤ d²` with Euclidean axial range. What was missing was the acceptance check, now added:
+the **reach**, projected onto the axis, lands within **0.5 tile-widths** of the axis-aligned
+figure at every one of the 256 rotations for ranges 1–8. That is the check the tile count
+misses and the one that catches the 4-vs-7 length bug.
+
+**(3) The ±1 cone tile-count AC is not attainable, and the suite asserts the measured bound
+instead.** The region's area is exactly rotation-invariant now; what varies is how the lattice
+samples the half-tile boundary band, which grows with the perimeter and so with range. The
+axis-aligned case is **the bottom of that distribution, not its centre** — the lattice lines up
+with the wedge's edges, so `≤` picks up a whole extra row for free. Measured over all 256
+rotations: r1 3..4, r2 8..10, r3 14..19, r4 24..29, r8 80..88. The suite asserts
+`[axis − 1, axis + range + 1]`, verified for every rotation at ranges 1–8. Making it ±1 would
+require moving the axis-aligned footprint off the owner-approved 3/8/15/24, which is a Designer
+call, not a Builder one. Raised in Open Questions.
+
+**(4) The line's reach check needed its own tolerance.** A beam is one tile wide, so its last
+covered centre can sit up to √2/2 inside the endpoint — measured worst case 1.30 tiles at
+range 8. The suite asserts **over-reach ≤ 0** (the hard half — over-reach was the bug) and
+**shortfall < 1.5** (the soft half, which is the lattice rather than the rule).
+
+**(5) A dash `impact` is an AREA, so FF1 polarity applies to it — and that changes one shipped
+behaviour.** The deleted teleport-strike branch was a "directly aimed" strike and hit allies;
+a blast radius is an area, and harmful area effects reach enemies only. So Shadowstep no longer
+catches an adjacent ally. The same ruling is what makes Aegis's Intercept work: beneficial
+effects reach allies in the blast, which is the Bodyguard fantasy the ability never delivered.
+The caster is excluded from the ally pass and picked up by the existing self-effects, so nobody
+is shielded twice. Asserted both ways.
+
+**(6) `impact.destination` is centred on where the dasher ACTUALLY came to rest.** A charge that
+passes through bodies and stops short detonates where it stopped, not where it aimed. The
+alternative — blasting the ordered square — would let a player detonate on a square they never
+reached. A test drives a charge stopped two squares short.
+
+**(7) The blast is not previewed.** `expandShape` still returns the path (or landing square) for
+a dash, so UI2's overlay shows no blast radius for an ability whose whole point is "leap into
+the middle of them and detonate". Extending `expandShape` was not in DASH-IMPACT's scoped files
+and would change what `a.area` denotes at plan time (aimed) versus resolution (actual rest), so
+it is flagged rather than assumed. Raised in Open Questions.
+
+**(8) `validateAbility` now rejects unknown `impact` members, but still accepts unknown
+top-level `AbilityDef` keys.** The review suggested a general "reject unknown keys" pass. The
+`impact` block is covered; the general pass touches every ability in `data/` and every test
+fixture at once, so it is a separate item rather than a rider on this one.
+
+## Open Questions for the Analyzer — 2026-08-27 (Track A + carryover)
+
+1. **CONE-B's ±1 tile-count AC cannot hold; the suite asserts `[axis − 1, axis + range + 1]`,
+   verified at every one of the 256 rotations for ranges 1–8.** The axis-aligned case is the
+   bottom of the distribution, not its centre (the lattice lines up with the wedge edges). The
+   **reach** half of the AC passes exactly — within 0.5 tile-widths everywhere. Confirm the
+   count bound, or rule a different axis-aligned footprint (a Designer call).
+
+2. **The line's rotation-invariance clause needs re-wording.** "(a) `line`/`cone` tile count
+   within ±1 of axis-aligned" is unattainable for beams by construction: a diagonal beam's tiles
+   are √2 apart, so a range-8 line is 8 tiles east and 5 on the diagonal. The suite asserts
+   `[floor(range/√2), range + 1]` plus the reach cap. The *reach* clause is the meaningful one
+   for lines and it passes.
+
+3. **DASH-IMPACT is not previewed** (DECISIONS (7)). `expandShape` returns the path/landing
+   square, so UI2 shows no blast radius. Natural follow-up item: either extend `expandShape` for
+   `impact` (one authority, preview for free — but `a.area` then means "aimed" while the
+   resolver blasts "actual rest"), or a client-side overlay. Needs a ruling on which.
+
+4. **Shadowstep no longer catches an adjacent ALLY** (DECISIONS (5)) — the deleted branch was a
+   directly-aimed strike, an `impact` is an area, and FF1 filters areas. Ruled as a consequence
+   rather than a choice; flagging because it is a live behaviour change to a shipped ability,
+   and Wisp already carried a rebalance flag.
+
+5. **A general "reject unknown `AbilityDef` keys" pass is not done** (review 2026-08-27 issue 1).
+   `impact` is validated; the general pass touches every ability and fixture at once, so it wants
+   its own item.
+
+6. **Track B and VISION1-opening are built on this branch, not on `main`.** The backlog lists
+   them as carryover because PR #33 is still open — FREE1, CAT1, CAT2 and VISION1-opening are all
+   implemented and tested here. Re-review them against the ACs on this PR rather than scheduling
+   them again. Their open questions from 2026-08-26 (1–11) are still open — in particular the
+   FREE1/CAT1 `free`+`oncePerMatch` conflict resolution, the one-free-action tiebreak, and
+   `AbilityOrder.target` becoming optional.
+
+7. **CAT2's parked "Shift teleport-preview" is ambiguous and half of it already exists.** What
+   ships: selecting Shift arms a `'catalyst'` mode and a board click paints its destination in
+   its own overlay layer. What does **not**: previewing a *normal ability* aimed from the Shift's
+   landing square (the engine plans it from there — CAT1 — but the client still aims from the
+   unit's current position). Confirm which one M3 owns; the shipped half is working and would be
+   a regression to remove.
+
+8. **Ravok's Bullrush is un-nerfed now.** Its `impact:{destination:2}` is live, so the playtest
+   note "Ravok is temporarily undertuned" no longer applies — the knockback is still 2→1 as the
+   Designer set it, but the AoE it was traded for now exists.
