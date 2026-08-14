@@ -69,6 +69,7 @@ import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { fogView, revealedView, type FogView } from './fog.js';
 import { type ViewState } from './playback.js';
 import { statusPips } from './status-pips.js';
+import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -134,6 +135,8 @@ const GUTTER_PX = 32;
  * changed.
  */
 const READOUT_RISE_PX = 34;
+/** Vertical gap between two preview numbers stacked on one unit. */
+const PREVIEW_STACK_PX = 19;
 const READOUT_LIFT = 1.6;
 /** How each readout kind reads. Signs and words, not four identical numbers. */
 const READOUT_TEXT: Record<Readout['kind'], (n: number) => string> = {
@@ -141,6 +144,16 @@ const READOUT_TEXT: Record<Readout['kind'], (n: number) => string> = {
   absorb: (n) => `${n} absorbed`,
   heal: (n) => `+${n}`,
   shield: (n) => `+${n} shield`,
+};
+/**
+ * Plan-time wording. Deliberately NOT the resolution wording: `−40` states a
+ * fact and `40` over an unlocked aim is a projection, so the preview says what
+ * it would do rather than what it did.
+ */
+const PREVIEW_TEXT: Record<PreviewNumber['kind'], (n: number) => string> = {
+  damage: (n) => `${n}`,
+  heal: (n) => `+${n}`,
+  shield: (n) => `+${n}`,
 };
 const now = (): number => performance.now();
 
@@ -250,6 +263,9 @@ export function startHotSeat(
   // and the billboarded bars all need continuous frames, not one render per
   // input event.
   renderer.start();
+  // The camera eases every frame, so the DOM-anchored plan-time numbers have to
+  // be re-placed against the frame that was just drawn or they trail the board.
+  renderer.onFrame(placePreviewNumbers);
   globalThis.addEventListener('resize', () => { sizeToContainer(); fitCamera(); });
   ui.board.addEventListener('click', onBoardClick);
   ui.board.addEventListener('mousemove', onBoardHover);
@@ -284,6 +300,11 @@ export function startHotSeat(
   readoutLayer.className = 'readouts';
   ui.board.appendChild(readoutLayer);
   const readoutNodes = new Map<string, HTMLElement>();
+  // PREVIEW-NUMBERS lives in the same layer but its own map: a resolution
+  // readout is transient and a plan-time preview persists until the aim changes,
+  // so one reconcile pass cannot own both without one clearing the other.
+  const previewNodes = new Map<string, HTMLElement>();
+  let livePreviews: readonly PreviewNumber[] = [];
 
   // The HUD is built ONCE and updated in place (UI3). Rebuilding it per render
   // would fire mouseleave on nodes that no longer exist, so UI1's hover state
@@ -544,6 +565,25 @@ export function startHotSeat(
       0.42,
     );
 
+    // ── PREVIEW-NUMBERS: what each armed action would do, before Lock In ─────
+    // All three slots at once, because all three are armed at once and a player
+    // deciding between two aims wants the turn's total on a unit, not one
+    // ability's share of it. A dash's numbers come from its impact discs, which
+    // is where the damage is actually dealt — the aimed square is only where it
+    // lands. `previewNumbers` applies FF1 polarity, so an ally in your own AoE
+    // gets a red number too.
+    showPreviewNumbers(previewNumbers(state, unit, [
+      ...(chosen !== undefined
+        ? [{ def: chosen, squares: [...covered, ...impact.origin, ...impact.destination] }]
+        : []),
+      ...(freeDef !== undefined && freeAim.length > 0
+        ? [{ def: freeDef, squares: abilityPreview(map, unit, freeDef, freeAim) }]
+        : []),
+      ...(catalystDef !== undefined && catalystAim.length > 0
+        ? [{ def: catalystDef, squares: abilityPreview(map, unit, catalystDef, catalystAim) }]
+        : []),
+    ]));
+
     // ── AIM1 (+UI4): the drawn route as a LINE ───────────────────────────────
     // Shaded reachability says where you *could* go; only a line says which way
     // you chose and in what order. A DASH is the same indicator in yellow (UI4)
@@ -799,6 +839,9 @@ export function startHotSeat(
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
     const player = createTurnPlayer(prev, result.events);
+    // The turn stops being a plan the instant it resolves, so the plan-time
+    // numbers go with the aim overlays rather than lingering over the playback.
+    clearPreviewNumbers();
     for (const layer of ['fog', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawShape([], SHAPE);
@@ -927,7 +970,67 @@ export function startHotSeat(
     readoutNodes.clear();
   }
 
+  /**
+   * PREVIEW-NUMBERS: the plan-time floats. Same layer and same three colours as
+   * UI5's resolution readouts — a player should not have to learn red twice —
+   * but marked `.preview` so "will happen" and "just happened" are still
+   * distinguishable, and pinned rather than rising, because nothing has happened
+   * yet for them to rise away from.
+   */
+  function showPreviewNumbers(numbers: readonly PreviewNumber[]): void {
+    livePreviews = numbers;
+    const live = new Set<string>();
+    let index = 0;
+    for (const n of numbers) {
+      const key = `${n.unitId}:${n.kind}`;
+      live.add(key);
+      let node = previewNodes.get(key);
+      if (node === undefined) {
+        node = document.createElement('div');
+        node.className = `readout preview ${n.kind}`;
+        readoutLayer.appendChild(node);
+        previewNodes.set(key, node);
+      }
+      node.textContent = PREVIEW_TEXT[n.kind](n.amount);
+      node.dataset['slot'] = String(index++);
+    }
+    for (const [key, node] of previewNodes) {
+      if (!live.has(key)) { node.remove(); previewNodes.delete(key); }
+    }
+    placePreviewNumbers();
+  }
+
+  /**
+   * Re-anchor the previews to the current camera. Called every drawn frame:
+   * `focusOn` eases the camera back out when planning resumes, so a number
+   * placed once would sit next to its unit rather than over it for a second.
+   */
+  function placePreviewNumbers(): void {
+    if (previewNodes.size === 0) return;
+    // Several colours on one unit stack upward rather than overprinting.
+    const stack = new Map<string, number>();
+    for (const n of livePreviews) {
+      const node = previewNodes.get(`${n.unitId}:${n.kind}`);
+      if (node === undefined) continue;
+      const square = unitById(n.unitId)?.pos;
+      const at = square === undefined ? undefined : renderer.screenPosition(square.x, square.y, READOUT_LIFT);
+      if (at === undefined) { node.style.display = 'none'; continue; }
+      const tier = stack.get(n.unitId) ?? 0;
+      stack.set(n.unitId, tier + 1);
+      node.style.display = '';
+      node.style.left = `${at.x.toFixed(1)}px`;
+      node.style.top = `${(at.y - tier * PREVIEW_STACK_PX).toFixed(1)}px`;
+    }
+  }
+
+  function clearPreviewNumbers(): void {
+    livePreviews = [];
+    for (const node of previewNodes.values()) node.remove();
+    previewNodes.clear();
+  }
+
   function renderGameOver(): void {
+    clearPreviewNumbers();
     renderer.show(toRenderUnits(revealedView(state, currentSeat()?.team ?? 0).units), []);
     for (const layer of ['fog', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);

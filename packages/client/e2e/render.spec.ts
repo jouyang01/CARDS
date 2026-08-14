@@ -401,3 +401,45 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
   // fringe cannot pass for a painted square.
   expect(bestAimed, 'the aim overlay did not survive the brush tiles').toBeGreaterThan(20);
 });
+
+/**
+ * PREVIEW-NUMBERS — "Players should know what their action is going to do."
+ *
+ * The polarity and the amounts are unit-covered; what only a browser can say is
+ * whether the floats are in the DOM, anchored over the board, and gone again
+ * once the turn stops being a plan.
+ */
+test('an aimed action floats its numbers before Lock In (PREVIEW-NUMBERS)', async ({ page }) => {
+  await page.goto('./?map=duel-arena&format=4v4');
+  await expect(boardCanvas(page)).toBeVisible();
+  await page.waitForTimeout(700);
+
+  const previews = page.locator('.readout.preview');
+  await expect(previews).toHaveCount(0); // nothing armed, nothing promised
+
+  // Sweep the board until an aim covers somebody. Which square that is depends
+  // on spawns and on the first ability's shape, so this searches rather than
+  // guessing — including the seat's own column, since friendly fire means an
+  // ally in your own area is a legitimate (and important) red number.
+  await page.locator('.hud-ability:not([disabled])').first().click();
+  const spots: [number, number][] = [];
+  for (let ix = 1; ix <= 9; ix++) for (let iy = 1; iy <= 5; iy++) spots.push([ix / 10, iy / 6]);
+  for (const [fx, fy] of spots) {
+    if ((await previews.count()) > 0) break;
+    await pointAt(page, fx, fy);
+  }
+  expect(await previews.count(), 'no aim over the board ever previewed a number').toBeGreaterThan(0);
+
+  // A number, positioned over the board — not a stray empty node in the corner.
+  const first = previews.first();
+  await expect(first).toHaveText(/^[+]?\d+$/);
+  const box = (await first.boundingBox())!;
+  const board = (await boardCanvas(page).boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(board.x - 40);
+  expect(box.x).toBeLessThanOrEqual(board.x + board.width + 40);
+
+  // Locking in resolves the turn, and a resolved turn is no longer a plan.
+  await lockIn(page).click();
+  await page.waitForTimeout(400);
+  await expect(previews).toHaveCount(0);
+});

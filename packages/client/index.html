@@ -113,6 +113,13 @@
       .readout.absorb { color: var(--shield); font-size: 13px; font-weight: 700; }
       .readout.heal { color: var(--hp); font-size: 18px; }
       .readout.shield { color: var(--shield); font-size: 14px; font-weight: 700; }
+      /* PREVIEW-NUMBERS: the same three colours, because red should mean damage
+         once and not twice — but outlined and slightly smaller, so "this WILL
+         happen" never reads as "this just happened". */
+      .readout.preview { font-size: 15px; font-weight: 700; opacity: 0.95;
+        padding: 0 4px; border-radius: 4px; background: rgb(10 12 16 / 0.55);
+        border: 1px solid currentColor; }
+      .readout.preview.damage { font-size: 16px; }
 
       /* ── UI6: the combat log, right side, independently scrollable ───────── */
       .log { position: fixed; top: 0; right: 0; bottom: 0; width: 300px; z-index: 4;

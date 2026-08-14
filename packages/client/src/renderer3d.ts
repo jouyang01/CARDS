@@ -214,6 +214,15 @@ export interface Renderer {
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
+  /**
+   * Run `cb` after every drawn frame, or clear it with `undefined`.
+   *
+   * The camera eases, so anything anchored to a *screen* position — the DOM
+   * readout layer — has to be re-placed once per frame or it lags behind the
+   * board it is labelling. Playback already does this from its own tween loop;
+   * this is the same hook for the decision phase, which has no loop of its own.
+   */
+  onFrame(cb: (() => void) | undefined): void;
   resize(width: number, height: number): void;
   render(): void;
   dispose(): void;
@@ -565,10 +574,14 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   }, { passive: false });
 
   let frameHandle: number | undefined;
+  let afterFrame: (() => void) | undefined;
   const drawFrame = (): void => {
     stepCamera();
     billboard();
     renderer.render(scene, camera);
+    // After the camera has moved, so anything DOM-anchored to a world position
+    // is repositioned against the frame that was actually just drawn.
+    afterFrame?.();
   };
 
   applyCamera();
@@ -803,6 +816,10 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
       mesh.position.y = SHAPE_LIFT;
       g.add(mesh);
+    },
+
+    onFrame(cb) {
+      afterFrame = cb;
     },
 
     start() {
