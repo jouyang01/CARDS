@@ -30,10 +30,10 @@
  *   area.
  * - **circle** is a true Euclidean disk of the ability's radius centred on the
  *   aimed square — round, not a Chebyshev block.
- * - a **line**'s reach is a TILE COUNT along its axis, so a rotated line reaches
- *   as many tiles as an axis-aligned one; a **cone**'s is a Euclidean tile
- *   distance (CONE-B supersedes the cone half of that ruling); aimed-square
- *   reach (`square`/`circle` centre) is MANHATTAN (MET1, GAME_SPEC §3).
+ * - **every ability range is a EUCLIDEAN tile distance** (AIM-METRIC): the axial
+ *   depth of a `line`/`cone`, the aim range of a `square`/`circle`, and a
+ *   `circle`'s radius. Movement, sprint, `path` dash length and vision stay
+ *   MANHATTAN (MET1) — steps for walking, distance for aiming.
  * Walls and out-of-bounds squares are excluded from every area.
  */
 
@@ -154,18 +154,21 @@ export function dominantCardinal(from: Vec2, to: Vec2): Vec2 {
 /**
  * Squares a ray covers, caster excluded, stopping at the first wall.
  *
- * The area is the segment from the caster's centre out to `range` tiles along
- * the axis; a tile is covered when that segment passes within half a tile of
- * its centre, so the beam reads as a one-tile-wide band. `dir` may be a compass
- * unit step or a quantized aim vector from `stepToVector`; `range` is a tile
- * count along the axis, so a rotated line reaches as far as an axis-aligned one.
+ * The area is the segment from the caster's centre out to `range` **tile-widths**
+ * along the axis (AIM-METRIC); a tile is covered when that segment passes within
+ * half a tile of its centre, so the beam reads as a one-tile-wide band. `dir` may
+ * be a compass unit step or a quantized aim vector from `stepToVector`.
+ *
+ * Because the reach is a distance rather than a step count, a diagonal beam
+ * covers fewer *tiles* than an axis-aligned one of the same range — its tiles
+ * are √2 apart. That is the nerf, not a bug: a range-8 line used to reach 11.3
+ * tiles on the diagonal and now reaches 8 whichever way it points.
  */
 export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number): Vec2[] {
-  const m = Math.max(Math.abs(dir.x), Math.abs(dir.y));
-  if (m === 0 || range < 1) return [];
   const d2 = dir.x * dir.x + dir.y * dir.y;
-  // The far end sits `range` tiles along the dominant axis, so no covered tile
-  // is further than that on either axis; +1 for the hitbox, +1 for headroom.
+  if (d2 === 0 || range < 1) return [];
+  // The beam ends `range` tile-widths out, so nothing beyond that box can be in
+  // it; +1 for the half-tile band, +1 for headroom.
   const reach = range + 2;
   const hits: { readonly p: Vec2; readonly depth: number }[] = [];
   for (let dy = -reach; dy <= reach; dy++) {
@@ -174,13 +177,12 @@ export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number):
       const dot = dir.x * dx + dir.y * dy;
       if (dot <= 0) continue; // level with or behind the caster
       const cross = dir.x * dy - dir.y * dx;
-      const covered = dot * m <= range * d2
-        // Alongside the beam: within half a tile of the axis.
-        ? 4 * cross * cross <= d2
-        // Past its end: within half a tile of the endpoint itself. This is what
-        // lets a rotated line reach its full tile count — the endpoint rarely
-        // lands on a lattice point, and the tile it lands *in* still takes it.
-        : sqLen(2 * m * dx - 2 * range * dir.x, 2 * m * dy - 2 * range * dir.y) <= m * m;
+      // Alongside the beam (within half a tile of the axis, HITBOX1) and inside
+      // its **Euclidean** reach (AIM-METRIC). Both sides squared: `dot / |dir|`
+      // is the axial distance in tiles, so `dot² ≤ range²·|dir|²` is "within
+      // `range` tile-widths" with no square root. Metering this in lattice steps
+      // is what used to let a range-8 line reach 11.3 tiles on the diagonal.
+      const covered = 4 * cross * cross <= d2 && dot * dot <= range * range * d2;
       if (covered) hits.push({ p: { x: from.x + dx, y: from.y + dy }, depth: dot });
     }
   }
@@ -390,11 +392,21 @@ export function expandShape(
 }
 
 /**
- * Reach of an *aimed square* from the caster: MANHATTAN (MET1, GAME_SPEC §3).
- * This is the target-square rule, used by `circle`/`square`. Directional shapes
- * (`line`/`cone`) measure range as a tile count along their axis instead, so
- * rotating one does not change how far it reaches (joint AIM2 x MET1 ruling).
+ * Reach of an *aimed square* from the caster: **EUCLIDEAN** (AIM-METRIC).
+ *
+ * Movement is measured in steps, aiming is measured in distance. This is the
+ * target-square rule (`circle`/`square`), and it makes the aimable region a
+ * **disc, not a diamond** — the arbitrary Manhattan restriction is what made a
+ * shot down the row reach further than the same shot on the diagonal. Squared
+ * on both sides, so it stays exact integer arithmetic with no square root, and
+ * a tile exactly `range` away is included.
+ *
+ * Supersedes MET1's circle/square clause. Movement, sprint, `path` dash length
+ * and vision are untouched — MET1 still governs everything that walks, and
+ * vision is perception rather than aiming (a separate owner call).
  */
 export function aimInRange(casterPos: Vec2, target: Vec2, range: number): boolean {
-  return distance(casterPos, target) <= range;
+  const dx = target.x - casterPos.x;
+  const dy = target.y - casterPos.y;
+  return dx * dx + dy * dy <= range * range;
 }

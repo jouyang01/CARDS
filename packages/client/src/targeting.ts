@@ -190,10 +190,11 @@ export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef
  * The rules are the engine's own, not a client approximation:
  * - `path` (dashes/charges) — `range` is a **movement-cost budget** (MET1), so
  *   the envelope is `reachableSquares`, walls and units accounted for.
- * - everything else — `range` is a Manhattan radius, so the envelope is the
- *   diamond `aimInRange` accepts. Wall squares stay in: the engine lets you aim
- *   at one (a circle centred on a wall still catches its neighbours), and an
- *   envelope that quietly disagreed with legality would be a lie.
+ * - everything else — `range` is a **Euclidean** radius (AIM-METRIC), so the
+ *   envelope is the disc `aimInRange` accepts. Wall squares stay in: the engine
+ *   lets you aim at one (a circle centred on a wall still catches its
+ *   neighbours), and an envelope that quietly disagreed with legality would be
+ *   a lie. It reads the engine's predicate, so the disc arrives for free.
  * - `self` — the caster's own square, which is exactly where it lands.
  */
 export function rangeEnvelope(map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef): Vec2[] {
@@ -370,8 +371,10 @@ export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim:
  * tile of its centre, so each outline is that area pushed out by half a tile —
  * which makes Layer 1 exactly the boundary Layer 2 is testing against:
  *
- * - a **line** is a ray `range` tiles along its axis (`alongAxis`), so the beam
- *   draws as a band half a tile to each side of it.
+ * - a **line** is a ray `range` **tile-widths** along its axis (AIM-METRIC), so
+ *   the beam draws as a band half a tile to each side of it. The far end is a
+ *   plain step along the unit axis — `alongAxis`'s dominant-axis metering is
+ *   what used to make a diagonal beam 41% too long.
  * - a **cone** is a 45° wedge from the caster, `range` **tiles** deep (CONE-B —
  *   a distance, not a tile count, which is what stops a rotated cone growing).
  *   Pushing its edges out half a tile widens each row by 0.71 (½ / cos 45°) and
@@ -398,7 +401,10 @@ export function shapeOutline(
   // the two layers this item exists to prevent. A disk is different: the engine
   // drops wall tiles from it without shortening it, so the disk stays whole and
   // the missing tiles beneath it are the point.
-  const reach = Math.min(ability.range, depthReached(from, covered));
+  // Nothing covered means nothing to outline. Asking "is the reach at least a
+  // tile" instead would be wrong now that reach is a projected distance: a beam
+  // that covers exactly one tile can project to 0.9995 of a tile-width.
+  const reach = dir === undefined ? 0 : Math.min(ability.range, depthReached(from, dir, covered));
 
   switch (ability.shape) {
     case 'square':
@@ -406,11 +412,13 @@ export function shapeOutline(
     case 'circle':
       return target === undefined ? [] : diskOutline(target, (ability.radius ?? 1) + HALF_TILE);
     case 'line': {
-      if (dir === undefined || reach < 1) return [];
+      if (dir === undefined || covered.length === 0) return [];
       // The far end reaches the OUTER EDGE of the last covered tile, not its
       // centre — a beam that stopped at the centre would leave the tile it hits
       // half outside the shape that is supposed to explain it.
-      const end = alongAxis(dir, reach + HALF_TILE);
+      const axis = unitVector(dir);
+      const far = reach + HALF_TILE;
+      const end = { x: axis.x * far, y: axis.y * far };
       const n = perpUnit(dir);
       // A band, not a hairline: the beam covers the tiles whose centres it runs
       // through, so it is drawn a tile wide.
@@ -422,7 +430,7 @@ export function shapeOutline(
       ];
     }
     case 'cone': {
-      if (dir === undefined || reach < 1) return [];
+      if (dir === undefined || covered.length === 0) return [];
       const axis = unitVector(dir);
       const n = perpUnit(dir);
       // The engine's wedge (CONE-B) starts at the caster with 45° edges and is
@@ -450,14 +458,21 @@ export function shapeOutline(
 }
 
 /**
- * How far a directional shape got, in tiles along its axis. `alongAxis` divides
- * by the dominant component, so a covered tile at depth `d` always sits exactly
- * `d` away on that component — `max(|dx|, |dy|)` recovers the depth exactly,
- * for any rotation, with no trig and no projection error.
+ * How far a directional shape actually got, in **tile-widths along its axis**
+ * (AIM-METRIC). Truncation is the only reason to ask: a beam stopped by a wall
+ * must not be drawn carrying on through it.
+ *
+ * Projecting onto the axis is the honest measure now that reach is a distance —
+ * `max(|dx|, |dy|)` was right only while depth was metered on the dominant
+ * component, and would over-report a rotated shape's reach by up to √2.
  */
-function depthReached(from: Vec2, covered: readonly Vec2[]): number {
+function depthReached(from: Vec2, dir: Vec2, covered: readonly Vec2[]): number {
+  const len = Math.hypot(dir.x, dir.y);
+  if (len === 0) return 0;
   let deepest = 0;
-  for (const p of covered) deepest = Math.max(deepest, Math.abs(p.x - from.x), Math.abs(p.y - from.y));
+  for (const p of covered) {
+    deepest = Math.max(deepest, ((p.x - from.x) * dir.x + (p.y - from.y) * dir.y) / len);
+  }
   return deepest;
 }
 

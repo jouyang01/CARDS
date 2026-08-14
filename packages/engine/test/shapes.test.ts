@@ -64,13 +64,15 @@ describe('lineSquares', () => {
     ]);
   });
 
-  it('walks diagonals too', () => {
+  it('AIM-METRIC: a diagonal beam reaches `range` tile-WIDTHS, so fewer tiles', () => {
     const b = openBoard(11);
-    const out = lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 1 }, 2);
-    expect(out).toEqual([
-      { x: 6, y: 6 },
-      { x: 7, y: 7 },
-    ]);
+    // Range 2 on the diagonal is 2 tile-widths ≈ 1.41 diagonal steps, so it
+    // covers one tile. Under the old step-count metering it covered two and
+    // reached 2.83 tiles — the over-reach AIM-METRIC removes.
+    expect(lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 1 }, 2)).toEqual([{ x: 6, y: 6 }]);
+    expect(lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 1 }, 3)).toEqual([{ x: 6, y: 6 }, { x: 7, y: 7 }]);
+    // …while the same range pointed east is unchanged: 3 tiles, reaching 3.
+    expect(lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 0 }, 3)).toHaveLength(3);
   });
 
   it('stops before the first wall but passes over cover', () => {
@@ -92,7 +94,7 @@ describe('lineSquares', () => {
     // A due-SE beam runs exactly through the shared corner of (5,6) and (6,5).
     // Nicking a corner is not a hit — their centres are 0.71 from the beam.
     const out = posKeys(lineSquares(b, { x: 5, y: 5 }, { x: 1, y: 1 }, 3));
-    expect(out).toEqual(posKeys([{ x: 6, y: 6 }, { x: 7, y: 7 }, { x: 8, y: 8 }]));
+    expect(out).toEqual(posKeys([{ x: 6, y: 6 }, { x: 7, y: 7 }]));
   });
 });
 
@@ -211,11 +213,13 @@ describe('CONE-B: rotating a cone does not change its size', () => {
 
   it('a cone reaches `range` tiles as a DISTANCE, so a diagonal one is shorter in steps', () => {
     // The trade CONE-B makes, stated out loud: a 45° cone no longer stretches
-    // √2 further than an axis-aligned one. `line` keeps the tile-count reading.
+    // √2 further than an axis-aligned one. AIM-METRIC gives `line` the same
+    // reading, so a diagonal range-4 beam is 2 tiles, not 4.
     const diagonal = coneSquares(b, centre, { x: 1, y: 1 }, 4);
-    const deepest = Math.max(...diagonal.map((p) => Math.abs(p.x - centre.x) + Math.abs(p.y - centre.y)));
-    expect(deepest).toBeLessThanOrEqual(8); // 4 tiles of distance, not 4 diagonal steps
-    expect(lineSquares(b, centre, { x: 1, y: 1 }, 4)).toHaveLength(4); // line unchanged
+    const deepest = Math.max(...diagonal.map((p) => Math.hypot(p.x - centre.x, p.y - centre.y)));
+    // Its far corner sits at range·√2, plus the half-tile hitbox — and no more.
+    expect(deepest).toBeLessThanOrEqual(4 * Math.SQRT2 + 0.5);
+    expect(lineSquares(b, centre, { x: 1, y: 1 }, 4)).toHaveLength(2);
   });
 });
 
@@ -364,7 +368,7 @@ describe('HITBOX1: cross-engine determinism', () => {
   }
 
   it('every shape, every aim step, every range folds to a fixed value', () => {
-    expect(signature()).toBe(-736229090);
+    expect(signature()).toBe(271561358);
   });
 
   it('is stable across repeated calls (no hidden state, no ordering drift)', () => {
@@ -383,12 +387,67 @@ describe('HITBOX1: cross-engine determinism', () => {
   });
 });
 
-describe('aimInRange', () => {
-  it('measures MANHATTAN distance to the aimed square (MET1)', () => {
-    expect(aimInRange({ x: 0, y: 0 }, { x: 4, y: 0 }, 4)).toBe(true); // straight out
-    expect(aimInRange({ x: 0, y: 0 }, { x: 2, y: 2 }, 4)).toBe(true); // 2+2 = 4
-    expect(aimInRange({ x: 0, y: 0 }, { x: 5, y: 0 }, 4)).toBe(false);
-    // The diagonal corner the old Chebyshev metric allowed is now distance 8.
-    expect(aimInRange({ x: 0, y: 0 }, { x: 4, y: 4 }, 4)).toBe(false);
+/**
+ * AIM-METRIC — movement is measured in steps, aiming is measured in distance.
+ *
+ * Both of the geometry bugs this batch fixes had one root cause: lattice-step
+ * metering applied to projected geometry. A step count is the right rule for
+ * *walking*, where the step is the atom; it is the wrong rule for *aiming*,
+ * where the shape has to describe the same thing whichever way it points.
+ */
+describe('AIM-METRIC: an aimed square is EUCLIDEAN, and the region is a disc', () => {
+  const from = { x: 0, y: 0 };
+
+  it('a tile exactly `range` away is in, one past it is out', () => {
+    expect(aimInRange(from, { x: 4, y: 0 }, 4)).toBe(true);
+    expect(aimInRange(from, { x: 0, y: -4 }, 4)).toBe(true);
+    expect(aimInRange(from, { x: 5, y: 0 }, 4)).toBe(false);
+  });
+
+  it('the diagonal is a distance, not a step count — the diamond is gone', () => {
+    // (3,3) is 4.24 away: Manhattan called it 6 and refused it, Euclidean
+    // refuses it for the honest reason. (2,3) is 3.61 — inside, and Manhattan
+    // called it 5 and refused it too.
+    expect(aimInRange(from, { x: 2, y: 3 }, 4)).toBe(true);
+    expect(aimInRange(from, { x: 3, y: 3 }, 4)).toBe(false);
+    expect(aimInRange(from, { x: 2, y: 2 }, 4)).toBe(true);
+  });
+
+  it('the aimable region grows from a diamond to a disc, by the ruled figures', () => {
+    const count = (range: number): number => {
+      let n = 0;
+      for (let dy = -range; dy <= range; dy++) {
+        for (let dx = -range; dx <= range; dx++) if (aimInRange(from, { x: dx, y: dy }, range)) n += 1;
+      }
+      return n;
+    };
+    // The Designer's measured numbers (aoe-footprints §2.1): 85→113, 145→197.
+    expect(count(6)).toBe(113);
+    expect(count(8)).toBe(197);
+  });
+
+  it('is symmetric and integer-exact — no rounding to disagree about', () => {
+    for (let dy = -9; dy <= 9; dy++) {
+      for (let dx = -9; dx <= 9; dx++) {
+        expect(aimInRange(from, { x: dx, y: dy }, 6)).toBe(aimInRange({ x: dx, y: dy }, from, 6));
+      }
+    }
+  });
+});
+
+describe('AIM-METRIC: movement is untouched — steps for walking', () => {
+  it('a directional shape reaches `range` tile-widths, not `range` steps', () => {
+    const b = openBoard(41);
+    const centre: Vec2 = { x: 20, y: 20 };
+    const axialReach = (dir: Vec2, squares: readonly Vec2[]): number => {
+      const len = Math.hypot(dir.x, dir.y);
+      return Math.max(...squares.map((p) => ((p.x - centre.x) * dir.x + (p.y - centre.y) * dir.y) / len));
+    };
+    // East and south-east both stop at 8 tile-widths. The diagonal used to run
+    // to 11.3 — a 41% longer shot for aiming at a corner.
+    for (const dir of [{ x: 1, y: 0 }, { x: 1, y: 1 }, { x: -1, y: 1 }] as const) {
+      expect(axialReach(dir, lineSquares(b, centre, dir, 8))).toBeLessThanOrEqual(8);
+    }
+    expect(lineSquares(b, centre, { x: 1, y: 1 }, 8).length).toBeLessThan(8);
   });
 });

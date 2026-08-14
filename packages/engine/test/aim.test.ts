@@ -88,10 +88,19 @@ describe('AIM2: the quantized direction is pure integer, both ways', () => {
 });
 
 describe('AIM2: rotated shapes keep their reach (line = tiles along the axis; cone = CONE-B)', () => {
-  it('a line covers `range` tiles whichever way it points', () => {
+  it('AIM-METRIC: a line reaches `range` tile-WIDTHS whichever way it points', () => {
+    // Not `range` *tiles*: a diagonal beam's tiles are √2 apart, so the same
+    // distance covers fewer of them. Reach is the invariant, count is not.
     for (let s = 0; s < AIM_STEPS; s += 8) {
-      const squares = lineSquares(board(), CENTRE, stepToVector(s), 8);
-      expect(squares.length, `step ${s} reached ${squares.length} tiles`).toBe(8);
+      const dir = stepToVector(s);
+      const squares = lineSquares(board(), CENTRE, dir, 8);
+      const len = Math.hypot(dir.x, dir.y);
+      const axial = Math.max(...squares.map((p) =>
+        ((p.x - CENTRE.x) * dir.x + (p.y - CENTRE.y) * dir.y) / len));
+      expect(axial, `step ${s} over-reached`).toBeLessThanOrEqual(8);
+      // …and it does not fall short by more than the tile spacing on that axis.
+      expect(axial, `step ${s} fell short at ${axial}`).toBeGreaterThan(8 - Math.SQRT2);
+      expect(squares.length, `step ${s}`).toBeGreaterThan(0);
     }
   });
 
@@ -100,13 +109,14 @@ describe('AIM2: rotated shapes keep their reach (line = tiles along the axis; co
     expect(posKeys(lineSquares(board(), CENTRE, stepToVector(192), 3))).toEqual(['10,7', '10,8', '10,9']);
   });
 
-  it('a diagonal step gives the diagonal ray, same tile count', () => {
-    expect(posKeys(lineSquares(board(), CENTRE, stepToVector(32), 3))).toEqual(['11,11', '12,12', '13,13']);
+  it('a diagonal step gives the diagonal ray, metered as a distance', () => {
+    // 3 tile-widths on the diagonal is 2.12 steps — two tiles, not three.
+    expect(posKeys(lineSquares(board(), CENTRE, stepToVector(32), 3))).toEqual(['11,11', '12,12']);
   });
 
   it('an in-between step gives a genuinely rotated ray — not snapped to a compass point', () => {
     const ray = lineSquares(board(), CENTRE, stepToVector(16), 6); // between E and SE
-    expect(ray).toHaveLength(6);
+    expect(ray).toHaveLength(5);
     const keys = posKeys(ray);
     expect(keys).not.toEqual(posKeys(lineSquares(board(), CENTRE, stepToVector(0), 6)));
     expect(keys).not.toEqual(posKeys(lineSquares(board(), CENTRE, stepToVector(32), 6)));
@@ -223,7 +233,9 @@ describe('AIM2: cross-engine determinism', () => {
     const once = expandShape(board(), def, CENTRE, [], 40);
     const twice = expandShape(board(), def, CENTRE, [], 40);
     expect(posKeys(once)).toEqual(posKeys(twice));
-    expect(once.length).toBe(8);
+    // Step 40 points south-south-east; 8 tile-widths that way covers 6 tiles
+    // (AIM-METRIC — reach is the distance, not the tile count).
+    expect(once.length).toBe(6);
   });
 
   it('produces no floats anywhere in a covered tile set', () => {
