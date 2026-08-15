@@ -77,7 +77,82 @@ describe('map content', () => {
         expect(spawnKeys.has(key({ x: mirror(p.x), y: p.y })), `${m.id} spawn (${p.x},${p.y}) lacks its mirror`).toBe(true);
       }
     });
+
+    it(`${m.id} keeps its terrain runs under the caps (MAP-CAPS)`, () => {
+      for (const [kind, cap] of Object.entries(TERRAIN_RUN_CAPS) as [TerrainKey, number][]) {
+        for (const [axis, run] of Object.entries(longestRuns(m, kind))) {
+          expect(run, `${m.id}: ${kind} run of ${run} along a ${axis} (cap ${cap})`)
+            .toBeLessThanOrEqual(cap);
+        }
+      }
+    });
   }
+});
+
+/**
+ * MAP-CAPS — the longest unbroken run of one terrain along any row and any
+ * column (ar-parity §5).
+ *
+ * The caps exist because a long unbroken run stops being cover and starts being
+ * a wall: a 6-square brush strip is not concealment you contest, it is a
+ * corridor you cannot see down, and a 7-square wall is a lane with no counterplay.
+ * Both shipped maps were re-cut to satisfy them; this is the guard that keeps the
+ * next map honest, and it is checked on **both orientations** because a vertical
+ * corridor plays exactly like a horizontal one.
+ */
+const TERRAIN_RUN_CAPS = { brush: 3, cover: 4, walls: 5 } as const;
+type TerrainKey = keyof typeof TERRAIN_RUN_CAPS;
+
+export function longestRuns(m: MapDef, kind: TerrainKey): { row: number; column: number } {
+  const present = new Set(m[kind].map((p) => `${p.x},${p.y}`));
+  const scan = (outer: number, inner: number, at: (a: number, b: number) => string): number => {
+    let longest = 0;
+    for (let a = 0; a < outer; a++) {
+      let run = 0;
+      for (let b = 0; b < inner; b++) {
+        run = present.has(at(a, b)) ? run + 1 : 0;
+        if (run > longest) longest = run;
+      }
+    }
+    return longest;
+  };
+  return {
+    row: scan(m.height, m.width, (y, x) => `${x},${y}`),
+    column: scan(m.width, m.height, (x, y) => `${x},${y}`),
+  };
+}
+
+describe('MAP-CAPS: the run-cap guard actually catches a bad map', () => {
+  // A guard on the guard. Both shipped maps pass, so without a deliberately
+  // over-long map here the assertions above could be vacuously true and nobody
+  // would find out until a future map shipped a 6-square brush corridor.
+  const strip = (kind: TerrainKey, n: number, vertical = false): MapDef => ({
+    id: 'bad', name: 'bad', width: 12, height: 12, walls: [], cover: [], brush: [],
+    spawns: [[{ x: 0, y: 0 }], [{ x: 11, y: 0 }]],
+    [kind]: Array.from({ length: n }, (_, i) => (vertical ? { x: 4, y: 2 + i } : { x: 2 + i, y: 4 })),
+  } as MapDef);
+
+  for (const [kind, cap] of Object.entries(TERRAIN_RUN_CAPS) as [TerrainKey, number][]) {
+    it(`${kind}: a run of ${cap} is fine and ${cap + 1} is not, in a row`, () => {
+      expect(longestRuns(strip(kind, cap), kind).row).toBe(cap);
+      expect(longestRuns(strip(kind, cap + 1), kind).row).toBeGreaterThan(cap);
+    });
+
+    it(`${kind}: the same holds down a column`, () => {
+      expect(longestRuns(strip(kind, cap + 1, true), kind).column).toBeGreaterThan(cap);
+      // …and a vertical strip must not be mistaken for a long row.
+      expect(longestRuns(strip(kind, cap + 1, true), kind).row).toBe(1);
+    });
+  }
+
+  it('counts a run as broken by a gap, not merely by the row ending', () => {
+    const gapped: MapDef = {
+      id: 'g', name: 'g', width: 12, height: 3, walls: [], cover: [], brush: [],
+      spawns: [[{ x: 0, y: 0 }], [{ x: 11, y: 0 }]],
+      brush: [0, 1, 2, 4, 5, 6].map((x) => ({ x, y: 1 })),
+    };
+    expect(longestRuns(gapped, 'brush').row).toBe(3);
+  });
 });
 
 /**

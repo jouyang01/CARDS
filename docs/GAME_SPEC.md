@@ -148,7 +148,7 @@ Every turn = **Decision Phase** then **Resolution**.
 | Energized | +50% energy gain | |
 | Unstoppable | Immune to knockback/pull/root/slow | |
 | Stealth | Hidden even outside brush; broken by attacking or taking damage | |
-| Untargetable | Cannot be hit this phase/turn (ults only) | |
+| Untargetable | Cannot be hit this phase/turn | Ults **and** catalysts (Fade) |
 
 - Durations are in turns, tick at end of turn. Same-status applications refresh (do
   not stack) unless the ability says otherwise.
