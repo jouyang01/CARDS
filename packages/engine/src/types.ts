@@ -168,6 +168,28 @@ export interface CharacterDef {
 
 export type TerrainKind = 'wall' | 'cover' | 'brush';
 
+/** The three power-up pad flavours (PADS1, ar-parity §7.3). */
+export const POWERUP_TYPES = ['health', 'might', 'energy'] as const;
+export type PowerupType = (typeof POWERUP_TYPES)[number];
+
+/**
+ * A power-up pad as authored on a map (PADS1). Flat `x`/`y` rather than a
+ * `Vec2` because that is the authored shape the backlog fixed, and a pad is a
+ * map *feature* rather than a square with attributes.
+ *
+ * The pad's square is its identity: two pads may not share one, so validation
+ * rejects duplicates and the live state keys off the position.
+ */
+export interface PowerupPad {
+  x: number;
+  y: number;
+  type: PowerupType;
+  /** The first turn it may be taken. */
+  firstTurn: number;
+  /** Turns from being taken to being takeable again. */
+  everyTurns: number;
+}
+
 export interface MapDef {
   id: string;
   name: string;
@@ -181,6 +203,12 @@ export interface MapDef {
   brush: Vec2[];
   /** spawns[teamId] = list of that team's spawn squares (one per character). */
   spawns: [Vec2[], Vec2[]];
+  /**
+   * Power-up pads (PADS1). Optional: a map with no pads is a legal map, and
+   * every fixture that predates them stays valid rather than being forced to
+   * declare an empty array it does not care about.
+   */
+  powerups?: PowerupPad[];
 }
 
 // ── Live state ──────────────────────────────────────────────────────────────
@@ -259,6 +287,22 @@ export interface DecoyState {
   expiresOnTurn: number;
 }
 
+/**
+ * A power-up pad that has been taken at least once (PADS1). The pad itself
+ * lives on the map; all the live state needs to remember is when it comes back.
+ *
+ * Append-on-take rather than seeded-at-match-start: a pad nobody has contested
+ * has nothing to say, and this way `powerups` is a record of what happened in
+ * the match rather than a copy of the map. Absent from the list = live from the
+ * pad's `firstTurn`.
+ */
+export interface PowerupState {
+  /** The pad's square — the key back into `MapDef.powerups`. */
+  pos: Vec2;
+  /** The first turn it may be taken again (`takenOn + everyTurns`). */
+  availableOnTurn: number;
+}
+
 export interface PendingDelayedAbility {
   casterUnitId: string;
   abilityId: string;
@@ -275,6 +319,8 @@ export interface GameState {
   delayed: PendingDelayedAbility[];
   /** Wisp decoys (edge-cases R2), kept out of `units`. */
   decoys: DecoyState[];
+  /** Respawn timers for power-up pads already taken this match (PADS1). */
+  powerups: PowerupState[];
   /** Per-team kill tally, `kills[teamId]`. */
   kills: [number, number];
   /** Match format id (GAME_SPEC §1) — sets kill target and turn limit. */
@@ -377,6 +423,10 @@ export type TurnEvent =
   // Without it a client folding the log keeps a marker over a square that is no
   // longer dangerous — the same failure `statusRemoved` exists to prevent.
   | { type: 'trapExpired'; trapId: string; pos: Vec2; owner: TeamId }
+  // A power-up pad was picked up (PADS1). The effects it grants arrive as the
+  // ordinary `heal`/`statusApplied` events immediately before this one, so the
+  // only thing the client learns here is that the pad went dark.
+  | { type: 'powerupTaken'; unitId: string; pos: Vec2; powerup: PowerupType }
   // A catalyst is spent (CAT1) — playback and the HUD's spent-slot greying.
   | { type: 'catalystUsed'; unitId: string; catalystId: string }
   | { type: 'trapTriggered'; trapId: string; unitId: string }

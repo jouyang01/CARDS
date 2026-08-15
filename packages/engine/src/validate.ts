@@ -2,8 +2,10 @@ import {
   type AbilityDef,
   type CharacterDef,
   type MapDef,
+  type PowerupPad,
   type Vec2,
   EFFECT_KINDS,
+  POWERUP_TYPES,
   TARGET_SHAPES,
 } from './types.js';
 import { MAX_ABILITY_RANGE, TRAP_MAX_LIFETIME } from './constants.js';
@@ -36,6 +38,9 @@ export const ABILITY_KEYS = [
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
 export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime'] as const;
+
+/** Every key a `PowerupPad` may carry (PADS1) — same argument again. */
+export const POWERUP_PAD_KEYS = ['x', 'y', 'type', 'firstTurn', 'everyTurns'] as const;
 
 function isInt(n: unknown): n is number {
   return typeof n === 'number' && Number.isInteger(n);
@@ -219,6 +224,46 @@ export function validateMap(m: MapDef): string[] {
     }
     if (m.spawns[0]!.length !== m.spawns[1]!.length) {
       errs.push(`${path}: both players must have the same number of spawns`);
+    }
+  }
+  errs.push(...validatePowerups(m, solid, path));
+  return errs;
+}
+
+/**
+ * Power-up pad schema (PADS1). `solid` is the wall/cover set already built by
+ * {@link validateMap} — a pad on a square nobody can stand on is a pad nobody
+ * can ever take, which is a data bug and not a balance choice.
+ *
+ * The pad's square is its identity (the live respawn record keys off it), so two
+ * pads sharing one is rejected outright rather than resolved by some rule.
+ */
+function validatePowerups(m: MapDef, solid: ReadonlySet<string>, path: string): string[] {
+  const errs: string[] = [];
+  if (m.powerups === undefined) return errs;
+  if (!Array.isArray(m.powerups)) return [`${path}.powerups: must be an array`];
+
+  const seen = new Set<string>();
+  for (const [i, pad] of m.powerups.entries()) {
+    const at = `${path}.powerups[${i}]`;
+    for (const k of Object.keys(pad as unknown as Record<string, unknown>)) {
+      if (!(POWERUP_PAD_KEYS as readonly string[]).includes(k)) errs.push(`${at}: unknown key "${k}"`);
+    }
+    if (!isInt(pad.x) || !isInt(pad.y) || !inBounds(pad as unknown as Vec2, m)) {
+      errs.push(`${at}: out of bounds (${pad.x},${pad.y})`);
+    } else if (solid.has(key(pad as unknown as Vec2))) {
+      errs.push(`${at}: on a solid square (${pad.x},${pad.y}) — nobody could ever take it`);
+    }
+    const k = key(pad as unknown as Vec2);
+    if (seen.has(k)) errs.push(`${at}: a second pad on (${pad.x},${pad.y})`);
+    seen.add(k);
+
+    if (!(POWERUP_TYPES as readonly string[]).includes(pad.type)) {
+      errs.push(`${at}: unknown powerup type "${pad.type}"`);
+    }
+    for (const field of ['firstTurn', 'everyTurns'] as const) {
+      const v: PowerupPad[typeof field] = pad[field];
+      if (!isInt(v) || v < 1) errs.push(`${at}: ${field} must be an integer >= 1`);
     }
   }
   return errs;

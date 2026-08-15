@@ -34,7 +34,7 @@ const roster: Roster = { gunner, medic };
 const mkUnit = (unitId: string, characterId: string, owner: 0 | 1, x: number, y: number, over: Partial<GameState['units'][number]> = {}) =>
   ({ unitId, characterId, owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], catalysts: [], catalystsUsed: [], ...over });
 const mkState = (units: GameState['units']): GameState =>
-  ({ turn: 1, units, traps: [], delayed: [], decoys: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false });
+  ({ turn: 1, units, traps: [], delayed: [], decoys: [], powerups: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false });
 const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
   resolveTurn(s, OPEN, [{ team: 0, units: u0 }, { team: 1, units: u1 }], roster);
 
@@ -221,5 +221,32 @@ describe('LOG-STATUS: a status leaving is news too', () => {
       removed('might', 'expired', 'b'),
     ], naming);
     expect(entries.map((e) => e.tone)).toEqual(['damage', 'status']);
+  });
+});
+
+describe('board features that leave the board announce themselves', () => {
+  // Both of these describe something the player planned around quietly ceasing
+  // to be true. Nothing else on screen says so, which is the whole argument for
+  // spending a log line on them.
+  const naming: LogNames = { unit: () => 'Vex', ability: (id) => id };
+
+  it('a trap that ran out its life gets a neutral line (TRAP-LIFETIME)', () => {
+    const entries = logEntriesForTurn(4, [
+      { type: 'trapExpired', trapId: 't1', pos: { x: 3, y: 7 }, owner: 0 },
+    ], naming);
+    expect(entries).toEqual([{ turn: 4, tone: 'neutral', text: 'A trap at (3,7) expired' }]);
+  });
+
+  it('a power-up pickup names the taker and the flavour (PADS1)', () => {
+    const entries = logEntriesForTurn(2, [
+      { type: 'heal', unitId: 'a', amount: 10, sourceUnitId: 'a', abilityId: 'powerup-health' },
+      { type: 'powerupTaken', unitId: 'a', pos: { x: 8, y: 7 }, powerup: 'health' },
+    ], naming);
+    // The heal logs itself; the pickup line says *why*, which is the part worth
+    // contesting next turn.
+    expect(entries.map((e) => e.text)).toEqual([
+      'Vex healed for 10 — powerup-health',
+      'Vex took the health power-up at (8,7)',
+    ]);
   });
 });

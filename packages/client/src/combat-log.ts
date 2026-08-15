@@ -141,6 +141,11 @@ export function logEntriesForTurn(turn: number, events: readonly TurnEvent[], na
         // that quietly stopped being true, and nothing else on screen says so.
         out.push({ turn, tone: 'neutral', text: `A trap at ${at(e.pos)} expired` });
         break;
+      case 'powerupTaken':
+        // The heal/buff it granted already logged itself on the line above; this
+        // one says *why*, which is the part a player wants to contest next turn.
+        out.push({ turn, tone: 'status', unitId: e.unitId, text: `${who(e.unitId)} took the ${e.powerup} power-up at ${at(e.pos)}` });
+        break;
       case 'gameEnd':
         out.push({
           turn, tone: 'neutral',

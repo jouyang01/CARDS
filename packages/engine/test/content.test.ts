@@ -78,6 +78,24 @@ describe('map content', () => {
       }
     });
 
+    it(`${m.id} mirrors its power-up pads, type included (PADS1)`, () => {
+      // A pad whose mirror is a different flavour — or missing — hands one team
+      // a resource the other cannot answer, which is the one thing a symmetric
+      // map exists to prevent. Placement here is a Builder placeholder; the
+      // Designer tunes the squares and the timings, and this guard survives it.
+      const mirror = (x: number) => m.width - 1 - x;
+      const pads = m.powerups ?? [];
+      expect(pads.length, `${m.id} should ship pads`).toBeGreaterThan(0);
+      const byPos = new Map(pads.map((p) => [`${p.x},${p.y}`, p]));
+      for (const pad of pads) {
+        const twin = byPos.get(`${mirror(pad.x)},${pad.y}`);
+        expect(twin, `${m.id} pad at (${pad.x},${pad.y}) lacks its mirror`).toBeDefined();
+        expect(twin?.type, `${m.id} pad at (${pad.x},${pad.y}) mirrors a different type`).toBe(pad.type);
+        expect(twin?.firstTurn).toBe(pad.firstTurn);
+        expect(twin?.everyTurns).toBe(pad.everyTurns);
+      }
+    });
+
     it(`${m.id} keeps its terrain runs under the caps (MAP-CAPS)`, () => {
       for (const [kind, cap] of Object.entries(TERRAIN_RUN_CAPS) as [TerrainKey, number][]) {
         for (const [axis, run] of Object.entries(longestRuns(m, kind))) {

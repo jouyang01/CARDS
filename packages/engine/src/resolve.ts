@@ -49,6 +49,7 @@ import {
 } from './constants.js';
 import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, stepCost, validateMovePath } from './movement.js';
+import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import type { CatalystPool } from './catalysts.js';
@@ -1379,15 +1380,52 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
     const path = pathWithinBudget(plan.movePath, plan.unit.pos, budget);
     if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false });
   }
-  if (movers.length === 0) return;
 
-  const maxLen = Math.max(...movers.map((m) => m.path.length));
-  for (let step = 0; step < maxLen; step++) {
-    stepMovers(draft, board, movers, step, events);
+  if (movers.length > 0) {
+    const maxLen = Math.max(...movers.map((m) => m.path.length));
+    for (let step = 0; step < maxLen; step++) {
+      stepMovers(draft, board, movers, step, events);
+    }
+    // A decoy is destroyed by an enemy that *ends a move* on its square (R2).
+    destroyDecoysUnderEnemies(draft, movers.map((m) => m.unit), events);
   }
 
-  // A decoy is destroyed by an enemy that *ends a move* on its square (R2).
-  destroyDecoysUnderEnemies(draft, movers.map((m) => m.unit), events);
+  // Power-up pads settle last, once every square has its final occupant
+  // (PADS1) — and unconditionally, not only when somebody moved: a unit
+  // knocked onto a pad, or one standing on a pad the moment it respawns, has
+  // just as much claim to it as one that walked there.
+  resolvePowerups(draft, board, events);
+}
+
+/**
+ * Award every live power-up pad to whoever is standing on it (PADS1), at the
+ * single fixed point at the end of Move.
+ *
+ * "First occupier" needs no tie-break in practice — Collisions forbid two units
+ * on one square — but the scan runs in `draft.units` order anyway so that if a
+ * future mechanic ever does allow co-occupancy the pad still goes to a fixed
+ * unit rather than to whichever the iteration happened to reach first.
+ */
+function resolvePowerups(draft: GameState, board: Board, events: TurnEvent[]): void {
+  const pads = board.map.powerups ?? [];
+  if (pads.length === 0) return;
+  for (const pad of pads) {
+    const pos = { x: pad.x, y: pad.y };
+    const record = draft.powerups.find((p) => vecEq(p.pos, pos));
+    // Dormant until `firstTurn`, then dark until `everyTurns` after being taken.
+    if (draft.turn < pad.firstTurn) continue;
+    if (record !== undefined && draft.turn < record.availableOnTurn) continue;
+
+    const taker = draft.units.find((u) => u.alive && vecEq(u.pos, pos));
+    if (taker === undefined) continue;
+
+    applySelfEffects(draft, taker, POWERUP_EFFECTS[pad.type], { unitId: taker.unitId, abilityId: powerupSourceId(pad.type) }, events);
+    events.push({ type: 'powerupTaken', unitId: taker.unitId, pos, powerup: pad.type });
+
+    const availableOnTurn = draft.turn + pad.everyTurns;
+    if (record !== undefined) record.availableOnTurn = availableOnTurn;
+    else draft.powerups.push({ pos, availableOnTurn });
+  }
 }
 
 /** Destroy any decoy an enemy of its team currently stands on (R2 move-onto). */
