@@ -81,6 +81,14 @@ export interface OrderDraft {
   sprint: boolean;
   /** Move-phase path; coexists with a non-dash ability, dropped for a dash. */
   movePath: Vec2[];
+  /**
+   * A **chase target** (CHASE1) — an enemy unit id, declared instead of a
+   * `movePath`. It occupies the same slot as the drawn path for the same reason
+   * the engine treats it that way: both are the unit's Move, and one reposition
+   * per turn is the rule. Coexists with a non-dash ability exactly as a walk
+   * does, so "chase and shoot" works like "move and shoot".
+   */
+  chaseTargetId?: string;
 }
 
 /** A blank draft for a unit (holds position until the player chooses). */
@@ -739,11 +747,18 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
     // Only directional shapes rotate; sending a step for a circle would be noise
     // the engine ignores anyway (AIM2).
     if (isRotatable(ability) && isAimStep(draft.aimStep)) order.ability.aimStep = draft.aimStep;
-    if (ability.phase !== 'dash' && draft.movePath.length > 0) order.movePath = draft.movePath.map((p) => ({ x: p.x, y: p.y }));
+    if (ability.phase !== 'dash') {
+      // A dash owns the movement, so neither the walk nor the chase goes out
+      // with it — the engine would drop both anyway, and sending them would put
+      // a promise in the order that resolution does not keep.
+      if (draft.chaseTargetId !== undefined) order.chase = draft.chaseTargetId;
+      else if (draft.movePath.length > 0) order.movePath = draft.movePath.map((p) => ({ x: p.x, y: p.y }));
+    }
     return order; // sprint dropped: an ability is in play
   }
   if (draft.sprint) order.sprint = true;
-  if (draft.movePath.length > 0) order.movePath = draft.movePath.map((p) => ({ x: p.x, y: p.y }));
+  if (draft.chaseTargetId !== undefined) order.chase = draft.chaseTargetId;
+  else if (draft.movePath.length > 0) order.movePath = draft.movePath.map((p) => ({ x: p.x, y: p.y }));
   return order;
 }
 
@@ -760,6 +775,9 @@ export type DraftAction =
   | { type: 'selectCatalyst'; catalystId: string; isDash?: boolean }
   | { type: 'selectFreeAbility'; abilityId: string }
   | { type: 'selectMove' }
+  // CHASE1 — picking an enemy to follow. Re-picking the same one deselects, so
+  // the Move slot can be handed back without clearing the rest of the turn.
+  | { type: 'selectChase'; targetUnitId: string }
   | { type: 'selectSprint' }
   | { type: 'clear' };
 
@@ -783,7 +801,13 @@ export function nextDraft(
       // now bidding for the same turn, so picking one must release the other
       // rather than silently voiding it at resolution.
       const freed = releaseDashCatalyst(draft, currentCatalystIsDash);
-      return { ...freed, abilityId: action.abilityId, sprint: false, aim: [], movePath: action.isDash ? [] : freed.movePath };
+      return {
+        ...freed, abilityId: action.abilityId, sprint: false, aim: [],
+        // A dash owns the movement, and a chase is movement (CHASE1) — so it
+        // goes with the drawn path rather than surviving as a dead promise.
+        movePath: action.isDash ? [] : freed.movePath,
+        chaseTargetId: action.isDash ? undefined : freed.chaseTargetId,
+      };
     }
     case 'selectCatalyst':
       // A catalyst is a SEPARATE slot: everything else in the draft survives,
@@ -821,9 +845,27 @@ export function nextDraft(
       // ability, or (since CAT-DASH-COST) a Dash catalyst. A non-dash ability
       // keeps its slot — move AND shoot is the point of MS1.
       const freed = releaseDashCatalyst(draft, currentCatalystIsDash);
+      // Drawing a path is the other way to spend the Move, so it takes the slot
+      // back off a chase (CHASE1).
       return draft.abilityId !== undefined && !currentIsDash
-        ? { ...freed, sprint: false, movePath: [] }
-        : { ...freed, abilityId: undefined, aim: [], sprint: false, movePath: [] };
+        ? { ...freed, sprint: false, movePath: [], chaseTargetId: undefined }
+        : { ...freed, abilityId: undefined, aim: [], sprint: false, movePath: [], chaseTargetId: undefined };
+    }
+    case 'selectChase': {
+      // The Move slot, spent on a unit instead of a square. Re-picking the same
+      // target hands it back. A non-dash ability and its aim survive — chase and
+      // shoot is move and shoot; a dash ability does not, because the dash and
+      // the chase are both the reposition.
+      const freed = releaseDashCatalyst(draft, currentCatalystIsDash);
+      if (draft.chaseTargetId === action.targetUnitId) return { ...freed, chaseTargetId: undefined };
+      const keepsAbility = freed.abilityId !== undefined && !currentIsDash;
+      return {
+        ...freed,
+        chaseTargetId: action.targetUnitId,
+        movePath: [],
+        sprint: false,
+        ...(keepsAbility ? {} : { abilityId: undefined, aim: [], aimStep: undefined }),
+      };
     }
     case 'selectSprint':
       // Sprint is move-only (8) and clears any ability. A Prep or Blast catalyst
@@ -832,7 +874,7 @@ export function nextDraft(
       // are now bidding for the same Move.
       return {
         ...releaseDashCatalyst(draft, currentCatalystIsDash),
-        abilityId: undefined, aim: [], sprint: true, movePath: [],
+        abilityId: undefined, aim: [], sprint: true, movePath: [], chaseTargetId: undefined,
       };
     case 'clear':
       return emptyDraft(draft.unitId);

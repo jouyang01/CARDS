@@ -141,6 +141,17 @@ export function logEntriesForTurn(turn: number, events: readonly TurnEvent[], na
         // that quietly stopped being true, and nothing else on screen says so.
         out.push({ turn, tone: 'neutral', text: `A trap at ${at(e.pos)} expired` });
         break;
+      case 'chaseResolved':
+        // Worth a line precisely when `seen` is false: the chase went to a
+        // remembered square rather than to the target, and the reason the unit
+        // stopped where it did is otherwise invisible.
+        out.push({
+          turn, tone: 'neutral', unitId: e.unitId,
+          text: e.seen
+            ? `${who(e.unitId)} chased ${who(e.targetUnitId)}`
+            : `${who(e.unitId)} chased ${who(e.targetUnitId)} to their last known position ${at(e.to)}`,
+        });
+        break;
       case 'powerupTaken':
         // The heal/buff it granted already logged itself on the line above; this
         // one says *why*, which is the part a player wants to contest next turn.

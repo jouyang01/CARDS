@@ -31,6 +31,7 @@ const model = (over: Partial<HudModel> = {}): HudModel => ({
   abilities: [ability('rail_shot'), ability('frag_grenade')],
   catalysts: [],
   move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
+  chase: { armed: false, disabled: false },
   lock: { label: 'Lock In ▸' },
   view: { projection: 'Isometric', orbit: false },
   ...over,
@@ -38,7 +39,7 @@ const model = (over: Partial<HudModel> = {}): HudModel => ({
 
 const handlers = () => ({
   selectCharacter: vi.fn(), selectAbility: vi.fn(), selectCatalyst: vi.fn(), hoverAbility: vi.fn(),
-  selectMove: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
+  selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
   toggleProjection: vi.fn(), toggleOrbit: vi.fn(),
 });
 
@@ -162,7 +163,10 @@ describe('UI3: controls are wired to handlers, and Lock In sits right of the hot
     expect(h.selectMove).toHaveBeenCalledWith(false);
     moves[1]!.click();
     expect(h.selectMove).toHaveBeenCalledWith(true);
+    // CHASE1 put a Chase control between Sprint and Clear.
     moves[2]!.click();
+    expect(h.selectChase).toHaveBeenCalled();
+    moves[3]!.click();
     expect(h.hold).toHaveBeenCalled();
 
     (root.querySelector('.hud-lock') as HTMLButtonElement).click();

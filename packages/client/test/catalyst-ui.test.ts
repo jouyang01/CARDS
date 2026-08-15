@@ -241,13 +241,14 @@ const model = (over: Partial<HudModel> = {}): HudModel => ({
   abilities: [],
   catalysts: [slot('second_wind'), slot('shift'), slot('adrenaline')],
   move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
+  chase: { armed: false, disabled: false },
   lock: { label: 'Lock In ▸' },
   view: { projection: 'Isometric', orbit: false },
   ...over,
 });
 const handlers = () => ({
   selectCharacter: vi.fn(), selectAbility: vi.fn(), selectCatalyst: vi.fn(), hoverAbility: vi.fn(),
-  selectMove: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
+  selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
   toggleProjection: vi.fn(), toggleOrbit: vi.fn(),
 });
 

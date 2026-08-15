@@ -100,7 +100,7 @@ const TRAP_SIZE = 0.5;
  * covered tile always reads on top of the envelope that contains it.
  */
 export type HighlightLayer =
-  | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
+  | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'chase' | 'select';
 
 /**
  * Route lines get their own layers for the same reason the aim overlays do: a
@@ -139,6 +139,10 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
   impact: OVERLAY_BASE + 0.016,
   free: OVERLAY_BASE + 0.018,
   catalyst: OVERLAY_BASE + 0.020,
+  // CHASE1's quarry ring sits just under the selection ring: it marks a unit
+  // rather than a target area, so it must read above every aim overlay and
+  // still yield to "this is the character you are ordering".
+  chase: OVERLAY_BASE + 0.022,
   select: OVERLAY_BASE + 0.024,
 };
 /**
@@ -147,7 +151,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
+  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, chase: 0.98, select: 0.92,
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;

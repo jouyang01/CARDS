@@ -125,6 +125,8 @@ const FOG_OPACITY = 0.62;
 const MOVE_LINE = 0x9fc4ff;
 const SPRINT_LINE = 0x8fd6ff;
 const DASH_LINE = 0xffd23f;
+/** CHASE1's route + quarry ring: orange, distinct from move blue and dash yellow. */
+const CHASE_LINE = 0xff8a3d;
 
 /**
  * The single pacing constant: one beat of `choreograph`'s timeline in
@@ -358,6 +360,7 @@ export function startHotSeat(
     selectCharacter: selectUnit,
     selectAbility,
     selectCatalyst,
+    selectChase: armChase,
     hoverAbility: (abilityId, control, def) => {
       if (abilityId === undefined || control === undefined || def === undefined) hideTip();
       else showTip(control, def);
@@ -683,12 +686,30 @@ export function startHotSeat(
     // you chose and in what order. A DASH is the same indicator in yellow (UI4)
     // — it is still a route, so it gets route geometry rather than nothing, and
     // colour carries the fact that it resolves in a different phase.
-    const route = isDash ? dashRoute(unit, chosen, preview.aim) : previewMovePath(map, state, unit, draft, interaction);
+    //
+    // A CHASE (CHASE1) draws the same geometry to a different destination: the
+    // route the engine would take toward the target *as this seat sees it*.
+    // Dashed and in its own colour, because unlike a drawn move it is a
+    // prediction — the target has not moved yet, and where it ends up is what
+    // the chase actually resolves against.
+    const chaseTarget = draft.chaseTargetId === undefined ? undefined : chaseableEnemies()
+      .find((u) => u.unitId === draft.chaseTargetId);
+    const chaseRoute = chaseTarget === undefined
+      ? []
+      : pathTo(map, state, unit, chaseTarget.pos, movementBudget(unit, draft.sprint));
+    const route = isDash
+      ? dashRoute(unit, chosen, preview.aim)
+      : chaseTarget !== undefined
+        ? chaseRoute
+        : previewMovePath(map, state, unit, draft, interaction);
     renderer.drawPath(
       route.length > 0 ? [unit.pos, ...route] : [],
-      isDash ? DASH_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
-      !isDash && draft.sprint, // sprint is the dashed one; a dash reads by colour
+      isDash ? DASH_LINE : chaseTarget !== undefined ? CHASE_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
+      !isDash && (draft.sprint || chaseTarget !== undefined),
     );
+    // …and the quarry is ringed, so the order reads as "that one" rather than
+    // as a line that happens to end near somebody.
+    renderer.highlight('chase', chaseTarget === undefined ? [] : [chaseTarget.pos], CHASE_LINE, 0.45);
 
     // ── DASH-CAT-ROUTE: a Dash catalyst is a reposition, so it draws like one ─
     // "Shift's dash catalyst should show as a yellow movement similar to other
@@ -800,6 +821,16 @@ export function startHotSeat(
         // catalyst does disable it: it is no longer a free action.
         sprintDisabled: !sprintAllowed(draft, dashCatalystArmed(draft)),
       },
+      // CHASE1. Disabled for exactly the reasons the engine would drop the
+      // order anyway: a dash ability or a Dash catalyst already owns the
+      // reposition, and there is nobody visible to chase.
+      chase: {
+        armed: interaction.mode === 'chase' || draft.chaseTargetId !== undefined,
+        disabled: currentIsDash(draft, character) || dashCatalystArmed(draft) || chaseableEnemies().length === 0,
+        targetName: draft.chaseTargetId === undefined
+          ? undefined
+          : roster0(draft.chaseTargetId)?.name,
+      },
       lock: { label: last ? 'Lock In & resolve ⚔' : 'Lock In ▸' },
       view: {
         projection: projection === 'isometric' ? 'Isometric' : 'Top-down',
@@ -890,6 +921,35 @@ export function startHotSeat(
     render();
   }
 
+  /**
+   * Enemies this seat may currently chase (CHASE1): the ones it can actually
+   * see. The engine drops a chase against a never-seen target, and offering one
+   * the player cannot see would either be a dead control or — worse — a way to
+   * confirm somebody is out there. The list comes from `currentFog`, the same
+   * view that decides what is drawn, so the affordance and the fog can never
+   * disagree about who is on screen.
+   */
+  function chaseableEnemies(): UnitState[] {
+    const me = selectedUnit();
+    if (me === undefined) return [];
+    const shown = new Set(currentFog(me.owner).units.map((u) => u.unitId));
+    return state.units.filter((u) => u.alive && u.owner !== me.owner && shown.has(u.unitId));
+  }
+
+  /** A chaseable enemy's display name, for the HUD's "Chase <name>" label. */
+  const roster0 = (unitId: string): CharacterDef | undefined => {
+    const u = unitById(unitId);
+    return u === undefined ? undefined : roster[u.characterId];
+  };
+
+  /** Arm chase mode: the next board click on a visible enemy sets the target. */
+  function armChase(): void {
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    interaction = arm('chase');
+    render();
+  }
+
   function selectMove(sprint: boolean): void {
     const unit = selectedUnit();
     if (unit === undefined) return;
@@ -946,6 +1006,21 @@ export function startHotSeat(
       const committed = commitAim(map, state, unit, def, sq);
       if (committed === undefined) return;
       draft.catalystAim = committed.aim;
+      interaction = afterCommit();
+      render();
+    } else if (interaction.mode === 'chase') {
+      // A chase names a UNIT, so the click resolves to whoever is standing on
+      // the square — and only if this seat can see them. Clicking empty ground
+      // leaves the mode armed rather than silently dropping the order.
+      const target = chaseableEnemies().find((u) => u.pos.x === sq.x && u.pos.y === sq.y);
+      if (target === undefined) return;
+      const next = nextDraft(
+        draft,
+        { type: 'selectChase', targetUnitId: target.unitId },
+        currentIsDash(draft, characterFor(unit)),
+        dashCatalystArmed(draft),
+      );
+      drafts.set(unit.unitId, next);
       interaction = afterCommit();
       render();
     } else if (interaction.mode === 'move' || draft.sprint) {

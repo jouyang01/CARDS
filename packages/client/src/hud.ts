@@ -84,6 +84,12 @@ export interface HudModel {
   /** The three catalyst slots, in phase order. Empty if the match has no pool. */
   catalysts: HudCatalyst[];
   move: { budget: number; drawing: boolean; sprinting: boolean; sprintDisabled: boolean };
+  /**
+   * The chase control (CHASE1). `targetName` is who is being chased, so the
+   * button can say so — a chase is the one order whose subject is a unit rather
+   * than a square, and "Chase" alone would not tell you whom.
+   */
+  chase: { armed: boolean; disabled: boolean; targetName?: string };
   lock: { label: string };
   view: { projection: string; orbit: boolean };
 }
@@ -94,6 +100,7 @@ export interface HudHandlers {
   selectCatalyst(catalystId: string): void;
   hoverAbility(abilityId: string | undefined, control?: HTMLElement, def?: AbilityDef): void;
   selectMove(sprint: boolean): void;
+  selectChase(): void;
   hoverMove(kind: 'move' | 'sprint' | undefined): void;
   hold(): void;
   lock(): void;
@@ -174,13 +181,16 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   moveBtn.textContent = 'Move';
   const sprintBtn = el('button', 'hud-move');
   sprintBtn.textContent = 'Sprint';
+  const chaseBtn = el('button', 'hud-move');
+  chaseBtn.textContent = 'Chase';
   const holdBtn = el('button', 'hud-move');
   holdBtn.textContent = 'Clear';
-  moveRow.append(moveBtn, sprintBtn, holdBtn);
+  moveRow.append(moveBtn, sprintBtn, chaseBtn, holdBtn);
   centre.append(catalystRow, hotbar, moveRow);
 
   moveBtn.onclick = () => handlers.selectMove(false);
   sprintBtn.onclick = () => handlers.selectMove(true);
+  chaseBtn.onclick = () => handlers.selectChase();
   holdBtn.onclick = () => handlers.hold();
   for (const [btn, kind] of [[moveBtn, 'move'], [sprintBtn, 'sprint']] as const) {
     btn.addEventListener('mouseenter', () => handlers.hoverMove(kind));
@@ -342,6 +352,12 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
       moveBtn.classList.toggle('sel', model.move.drawing && !model.move.sprinting);
       sprintBtn.classList.toggle('sel', model.move.sprinting);
       sprintBtn.disabled = model.move.sprintDisabled;
+
+      // A chase names its quarry (CHASE1): the order's subject is a unit, not a
+      // square, so the label is the only place on screen that says whom.
+      chaseBtn.textContent = model.chase.targetName === undefined ? 'Chase' : `Chase ${model.chase.targetName}`;
+      chaseBtn.classList.toggle('sel', model.chase.armed);
+      chaseBtn.disabled = model.chase.disabled;
 
       lockBtn.textContent = model.lock.label;
       projBtn.textContent = model.view.projection;
