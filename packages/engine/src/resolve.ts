@@ -613,6 +613,47 @@ function collectDisplacement(pending: Displacement[], effects: readonly AbilityE
 }
 
 /**
+ * DASH-OCCUPIED — the knockback exception.
+ *
+ * A dash may not end on a square another character is standing on ("you should
+ * not be able to dash onto the same square as another character unless there's a
+ * knockback associated with the skill"). The exception is that a dash carrying
+ * its **own** knockback clears the square first: the shove resolves **inside the
+ * Dash phase, before the dasher settles**, rather than being queued for the
+ * end-of-Blast displacement pass. Queued, the occupant would still be standing
+ * when the teleport tried to land and the dash would fizzle — the exception
+ * would exist only on paper.
+ *
+ * Returns the unit it cleared, so the caller can skip queueing a *second*
+ * displacement against it when the damage loop comes round.
+ *
+ * **No shipped ability reaches this yet** — every roster teleport is
+ * knockback-free and charges carry their shove as an area `impact` — so it
+ * changes no current behaviour. It is here so the ruling is executable rather
+ * than a note, and so the first skill that wants it works the day it is authored.
+ */
+function clearLandingWithKnockback(
+  draft: GameState, board: Board, dasher: UnitState, a: PlannedAbility,
+  displaced: Set<string>, events: TurnEvent[],
+): UnitState | undefined {
+  const dest = a.aim[0];
+  if (dest === undefined) return undefined;
+  const shove = a.def.effects.find((e) => e.kind === 'knockback');
+  if (shove === undefined) return undefined;
+  const occupant = draft.units.find((u) => u.alive && u.unitId !== dasher.unitId && vecEq(u.pos, dest));
+  if (occupant === undefined) return undefined;
+
+  // Pushed along the line the dasher travelled — away from where it came from,
+  // the only direction a body arriving at speed could send them.
+  applyDisplacements(
+    draft, board,
+    [{ victim: occupant, kind: 'knockback', amount: shove.amount ?? 0, source: { ...dasher.pos }, attackerId: dasher.unitId }],
+    displaced, events,
+  );
+  return occupant;
+}
+
+/**
  * Resolve all displacement at the end of Blast (golden rule #4): each victim is
  * pushed away from (knockback) or toward (pull) its source, stopping on the last
  * open square before a wall, cover, edge or unit (edge-cases: knockback into
@@ -887,7 +928,7 @@ function impactBlasts(
  * aimed at (edge-cases: dash immunity scope). Displacement from a dash is queued
  * for end of Blast (BACKLOG item 8); trap triggers attach here (item 9).
  */
-function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], events: TurnEvent[]): void {
+function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], displaced: Set<string>, events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'dash' });
   // Shift resolves before a dash ability the same unit declared. Its Move cost
   // (CAT-DASH-COST) was already taken at plan time — `planUnit` drops the walk
@@ -916,8 +957,16 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // not the post-pass-through position — combat semantics stay as today.
     const origin: Vec2 = { x: plan.unit.pos.x, y: plan.unit.pos.y };
     let crossed: UnitState[] = [];
+    let shovedAside: UnitState | undefined;
     if (a.def.shape === 'path') crossed = walkCharge(draft, board, plan.unit, a.aim, events);
-    else teleport(draft, board, plan.unit, a.aim[0], events);
+    else {
+      // DASH-OCCUPIED: a dash carrying its own knockback clears the landing
+      // square before it settles. Without this the shove would be queued for
+      // end-of-Blast, the occupant would still be there, and the teleport would
+      // simply fizzle — the exception the owner asked for would never fire.
+      shovedAside = clearLandingWithKnockback(draft, board, plan.unit, a, displaced, events);
+      teleport(draft, board, plan.unit, a.aim[0], events);
+    }
 
     // DASH-IMPACT: an optional AoE at takeoff and/or landing, expanded from the
     // square the dasher actually came to rest on rather than the one it aimed
@@ -955,7 +1004,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
         onDamageTaken(board, victim, a.def.id, events); // CAMO-REVEAL: + reveal if concealed
         if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
-        else collectDisplacement(pending, a.def.effects, victim, from, plan.unit.unitId);
+        // …unless this dash already shoved them out of its landing square, in
+        // which case they have taken their displacement for this ability.
+        else if (victim.unitId !== shovedAside?.unitId) {
+          collectDisplacement(pending, a.def.effects, victim, from, plan.unit.unitId);
+        }
       }
     }
 
@@ -1522,7 +1575,7 @@ export function resolveTurn(
     const pending: Displacement[] = [];
     const displaced = new Set<string>();
     runPrep(draft, board, plans, events);
-    runDash(draft, board, plans, pending, events);
+    runDash(draft, board, plans, pending, displaced, events);
     runBlast(draft, board, roster, plans, pending, events);
     applyDisplacements(draft, board, pending, displaced, events);
     runMove(draft, board, plans, displaced, events);

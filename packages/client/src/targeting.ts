@@ -26,6 +26,7 @@ import {
   reachableSquares,
   reconstructPath,
   validateMovePath,
+  vecEq,
   vectorToStep,
   type AbilityDef,
   type AbilityEffect,
@@ -456,8 +457,46 @@ export function commitAim(
   ability: AbilityDef,
   target: Vec2,
 ): { aim: Vec2[]; aimStep?: number } | undefined {
+  // DASH-OCCUPIED (4): a `line`/`cone` click on your own square is a no-op.
+  // `dragToAimStep(pos, pos)` quantizes (0,0) to step 0, which `isAimStep`
+  // accepts — so clicking yourself used to commit an eastward shot you never
+  // asked for. There is no direction in a zero-length drag; refuse it.
+  const directional = ability.shape === 'line' || ability.shape === 'cone';
+  if (directional && vecEq(target, unit.pos)) return undefined;
+
+  // DASH-OCCUPIED (3): a teleporting dash aimed at a square somebody is standing
+  // on will fizzle at resolution (`teleport` refuses a living occupant), and a
+  // committed order that silently does nothing is the same class of bug
+  // AIM-RANGE fixed — it reads as the ability being broken rather than as the
+  // square being taken. Refuse the commit instead, so the slot stays armed.
+  //
+  // Unless the dash's own knockback would clear the square: the engine lands it
+  // in that case, so the client must not veto what the engine will allow.
+  if (isBlockedDashLanding(state, unit, ability, target)) return undefined;
+
   const resolved = aimFor(map, state, unit, ability, target);
   return aimLegal(unit, ability, resolved.aim, resolved.aimStep) ? resolved : undefined;
+}
+
+/**
+ * Would this dash be aimed at a square a living character already holds, with no
+ * knockback of its own to clear it?
+ *
+ * Teleporting dashes only. A `path` charge is *allowed* to be drawn through and
+ * at bodies — it rests on the furthest free square rather than fizzling — so
+ * refusing that click would break a legal order (edge-cases: charges pass
+ * through, rest short).
+ */
+export function isBlockedDashLanding(
+  state: GameState,
+  unit: UnitState,
+  ability: AbilityDef,
+  target: Vec2,
+): boolean {
+  const teleporting = ability.effects.some((e) => e.kind === 'teleport');
+  if (!teleporting || ability.shape === 'path') return false;
+  if (ability.effects.some((e) => e.kind === 'knockback')) return false; // it clears its own way
+  return state.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, target));
 }
 
 /**
