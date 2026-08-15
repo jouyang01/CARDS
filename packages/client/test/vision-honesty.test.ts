@@ -12,7 +12,7 @@ import {
   type TeamId,
   type TrapState,
 } from '@cards/engine';
-import { camoTiles, fogView, revealedView } from '../src/fog.js';
+import { camoTiles, fogView, rememberSightings, revealedView, sightingKey } from '../src/fog.js';
 import { previewNumbers } from '../src/preview-numbers.js';
 import { initView, playEvents } from '../src/playback.js';
 import vex from '../../../data/characters/vex.json';
@@ -288,5 +288,138 @@ describe('CAMO-REVEAL: a camouflage tile burns red under a revealed unit', () =>
   it('a board with no brush at all lights nothing, whoever is revealed', () => {
     const s = thicket(true);
     expect(fogView(OPEN, s, 0).camoTiles).toEqual([]);
+  });
+});
+
+
+// ── LAST-KNOWN ──────────────────────────────────────────────────────────────
+
+/**
+ * LAST-KNOWN — "Your character icon would remain at your last spotted location
+ * until you stepped back into their sight."
+ *
+ * Without it an enemy that steps behind a wall simply evaporates, and the player
+ * is left guessing whether it is still there or already flanking. The ghost
+ * leaks nothing — every square in the memory is one this team was already shown
+ * — but it is the only stateful thing the client keeps, so these tests are as
+ * much about *when the memory must not update* as about when it must.
+ */
+describe('LAST-KNOWN: an enemy you lose sight of leaves a ghost behind', () => {
+  /** Vex at (2,7); the enemy wherever the case needs it. */
+  const facing = (enemyAt: { x: number; y: number }): GameState => {
+    const s = board();
+    at(s, s.units[0]!.unitId, 2, 7);
+    at(s, s.units[1]!.unitId, enemyAt.x, enemyAt.y);
+    return s;
+  };
+  const NEAR = { x: 5, y: 7 };   // inside VISION_RANGE
+  const FAR = { x: 20, y: 7 };   // well outside it
+  const enemyId = (s: GameState) => s.units[1]!.unitId;
+
+  it('remembers where an enemy was standing while it was visible', () => {
+    const s = facing(NEAR);
+    const memory = rememberSightings(new Map(), OPEN, s, 0);
+    expect(memory.get(sightingKey(0, enemyId(s)))).toEqual(NEAR);
+  });
+
+  it('draws no ghost while the enemy is still visible — the real thing is there', () => {
+    const s = facing(NEAR);
+    const memory = rememberSightings(new Map(), OPEN, s, 0);
+    const view = fogView(OPEN, s, 0, memory);
+    expect(view.units.map((u) => u.unitId)).toContain(enemyId(s));
+    expect(view.ghosts).toEqual([]);
+  });
+
+  it('leaves the ghost at the LAST SEEN square once it goes dark', () => {
+    // Seen at (5,7), then it walks to (20,7). The ghost stays where it was seen.
+    const seenState = facing(NEAR);
+    const memory = rememberSightings(new Map(), OPEN, seenState, 0);
+    const moved = facing(FAR);
+    const view = fogView(OPEN, moved, 0, memory);
+    expect(view.units.map((u) => u.unitId)).not.toContain(enemyId(moved)); // hidden
+    expect(view.ghosts).toHaveLength(1);
+    expect(view.ghosts[0]!.pos).toEqual(NEAR);
+  });
+
+  it('the ghost never reports the LIVE position — that is the whole contract', () => {
+    const memory = rememberSightings(new Map(), OPEN, facing(NEAR), 0);
+    const moved = facing(FAR);
+    expect(fogView(OPEN, moved, 0, memory).ghosts[0]!.pos).not.toEqual(FAR);
+  });
+
+  it('the ghost moves to the new sighting when the team re-sees it', () => {
+    const later = { x: 6, y: 9 };
+    let memory = rememberSightings(new Map(), OPEN, facing(NEAR), 0);
+    memory = rememberSightings(memory, OPEN, facing(FAR), 0); // out of sight: no update
+    expect(memory.get(sightingKey(0, enemyId(facing(NEAR))))).toEqual(NEAR);
+
+    const back = facing(later);
+    memory = rememberSightings(memory, OPEN, back, 0);
+    expect(memory.get(sightingKey(0, enemyId(back)))).toEqual(later);
+    // …and while it is visible again there is no ghost at all.
+    expect(fogView(OPEN, back, 0, memory).ghosts).toEqual([]);
+  });
+
+  it('an enemy never seen leaves no ghost — you cannot remember what you never saw', () => {
+    const s = facing(FAR);
+    const memory = rememberSightings(new Map(), OPEN, s, 0);
+    expect(fogView(OPEN, s, 0, memory).ghosts).toEqual([]);
+  });
+
+  it('a dead enemy leaves no ghost — its corpse is already drawn', () => {
+    // `fogView` keeps corpses on the board, so a ghost as well would double it.
+    const seen = facing(NEAR);
+    const memory = rememberSightings(new Map(), OPEN, seen, 0);
+    const dead = facing(FAR);
+    dead.units[1]!.alive = false;
+    const view = fogView(OPEN, dead, 0, memory);
+    expect(view.ghosts).toEqual([]);
+    expect(view.units.map((u) => u.unitId)).toContain(enemyId(dead)); // the corpse
+  });
+
+  it('the two teams remember separately', () => {
+    const s = facing(NEAR);
+    const memory = rememberSightings(new Map(), OPEN, s, 0);
+    expect(memory.has(sightingKey(0, enemyId(s)))).toBe(true);
+    expect(memory.has(sightingKey(1, enemyId(s)))).toBe(false);
+  });
+
+  it('never ghosts your OWN units — they are always drawn', () => {
+    const s = createMatch(OPEN, '2v2', [[VEX, AEGIS], [AEGIS, VEX]]);
+    const [me, ally] = s.units.filter((u) => u.owner === 0);
+    at(s, me!.unitId, 2, 7);
+    at(s, ally!.unitId, 22, 2); // an ally miles away, still yours
+    // Park both enemies out of sight so nothing else can account for the result.
+    for (const e of s.units.filter((u) => u.owner === 1)) at(s, e.unitId, 23, 13);
+    const memory = rememberSightings(new Map(), OPEN, s, 0);
+    const view = fogView(OPEN, s, 0, memory);
+    expect(view.ghosts).toEqual([]);
+    expect(view.units.map((u) => u.unitId)).toContain(ally!.unitId);
+  });
+
+  it('is pure — remembering returns a new map and never mutates the old one', () => {
+    // The memo in `app.ts` re-runs `fogView` on every `(state, team)` change; a
+    // memory that mutated in place would be impossible to reason about across
+    // those repaints, and impossible to test without a render loop.
+    const before = new Map<string, { x: number; y: number }>();
+    const after = rememberSightings(before, OPEN, facing(NEAR), 0);
+    expect(before.size).toBe(0);
+    expect(after.size).toBe(1);
+    expect(after).not.toBe(before);
+  });
+
+  it('with no memory at all it simply draws no ghosts, rather than guessing', () => {
+    // The safe direction to fail: a missing ghost tells the player less, never
+    // more. `fogView`'s memory argument is optional for exactly this reason.
+    expect(fogView(OPEN, facing(FAR), 0).ghosts).toEqual([]);
+  });
+
+  it('playback reveals everything, so nothing is a ghost once the turn is history', () => {
+    // The trajectory-through-fog half of the Dev Note falls out of this: during
+    // playback every unit and every area is drawn, so an attack fired from
+    // positional fog animates across the viewer's board without any extra work.
+    const seen = facing(NEAR);
+    expect(revealedView(facing(FAR), 0).ghosts).toEqual([]);
+    expect(revealedView(seen, 0).units.map((u) => u.unitId)).toContain(enemyId(seen));
   });
 });

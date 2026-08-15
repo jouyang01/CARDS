@@ -79,6 +79,11 @@ const AUTO_ZOOM_FLOOR = 0.85;
 const DIM_ALPHA = 0.22;
 /** A decoy, seen by its OWNER: unmistakably theirs, unmistakably not a unit. */
 const DECOY_PURPLE = 0xa06bd6;
+/**
+ * A last-known-position ghost (LAST-KNOWN). Fainter than a dead unit, so the
+ * three states a body can be in — alive, dead, remembered — never read alike.
+ */
+const GHOST_ALPHA = 0.22;
 /** The owner's decoy plate sits just above the trap marker in the overlay band. */
 const DECOY_PLATE_LIFT = 0.05;
 /** The status row sits just above the shield bar; its size/gap are shared. */
@@ -193,6 +198,13 @@ export interface RenderUnit {
    * decides nothing about which statuses matter.
    */
   pips?: readonly StatusPip[];
+  /**
+   * A last-known-position **ghost** (LAST-KNOWN) rather than a live sighting:
+   * this is where the unit *was*, not where it is. Drawn faint and stripped of
+   * its bars and pips — a ghost that carried a live HP bar would be reporting
+   * information the viewer does not have.
+   */
+  ghost?: boolean;
 }
 
 export interface Renderer {
@@ -644,13 +656,16 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         g.visible = true;
         // Dead units read as hollow/faded rather than vanishing, so a corpse
         // still tells you where the fight happened.
-        baseAlpha.set(unit.unitId, unit.alive ? 1 : DEAD_ALPHA);
+        baseAlpha.set(unit.unitId, unit.ghost === true ? GHOST_ALPHA : unit.alive ? 1 : DEAD_ALPHA);
         const bars = g.getObjectByName('bars');
         if (bars instanceof Group) {
-          setBar(bars, 'hp', unit.hp / Math.max(1, unit.maxHp), true);
-          setBar(bars, 'energy', unit.energy / 100, true);
-          setBar(bars, 'shield', (unit.shield ?? 0) / Math.max(1, unit.maxHp), (unit.shield ?? 0) > 0);
-          setPips(bars, unit.alive ? (unit.pips ?? []) : []); // a corpse carries nothing
+          // A ghost reports nothing live: its HP, energy and statuses are all
+          // things the viewer stopped being able to see when it went dark.
+          const known = unit.ghost !== true;
+          setBar(bars, 'hp', unit.hp / Math.max(1, unit.maxHp), known);
+          setBar(bars, 'energy', unit.energy / 100, known);
+          setBar(bars, 'shield', (unit.shield ?? 0) / Math.max(1, unit.maxHp), known && (unit.shield ?? 0) > 0);
+          setPips(bars, unit.alive && known ? (unit.pips ?? []) : []); // a corpse or a ghost carries nothing
         }
         refreshOpacity(unit.unitId);
         live.add(unit.unitId);

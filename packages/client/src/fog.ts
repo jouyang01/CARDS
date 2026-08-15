@@ -59,8 +59,26 @@ export interface FogTrap {
   own: boolean;
 }
 
+/**
+ * An enemy the team has seen before and cannot see now (LAST-KNOWN), drawn at
+ * the square it was last spotted on.
+ *
+ * It leaks nothing: the square is one this team was already shown. What it adds
+ * is *memory* — without it an enemy that steps behind a wall simply evaporates,
+ * and the player is left guessing whether it is still there or has flanked them.
+ */
+export interface FogGhost {
+  unitId: string;
+  characterId: string;
+  owner: TeamId;
+  /** Where it was last **seen** — never where it is now. */
+  pos: Vec2;
+}
+
 /** What a renderer should draw for one viewer. */
 export interface FogView {
+  /** Enemies out of sight, at their last-spotted squares (LAST-KNOWN). */
+  ghosts: FogGhost[];
   /**
    * Camouflage squares lit **red** because the unit standing on them gave
    * itself away (CAMO-REVEAL). The owner's tell: acting from a thicket turns
@@ -86,7 +104,24 @@ export interface FogView {
  * the next turn's fog check would read as a rendering bug rather than as
  * information you lost (a judgment call — see docs/DECISIONS.md).
  */
-export function fogView(map: MapDef, state: GameState, team: TeamId): FogView {
+export function fogView(
+  map: MapDef,
+  state: GameState,
+  team: TeamId,
+  /**
+   * Where this team last saw each enemy (LAST-KNOWN), keyed by `sightingKey`.
+   *
+   * Passed **in** rather than kept here on purpose: this module is a pure
+   * function of its arguments and `app.ts` memoises it on `(state, team)`, so a
+   * memory living inside would be rebuilt — and flattened to the current frame —
+   * on every repaint. The app owns the map; this only reads it.
+   *
+   * Defaulted to empty so a caller that has no memory yet simply gets no ghosts,
+   * which is the safe direction to fail: a missing ghost tells the player less,
+   * never more.
+   */
+  memory: ReadonlyMap<string, Vec2> = new Map(),
+): FogView {
   const vision = buildVision(buildBoard(map));
   const seen = new Set(visibleEnemiesForTeam(vision, state, team).map((u) => u.unitId));
   const lit = new Set(visibleSquaresForTeam(vision, state, team).map(vecKey));
@@ -99,6 +134,7 @@ export function fogView(map: MapDef, state: GameState, team: TeamId): FogView {
   const units = state.units.filter((u) => u.owner === team || !u.alive || seen.has(u.unitId));
   return {
     units,
+    ghosts: rememberedGhosts(state, team, seen, memory),
     decoys: visibleDecoys(state, team, lit),
     traps: visibleTraps(state, team, lit),
     // Only over units this viewer can already see. A red tile is a *tell*, and a
@@ -197,6 +233,8 @@ export function revealedView(state: GameState, team: TeamId): FogView {
     units: [...state.units],
     // Even revealed, a decoy is still drawn from a viewpoint — "everyone sees
     // it" is not the same as "everyone sees it as the same thing".
+    // Nothing is out of sight once the turn is history, so nothing is a ghost.
+    ghosts: [],
     decoys: state.decoys.map((d) => ({ id: d.id, pos: { ...d.pos }, owner: d.teamId, asEnemy: d.teamId !== team })),
     // Likewise still viewpoint-styled: "revealed" means everyone sees it, not
     // that everyone sees it as theirs.
@@ -207,4 +245,55 @@ export function revealedView(state: GameState, team: TeamId): FogView {
     camoTiles: [],
     fogged: [],
   };
+}
+
+// ── LAST-KNOWN: sighting memory ─────────────────────────────────────────────
+
+/** Memory is per (viewing team, enemy unit) — the two teams remember separately. */
+export const sightingKey = (team: TeamId, unitId: string): string => `${team}:${unitId}`;
+
+/**
+ * Fold this turn's sightings into the memory, returning a **new** map.
+ *
+ * Pure, so it is testable without a render loop and cannot be accidentally
+ * mutated by a repaint. Only *upgrades* entries: seeing an enemy overwrites
+ * where you last saw it, and losing sight of it changes nothing — that stale
+ * square is the whole point.
+ */
+export function rememberSightings(
+  memory: ReadonlyMap<string, Vec2>,
+  map: MapDef,
+  state: GameState,
+  team: TeamId,
+): Map<string, Vec2> {
+  const vision = buildVision(buildBoard(map));
+  const next = new Map(memory);
+  for (const enemy of visibleEnemiesForTeam(vision, state, team)) {
+    next.set(sightingKey(team, enemy.unitId), { ...enemy.pos });
+  }
+  return next;
+}
+
+/**
+ * The enemies to draw as ghosts: alive, remembered, and not visible right now.
+ *
+ * A **dead** enemy is excluded because `fogView` already keeps corpses on the
+ * board — it was revealed when it died, and drawing a ghost *and* a corpse for
+ * one unit would double it. A **visible** enemy is excluded because the real
+ * thing is being drawn; a ghost beside it would be a phantom second enemy.
+ */
+function rememberedGhosts(
+  state: GameState,
+  team: TeamId,
+  seen: ReadonlySet<string>,
+  memory: ReadonlyMap<string, Vec2>,
+): FogGhost[] {
+  const out: FogGhost[] = [];
+  for (const u of state.units) {
+    if (u.owner === team || !u.alive || seen.has(u.unitId)) continue;
+    const at = memory.get(sightingKey(team, u.unitId));
+    if (at === undefined) continue; // never seen — you cannot remember it
+    out.push({ unitId: u.unitId, characterId: u.characterId, owner: u.owner, pos: { ...at } });
+  }
+  return out;
 }

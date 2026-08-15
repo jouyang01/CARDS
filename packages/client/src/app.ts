@@ -69,7 +69,7 @@ import {
 import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js';
 import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
-import { camoTiles, fogView, revealedView, type FogView } from './fog.js';
+import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
 import { type ViewState } from './playback.js';
 import { statusPips } from './status-pips.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
@@ -202,9 +202,27 @@ export function startHotSeat(
    * One slot is enough: the seat changes far more rarely than the pointer.
    */
   let fogMemo: { state: GameState; team: TeamId; view: FogView } | undefined;
+  /**
+   * LAST-KNOWN — where each team last *saw* each enemy, `(team, unitId) → pos`.
+   *
+   * The one genuinely stateful thing the client keeps, and it lives here rather
+   * than in `fog.ts` for a specific reason: `fogView` is a pure function and the
+   * memo below re-runs it whenever `(state, team)` changes, so a memory held
+   * inside would be rebuilt from the current frame on every repaint — which is
+   * precisely the memory being erased. `fog.ts` reads this map; only this line
+   * writes it.
+   *
+   * It is not a vision rule and derives nothing: every square in it is one the
+   * engine already showed this team.
+   */
+  let sightings: ReadonlyMap<string, Vec2> = new Map();
   const currentFog = (team: TeamId): FogView => {
     if (fogMemo?.state !== state || fogMemo.team !== team) {
-      fogMemo = { state, team, view: fogView(map, state, team) };
+      // Record what is visible *now* before building the view, so the next turn
+      // has somewhere to put its ghost. A unit visible this frame gets no ghost
+      // regardless — the real thing is being drawn.
+      sightings = rememberSightings(sightings, map, state, team);
+      fogMemo = { state, team, view: fogView(map, state, team, sightings) };
     }
     return fogMemo.view;
   };
@@ -216,6 +234,16 @@ export function startHotSeat(
     // STATUS-AUDIT: read straight off engine state during Decision. An active
     // status is one with turns left — an expired instance is not a status.
     pips: statusPips(u.statuses.filter((s) => s.remaining > 0)),
+  }));
+
+  /**
+   * A remembered enemy, in the renderer's shape. Everything live is blanked:
+   * full HP, no energy, no statuses — a ghost that reported a real HP bar would
+   * be telling the viewer something it stopped being allowed to know.
+   */
+  const toGhostUnits = (ghosts: readonly FogGhost[]): RenderUnit[] => ghosts.map((g) => ({
+    unitId: g.unitId, owner: g.owner, pos: g.pos, hp: 1, maxHp: 1, energy: 0,
+    alive: true, label: (g.characterId[0] ?? '?').toUpperCase(), ghost: true,
   }));
 
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
@@ -493,7 +521,10 @@ export function startHotSeat(
     // Traps ride the same view for the same reason (TRAP-INDICATOR): the
     // placing team always sees its own, the enemy only a square it can see, and
     // that decision belongs to `fogView` rather than to the renderer.
-    renderer.show(toRenderUnits(view.units), view.decoys, view.traps);
+    // LAST-KNOWN: ghosts ride the same reconcile path as live units — same
+    // `unitId`, so one scene object is either the unit or its memory and the two
+    // can never be on the board at once.
+    renderer.show([...toRenderUnits(view.units), ...toGhostUnits(view.ghosts)], view.decoys, view.traps);
     renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
     // CAMO-REVEAL: the thicket a unit gave itself away in burns red. Same view
     // as everything else, so it can never out a unit the seat cannot see.
