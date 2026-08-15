@@ -127,7 +127,7 @@ describe('VISION1: playback reveals', () => {
     const hidden = s.units.find((u) => u.owner === 1)!;
     expect(fogView(m, s, 0).units.map((u) => u.unitId)).not.toContain(hidden.unitId);
 
-    const revealed = revealedView(s);
+    const revealed = revealedView(s, 0);
     expect(revealed.units.map((u) => u.unitId)).toContain(hidden.unitId);
     expect(revealed.fogged).toEqual([]);
   });
@@ -180,5 +180,76 @@ describe('VISION1-opening: no turn-1 grace reveal', () => {
         expect(drawn).toHaveLength(perTeam);
       }
     }
+  });
+});
+
+/**
+ * DECOY-RENDER — a decoy exists to be mistaken for Wisp.
+ *
+ * Every decoy used to be drawn from `state.decoys` directly: no fog, no
+ * viewpoint, and a translucent ghost in the *enemy* team's colour. So it was
+ * visible to both teams, through walls, in a shade that announced it was fake
+ * — which is three separate ways of giving away the square Wisp just vanished
+ * from, and is why stealth did not read as working.
+ */
+describe('DECOY-RENDER: a decoy is drawn from a viewpoint', () => {
+  const decoyAt = (s: ReturnType<typeof match>, pos: { x: number; y: number }, teamId: 0 | 1) => ({
+    ...s,
+    decoys: [{ id: 'd1', teamId, pos, expiresOnTurn: s.turn + 1 }],
+  });
+
+  it('renders AS AN ENEMY to the team being fooled', () => {
+    const m = map({ spawns: [[{ x: 8, y: 4 }], [{ x: 11, y: 4 }]] });
+    const s = decoyAt(match(m), { x: 10, y: 4 }, 1); // team 1's decoy, in team 0's sight
+    const [drawn] = fogView(m, s, 0).decoys;
+    expect(drawn).toBeDefined();
+    expect(drawn!.asEnemy).toBe(true);
+  });
+
+  it('renders as its OWNER’s marker to the team that placed it', () => {
+    const m = map({ spawns: [[{ x: 8, y: 4 }], [{ x: 11, y: 4 }]] });
+    const s = decoyAt(match(m), { x: 10, y: 4 }, 1);
+    const [drawn] = fogView(m, s, 1).decoys;
+    expect(drawn!.asEnemy).toBe(false);
+  });
+
+  it('is FOGGED for the enemy exactly like a real unit', () => {
+    // The one that matters for stealth: a decoy shining through the dark would
+    // be the only visible thing on that square, which is a tell rather than a
+    // trick.
+    const m = map({});
+    const s = decoyAt(match(m), { x: 19, y: 4 }, 1); // beside team 1's spawn, far out of sight
+    expect(fogView(m, s, 0).decoys).toEqual([]);
+    expect(fogView(m, s, 1).decoys).toHaveLength(1); // its owner always sees its own
+  });
+
+  it('a wall hides it from the enemy too', () => {
+    const m = map({
+      spawns: [[{ x: 8, y: 4 }], [{ x: 12, y: 4 }]],
+      walls: [{ x: 10, y: 3 }, { x: 10, y: 4 }, { x: 10, y: 5 }],
+    });
+    const s = decoyAt(match(m), { x: 11, y: 4 }, 1);
+    expect(fogView(m, s, 0).decoys).toEqual([]);
+  });
+
+  it('carries its id and position through unchanged', () => {
+    const m = map({ spawns: [[{ x: 8, y: 4 }], [{ x: 11, y: 4 }]] });
+    const s = decoyAt(match(m), { x: 9, y: 4 }, 1);
+    expect(fogView(m, s, 0).decoys).toEqual([{ id: 'd1', pos: { x: 9, y: 4 }, asEnemy: true }]);
+  });
+
+  it('playback reveals it, but still from a viewpoint', () => {
+    // "Revealed" is not "identical for everyone" — after the turn resolves the
+    // decoy is on screen for both teams, and it is still an enemy to one of
+    // them and a marker to the other.
+    const m = map({});
+    const s = decoyAt(match(m), { x: 10, y: 4 }, 1);
+    expect(revealedView(s, 0).decoys[0]!.asEnemy).toBe(true);
+    expect(revealedView(s, 1).decoys[0]!.asEnemy).toBe(false);
+  });
+
+  it('a match with no decoys draws none', () => {
+    const m = map({});
+    expect(fogView(m, match(m), 0).decoys).toEqual([]);
   });
 });

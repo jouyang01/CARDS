@@ -86,21 +86,35 @@ export function applyStatus(
   unit.statuses.push(amount === undefined ? { kind, remaining: duration } : { kind, remaining: duration, amount });
 }
 
-/** Remove every instance of `kind` outright (e.g. Stealth broken by attacking). */
-export function removeStatus(unit: UnitState, kind: EffectKind): void {
+/**
+ * Remove every instance of `kind` outright (e.g. Stealth broken by attacking).
+ * Returns whether anything was actually there, so the caller can log a
+ * `statusRemoved` event only when a status really left (STATUS-AUDIT: the
+ * client folds those events and must not be told about removals that did not
+ * happen).
+ */
+export function removeStatus(unit: UnitState, kind: EffectKind): boolean {
+  const before = unit.statuses.length;
   unit.statuses = unit.statuses.filter((s) => s.kind !== kind);
+  return unit.statuses.length !== before;
 }
 
 /**
  * End-of-turn tick: every status loses one turn; those that reach zero are
  * dropped. Shields expire the same way (their `amount` is irrelevant once the
  * duration runs out). Called once per unit at end of turn.
+ *
+ * Returns the kinds that expired, in `unit.statuses` order — stable, so the
+ * event log stays deterministic.
  */
-export function tickStatuses(unit: UnitState): void {
+export function tickStatuses(unit: UnitState): EffectKind[] {
   const survivors: StatusInstance[] = [];
+  const expired: EffectKind[] = [];
   for (const s of unit.statuses) {
     const remaining = s.remaining - 1;
     if (remaining > 0) survivors.push({ ...s, remaining });
+    else expired.push(s.kind);
   }
   unit.statuses = survivors;
+  return expired;
 }

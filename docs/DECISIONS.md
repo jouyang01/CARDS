@@ -1708,3 +1708,120 @@ fixture at once, so it is a separate item rather than a rider on this one.
 8. **Ravok's Bullrush is un-nerfed now.** Its `impact:{destination:2}` is live, so the playtest
    note "Ravok is temporarily undertuned" no longer applies — the knockback is still 2→1 as the
    Designer set it, but the AoE it was traded for now exists.
+
+---
+
+## 2026-08-28 — Builder: `untargetable` is enforced against aimed offence only (UNTGT1)
+
+STATUS-AUDIT's AC required a regression test proving `untargetable` "blocks being targeted".
+Writing it revealed that no damage path read the status at all: Fade and Shadowstep applied it,
+`fireCatalyst` was the only reader, and a Blast aimed at an Untargetable unit did full damage.
+GAME_SPEC §6 says "cannot be hit this phase/turn", so the rule exists — the engine simply never
+implemented it, and the audit's job is to reveal exactly that. Fixed rather than reported,
+because the AC asks for a passing test and a rule change was never involved.
+
+The judgment call the docs do not cover is **scope**. Ruled: a unit carrying `untargetable` is
+skipped by the entire HARMFUL half of an **aimed** ability — direct Blast, a dash's crossed
+targets and `impact` blasts, a delayed detonation, and a catalyst — damage, displacement riders
+and debuffs together, and the attacker earns no energy from it because nothing was hit. Splitting
+that (blocking damage but landing the knockback) is not "untargetable", it is "half targetable".
+Beneficial effects still reach it: hiding from attacks is not hiding from your own support.
+**Traps are excluded** — edge-cases already holds placed hazards apart from directly aimed
+attacks (they are team-safe and outside friendly fire), so an Untargetable unit that walks onto a
+mine still takes it. That carve-out is the part worth a second opinion; see Open Questions.
+
+## 2026-08-28 — Builder: status removals are logged, not derived (`statusRemoved`)
+
+STATUS-AUDIT's client half needs an indicator that goes away when the status does. The event log
+had `statusApplied` and no counterpart, so a client folding the log could only learn that Stealth
+broke by re-implementing "taking damage breaks Stealth" — deriving game logic, which the
+rendering contract forbids. Added `statusRemoved { unitId, status, reason: 'broken' | 'expired' }`,
+emitted when Stealth is actually broken and for each status that expires at the end-of-turn tick,
+and only when the status was really present. `removeStatus` now returns whether it removed
+anything and `tickStatuses` returns the expired kinds, so neither caller has to re-inspect the
+unit. This is additive to the log; no state, no ordering and no resolution outcome changed.
+
+## 2026-08-28 — Builder: CAT-DASH-COST implemented under a dev overrule, uniformly per colour
+
+**The conflict, stated plainly.** `docs/design/edge-cases.md` carries a shipped ruling —
+*"RULED — A free dash catalyst (Shift) does NOT consume your Move. Genuinely additive."* — and
+`docs/BACKLOG.md` files CAT-DASH-COST under "Blocked on Designer" with **"Do not implement before
+the Designer rules."** The owner's Dev Note for this session says *"Dash Catalysts should not be a
+free action,"* and the Analyzer's notes mark the item **DO NOT HOLD (DEV OVERRULE)**. Implemented
+on that authority. The edge-cases ruling is now stale on this point; **the Builder does not edit
+`docs/design/`**, so the Designer needs to retire it — flagged in Open Questions below.
+
+**What shipped.** A Dash-phase catalyst spends the unit's Move, exactly as a dash ability does:
+`planUnit` drops the walk and cancels Sprint for any unit that actually spends one. Shift 3 in
+Dash *or* walk 4 in Move, never both. Prep and Blast catalysts are untouched and stay fully
+additive — they never touched movement, so repricing them would be inventing a cost the directive
+did not ask for. Free *abilities* are also untouched: FREE1's budget independence was never in
+question, and a regression test pins that the change did not leak out of the Dash colour.
+
+**The judgment call.** The Analyzer's PROPOSED recommendation was narrower — the Move cost for the
+catalyst that *repositions*, with an open question about whether Fade and Unshackle (which move
+nobody) also lose additivity. The directive names the **colour**, not Shift, so all three Dash
+catalysts pay. One rule per colour is also the version a player can hold in their head: "yellow
+costs your Move" is learnable, "yellow costs your Move unless it doesn't move you" is a footnote.
+This is the more conservative reading of the directive and the *less* conservative reading of the
+economy, so it is exactly the sub-question worth a Designer confirmation — noted below rather than
+settled here.
+
+**Client.** The cost has to be visible before it is paid, or it is just a bug: arming a Dash
+catalyst clears the drawn move and disables Sprint, the HUD's move budget reads 0, and choosing to
+move or sprint hands the catalyst slot back rather than silently voiding it. The CAT2 separate-slot
+invariant is otherwise intact — a Dash catalyst still never touches the chosen ability or its aim.
+
+## Open Questions for the Analyzer — 2026-08-28
+
+1. **`untargetable` and traps (UNTGT1).** STATUS-AUDIT's AC required a test that `untargetable`
+   blocks being targeted, and writing it found that no damage path read the status at all. It is
+   now enforced across **aimed** offence — Blast, dash crossings and impact blasts, delayed
+   detonations, catalysts — over the whole harmful half of an ability, with no energy for the
+   attacker. **Traps are excluded**, on the reading that edge-cases already holds placed hazards
+   apart from aimed attacks (team-safe, outside friendly fire). If the Designer wants "cannot be
+   hit" to mean "cannot be hurt", the trap path is one `if`. Route it.
+
+2. **CAT-DASH-COST contradicts a shipped ruling the Builder may not edit.** `edge-cases.md` still
+   says *"RULED — A free dash catalyst (Shift) does NOT consume your Move. Genuinely additive."*
+   That is now false in the engine, on the owner's directive and the Analyzer's DO-NOT-HOLD.
+   The Designer needs to retire or rewrite that bullet, and the BACKLOG entry needs to leave
+   "Blocked on Designer". Until then the docs and the code disagree in writing.
+
+3. **CAT-DASH-COST sub-question, still open.** All three Dash catalysts pay the Move, including
+   Fade and Unshackle, which reposition nobody. The directive names the colour rather than Shift,
+   and one rule per colour is what a player can hold in their head — but the Analyzer's PROPOSED
+   version was narrower, and Fade at the cost of a full Move may simply be unplayable. A balance
+   call the Designer owns; the engine change is one condition either way.
+
+4. **`statusRemoved` is a new event kind and the log schema is now wider.** Emitted for Stealth
+   broken early and for every end-of-turn expiry. Nothing in resolution changed, but the combat
+   log (UI6) does not render it and probably should — "Vex's Haste wore off" is exactly the kind
+   of thing a player loses track of. Not scoped; raise it if you agree.
+
+5. **Status pips are not pixel-verified.** The vocabulary (`status-pips.ts`) and the playback fold
+   are unit-covered, and the row's centring maths with them, but nothing asserts the quads
+   composite — they are billboarded meshes, not DOM, so RENDER-VERIFY's pixel families cannot
+   isolate them the way FOG-ZORDER's brush test can. A dedicated colour family per pip would make
+   it testable; worth it only if a pip regression actually happens.
+
+6. **PREVIEW-NUMBERS shows nominal amounts.** Before Might/Weaken, cover, shields and now
+   Untargetable. Deliberate — a plan-time preview cannot know what will be standing at resolution,
+   since Adrenaline resolves at the *start* of Blast, after lock. Cover is the one modifier that is
+   knowable at plan time and would change the number by half; if playtest reports the preview
+   "lying" over a unit in cover, that is the first thing to fold in.
+
+7. **PREVIEW-NUMBERS covers all three armed slots.** Ability, free action and catalyst, summed per
+   unit and colour, on the reading that the player's question is what *their turn* does to a unit.
+   The AC said "the action's area", singular. If the intent was ability-only, it is one argument.
+
+8. **DASH-PREVIEW is a plan-time estimate and can disagree with resolution.** The disc is centred
+   on the *aimed* landing square; a charge stopped short by a body detonates where it stopped.
+   That is the ruled behaviour and the reason the disc is not folded into `expandShape`'s area,
+   but it does mean the preview can be wrong in exactly the case a player most wants it right.
+   Showing the truncated route's real end would need the client to re-run `walkCharge` against
+   post-Dash positions, which it cannot know at plan time. Flagging, not proposing.
+
+9. **Carried over, still open:** the FREE1/CAT1 `free` + `oncePerMatch` conflict resolution, the
+   one-free-action tiebreak, and `AbilityOrder.target` becoming optional (Builder OQ 2026-08-26,
+   1–11). None of this session's work resolved them.

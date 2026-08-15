@@ -12,7 +12,7 @@
  * kills, shields and energy are all reproducible from the log alone, no recomputation.
  */
 
-import { PHASES, type GameState, type Phase, type TurnEvent, type Vec2 } from '@cards/engine';
+import { PHASES, type EffectKind, type GameState, type Phase, type TurnEvent, type Vec2 } from '@cards/engine';
 
 export interface ViewUnit {
   unitId: string;
@@ -24,6 +24,12 @@ export interface ViewUnit {
   alive: boolean;
   /** Remaining shield pool, tracked from statusApplied(shield).amount − damage.absorbed. */
   shield: number;
+  /**
+   * Live statuses, folded from the `statusApplied` / `statusRemoved` pair
+   * (STATUS-AUDIT). Set, not array: refresh-not-stack means presence is the only
+   * question a pip asks, and a re-application must not double the row.
+   */
+  statuses: Set<EffectKind>;
 }
 
 /** A Wisp decoy in the view (rendered to the enemy team as Wisp — R2). */
@@ -47,7 +53,8 @@ export function initView(state: GameState): ViewState {
   const units = new Map<string, ViewUnit>();
   for (const u of state.units) {
     const shield = u.statuses.filter((s) => s.kind === 'shield' && s.remaining > 0).reduce((sum, s) => sum + (s.amount ?? 0), 0);
-    units.set(u.unitId, { unitId: u.unitId, owner: u.owner, pos: { ...u.pos }, hp: u.hp, maxHp: u.maxHp, energy: u.energy, alive: u.alive, shield });
+    const statuses = new Set<EffectKind>(u.statuses.filter((s) => s.remaining > 0).map((s) => s.kind));
+    units.set(u.unitId, { unitId: u.unitId, owner: u.owner, pos: { ...u.pos }, hp: u.hp, maxHp: u.maxHp, energy: u.energy, alive: u.alive, shield, statuses });
   }
   const decoys = new Map<string, ViewDecoy>();
   for (const d of state.decoys) decoys.set(d.id, { id: d.id, teamId: d.teamId, pos: { ...d.pos } });
@@ -73,7 +80,15 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
     }
     case 'statusApplied': {
       const u = view.units.get(event.unitId);
-      if (u && event.status === 'shield' && event.amount !== undefined) u.shield = event.amount;
+      if (u === undefined) break;
+      if (event.status === 'shield' && event.amount !== undefined) u.shield = event.amount;
+      u.statuses.add(event.status);
+      break;
+    }
+    case 'statusRemoved': {
+      // Broken early or expired at the tick — either way the engine said so, so
+      // the view drops it rather than working out durations for itself.
+      view.units.get(event.unitId)?.statuses.delete(event.status);
       break;
     }
     case 'energySpent': {
@@ -93,13 +108,13 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
     }
     case 'death': {
       const u = view.units.get(event.unitId);
-      if (u) { u.alive = false; u.hp = 0; u.shield = 0; }
+      if (u) { u.alive = false; u.hp = 0; u.shield = 0; u.statuses.clear(); }
       view.kills[event.killer] += 1;
       break;
     }
     case 'respawn': {
       const u = view.units.get(event.unitId);
-      if (u) { u.alive = true; u.hp = u.maxHp; u.shield = 0; u.pos = { ...event.pos }; }
+      if (u) { u.alive = true; u.hp = u.maxHp; u.shield = 0; u.statuses.clear(); u.pos = { ...event.pos }; }
       break;
     }
     case 'decoySpawned': {
@@ -115,8 +130,7 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
       if (event.result === 'win') view.winner = event.winner;
       break;
     }
-    // phaseStart / abilityFired / trapPlaced / trapTriggered: no board delta
-    // (non-shield statusApplied included — HUD/animation cues only).
+    // phaseStart / abilityFired / trapPlaced / trapTriggered: no board delta.
     default:
       break;
   }

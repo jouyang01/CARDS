@@ -3,10 +3,13 @@ import {
   countPixels,
   decodePng,
   distinctColours,
+  findPixels,
   isAimOrange,
+  isBrushGreen,
   isFogged,
   isTeamBlue,
   isTeamRed,
+  pixelAt,
   type Image,
 } from './pixels.js';
 
@@ -251,6 +254,52 @@ test('a catalyst can be armed without clearing the chosen ability', async ({ pag
 });
 
 /**
+ * CAT-DASH-COST — "Dash Catalysts should not be a free action." The reducer is
+ * unit-covered; what only a browser shows is that the cost is *visible* before
+ * it is paid, which is the difference between a rule and a bug.
+ */
+test('arming the Dash catalyst prices the turn: Sprint greys out, Move reads 0', async ({ page }) => {
+  const slots = page.locator('.hud-catalyst');
+  await expect(slots.nth(1)).toHaveAttribute('data-phase', 'dash');
+  const moveButtons = page.locator('.hud-moves .hud-move');
+  const move = moveButtons.nth(0);
+  const sprint = moveButtons.nth(1);
+  await expect(sprint).toBeEnabled();
+  await expect(move).toHaveText(/Move \([1-9]/);
+
+  await slots.nth(1).click(); // Shift
+  await expect(slots.nth(1)).toHaveClass(/sel/);
+  await expect(sprint, 'Sprint must not stay offered once the Move is spent').toBeDisabled();
+  await expect(move, 'the budget has to say what you will actually get').toHaveText('Move (0)');
+
+  // Handing the slot back gives the Move back with it.
+  await slots.nth(1).click();
+  await expect(sprint).toBeEnabled();
+  await expect(move).toHaveText(/Move \([1-9]/);
+});
+
+/**
+ * FREE-UI — the mechanic the engine implemented and the client never exposed.
+ * A unit test proves the reducer keeps both slots; only a browser proves the
+ * hotbar button is wired to the free slot and not to the normal one.
+ */
+test('a free ability arms alongside a normal ability, and does not disable Sprint', async ({ page }) => {
+  // Vex leads the dev draft and carries Overwatch Trap, the free Prep action.
+  const free = page.locator('.hud-ability.free').first();
+  await expect(free).toBeVisible();
+  await expect(free).toContainText('free');
+
+  const normal = page.locator('.hud-ability:not(.free):not([disabled])').first();
+  await normal.click();
+  await expect(normal).toHaveClass(/sel/);
+
+  await free.click();
+  await expect(free).toHaveClass(/sel/);
+  // Both armed at once — the whole point of a separate slot.
+  await expect(normal).toHaveClass(/sel/);
+});
+
+/**
  * MAPTOGGLE — the 4v4 map has been in `data/` and validated by unit tests since
  * M1, and was still unreachable in a browser because the entry point hard-coded
  * `duel-arena`. A unit test cannot tell you the URL boots; this can.
@@ -307,4 +356,115 @@ test.describe('the layout survives a laptop-sized window', () => {
       expect(countPixels(image, isTeamBlue), 'units stopped drawing at this size').toBeGreaterThan(0);
     });
   }
+});
+
+/**
+ * FOG-ZORDER — "the green stealth squares are STILL hiding aoe effect and
+ * movement options".
+ *
+ * The green is brush, drawn as a 0.02-high box, and the highlight layers used to
+ * live at 0.002–0.022 — *under* that lid. So an overlay covering a brush square
+ * lost the depth test and simply did not appear, which to a player reads as the
+ * ability being unable to reach there. Overlays now start above the brush
+ * (`OVERLAY_BASE`), and `renderer3d.test.ts` pins that invariant numerically.
+ *
+ * This is the half a unit test cannot see: whether the pixels arrive. It finds
+ * real lit brush on the composited board, aims at it, and asserts the overlay
+ * shows up **on those same pixels** — not merely somewhere on screen, which is
+ * what a whole-frame colour count would have let through.
+ *
+ * 4v4 on purpose: in the default format the seat's vision never reaches either
+ * brush band, so every green pixel on screen is fogged brush and there is
+ * nothing to prove anything against.
+ */
+test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async ({ page }) => {
+  await page.goto('./?map=duel-arena&format=4v4');
+  await expect(boardCanvas(page)).toBeVisible();
+  await page.waitForTimeout(700);
+
+  const bare = await pixels(page);
+  const brush = findPixels(bare, isBrushGreen, 2);
+  expect(brush.length, 'no lit brush on the board — nothing to test against').toBeGreaterThan(100);
+
+  const box = (await boardCanvas(page).boundingBox())!;
+  const scale = { x: box.width / bare.width, y: box.height / bare.height };
+  const hoverAt = async (p: { x: number; y: number }): Promise<Image> => {
+    await page.mouse.move(box.x + p.x * scale.x, box.y + p.y * scale.y);
+    await page.waitForTimeout(200);
+    return await pixels(page);
+  };
+  /** Brush pixels that are no longer bare brush — i.e. something drew on them. */
+  const covered = (img: Image): number => brush.filter((p) => !isBrushGreen(pixelAt(img, p.x, p.y))).length;
+  const aimed = (img: Image): number => brush.filter((p) => isAimOrange(pixelAt(img, p.x, p.y))).length;
+
+  // Candidates spread across both bands: only one of them is inside any given
+  // ability's range, and which one depends on where the seat's units spawned.
+  const step = Math.max(1, Math.floor(brush.length / 6));
+  const candidates = Array.from({ length: 6 }, (_, i) => brush[i * step]).filter((p) => p !== undefined);
+
+  const abilities = page.locator('.hud-ability:not([disabled])');
+  const count = await abilities.count();
+  expect(count, 'no usable ability to aim with').toBeGreaterThan(0);
+
+  let bestCovered = 0;
+  let bestAimed = 0;
+  for (let i = 0; i < count && bestAimed === 0; i++) {
+    await abilities.nth(i).click();
+    for (const p of candidates) {
+      const img = await hoverAt(p);
+      bestCovered = Math.max(bestCovered, covered(img));
+      bestAimed = Math.max(bestAimed, aimed(img));
+      if (bestAimed > 0) break;
+    }
+  }
+
+  // The hover range envelope reaching brush at all is the coarse half: under the
+  // old lifts every one of these pixels stayed bare green.
+  expect(bestCovered, 'no overlay composited onto brush at all').toBeGreaterThan(brush.length / 4);
+  // And the aimed AoE specifically — the "hiding aoe effect" in the report.
+  // A floor well above one tile's worth of edge pixels, so an antialiased
+  // fringe cannot pass for a painted square.
+  expect(bestAimed, 'the aim overlay did not survive the brush tiles').toBeGreaterThan(20);
+});
+
+/**
+ * PREVIEW-NUMBERS — "Players should know what their action is going to do."
+ *
+ * The polarity and the amounts are unit-covered; what only a browser can say is
+ * whether the floats are in the DOM, anchored over the board, and gone again
+ * once the turn stops being a plan.
+ */
+test('an aimed action floats its numbers before Lock In (PREVIEW-NUMBERS)', async ({ page }) => {
+  await page.goto('./?map=duel-arena&format=4v4');
+  await expect(boardCanvas(page)).toBeVisible();
+  await page.waitForTimeout(700);
+
+  const previews = page.locator('.readout.preview');
+  await expect(previews).toHaveCount(0); // nothing armed, nothing promised
+
+  // Sweep the board until an aim covers somebody. Which square that is depends
+  // on spawns and on the first ability's shape, so this searches rather than
+  // guessing — including the seat's own column, since friendly fire means an
+  // ally in your own area is a legitimate (and important) red number.
+  await page.locator('.hud-ability:not([disabled])').first().click();
+  const spots: [number, number][] = [];
+  for (let ix = 1; ix <= 9; ix++) for (let iy = 1; iy <= 5; iy++) spots.push([ix / 10, iy / 6]);
+  for (const [fx, fy] of spots) {
+    if ((await previews.count()) > 0) break;
+    await pointAt(page, fx, fy);
+  }
+  expect(await previews.count(), 'no aim over the board ever previewed a number').toBeGreaterThan(0);
+
+  // A number, positioned over the board — not a stray empty node in the corner.
+  const first = previews.first();
+  await expect(first).toHaveText(/^[+]?\d+$/);
+  const box = (await first.boundingBox())!;
+  const board = (await boardCanvas(page).boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(board.x - 40);
+  expect(box.x).toBeLessThanOrEqual(board.x + board.width + 40);
+
+  // Locking in resolves the turn, and a resolved turn is no longer a plan.
+  await lockIn(page).click();
+  await page.waitForTimeout(400);
+  await expect(previews).toHaveCount(0);
 });

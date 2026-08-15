@@ -14,6 +14,7 @@ import {
   ULT_COST,
   aimInRange,
   buildBoard,
+  circleSquares,
   direction8,
   distance,
   dominantCardinal,
@@ -65,6 +66,16 @@ export interface OrderDraft {
    */
   catalystId?: string;
   catalystAim: Vec2[];
+  /**
+   * A **free ability** (FREE-UI) — its own slot, for exactly the same reason a
+   * catalyst has one. The engine has accepted `order.freeAbility` since FREE1;
+   * the client had no reference to it at all, so a `free: true` ability filled
+   * the normal `abilityId` slot, went out as `order.ability`, and disabled
+   * Sprint. The whole mechanic — "place the trap AND take your turn" — was
+   * unreachable through the UI while the engine implemented it correctly.
+   */
+  freeAbilityId?: string;
+  freeAim: Vec2[];
   /** Sprint = move-only, longer range. Ignored once an ability is chosen. */
   sprint: boolean;
   /** Move-phase path; coexists with a non-dash ability, dropped for a dash. */
@@ -73,7 +84,7 @@ export interface OrderDraft {
 
 /** A blank draft for a unit (holds position until the player chooses). */
 export function emptyDraft(unitId: string): OrderDraft {
-  return { unitId, aim: [], catalystAim: [], sprint: false, movePath: [] };
+  return { unitId, aim: [], catalystAim: [], freeAim: [], sprint: false, movePath: [] };
 }
 
 export interface AbilityOption {
@@ -123,6 +134,15 @@ export function abilityTooltip(def: AbilityDef): string[] {
   return lines;
 }
 
+/** Is this a free action — additive, its own slot, never the turn's ability? */
+export const isFreeAbility = (ability: AbilityDef): boolean => ability.free === true;
+
+/** Resolve a draft's FREE ability id against the character (FREE-UI). */
+export function draftFreeAbility(character: CharacterDef, draft: OrderDraft): AbilityDef | undefined {
+  if (draft.freeAbilityId === undefined) return undefined;
+  return findAbility({ [character.id]: character }, character.id, draft.freeAbilityId)?.def;
+}
+
 /** Shapes that can be freely rotated by a drag (AIM2). */
 export const isRotatable = (ability: AbilityDef): boolean => ability.shape === 'line' || ability.shape === 'cone';
 
@@ -136,9 +156,19 @@ export function dragToAimStep(from: Vec2, to: Vec2): number {
   return vectorToStep(to.x - from.x, to.y - from.y);
 }
 
-/** Is `sprint` currently selectable? Only when no ability is chosen (GAME_SPEC §2). */
-export function sprintAllowed(draft: OrderDraft): boolean {
-  return draft.abilityId === undefined;
+/**
+ * Is `sprint` currently selectable? Only when no ability is chosen
+ * (GAME_SPEC §2) — and, since CAT-DASH-COST, only when no **Dash catalyst** is
+ * armed either, because a Dash catalyst now spends the Move rather than riding
+ * alongside it. A free *ability* still never blocks it (FREE1), and neither
+ * does a Prep or Blast catalyst.
+ *
+ * `dashCatalystArmed` is passed in rather than read off the draft because a
+ * draft stores ids, and only the caller holds the catalyst pool that says which
+ * phase an id belongs to.
+ */
+export function sprintAllowed(draft: OrderDraft, dashCatalystArmed = false): boolean {
+  return draft.abilityId === undefined && !dashCatalystArmed;
 }
 
 /** Resolve a draft's ability id against the character (ult included). */
@@ -176,6 +206,54 @@ export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef
   // Same call the engine makes, same step — so the preview is exactly the tile
   // set that will be hit, rotation included.
   return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
+}
+
+/**
+ * DASH-PREVIEW — the impact disc(s) a dash carrying `impact` would detonate.
+ *
+ * "Shadowstep Strike needs to show what boxes are being hit, not just the box of
+ * arrival." DASH-IMPACT shipped the mechanic without the preview, so a dash with
+ * a destination blast looked exactly like a dash that only moves you.
+ *
+ * Deliberately **not** folded into `expandShape`'s `a.area`. That field means
+ * "the aimed area" at plan time, but the engine detonates from the square the
+ * dasher actually comes to rest on — a charge stopped short blasts where it
+ * stopped. Merging the two would make one of them lie. This is a plan-time
+ * estimate at the *aimed* landing square, and resolution playback still shows
+ * the true detonation.
+ *
+ * `origin` is the takeoff disc (Ravok's Bullrush shoves off the square it left),
+ * `destination` the landing disc. Either is empty when the ability declares no
+ * radius for it, so a dash with no `impact` previews nothing new.
+ */
+export interface ImpactPreview {
+  origin: Vec2[];
+  destination: Vec2[];
+}
+
+export function impactPreview(
+  map: MapDef,
+  unit: UnitState,
+  ability: AbilityDef | undefined,
+  aim: readonly Vec2[],
+  aimStep?: number,
+): ImpactPreview {
+  const none: ImpactPreview = { origin: [], destination: [] };
+  if (ability?.impact === undefined || ability.phase !== 'dash') return none;
+  if (!aimLegal(unit, ability, aim, aimStep)) return none;
+  // Where the dash is *aimed* to end: the last square of a charge's route, or
+  // the teleport's target. `dashRoute` already makes that one decision.
+  const route = dashRoute(unit, ability, aim);
+  const landing = route[route.length - 1];
+  if (landing === undefined) return none;
+
+  const board = buildBoard(map);
+  const disc = (centre: Vec2, radius: number | undefined): Vec2[] =>
+    radius === undefined || radius < 1 ? [] : circleSquares(board, centre, radius);
+  return {
+    origin: disc(unit.pos, ability.impact.origin),
+    destination: disc(landing, ability.impact.destination),
+  };
 }
 
 /**
@@ -535,7 +613,7 @@ function diskOutline(centre: Vec2, radius: number): Vec2[] {
 /** Does this draft carry an actual order, or is the character holding? */
 export function draftHasOrder(draft: OrderDraft): boolean {
   return draft.abilityId !== undefined || draft.catalystId !== undefined
-    || draft.sprint || draft.movePath.length > 0;
+    || draft.freeAbilityId !== undefined || draft.sprint || draft.movePath.length > 0;
 }
 
 /** Is a drawn move path legal right now (delegates to the engine)? */
@@ -555,6 +633,11 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
   // it is written first and never gates any of the branches below (CAT2).
   if (draft.catalystId !== undefined) {
     order.catalyst = { abilityId: draft.catalystId, target: draft.catalystAim.map((p) => ({ x: p.x, y: p.y })) };
+  }
+  // A free ability rides alongside everything else — it is written before the
+  // branches below and gates none of them, which is the whole mechanic.
+  if (draft.freeAbilityId !== undefined) {
+    order.freeAbility = { abilityId: draft.freeAbilityId, target: draft.freeAim.map((p) => ({ x: p.x, y: p.y })) };
   }
   if (ability !== undefined) {
     order.ability = { abilityId: ability.id, target: draft.aim.map((p) => ({ x: p.x, y: p.y })) };
@@ -577,12 +660,25 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
  */
 export type DraftAction =
   | { type: 'selectAbility'; abilityId: string; isDash: boolean }
-  | { type: 'selectCatalyst'; catalystId: string }
+  // `isDash` mirrors `selectAbility`'s: since CAT-DASH-COST a Dash catalyst
+  // spends the Move, so it has the same exclusivity a dash ability does.
+  | { type: 'selectCatalyst'; catalystId: string; isDash?: boolean }
+  | { type: 'selectFreeAbility'; abilityId: string }
   | { type: 'selectMove' }
   | { type: 'selectSprint' }
   | { type: 'clear' };
 
-export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash: boolean): OrderDraft {
+/** Hand a Dash catalyst's slot back when the player chooses to move instead. */
+const releaseDashCatalyst = (draft: OrderDraft, isDash: boolean): OrderDraft =>
+  isDash ? { ...draft, catalystId: undefined, catalystAim: [] } : draft;
+
+export function nextDraft(
+  draft: OrderDraft,
+  action: DraftAction,
+  currentIsDash: boolean,
+  /** Whether the draft's *existing* catalyst is a Dash one (CAT-DASH-COST). */
+  currentCatalystIsDash = false,
+): OrderDraft {
   switch (action.type) {
     case 'selectAbility':
       // Choosing an ability clears sprint and re-aims; a dash owns the movement
@@ -592,18 +688,48 @@ export function nextDraft(draft: OrderDraft, action: DraftAction, currentIsDash:
       // A catalyst is a SEPARATE slot: everything else in the draft survives,
       // including the chosen ability and its aim. Re-picking the same one
       // deselects it, so the slot can be given back without clearing the turn.
-      return draft.catalystId === action.catalystId
-        ? { ...draft, catalystId: undefined, catalystAim: [] }
-        : { ...draft, catalystId: action.catalystId, catalystAim: [] };
-    case 'selectMove':
-      // "Draw move" keeps a non-dash ability; a dash (or no ability) is replaced.
+      if (draft.catalystId === action.catalystId) return { ...draft, catalystId: undefined, catalystAim: [] };
+      return {
+        ...draft,
+        catalystId: action.catalystId,
+        catalystAim: [],
+        // The other side of "one free action per turn": a catalyst drops an
+        // armed free ability, symmetrically.
+        freeAbilityId: undefined,
+        freeAim: [],
+        // …and a DASH catalyst additionally drops the move, because it is no
+        // longer free: it buys its effect with the Move (CAT-DASH-COST), so a
+        // move line left drawn beside it would promise a walk the engine is
+        // going to throw away. Prep and Blast catalysts still change nothing.
+        ...(action.isDash === true ? { sprint: false, movePath: [] } : {}),
+      };
+    case 'selectFreeAbility':
+      // A separate slot, exactly like a catalyst: the chosen ability, its aim,
+      // its rotation and any drawn move all survive. Re-picking deselects.
+      // **At most one free action per turn** (edge-cases), counting free
+      // abilities and catalysts together — so arming one drops the other rather
+      // than sending an order the engine will silently reject half of.
+      return draft.freeAbilityId === action.abilityId
+        ? { ...draft, freeAbilityId: undefined, freeAim: [] }
+        : { ...draft, freeAbilityId: action.abilityId, freeAim: [], catalystId: undefined, catalystAim: [] };
+    case 'selectMove': {
+      // Choosing to move gives back whatever was holding the Move: a dash
+      // ability, or (since CAT-DASH-COST) a Dash catalyst. A non-dash ability
+      // keeps its slot — move AND shoot is the point of MS1.
+      const freed = releaseDashCatalyst(draft, currentCatalystIsDash);
       return draft.abilityId !== undefined && !currentIsDash
-        ? { ...draft, sprint: false, movePath: [] }
-        : { ...draft, abilityId: undefined, aim: [], sprint: false, movePath: [] };
+        ? { ...freed, sprint: false, movePath: [] }
+        : { ...freed, abilityId: undefined, aim: [], sprint: false, movePath: [] };
+    }
     case 'selectSprint':
-      // Sprint is move-only (8) and clears any ability — but NOT the catalyst,
-      // which never prices the turn (FREE1 budget independence).
-      return { ...draft, abilityId: undefined, aim: [], sprint: true, movePath: [] };
+      // Sprint is move-only (8) and clears any ability. A Prep or Blast catalyst
+      // rides along untouched — those never price the turn (FREE1 budget
+      // independence) — but a Dash catalyst is given back, because it and Sprint
+      // are now bidding for the same Move.
+      return {
+        ...releaseDashCatalyst(draft, currentCatalystIsDash),
+        abilityId: undefined, aim: [], sprint: true, movePath: [],
+      };
     case 'clear':
       return emptyDraft(draft.unitId);
   }

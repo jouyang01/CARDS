@@ -18,11 +18,13 @@ import type { AbilityDef, CharacterDef, GameState, UnitOrders } from '../src/typ
 /**
  * CAT1 — three catalyst slots, one per phase, each spent once per match.
  *
- * Two of the rulings here fail **silently**: a Blast catalyst resolved after the
- * Blast damage step boosts nothing until next turn (Adrenaline and Overdrive
- * become no-ops that still cost you the slot), and a Dash catalyst that quietly
- * consumed the Move would make Shift a sidegrade instead of a burst. Both get a
- * test that measures the *outcome*, not the event.
+ * The rulings here fail **silently**, which is why each is measured as an
+ * *outcome* rather than an event: a Blast catalyst resolved after the Blast
+ * damage step boosts nothing until next turn (Adrenaline and Overdrive become
+ * no-ops that still cost you the slot), and the Move a Dash catalyst does or
+ * does not consume is invisible unless something asserts where the unit ended
+ * up. That second one has since been reversed by owner directive — see
+ * CAT-DASH-COST below.
  */
 
 const DATA = JSON.parse(
@@ -214,16 +216,74 @@ describe('CAT1: catalysts resolve at the START of their phase', () => {
   });
 });
 
-describe('CAT1: Shift does NOT consume your Move — the other silent one', () => {
-  it('a unit Shifts 3 in Dash and still walks its full 4 in Move', () => {
+describe('CAT-DASH-COST: a Dash catalyst SPENDS your Move', () => {
+  /**
+   * Owner directive 2026-08-28 — "Dash Catalysts should not be a free action."
+   * This reverses CAT1's "a free dash catalyst does NOT consume your Move" for
+   * the Dash colour: Shift 3 in Dash *or* walk 4 in Move, never both. The tests
+   * below are the shape of that reversal, so a re-ruling has one place to land.
+   */
+  it('a unit that Shifts 3 in Dash does not also walk in Move', () => {
     const s = setup();
     const { state } = run(s, [{
       unitId: 'a',
       catalyst: { abilityId: 'shift', target: [{ x: 4, y: 7 }] }, // 3 north
       movePath: [{ x: 5, y: 7 }, { x: 6, y: 7 }, { x: 7, y: 7 }, { x: 8, y: 7 }],
     }]);
-    expect(unit(state, 'a').pos).toEqual({ x: 8, y: 7 }); // teleported, then walked
+    expect(unit(state, 'a').pos).toEqual({ x: 4, y: 7 }); // the Shift, and only the Shift
     expect(unit(state, 'a').catalystsUsed).toEqual(['shift']);
+  });
+
+  it('and the catalyst still resolves — the Move is the price, not a rejection', () => {
+    const { state, events } = run(setup(), [{
+      unitId: 'a',
+      catalyst: { abilityId: 'shift', target: [{ x: 4, y: 7 }] },
+      movePath: [{ x: 5, y: 7 }, { x: 6, y: 7 }],
+    }]);
+    expect(events.some((e) => e.type === 'catalystUsed' && e.catalystId === 'shift')).toBe(true);
+    expect(unit(state, 'a').pos).toEqual({ x: 4, y: 7 });
+  });
+
+  it('a Dash catalyst that does not reposition costs the Move too', () => {
+    // Fade grants Untargetable and moves nobody, and it is still a Dash
+    // catalyst. One rule per colour beats two rules per catalyst; DECISIONS
+    // 2026-08-28 flags the sub-question for the Designer.
+    const { state } = run(withCatalyst(setup(), 'fade'), [{
+      unitId: 'a',
+      catalyst: { abilityId: 'fade', target: [] },
+      movePath: walk(2),
+    }]);
+    expect(unit(state, 'a').pos).toEqual({ x: 4, y: 10 }); // held its ground
+    expect(unit(state, 'a').catalystsUsed).toEqual(['fade']);
+  });
+
+  it('Sprint is cancelled by a Dash catalyst, not merely shortened', () => {
+    const { state } = run(setup(), [{
+      unitId: 'a',
+      catalyst: { abilityId: 'shift', target: [{ x: 4, y: 7 }] },
+      sprint: true,
+      movePath: [{ x: 5, y: 7 }, { x: 6, y: 7 }, { x: 7, y: 7 }, { x: 8, y: 7 }, { x: 9, y: 7 }],
+    }]);
+    expect(unit(state, 'a').pos).toEqual({ x: 4, y: 7 });
+  });
+
+  it('a PREP catalyst is still fully additive — it never touched movement', () => {
+    const { state } = run(setup(), [{
+      unitId: 'a',
+      catalyst: { abilityId: 'second_wind', target: [] },
+      movePath: walk(MOVE_RANGE),
+    }]);
+    expect(unit(state, 'a').pos).toEqual({ x: 8, y: 10 });
+    expect(unit(state, 'a').catalystsUsed).toEqual(['second_wind']);
+  });
+
+  it('…and so is a BLAST catalyst', () => {
+    const { state } = run(setup(), [{
+      unitId: 'a',
+      catalyst: { abilityId: 'adrenaline', target: [] },
+      movePath: walk(MOVE_RANGE),
+    }]);
+    expect(unit(state, 'a').pos).toEqual({ x: 8, y: 10 });
   });
 
   it('Shift ignores walls — it is a teleport, not a walk', () => {

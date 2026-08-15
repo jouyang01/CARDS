@@ -10,7 +10,7 @@ import {
   type MapDef,
 } from '@cards/engine';
 import { createHud, type HudCatalyst, type HudCharacter, type HudModel } from '../src/hud.js';
-import { emptyDraft, nextDraft, toUnitOrders } from '../src/targeting.js';
+import { emptyDraft, nextDraft, sprintAllowed, toUnitOrders } from '../src/targeting.js';
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
 
@@ -45,8 +45,10 @@ describe('CAT2: selecting a catalyst never replaces the ability selection', () =
   });
 
   it('keeps the ability, its aim, its rotation and the drawn move', () => {
-    const after = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift' }, false);
-    expect(after.catalystId).toBe('shift');
+    // Second Wind is a PREP catalyst — still fully additive, so nothing in the
+    // turn moves. (The Dash colour is the exception; see CAT-DASH-COST below.)
+    const after = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'second_wind', isDash: false }, false);
+    expect(after.catalystId).toBe('second_wind');
     expect(after.abilityId).toBe('rail_shot');
     expect(after.aim).toEqual([{ x: 14, y: 7 }]);
     expect(after.aimStep).toBe(12);
@@ -75,8 +77,8 @@ describe('CAT2: selecting a catalyst never replaces the ability selection', () =
   });
 
   it('re-picking the same catalyst hands the slot back without clearing the turn', () => {
-    const on = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift' }, false);
-    const off = nextDraft(on, { type: 'selectCatalyst', catalystId: 'shift' }, false);
+    const on = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
+    const off = nextDraft(on, { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false, true);
     expect(off.catalystId).toBeUndefined();
     expect(off.catalystAim).toEqual([]);
     expect(off.abilityId).toBe('rail_shot'); // the rest of the turn is untouched
@@ -84,14 +86,82 @@ describe('CAT2: selecting a catalyst never replaces the ability selection', () =
 
   it('swapping catalysts clears the old aim so it cannot be sent with the new one', () => {
     const shift = { ...armed(), catalystId: 'shift', catalystAim: [{ x: 4, y: 7 }] };
-    const swapped = nextDraft(shift, { type: 'selectCatalyst', catalystId: 'adrenaline' }, false);
+    const swapped = nextDraft(shift, { type: 'selectCatalyst', catalystId: 'adrenaline', isDash: false }, false, true);
     expect(swapped.catalystId).toBe('adrenaline');
     expect(swapped.catalystAim).toEqual([]);
   });
 
   it('`clear` resets everything, catalyst included', () => {
-    const draft = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift' }, false);
+    const draft = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
     expect(nextDraft(draft, { type: 'clear' }, false)).toEqual(emptyDraft('vex-t0-0'));
+  });
+});
+
+/**
+ * CAT-DASH-COST — "Dash Catalysts should not be a free action" (owner
+ * directive, 2026-08-28). The Dash colour alone buys its effect with the Move,
+ * so it is exclusive with walking and sprinting the way a dash ability is. The
+ * separate-slot invariant above still holds for everything else: it never
+ * touches the chosen ability or its aim, only the Move it is now paying with.
+ */
+describe('CAT-DASH-COST: a Dash catalyst and the Move are one choice', () => {
+  const armed = () => ({
+    ...emptyDraft('vex-t0-0'),
+    abilityId: 'rail_shot',
+    aim: [{ x: 14, y: 7 }],
+    aimStep: 12,
+    movePath: [{ x: 2, y: 7 }, { x: 3, y: 7 }],
+  });
+
+  it('arming Shift drops the drawn move — the engine would throw it away anyway', () => {
+    const after = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
+    expect(after.catalystId).toBe('shift');
+    expect(after.movePath).toEqual([]);
+    expect(after.sprint).toBe(false);
+  });
+
+  it('…but still not the ability or its aim — it is a separate slot, not a replacement', () => {
+    const after = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
+    expect(after.abilityId).toBe('rail_shot');
+    expect(after.aim).toEqual([{ x: 14, y: 7 }]);
+    expect(after.aimStep).toBe(12);
+  });
+
+  it('applies to every Dash catalyst, not only the one that repositions', () => {
+    const fade = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'fade', isDash: true }, false);
+    expect(fade.movePath).toEqual([]);
+  });
+
+  it('leaves Prep and Blast catalysts exactly as additive as before', () => {
+    for (const id of ['second_wind', 'adrenaline']) {
+      const after = nextDraft(armed(), { type: 'selectCatalyst', catalystId: id, isDash: false }, false);
+      expect(after.movePath, id).toHaveLength(2);
+    }
+  });
+
+  it('choosing to move hands the Dash catalyst back rather than silently voiding it', () => {
+    const shifted = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
+    const moved = nextDraft(shifted, { type: 'selectMove' }, false, true);
+    expect(moved.catalystId).toBeUndefined();
+    expect(moved.catalystAim).toEqual([]);
+  });
+
+  it('and so does Sprint — they are bidding for the same Move', () => {
+    const shifted = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
+    const sprinted = nextDraft(shifted, { type: 'selectSprint' }, false, true);
+    expect(sprinted.catalystId).toBeUndefined();
+    expect(sprinted.sprint).toBe(true);
+  });
+
+  it('a Prep catalyst is NOT handed back by choosing to move', () => {
+    const helped = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'second_wind', isDash: false }, false);
+    expect(nextDraft(helped, { type: 'selectMove' }, false, false).catalystId).toBe('second_wind');
+  });
+
+  it('Sprint is unselectable while a Dash catalyst is armed, and fine otherwise', () => {
+    const draft = emptyDraft('u');
+    expect(sprintAllowed(draft, true)).toBe(false);
+    expect(sprintAllowed(draft, false)).toBe(true);
   });
 });
 

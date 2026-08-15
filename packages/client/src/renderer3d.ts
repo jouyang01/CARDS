@@ -44,6 +44,7 @@ import {
 } from 'three';
 import type { MapDef, Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
+import { PIP_GAP, PIP_SIZE, pipOffsets, type StatusPip } from './status-pips.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -76,16 +77,43 @@ const AUTO_PAN = 0.35;
 const AUTO_ZOOM_FLOOR = 0.85;
 /** Alpha applied to everything outside a spotlight. */
 const DIM_ALPHA = 0.22;
+/** A decoy, seen by its OWNER: unmistakably theirs, unmistakably not a unit. */
+const DECOY_PURPLE = 0xa06bd6;
+/** The status row sits just above the shield bar; its size/gap are shared. */
+const PIP_ROW_Y = 0.38;
 
 /**
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
  * covered tile always reads on top of the envelope that contains it.
  */
-export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'catalyst' | 'select';
+export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
 
+/**
+ * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
+ * its top surface the floor every tile overlay has to clear (FOG-ZORDER).
+ */
+export const TERRAIN_HEIGHT = { brush: 0.02, cover: COVER_HEIGHT, wall: WALL_HEIGHT } as const;
+
+/**
+ * Where the overlay band starts. FOG-ZORDER: the highlight layers used to run
+ * 0.002–0.022, which is *under* the brush box's 0.02-high lid — so every aim,
+ * AoE and move envelope drawn over a green square lost the depth test to the
+ * brush and simply vanished. That reads as "the ability cannot reach there",
+ * which is a rules bug as far as the player is concerned, and it is exactly the
+ * reported one. Overlays now begin above the brush lid with a margin, so no tile
+ * you can stand on can eat a highlight.
+ */
+const OVERLAY_BASE = TERRAIN_HEIGHT.brush + 0.006;
 /** Height above the ground plane per layer, so they never z-fight. */
-const LAYER_LIFT: Record<HighlightLayer, number> = {
-  fog: 0.002, range: 0.006, reach: 0.010, aim: 0.016, catalyst: 0.019, select: 0.022,
+export const LAYER_LIFT: Record<HighlightLayer, number> = {
+  fog: OVERLAY_BASE,
+  range: OVERLAY_BASE + 0.004,
+  reach: OVERLAY_BASE + 0.008,
+  aim: OVERLAY_BASE + 0.014,
+  impact: OVERLAY_BASE + 0.016,
+  free: OVERLAY_BASE + 0.018,
+  catalyst: OVERLAY_BASE + 0.020,
+  select: OVERLAY_BASE + 0.024,
 };
 /**
  * Overlay tiles are inset so the grid reads through them — except fog, which
@@ -93,10 +121,22 @@ const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, catalyst: 0.72, select: 0.92,
+  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
 };
 /** UI2's continuous shape sits just above the covered tiles it explains. */
-const SHAPE_LIFT = 0.026;
+export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
+
+/**
+ * A decoy, as one viewer should see it (DECOY-RENDER). `asEnemy` decides the
+ * whole appearance: a decoy's job is to be mistaken for a real Wisp, so to the
+ * team being fooled it is drawn exactly like an enemy unit — same box, same
+ * team colour, same solidity. Only its owner sees the purple ghost.
+ */
+export interface RenderDecoy {
+  id: string;
+  pos: Vec2;
+  asEnemy: boolean;
+}
 
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
@@ -109,18 +149,25 @@ export interface RenderUnit {
   alive: boolean;
   label: string;
   shield?: number;
+  /**
+   * Statuses to show as pips above the bars (STATUS-AUDIT). Already ordered and
+   * coloured by `status-pips.ts` — the renderer draws what it is handed and
+   * decides nothing about which statuses matter.
+   */
+  pips?: readonly StatusPip[];
 }
 
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
-  show(units: readonly RenderUnit[], decoys?: readonly Vec2[]): void;
+  show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[]): void;
   /**
    * Highlight squares. Layers stack bottom-up in the order listed here:
    * `fog` is the unseen board (VISION1) and sits underneath everything, so your
    * own aim still reads over darkness — you may shoot where you cannot see.
    * `range` is the hover envelope (UI1 — where an ability *could* go), `reach`
-   * the move envelope, `aim` the tiles an aim actually covers, `select` the
-   * current unit and impact flashes.
+   * the move envelope, `aim` the tiles an aim actually covers, `impact` a dash's
+   * previewed blast discs (DASH-PREVIEW), `select` the current unit and impact
+   * flashes.
    */
   highlight(layer: HighlightLayer, squares: readonly Vec2[], color: number, opacity?: number): void;
   /** The board square under a client-space point, via a ray/plane intersection. */
@@ -167,6 +214,15 @@ export interface Renderer {
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
+  /**
+   * Run `cb` after every drawn frame, or clear it with `undefined`.
+   *
+   * The camera eases, so anything anchored to a *screen* position — the DOM
+   * readout layer — has to be re-placed once per frame or it lags behind the
+   * board it is labelling. Playback already does this from its own tween loop;
+   * this is the same hook for the decision phase, which has no loop of its own.
+   */
+  onFrame(cb: (() => void) | undefined): void;
   resize(width: number, height: number): void;
   render(): void;
   dispose(): void;
@@ -232,9 +288,9 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   // Faint tile seams so squares are countable — the grid IS the ruleset here.
   for (const [squares, colour, height] of [
-    [map.brush, palette.brush, 0.02],
-    [map.cover, palette.cover, COVER_HEIGHT],
-    [map.walls, palette.wall, WALL_HEIGHT],
+    [map.brush, palette.brush, TERRAIN_HEIGHT.brush],
+    [map.cover, palette.cover, TERRAIN_HEIGHT.cover],
+    [map.walls, palette.wall, TERRAIN_HEIGHT.wall],
   ] as const) {
     for (const p of squares) {
       const box = new Mesh(
@@ -265,7 +321,35 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     bar('hp', 0.12, 0x5ad17f);
     bar('shield', 0.24, 0x62d0e0);
     bar('energy', 0, 0xe0c04f);
+    // The status row rides inside `bars`, so it billboards and cancels zoom for
+    // free — a pip is only useful if it is the same legible size at any framing.
+    const pips = new Group();
+    pips.name = 'pips';
+    pips.position.y = PIP_ROW_Y;
+    bars.add(pips);
     return bars;
+  };
+
+  /**
+   * Rebuild a unit's status row. Cheap enough to redo per `show()` (at most
+   * eleven 0.09-wide quads per unit) and rebuilding avoids a second reconcile
+   * path — the pips are the one part of a unit that legitimately changes shape
+   * turn to turn.
+   */
+  const setPips = (bars: Group, pips: readonly StatusPip[]): void => {
+    const row = bars.getObjectByName('pips');
+    if (!(row instanceof Group)) return;
+    disposeChildren(row);
+    const offsets = pipOffsets(pips.length);
+    pips.forEach((pip, i) => {
+      const quad = new Mesh(
+        new PlaneGeometry(PIP_SIZE, PIP_SIZE),
+        new MeshBasicMaterial({ color: pip.color }),
+      );
+      quad.name = pip.kind;
+      quad.position.set(offsets[i] ?? 0, 0, 0);
+      row.add(quad);
+    });
   };
 
   const buildUnit = (unit: RenderUnit): Group => {
@@ -490,10 +574,14 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   }, { passive: false });
 
   let frameHandle: number | undefined;
+  let afterFrame: (() => void) | undefined;
   const drawFrame = (): void => {
     stepCamera();
     billboard();
     renderer.render(scene, camera);
+    // After the camera has moved, so anything DOM-anchored to a world position
+    // is repositioned against the frame that was actually just drawn.
+    afterFrame?.();
   };
 
   applyCamera();
@@ -522,6 +610,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           setBar(bars, 'hp', unit.hp / Math.max(1, unit.maxHp), true);
           setBar(bars, 'energy', unit.energy / 100, true);
           setBar(bars, 'shield', (unit.shield ?? 0) / Math.max(1, unit.maxHp), (unit.shield ?? 0) > 0);
+          setPips(bars, unit.alive ? (unit.pips ?? []) : []); // a corpse carries nothing
         }
         refreshOpacity(unit.unitId);
         live.add(unit.unitId);
@@ -530,12 +619,23 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
       const decoyLayer = layerGroup('decoy');
       disposeChildren(decoyLayer);
-      for (const p of decoys) {
+      for (const decoy of decoys) {
+        // To the team being fooled: a normal enemy unit, indistinguishable —
+        // same geometry and colour a real one gets, fully opaque. Drawing it as
+        // a translucent ghost is what gave every decoy away for free.
+        // To its owner: a solid purple marker, obviously theirs and obviously
+        // not a unit, so they can plan around it.
         const ghost = new Mesh(
-          new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-          new MeshLambertMaterial({ color: palette.team1, transparent: true, opacity: 0.35 }),
+          decoy.asEnemy
+            ? new BoxGeometry(TILE * 0.7, UNIT_HEIGHT, TILE * 0.7)
+            : new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
+          new MeshLambertMaterial(
+            decoy.asEnemy
+              ? { color: palette.team1 }
+              : { color: DECOY_PURPLE, transparent: true, opacity: 0.55 },
+          ),
         );
-        ghost.position.copy(toWorld(map, p)).setY(UNIT_HEIGHT / 2);
+        ghost.position.copy(toWorld(map, decoy.pos)).setY(UNIT_HEIGHT / 2);
         decoyLayer.add(ghost);
       }
     },
@@ -716,6 +816,10 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
       mesh.position.y = SHAPE_LIFT;
       g.add(mesh);
+    },
+
+    onFrame(cb) {
+      afterFrame = cb;
     },
 
     start() {

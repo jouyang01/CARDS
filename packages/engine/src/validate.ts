@@ -17,6 +17,26 @@ import { MAX_ABILITY_RANGE } from './constants.js';
 
 const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
 
+/**
+ * Every key an `AbilityDef` may carry (VALIDATE-KEYS).
+ *
+ * Content is JSON, so a mistyped field is not a compile error — it is a silent
+ * nothing. `impcat` or `destinaton` parses fine, validates fine, and the ability
+ * simply does not do the thing it was written to do. That is exactly how three
+ * `impact` blocks sat inert in `data/` for a session with the suite green.
+ *
+ * Listing the keys is the cheapest thing that turns that into a loud failure.
+ * The cost is that adding a field to `AbilityDef` means adding it here too — so
+ * a test asserts the two lists agree, rather than trusting anyone to remember.
+ */
+export const ABILITY_KEYS = [
+  'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
+  'delayTurns', 'chargeHits', 'free', 'oncePerMatch', 'impact', 'effects', 'description',
+] as const;
+
+/** Every key an `AbilityEffect` may carry — the same argument, one level down. */
+export const EFFECT_KEYS = ['kind', 'amount', 'duration'] as const;
+
 function isInt(n: unknown): n is number {
   return typeof n === 'number' && Number.isInteger(n);
 }
@@ -28,6 +48,11 @@ function isInt(n: unknown): n is number {
  */
 export function validateAbility(a: AbilityDef, path: string, isUltimate = false): string[] {
   const errs: string[] = [];
+  for (const key of Object.keys(a)) {
+    if (!(ABILITY_KEYS as readonly string[]).includes(key)) {
+      errs.push(`${path}: unknown key "${key}" (did you mean one of: ${ABILITY_KEYS.join(', ')})`);
+    }
+  }
   if (!a.id) errs.push(`${path}: missing id`);
   if (!a.name) errs.push(`${path}: missing name`);
   if (!ABILITY_PHASES.includes(a.phase)) {
@@ -98,6 +123,11 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
     errs.push(`${path}: must declare at least one effect`);
   } else {
     for (const [i, e] of a.effects.entries()) {
+      for (const key of Object.keys(e)) {
+        if (!(EFFECT_KEYS as readonly string[]).includes(key)) {
+          errs.push(`${path}.effects[${i}]: unknown key "${key}"`);
+        }
+      }
       if (!EFFECT_KINDS.includes(e.kind)) {
         errs.push(`${path}.effects[${i}]: unknown effect kind "${e.kind}"`);
       }
