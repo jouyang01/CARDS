@@ -417,6 +417,22 @@ export function aimFor(
 }
 
 /**
+ * What a catalyst costs to use (CAT-COST-LABEL).
+ *
+ * One place, because two parts of the client act on it: the HUD tag a player
+ * reads before spending the slot, and the draft rules that clear the move when a
+ * Dash catalyst is armed. Those disagreeing would be worse than either being
+ * wrong — the label would promise something the reducer then took away.
+ *
+ * `'move'` is CAT-DASH-COST: a Dash catalyst buys its effect with the unit's
+ * Move. Prep and Blast catalysts never touched movement, so they stayed free.
+ */
+export type CatalystCost = 'free' | 'move';
+
+export const catalystCost = (def: AbilityDef): CatalystCost =>
+  (def.phase === 'dash' ? 'move' : 'free');
+
+/**
  * AIM-RANGE — the aim a board click should **commit**, or `undefined` when the
  * click is not a legal aim for this ability.
  *

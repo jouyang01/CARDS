@@ -49,6 +49,7 @@ import {
   impactPreview,
   abilityTooltip,
   aimFor,
+  catalystCost,
   commitAim,
   dashRoute,
   draftAbility,
@@ -716,6 +717,7 @@ export function startHotSeat(
           id,
           name: def.name,
           phase: def.phase,
+          cost: catalystCost(def),
           spent: unit.catalystsUsed.includes(id),
           selected: draft.catalystId === id,
           def,
@@ -752,8 +754,10 @@ export function startHotSeat(
    * a free rider — it spends the Move — so it gates Sprint and the move budget
    * exactly as a dash ability does.
    */
-  const dashCatalystArmed = (draft: OrderDraft): boolean =>
-    draft.catalystId !== undefined && catalysts[draft.catalystId]?.phase === 'dash';
+  const dashCatalystArmed = (draft: OrderDraft): boolean => {
+    const def = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
+    return def !== undefined && catalystCost(def) === 'move';
+  };
 
   /**
    * Arm a **free** ability (FREE-UI): its own slot, its own aim, additive with

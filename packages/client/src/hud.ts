@@ -16,6 +16,7 @@
  */
 
 import type { AbilityDef } from '@cards/engine';
+import type { CatalystCost } from './targeting.js';
 
 export interface HudAbility {
   id: string;
@@ -46,6 +47,11 @@ export interface HudCatalyst {
   name: string;
   /** The phase it fires in — the slot's colour, in the Prep/Dash/Blast order. */
   phase: string;
+  /**
+   * What spending it costs (CAT-COST-LABEL). Passed as the *rule*, not as the
+   * wording: the HUD owns how a cost reads, the caller owns what it is.
+   */
+  cost: CatalystCost;
   spent: boolean;
   selected: boolean;
   def: AbilityDef;
@@ -303,6 +309,17 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
         const note = el('span', 'hud-ability-note');
         note.textContent = catalyst.spent ? 'spent' : catalyst.phase;
         btn.appendChild(note);
+        // CAT-COST-LABEL: "Prep Catalyst and Blast Catalyst are not showing as
+        // free actions." Free abilities already carried a `free` tag and the
+        // catalyst row carried none, so the two additive mechanics on screen at
+        // once looked like different kinds of thing. Post-CAT-DASH-COST the
+        // answer differs by colour, which makes the tag load-bearing rather than
+        // decorative: Dash is the one slot that prices your turn.
+        if (!catalyst.spent) {
+          const cost = el('span', `hud-catalyst-cost ${catalyst.cost}`);
+          cost.textContent = catalyst.cost === 'move' ? 'costs Move' : 'free';
+          btn.appendChild(cost);
+        }
         btn.disabled = catalyst.spent;
         btn.classList.toggle('spent', catalyst.spent);
         btn.classList.toggle('sel', catalyst.selected);

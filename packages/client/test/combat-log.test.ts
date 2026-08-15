@@ -162,3 +162,64 @@ describe('UI6: it is a pure consumer — it states, never derives', () => {
     for (const entry of logEntriesForTurn(7, events, names(s))) expect(entry.turn).toBe(7);
   });
 });
+
+/**
+ * LOG-STATUS — the engine emits `statusRemoved`; UI6 never rendered it, so a
+ * Slow looked permanent and a Stealth an attack broke left no trace of breaking.
+ * "Why did that only do 40?" now has an answer in the place a player already
+ * scrolls back through.
+ */
+describe('LOG-STATUS: a status leaving is news too', () => {
+  const s = mkState([mkUnit('a', 'gunner', 0, 2, 6), mkUnit('b', 'medic', 1, 6, 6)]);
+  const naming = names(s);
+  const removed = (status: string, reason: 'broken' | 'expired', unitId = 'a'): TurnEvent =>
+    ({ type: 'statusRemoved', unitId, status, reason } as unknown as TurnEvent);
+
+  it('logs an expiry in the past tense', () => {
+    const [entry] = logEntriesForTurn(3, [removed('haste', 'expired')], naming);
+    expect(entry!.text).toBe("Vex's haste wore off");
+    expect(entry!.tone).toBe('status');
+    expect(entry!.turn).toBe(3);
+  });
+
+  it('distinguishes a status BROKEN from one that expired', () => {
+    // Different events: one was done to you mid-turn, the other is a clock
+    // running out. Collapsing them would lose why the Stealth ended.
+    const [entry] = logEntriesForTurn(1, [removed('stealth', 'broken')], naming);
+    expect(entry!.text).toBe("Vex's stealth broke");
+  });
+
+  it('names the unit it happened to, so the panel can attribute it', () => {
+    const [entry] = logEntriesForTurn(1, [removed('slow', 'expired')], naming);
+    expect(entry!.unitId).toBe('a');
+    // Nobody *caused* an expiry, so there is no source to name — and inventing
+    // one would credit the original caster for a clock.
+    expect(entry!.sourceUnitId).toBeUndefined();
+  });
+
+  it('suppresses the same statuses `statusApplied` suppresses', () => {
+    // Reveal fires on every attacker every turn, so it is filtered on the way
+    // in; logging it on the way out would be noise with no matching arrival.
+    expect(logEntriesForTurn(1, [removed('reveal', 'expired')], naming)).toEqual([]);
+    expect(logEntriesForTurn(1, [removed('shield', 'expired')], naming)).toEqual([]);
+  });
+
+  it('reads as a pair with the line that applied it', () => {
+    const entries = logEntriesForTurn(1, [
+      { type: 'statusApplied', unitId: 'a', status: 'slow', duration: 2, sourceUnitId: 'b', abilityId: 'hex' },
+      removed('slow', 'expired'),
+    ], naming);
+    expect(entries.map((e) => e.text)).toEqual([
+      'Vex is slow for 2t — Bola',
+      "Vex's slow wore off",
+    ]);
+  });
+
+  it('keeps log order — the engine ticks at end of turn and the log says so', () => {
+    const entries = logEntriesForTurn(1, [
+      { type: 'damage', unitId: 'a', amount: 10, absorbed: 0, sourceUnitId: 'b', abilityId: 'hex' },
+      removed('might', 'expired', 'b'),
+    ], naming);
+    expect(entries.map((e) => e.tone)).toEqual(['damage', 'status']);
+  });
+});

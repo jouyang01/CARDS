@@ -10,7 +10,7 @@ import {
   type MapDef,
 } from '@cards/engine';
 import { createHud, type HudCatalyst, type HudCharacter, type HudModel } from '../src/hud.js';
-import { emptyDraft, nextDraft, sprintAllowed, toUnitOrders } from '../src/targeting.js';
+import { catalystCost, emptyDraft, nextDraft, sprintAllowed, toUnitOrders } from '../src/targeting.js';
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
 
@@ -212,7 +212,8 @@ const character = (over: Partial<HudCharacter> = {}): HudCharacter => ({
   hp: 95, maxHp: 95, energy: 0, shield: 0, locked: false, hasOrder: false, ...over,
 });
 const slot = (id: string, over: Partial<HudCatalyst> = {}): HudCatalyst => ({
-  id, name: POOL[id]!.name, phase: POOL[id]!.phase, spent: false, selected: false, def: POOL[id]!, ...over,
+  id, name: POOL[id]!.name, phase: POOL[id]!.phase, cost: catalystCost(POOL[id]!),
+  spent: false, selected: false, def: POOL[id]!, ...over,
 });
 const model = (over: Partial<HudModel> = {}): HudModel => ({
   active: character(),
@@ -243,7 +244,8 @@ describe('CAT2: three slots, in phase order, greyed out once spent', () => {
     const hud = createHud(root, handlers());
     hud.update(model());
     expect(slots().map((b) => b.dataset['phase'])).toEqual(['prep', 'dash', 'blast']);
-    expect(slots().map((b) => b.textContent)).toEqual(['Second Windprep', 'Shiftdash', 'Adrenalineblast']);
+    expect(slots().map((b) => b.textContent))
+      .toEqual(['Second Windprepfree', 'Shiftdashcosts Move', 'Adrenalineblastfree']);
   });
 
   it('a spent slot is disabled, marked, and still says what it was', () => {
@@ -283,5 +285,52 @@ describe('CAT2: three slots, in phase order, greyed out once spent', () => {
     const hud = createHud(root, handlers());
     hud.update(model({ catalysts: [] }));
     expect((root.querySelector('.hud-catalysts') as HTMLElement).style.display).toBe('none');
+  });
+});
+
+/**
+ * CAT-COST-LABEL — "Prep Catalyst and Blast Catalyst are not showing as free
+ * actions." Free *abilities* already carried a tag and the catalyst row carried
+ * none, so two additive mechanics on screen at once looked like different kinds
+ * of thing. Post-CAT-DASH-COST the tag is load-bearing rather than decorative:
+ * the Dash slot is the one that prices your turn, and a player has to know that
+ * *before* spending a once-per-match resource.
+ */
+describe('CAT-COST-LABEL: each slot says what it costs', () => {
+  const costs = () => [...root.querySelectorAll('.hud-catalyst-cost')] as HTMLElement[];
+
+  it('tags Prep and Blast free, and Dash as costing the Move', () => {
+    const hud = createHud(root, handlers());
+    hud.update(model());
+    expect(costs().map((n) => n.textContent)).toEqual(['free', 'costs Move', 'free']);
+  });
+
+  it('marks them with distinct classes, so the exception can be styled as one', () => {
+    const hud = createHud(root, handlers());
+    hud.update(model());
+    expect(costs().map((n) => n.className)).toEqual([
+      'hud-catalyst-cost free', 'hud-catalyst-cost move', 'hud-catalyst-cost free',
+    ]);
+  });
+
+  it('derives the cost from the phase, for every catalyst in the pool', () => {
+    // Nine catalysts, one rule: yellow prices your turn, the other two do not.
+    for (const def of Object.values(POOL)) {
+      expect(catalystCost(def), def.id).toBe(def.phase === 'dash' ? 'move' : 'free');
+    }
+  });
+
+  it('drops the tag on a spent slot — what it cost stopped mattering', () => {
+    const hud = createHud(root, handlers());
+    hud.update(model({ catalysts: [slot('second_wind', { spent: true }), slot('shift'), slot('adrenaline')] }));
+    expect(costs()).toHaveLength(2);
+    expect(slots()[0]!.textContent).toContain('spent');
+  });
+
+  it('keeps the phase word too — the cost is added information, not a swap', () => {
+    const hud = createHud(root, handlers());
+    hud.update(model());
+    expect(slots()[1]!.textContent).toContain('dash');
+    expect(slots()[1]!.textContent).toContain('costs Move');
   });
 });
