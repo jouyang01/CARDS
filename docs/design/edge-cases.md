@@ -200,8 +200,10 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   same square as another character unless there's a knockback associated with the skill"; backlog
   DASH-OCCUPIED — engine tests + client aim-gating).** The **prohibition already holds in the
   engine** and this ruling pins it: a **teleport** (`square`) onto an occupied square **fizzles**
-  (`teleport()` ~:292 returns false on a living occupant), and a **charge** (`path`) **rests on
-  the furthest FREE square** (`walkCharge` ~:933-937), never on top of a unit. Decoys are not in
+  (`teleport()` at **`resolve.ts:963`**, occupancy check at **:967** — corrected 2026-08-31; the
+  2026-08-30 draft cited `:292`, which is `teleportDestination`, a different function), and a
+  **charge** (`path`) **rests on the furthest FREE square** (`walkCharge` :933-937), never on top
+  of a unit. Decoys are not in
   `state.units`, so this is about real characters; a dash *ending* on a decoy destroys it (R2).
   The two owed pieces:
   - **The knockback exception (engine).** A dash whose **own effect knocks the destination's
@@ -541,23 +543,38 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   turn and all of the next** (the existing 2-turn Reveal) and its Stealth breaks. Deltas from the
   shipped engine:
   - **Expand the reveal triggers.** Today `reveal` is applied only on **dealing damage**
-    (`resolve.ts` ~:911, ~:1101). Add: **using a catalyst** while concealed, and **taking
-    damage** while concealed (today taking damage only calls `breakStealth` (~:1079/~:495) — a
-    brush-hidden unit with no `stealth` status is therefore *not* revealed next turn, which is the
-    bug the owner is describing). "Offensive ability" reads as any *harmful* ability (damage,
-    debuff or displacement), not damage alone.
-  - **Gate the penalty on being concealed at the moment of acting.** Reveal-on-action fires **iff
-    the unit is in a brush patch OR carries `stealth`** when it acts/takes the hit — so acting in
-    the **open** does not arm a future reveal (it is a no-op anyway, but this makes the rule match
-    the owner's wording and avoids an "acted in the open, then hid, got revealed" false positive).
-    This refines the current "reveal on any damaging attack" to "reveal on any qualifying action
-    *while concealed*."
+    (`resolve.ts` :912 dash, :1106 blast). Add: **using a catalyst** while concealed, **taking
+    damage** while concealed (today taking damage only calls `breakStealth` — :1079 blast, :495
+    trap — so a brush-hidden unit with no `stealth` status is *not* revealed next turn, which is
+    the bug the owner is describing), and **using a harmful ability that deals no damage** (a pure
+    debuff or displacement) while concealed. "Offensive ability" reads as any *harmful* ability,
+    not damage alone.
+  - **CORRECTED 2026-08-31 — the new triggers are concealed-gated; the EXISTING one is not.**
+    An earlier draft of this ruling said reveal-on-action should fire *iff* concealed, so acting
+    in the open would arm no reveal. That is a **reversal of shipped behaviour the owner never
+    asked for**, and it is wrong twice over: (a) `attribution.test.ts:178` pins a plain
+    open-field attacker gaining `reveal`, so it would break a shipped test; (b) it is **not** the
+    no-op that draft claimed — `reveal` lasts 2 turns and beats brush, so dropping it would let a
+    unit attack in the open on one turn and hide in brush the next with no penalty at all, which
+    is the opposite of what a reveal mechanic is for. Ruling: **dealing damage reveals you,
+    concealed or not, exactly as it does today — unchanged.** The three *new* triggers above fire
+    **only while concealed**. The rule is purely additive.
+  - **RULED — "Concealed" here is a property of the TILE, not of any observer.** The gate is
+    "standing on a **brush** square **or** carrying `stealth`", full stop. It deliberately does
+    **not** use `isConcealedFrom` (`vision.ts:230`), which is per-observer: the brush adjacency
+    exception means a unit in brush is concealed from a distant enemy and not from an adjacent
+    one, so "am I concealed?" has no observer-free answer and a per-observer gate would reveal you
+    to some enemies and not others off one action. The owner's wording is *"while inside a
+    camouflage zone"* — a place you are standing, which is exactly the tile test. Use
+    `terrainAt(board, unit.pos) === 'brush' || hasStatus(unit, 'stealth')`.
   - **Client: the tile turns red.** The camouflage tile the unit stood on when it revealed itself
     renders **bright red** for the reveal's duration — the visible tell the owner described. Drive
     it off the `reveal` `statusApplied` event + the unit's tile.
   - Engine behavior change → ships with tests: a brush-hidden unit that takes damage is revealed
-    next turn; a brush-hidden unit that fires a catalyst is revealed; a unit acting **in the open**
-    gains no reveal; movement through brush (no offensive action) does **not** reveal.
+    next turn; a brush-hidden unit that fires a catalyst is revealed; a brush-hidden unit that
+    lands a pure debuff is revealed; an **open** unit that takes damage or fires a catalyst gains
+    **no** reveal; an **open** unit that deals damage **still** gains reveal (unchanged);
+    movement through brush (no offensive action) does **not** reveal.
 - **RULED — Stealth ends on attack/damage; Reveal only masks it (BACKLOG item 6; see
   review 2026-08-12).** `canSee` checks Reveal before Stealth, so an attacker who gains
   Reveal-for-one-turn merely *appears* to leave Stealth. GAME_SPEC §6 says Stealth is
@@ -586,9 +603,18 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     aligning it with the decoy's `castTurn + 1` — now the decoy stands *and* the caster is hidden
     through the enemy's next Decision, which is the whole point of the ability. The owner has ruled
     the value, so it overrides "never rebalance"; it is a one-line change in
-    `data/characters/wisp.json` (`veil_and_decoy` → the `stealth` effect's `duration: 1 → 2`).
+    `data/characters/wisp.json` — the ability id is **`veil_decoy`** (corrected 2026-08-31; this
+    ruling and the 2026-08-30 review both said `veil_and_decoy`, which does not exist in the
+    roster) → the `stealth` effect's `duration: 1 → 2`.
     **This reverses every prior "1-turn Stealth" note above** — the imprecise phrasing is now a
     ruled `duration: 2`.
+  - **NOTE (2026-08-31) — the `decoy` effect's own `duration` is dead data.** `spawnDecoy`
+    (`resolve.ts:713`) reads only `draft.turn`, setting `expiresOnTurn = castTurn + 1`; the
+    `{ kind: 'decoy', duration: 1 }` entry in `wisp.json` is never consulted. The decoy therefore
+    *already* satisfies "one turn after the cast" and needs no change — but do not read the `1`
+    there as the thing that makes it so, and do not "align" it to 2 expecting a longer decoy.
+    Flagged as a validation gap: `VALIDATE-KEYS` rejects *unknown* keys, not known-but-ignored
+    ones, so nothing catches a field that silently does nothing.
   - **Destruction:** *any* damage destroys it (no HP pool). An enemy that **ends a voluntary
     reposition on its square — Move *or* Dash — destroys it** (you walked/dashed onto the
     ghost). **Confirmed/widened 2026-08-20:** the shipped code destroys on Move-onto only;
