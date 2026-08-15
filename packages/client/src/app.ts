@@ -49,6 +49,7 @@ import {
   impactPreview,
   abilityTooltip,
   aimFor,
+  abilitiesAllowed,
   catalystCost,
   commitAim,
   dashRoute,
@@ -751,8 +752,14 @@ export function startHotSeat(
         id: opt.def.id,
         name: opt.def.name,
         isUlt: opt.isUlt,
-        available: opt.available,
-        reason: opt.reason,
+        // CAT-DASH-FULL: a Dash catalyst is the whole active turn, so the normal
+        // hotbar goes dark with Move and Sprint. Free abilities are exempt —
+        // they are a separate free action and the ruling leaves them alone.
+        available: opt.available
+          && (opt.def.free === true || abilitiesAllowed(dashCatalystArmed(draft))),
+        reason: opt.available && !abilitiesAllowed(dashCatalystArmed(draft)) && opt.def.free !== true
+          ? 'catalyst' as const
+          : opt.reason,
         cooldown: opt.cooldown,
         // A free ability lives in its own slot, so it is "selected" from the
         // free draft — never from `abilityId`, which it must never occupy.
@@ -807,7 +814,7 @@ export function startHotSeat(
    */
   const dashCatalystArmed = (draft: OrderDraft): boolean => {
     const def = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
-    return def !== undefined && catalystCost(def) === 'move';
+    return def !== undefined && catalystCost(def) === 'action';
   };
 
   /**
@@ -834,7 +841,12 @@ export function startHotSeat(
     const isDash = chosen?.phase === 'dash';
     // Choosing another ability before Lock In simply replaces the last one
     // (UI1) — `nextDraft` owns the exclusivity rules (sprint, dash-owns-move).
-    const draft = nextDraft(prev, { type: 'selectAbility', abilityId, isDash }, isDash);
+    const draft = nextDraft(
+      prev,
+      { type: 'selectAbility', abilityId, isDash },
+      isDash,
+      dashCatalystArmed(prev),
+    );
     if (chosen && chosen.shape === 'self') draft.aim = [{ ...unit.pos }];
     draft.aimStep = undefined;
     drafts.set(unit.unitId, draft);

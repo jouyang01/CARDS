@@ -290,7 +290,9 @@ function planUnit(
   const after = shiftTo === undefined ? unit : { ...unit, pos: shiftTo };
 
   const declared = planAbility(board, unit, roster, order.ability);
-  const ability = declared?.def.phase === 'prep'
+  // What the player asked for, before CAT-DASH-FULL below decides whether they
+  // are allowed to have it.
+  const declaredAbility = declared?.def.phase === 'prep'
     ? declared
     : planAbility(board, after, roster, order.ability);
 
@@ -299,7 +301,7 @@ function planUnit(
   // the normal slot: ordering the same trap twice would fire it twice off one
   // cooldown, which is the one way this slot could be abused.
   let freeAbility = planAbility(board, unit, roster, order.freeAbility);
-  if (freeAbility?.def.free !== true || freeAbility.def.id === ability?.def.id) freeAbility = undefined;
+  if (freeAbility?.def.free !== true || freeAbility.def.id === declaredAbility?.def.id) freeAbility = undefined;
 
 
   // **At most one free action per turn** (edge-cases, the conservative v1
@@ -310,28 +312,42 @@ function planUnit(
   // what decides the Move below.
   const spentCatalyst = freeAbility === undefined ? catalyst : undefined;
 
-  // CAT-DASH-COST — a **Dash catalyst is not a free action** (owner directive,
-  // 2026-08-28: "Dash Catalysts should not be a free action"). It buys its
-  // effect with the unit's Move, exactly as a dash ability does: Shift 3 in Dash
-  // *or* walk 4 in Move, never both. This reverses CAT1's "a free dash catalyst
-  // does NOT consume your Move" for the Dash colour only — Prep and Blast
-  // catalysts stay fully additive, because they never touched movement.
+  // CAT-DASH-FULL — a **Dash catalyst is your whole active turn** (owner
+  // directive 2026-09-01: "Dash Catalyst should count as your full action",
+  // superseding CAT-DASH-COST's "it spends your Move").
   //
-  // Applied uniformly across all three Dash catalysts, not just the one that
-  // repositions. The directive names the colour, not Shift, and one rule per
-  // colour is the reading a player can hold in their head; see DECISIONS
-  // 2026-08-28 for the sub-question this leaves open for the Designer.
+  // A free ≤3 teleport (Shift) or a 2-turn Untargetable (Fade) that cost only a
+  // Move was still the strongest thing a turn could do; priced at the whole
+  // action it reads like the once-per-match power it is. So a Dash-catalyst turn
+  // carries no normal ability, no Move and no Sprint — exactly as if the
+  // catalyst *were* the unit's ability-and-movement.
+  //
+  // Uniform across all three Dash catalysts, Fade and Unshackle included. The
+  // directive names the colour, and "yellow is your turn" is one rule a player
+  // can hold; "yellow is your turn unless it doesn't move you" is a footnote.
+  // Prep and Blast catalysts are untouched — still free, still additive.
   const dashCatalyst = spentCatalyst?.def.phase === 'dash';
+
+  // The ability slot goes with it. Dropped here rather than at the fire sites so
+  // there is one answer to "did this unit act this turn" — the plan — and every
+  // phase reads the same one.
+  //
+  // Safe to drop *after* the free-ability duplicate check above: a Dash catalyst
+  // is only ever `spent` when no free ability was declared (the one-free-action
+  // rule makes the catalyst yield), so in every branch that reaches here the
+  // check had nothing to compare against anyway.
+  const ability = dashCatalyst ? undefined : declaredAbility;
 
   // Sprint is "move only": it is ignored the moment a real ability is used —
   // and a free action is **not** one. Reading `ability` alone here was the whole
-  // of FREE1's budget independence; a Dash catalyst now joins it, because it is
-  // no longer free. `movementBudget` still takes only the unit and this flag, so
-  // a *free* action still cannot shrink a move or cancel a Sprint.
+  // of FREE1's budget independence; a Dash catalyst joins it, because it is no
+  // longer free. `movementBudget` still takes only the unit and this flag, so a
+  // *free* action still cannot shrink a move or cancel a Sprint.
   const sprint = ability === undefined && !dashCatalyst && order.sprint === true;
 
   // A dash ability IS the unit's movement this turn; a separate Move path is
-  // dropped (see docs/DECISIONS.md). A Dash catalyst now costs the same.
+  // dropped (see docs/DECISIONS.md). A Dash catalyst costs the same, and now the
+  // ability slot on top.
   let movePath: Vec2[] = [];
   const dashing = ability?.def.phase === 'dash';
   if (!dashing && !dashCatalyst && order.movePath !== undefined && order.movePath.length > 0) {

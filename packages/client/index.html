@@ -123,11 +123,11 @@
 
       /* CAT-COST-LABEL: the cost a catalyst charges, in the same visual register
          as the free-ability tag — green for additive, amber for the Dash slot
-         that spends your Move, so the exception reads as an exception. */
+         that *is* your turn, so the exception reads as an exception. */
       .hud-catalyst-cost { font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase;
         padding: 0 3px; border-radius: 3px; white-space: nowrap; }
       .hud-catalyst-cost.free { color: #6fbf73; border: 1px solid #6fbf7355; }
-      .hud-catalyst-cost.move { color: #ffd23f; border: 1px solid #ffd23f55; }
+      .hud-catalyst-cost.action { color: #ffd23f; border: 1px solid #ffd23f55; }
 
       /* ── UI6: the combat log, right side, independently scrollable ───────── */
       .log { position: fixed; top: 0; right: 0; bottom: 0; width: 300px; z-index: 4;

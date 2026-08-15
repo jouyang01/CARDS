@@ -172,6 +172,16 @@ export function sprintAllowed(draft: OrderDraft, dashCatalystArmed = false): boo
   return draft.abilityId === undefined && !dashCatalystArmed;
 }
 
+/**
+ * Is the ability hotbar usable at all right now? (CAT-DASH-FULL.)
+ *
+ * A Dash catalyst is the unit's whole active turn, so the hotbar goes dark with
+ * Move and Sprint. Free abilities are exempt — they are a separate free action
+ * and the ruling leaves them alone — so the caller applies this to the normal
+ * slots only.
+ */
+export const abilitiesAllowed = (dashCatalystArmed: boolean): boolean => !dashCatalystArmed;
+
 /** Resolve a draft's ability id against the character (ult included). */
 export function draftAbility(character: CharacterDef, draft: OrderDraft): AbilityDef | undefined {
   if (draft.abilityId === undefined) return undefined;
@@ -425,13 +435,15 @@ export function aimFor(
  * Dash catalyst is armed. Those disagreeing would be worse than either being
  * wrong — the label would promise something the reducer then took away.
  *
- * `'move'` is CAT-DASH-COST: a Dash catalyst buys its effect with the unit's
- * Move. Prep and Blast catalysts never touched movement, so they stayed free.
+ * `'action'` is CAT-DASH-FULL: a Dash catalyst is the unit's **whole active
+ * turn** — no ability, no Move, no Sprint. (It was `'move'` under CAT-DASH-COST,
+ * which priced only the movement; the owner ruled that too cheap.) Prep and
+ * Blast catalysts never touched either, so they stayed free.
  */
-export type CatalystCost = 'free' | 'move';
+export type CatalystCost = 'free' | 'action';
 
 export const catalystCost = (def: AbilityDef): CatalystCost =>
-  (def.phase === 'dash' ? 'move' : 'free');
+  (def.phase === 'dash' ? 'action' : 'free');
 
 /**
  * AIM-RANGE — the aim a board click should **commit**, or `undefined` when the
@@ -763,10 +775,16 @@ export function nextDraft(
   currentCatalystIsDash = false,
 ): OrderDraft {
   switch (action.type) {
-    case 'selectAbility':
+    case 'selectAbility': {
       // Choosing an ability clears sprint and re-aims; a dash owns the movement
       // so it drops any drawn move, a non-dash ability keeps it (move AND shoot).
-      return { ...draft, abilityId: action.abilityId, sprint: false, aim: [], movePath: action.isDash ? [] : draft.movePath };
+      //
+      // It also hands back an armed Dash catalyst (CAT-DASH-FULL): the two are
+      // now bidding for the same turn, so picking one must release the other
+      // rather than silently voiding it at resolution.
+      const freed = releaseDashCatalyst(draft, currentCatalystIsDash);
+      return { ...freed, abilityId: action.abilityId, sprint: false, aim: [], movePath: action.isDash ? [] : freed.movePath };
+    }
     case 'selectCatalyst':
       // A catalyst is a SEPARATE slot: everything else in the draft survives,
       // including the chosen ability and its aim. Re-picking the same one
@@ -780,11 +798,14 @@ export function nextDraft(
         // armed free ability, symmetrically.
         freeAbilityId: undefined,
         freeAim: [],
-        // …and a DASH catalyst additionally drops the move, because it is no
-        // longer free: it buys its effect with the Move (CAT-DASH-COST), so a
-        // move line left drawn beside it would promise a walk the engine is
-        // going to throw away. Prep and Blast catalysts still change nothing.
-        ...(action.isDash === true ? { sprint: false, movePath: [] } : {}),
+        // …and a DASH catalyst additionally clears the whole active turn, because
+        // it *is* the active turn (CAT-DASH-FULL): the ability, its aim, the
+        // drawn move and Sprint all go. Leaving any of them drafted beside it
+        // would promise something the engine is going to throw away. Prep and
+        // Blast catalysts still change nothing.
+        ...(action.isDash === true
+          ? { sprint: false, movePath: [], abilityId: undefined, aim: [], aimStep: undefined }
+          : {}),
       };
     case 'selectFreeAbility':
       // A separate slot, exactly like a catalyst: the chosen ability, its aim,
