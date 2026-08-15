@@ -74,6 +74,10 @@ import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, typ
 import { type ViewState } from './playback.js';
 import { statusPips } from './status-pips.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
+import {
+  clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
+  type MatchTotals,
+} from './scoreboard.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -182,6 +186,8 @@ export function startHotSeat(
   catalysts: CatalystPool = {},
 ): void {
   let state = createMatch(map, format, teams);
+  /** SCORE1's running ledger, folded from each turn's event log as it plays. */
+  let totals: MatchTotals = initTotals(state);
   const seats = deriveSeats(state, playersPerTeam);
 
   // UI1's Lock-In ruling: a seat's characters are all orderable at once and the
@@ -336,6 +342,12 @@ export function startHotSeat(
 
   // Persistent corner phase label (A3): it stays put and changes text, so the
   // eye never has to hunt for which phase is playing.
+  // SCORE1's readout lives in its own element under the status line, so the
+  // HUD's in-place update never has to know about it and vice versa.
+  const scoreEl = document.createElement('div');
+  scoreEl.className = 'scoreboard';
+  ui.status.after(scoreEl);
+
   const phaseLabel = document.createElement('div');
   phaseLabel.className = 'phase-label';
   phaseLabel.style.display = 'none';
@@ -746,6 +758,53 @@ export function startHotSeat(
     ui.status.textContent =
       `Turn ${state.turn} · ${teamName(seat?.team ?? 0)} · seat ${seat?.seatId ?? '?'}` +
       ` — ${characterFor(unit).name} (${done}/${roster.length} locked)`;
+    renderScoreboard();
+  }
+
+  /**
+   * SCORE1 — the in-match readout: both kill tallies against the format's
+   * target, the clock, and a per-character strip. It sits in its own element so
+   * it survives the HUD's in-place update, and it is rebuilt wholesale because
+   * it is a handful of nodes with no hover state to preserve.
+   */
+  function renderScoreboard(): void {
+    const readout = scoreReadout(state, unitName);
+    scoreEl.replaceChildren();
+    const head = document.createElement('div');
+    head.className = 'score-head';
+    for (const team of [0, 1] as const) {
+      const side = document.createElement('span');
+      side.className = 'score-team';
+      side.style.color = TEAM_CSS[team];
+      side.textContent = `${teamName(team)} ${tally(readout.kills[team], readout.killTarget)}`;
+      head.appendChild(side);
+    }
+    const turn = document.createElement('span');
+    turn.className = 'score-clock';
+    // Sudden death is the one thing here that changes how a turn should be
+    // played, so it replaces the clock rather than sitting beside it.
+    turn.textContent = readout.suddenDeath ? 'SUDDEN DEATH' : clock(readout.turn, readout.turnLimit);
+    head.appendChild(turn);
+    scoreEl.appendChild(head);
+
+    const strip = document.createElement('div');
+    strip.className = 'score-strip';
+    for (const row of readout.rows) {
+      const cell = document.createElement('span');
+      cell.className = row.alive ? 'score-unit' : 'score-unit dead';
+      cell.style.borderColor = TEAM_CSS[row.owner];
+      cell.textContent = row.alive
+        ? `${row.name} ${row.hp}/${row.maxHp} · ult ${row.ultPct}%`
+        : `${row.name} — down (${row.respawnIn})`;
+      strip.appendChild(cell);
+    }
+    scoreEl.appendChild(strip);
+  }
+
+  /** A unit's character name, for the scoreboard and the end screen. */
+  function unitName(unitId: string): string {
+    const u = unitById(unitId);
+    return u === undefined ? unitId : roster[u.characterId]?.name ?? unitId;
   }
 
   /** One character as the HUD's view of it — presentation data only. */
@@ -1111,6 +1170,10 @@ export function startHotSeat(
     finish();
 
     state = result.state;
+    // SCORE1 — the damage/healing ledger is folded from the same log playback
+    // just consumed, so the scoreboard and the animation can never describe
+    // different turns.
+    totals = foldTurn(totals, result.events);
     if (state.status !== 'active') return renderGameOver();
     beginTurn();
   }
@@ -1282,9 +1345,33 @@ export function startHotSeat(
     renderer.setSpotlight(null);
     renderer.fitBoard();
     hud.clear();
-    ui.status.textContent = state.status === 'draw'
-      ? 'Double KO — the match is a draw.'
-      : `${teamName(state.winner ?? 0)} wins! (${state.kills[0]}–${state.kills[1]})`;
+    const result = matchBreakdown(state, unitName, totals);
+    ui.status.textContent = endReasonText(result);
+    // SCORE1's end-of-match breakdown: what each character actually did, from
+    // the folded log. It replaces the scoreboard rather than sitting under it —
+    // the tally it was showing is now the final score on the line above.
+    scoreEl.replaceChildren();
+    const table = document.createElement('table');
+    table.className = 'score-table';
+    const header = document.createElement('tr');
+    for (const h of ['', 'Kills', 'Deaths', 'Dmg dealt', 'Dmg taken', 'Healing']) {
+      const th = document.createElement('th');
+      th.textContent = h;
+      header.appendChild(th);
+    }
+    table.appendChild(header);
+    for (const row of result.rows) {
+      const tr = document.createElement('tr');
+      const cells = [row.name, row.kills, row.deaths, row.damageDealt, row.damageTaken, row.supportGiven];
+      for (const [i, value] of cells.entries()) {
+        const td = document.createElement('td');
+        td.textContent = String(value);
+        if (i === 0) td.style.color = TEAM_CSS[row.owner];
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    scoreEl.appendChild(table);
   }
 
   const teamName = (t: number) => (t === 0 ? 'Team 1' : 'Team 2');
