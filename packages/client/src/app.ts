@@ -26,7 +26,7 @@ import {
   type UnitState,
   type Vec2,
 } from '@cards/engine';
-import { createRenderer, type ProjectionName, type RenderDecoy, type RenderUnit, type Renderer } from './renderer3d.js';
+import { createRenderer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { type Cue } from './choreograph.js';
@@ -408,6 +408,20 @@ export function startHotSeat(
     }));
   };
 
+  /**
+   * Playback traps (TRAP-INDICATOR). Nothing is hidden once the turn is history,
+   * so every trap is drawn — but a marker that appears mid-Prep and vanishes the
+   * instant somebody walks onto it is the clearest possible account of what just
+   * happened, which is why the view folds `trapPlaced`/`trapTriggered` rather
+   * than reading the resolved state.
+   */
+  const viewTraps = (view: ViewState): RenderTrap[] => {
+    const viewer = currentSeat()?.team ?? 0;
+    return [...view.traps.values()].map((t) => ({
+      id: t.id, pos: { ...t.pos }, owner: t.owner, own: t.owner === viewer,
+    }));
+  };
+
   function beginTurn(): void {
     drafts = new Map();
     locked = new Set();
@@ -458,7 +472,10 @@ export function startHotSeat(
     // same rule, and tagged with how *this* viewer should see them. Drawing
     // `state.decoys` directly is what showed every decoy to both teams, through
     // walls, in a colour that announced it was fake.
-    renderer.show(toRenderUnits(view.units), view.decoys);
+    // Traps ride the same view for the same reason (TRAP-INDICATOR): the
+    // placing team always sees its own, the enemy only a square it can see, and
+    // that decision belongs to `fogView` rather than to the renderer.
+    renderer.show(toRenderUnits(view.units), view.decoys, view.traps);
     renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
   }
 
@@ -587,6 +604,9 @@ export function startHotSeat(
     // is where the damage is actually dealt — the aimed square is only where it
     // lands. `previewNumbers` applies FF1 polarity, so an ally in your own AoE
     // gets a red number too.
+    // PREVIEW-FOG: the same view the board is drawn from decides who may carry a
+    // number, so the preview cannot contradict the fog beside it.
+    const seen = new Set(currentFog(currentSeat()?.team ?? unit.owner).units.map((u) => u.unitId));
     showPreviewNumbers(previewNumbers(state, unit, [
       ...(chosen !== undefined
         ? [{ def: chosen, squares: [...covered, ...impact.origin, ...impact.destination] }]
@@ -597,7 +617,7 @@ export function startHotSeat(
       ...(catalystDef !== undefined && catalystAim.length > 0
         ? [{ def: catalystDef, squares: abilityPreview(map, unit, catalystDef, catalystAim) }]
         : []),
-    ]));
+    ], seen));
 
     // ── AIM1 (+UI4): the drawn route as a LINE ───────────────────────────────
     // Shaded reachability says where you *could* go; only a line says which way
@@ -911,7 +931,7 @@ export function startHotSeat(
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     renderer.drawShape([], SHAPE);
-    renderer.show(viewUnits(player.view), viewDecoys(player.view));
+    renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view));
 
     let skipped = false;
     const finish = (): void => {
@@ -922,7 +942,7 @@ export function startHotSeat(
       renderer.highlight('aim', [], AIM);
       renderer.highlight('select', [], IMPACT);
       clearReadouts();
-      renderer.show(viewUnits(player.view), viewDecoys(player.view));
+      renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view));
     };
     hud.showPlayback(() => {
       skipped = true;
@@ -933,7 +953,11 @@ export function startHotSeat(
     for (let step = player.advancePhase(); step !== undefined; step = player.advancePhase()) {
       ui.status.textContent = `Turn ${prev.turn} · resolving — ${step.phase.toUpperCase()}`;
       if (skipped) continue; // keep folding; just stop animating
-      await animatePhase(player.cues, step.phase, viewUnits(player.view), viewDecoys(player.view), () => skipped);
+      await animatePhase(
+        player.cues, step.phase,
+        viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view),
+        () => skipped,
+      );
     }
     finish();
 
@@ -956,10 +980,11 @@ export function startHotSeat(
     phase: Phase,
     units: RenderUnit[],
     decoys: RenderDecoy[],
+    traps: RenderTrap[],
     cancelled: () => boolean,
   ): Promise<void> {
     const { start, end } = phaseWindow(cues, phase);
-    renderer.show(units, decoys);
+    renderer.show(units, decoys, traps);
     phaseLabel.textContent = phase.toUpperCase();
     phaseLabel.style.display = 'block';
     const posOf = (unitId: string): Vec2 | undefined => units.find((u) => u.unitId === unitId)?.pos;
@@ -1097,7 +1122,8 @@ export function startHotSeat(
 
   function renderGameOver(): void {
     clearPreviewNumbers();
-    renderer.show(toRenderUnits(revealedView(state, currentSeat()?.team ?? 0).units), []);
+    const revealed = revealedView(state, currentSeat()?.team ?? 0);
+    renderer.show(toRenderUnits(revealed.units), revealed.decoys, revealed.traps);
     for (const layer of ['fog', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');

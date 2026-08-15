@@ -43,12 +43,28 @@ export interface FogDecoy {
   asEnemy: boolean;
 }
 
+/**
+ * A placed trap as one viewer sees it (TRAP-INDICATOR). `own` decides the
+ * styling: your own minefield is something you must route around knowingly —
+ * traps are team-safe, so you need to see yours — while an enemy trap is a
+ * threat you only learn about by looking at its square.
+ */
+export interface FogTrap {
+  id: string;
+  pos: Vec2;
+  owner: TeamId;
+  /** True when this trap belongs to the viewing team. */
+  own: boolean;
+}
+
 /** What a renderer should draw for one viewer. */
 export interface FogView {
   /** The units to draw — hidden enemies are simply absent. */
   units: UnitState[];
   /** The decoys to draw, styled for this viewer. Hidden ones are absent. */
   decoys: FogDecoy[];
+  /** The traps to draw, styled for this viewer. Hidden ones are absent. */
+  traps: FogTrap[];
   /** Squares outside the team's sight, to darken. Empty when nothing is hidden. */
   fogged: Vec2[];
 }
@@ -75,8 +91,28 @@ export function fogView(map: MapDef, state: GameState, team: TeamId): FogView {
   return {
     units: state.units.filter((u) => u.owner === team || !u.alive || seen.has(u.unitId)),
     decoys: visibleDecoys(state, team, lit),
+    traps: visibleTraps(state, team, lit),
     fogged,
   };
+}
+
+/**
+ * The traps this team may see (TRAP-INDICATOR).
+ *
+ * **Your own, always** — you planted them, they are team-safe, and a minefield
+ * you cannot see is one you will plan a walk straight over. An **enemy** trap
+ * only when a unit has vision of its square, which is the same
+ * `visibleSquaresForTeam` gate everything else uses: a trap is a hidden threat
+ * until somebody looks at it.
+ *
+ * Square visibility rather than `visibleEnemiesForTeam`, for the same reason
+ * decoys use it: a trap is a static object on the ground with no Stealth to
+ * check, no brush concealment of its own and nothing to reveal.
+ */
+function visibleTraps(state: GameState, team: TeamId, lit: ReadonlySet<string>): FogTrap[] {
+  return state.traps
+    .filter((t) => t.owner === team || lit.has(vecKey(t.pos)))
+    .map((t) => ({ id: t.id, pos: { ...t.pos }, owner: t.owner, own: t.owner === team }));
 }
 
 /**
@@ -114,6 +150,9 @@ export function revealedView(state: GameState, team: TeamId): FogView {
     // Even revealed, a decoy is still drawn from a viewpoint — "everyone sees
     // it" is not the same as "everyone sees it as the same thing".
     decoys: state.decoys.map((d) => ({ id: d.id, pos: { ...d.pos }, asEnemy: d.teamId !== team })),
+    // Likewise still viewpoint-styled: "revealed" means everyone sees it, not
+    // that everyone sees it as theirs.
+    traps: state.traps.map((t) => ({ id: t.id, pos: { ...t.pos }, owner: t.owner, own: t.owner === team })),
     fogged: [],
   };
 }

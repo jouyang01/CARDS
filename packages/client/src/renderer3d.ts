@@ -81,6 +81,12 @@ const DIM_ALPHA = 0.22;
 const DECOY_PURPLE = 0xa06bd6;
 /** The status row sits just above the shield bar; its size/gap are shared. */
 const PIP_ROW_Y = 0.38;
+/**
+ * Trap markers: a little smaller than a tile so the grid still reads, and lifted
+ * into the overlay band so brush cannot eat them the way it ate the highlights
+ * (FOG-ZORDER). Below `select`, so the selected-unit ring still reads on top.
+ */
+const TRAP_SIZE = 0.5;
 
 /**
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
@@ -131,6 +137,8 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
 const LAYER_INSET: Record<HighlightLayer, number> = {
   fog: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
 };
+/** A trap marker rides in the overlay band, just under the selection ring. */
+const TRAP_LIFT = LAYER_LIFT.select - 0.001;
 /** UI2's continuous shape sits just above the covered tiles it explains. */
 export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
 
@@ -144,6 +152,19 @@ export interface RenderDecoy {
   id: string;
   pos: Vec2;
   asEnemy: boolean;
+}
+
+/**
+ * A placed trap, as one viewer should see it (TRAP-INDICATOR). Drawn flat on the
+ * ground and marked with a cross, so it reads as *a square you should not step
+ * on* rather than as a unit or as another aim overlay.
+ */
+export interface RenderTrap {
+  id: string;
+  pos: Vec2;
+  owner: 0 | 1;
+  /** The viewing team's own trap — team-safe, and something to route over. */
+  own: boolean;
 }
 
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
@@ -167,7 +188,7 @@ export interface RenderUnit {
 
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
-  show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[]): void;
+  show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[], traps?: readonly RenderTrap[]): void;
   /**
    * Highlight squares. Layers stack bottom-up in the order listed here:
    * `fog` is the unseen board (VISION1) and sits underneath everything, so your
@@ -596,7 +617,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   renderer.setSize(width, height);
 
   return {
-    show(units, decoys = []) {
+    show(units, decoys = [], traps = []) {
       // `show()` is the snap-to-truth call: it places every unit on its whole
       // square and drops any in-flight tween state. Cue-driven overrides
       // (`setUnitAt`, `setUnitFade`) are applied *after* it, per frame.
@@ -624,6 +645,36 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         live.add(unit.unitId);
       }
       for (const [id, g] of unitObjects) if (!live.has(id)) g.visible = false;
+
+      // TRAP-INDICATOR: flat ground markers, in the owning team's colour so
+      // "whose trap" is answered without a legend. Visibility was already
+      // decided by `fogView` — an enemy trap that reaches here is one this team
+      // can see, and one it cannot is simply absent from the list.
+      const trapLayer = layerGroup('trap');
+      disposeChildren(trapLayer);
+      for (const trap of traps) {
+        const colour = trap.owner === 0 ? palette.team0 : palette.team1;
+        const at = toWorld(map, trap.pos);
+        const plate = new Mesh(
+          new PlaneGeometry(TILE * TRAP_SIZE, TILE * TRAP_SIZE),
+          new MeshBasicMaterial({ color: colour, transparent: true, opacity: trap.own ? 0.28 : 0.42 }),
+        );
+        plate.rotation.x = -Math.PI / 2;
+        plate.position.copy(at).setY(TRAP_LIFT);
+        trapLayer.add(plate);
+        // A cross on top: the plate alone is another coloured tile among many,
+        // and the whole point is that this one square is dangerous.
+        for (const spin of [Math.PI / 4, -Math.PI / 4]) {
+          const bar = new Mesh(
+            new PlaneGeometry(TILE * TRAP_SIZE * 1.1, TILE * 0.08),
+            new MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.9 }),
+          );
+          bar.rotation.x = -Math.PI / 2;
+          bar.rotation.z = spin;
+          bar.position.copy(at).setY(TRAP_LIFT + 0.001);
+          trapLayer.add(bar);
+        }
+      }
 
       const decoyLayer = layerGroup('decoy');
       disposeChildren(decoyLayer);

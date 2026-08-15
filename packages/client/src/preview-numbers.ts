@@ -16,6 +16,11 @@
  * - **Beneficial** effects reach your own team only. A heal aimed over an enemy
  *   shows them nothing, because it would do nothing.
  *
+ * It is also gated on **vision** (PREVIEW-FOG): a number over a unit the acting
+ * team cannot see would hand the player the one thing fog exists to withhold —
+ * a fogged enemy's exact square, readable by sweeping an aim past it. You may
+ * still aim into the dark; you just are not told what is standing there.
+ *
  * The amounts are **nominal**: the ability's authored effect value, before
  * Might/Weaken, cover, shields or Untargetable. A plan-time preview cannot know
  * what buffs will be standing at resolution — Adrenaline resolves at the start of
@@ -61,6 +66,15 @@ export function previewNumbers(
   state: GameState,
   caster: UnitState,
   actions: readonly AimedAction[],
+  /**
+   * Unit ids the acting seat's team can currently see — `fogView().units`,
+   * the same answer the board is already drawn from, so a number can never
+   * appear over a unit the player is not being shown.
+   *
+   * Required rather than defaulted: a default of "everyone" is the leak this
+   * parameter exists to close, and it would fail silently.
+   */
+  visible: ReadonlySet<string>,
 ): PreviewNumber[] {
   const totals = new Map<string, number>(); // `${unitId}:${kind}` → amount
   for (const { def, squares } of actions) {
@@ -74,6 +88,10 @@ export function previewNumbers(
       for (const target of state.units) {
         if (!target.alive || !area.has(`${target.pos.x},${target.pos.y}`)) continue;
         if (OWN_TEAM_ONLY.has(kind) && target.owner !== caster.owner) continue;
+        // PREVIEW-FOG. Own units are always visible to their own team, so this
+        // only ever removes enemies — and it asks the fog view rather than
+        // re-deriving sight, exactly like every other client consumer.
+        if (target.owner !== caster.owner && !visible.has(target.unitId)) continue;
         const key = `${target.unitId}:${kind}`;
         totals.set(key, (totals.get(key) ?? 0) + amount);
       }

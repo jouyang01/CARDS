@@ -32,6 +32,13 @@ export interface ViewUnit {
   statuses: Set<EffectKind>;
 }
 
+/** A placed trap in the view (TRAP-INDICATOR) — folded from the log like a decoy. */
+export interface ViewTrap {
+  id: string;
+  owner: 0 | 1;
+  pos: Vec2;
+}
+
 /** A Wisp decoy in the view (rendered to the enemy team as Wisp — R2). */
 export interface ViewDecoy {
   id: string;
@@ -43,6 +50,8 @@ export interface ViewState {
   units: Map<string, ViewUnit>;
   /** Live decoys, keyed by id — spawned/removed straight from the event log. */
   decoys: Map<string, ViewDecoy>;
+  /** Live traps, keyed by id — placed and consumed straight from the event log. */
+  traps: Map<string, ViewTrap>;
   kills: [number, number];
   status: GameState['status'];
   winner?: 0 | 1;
@@ -58,7 +67,9 @@ export function initView(state: GameState): ViewState {
   }
   const decoys = new Map<string, ViewDecoy>();
   for (const d of state.decoys) decoys.set(d.id, { id: d.id, teamId: d.teamId, pos: { ...d.pos } });
-  return { units, decoys, kills: [state.kills[0], state.kills[1]], status: state.status, winner: state.winner };
+  const traps = new Map<string, ViewTrap>();
+  for (const t of state.traps) traps.set(t.id, { id: t.id, owner: t.owner, pos: { ...t.pos } });
+  return { units, decoys, traps, kills: [state.kills[0], state.kills[1]], status: state.status, winner: state.winner };
 }
 
 /** Apply one event's stated delta to the view. Never derives new game logic. */
@@ -117,6 +128,15 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
       if (u) { u.alive = true; u.hp = u.maxHp; u.shield = 0; u.statuses.clear(); u.pos = { ...event.pos }; }
       break;
     }
+    case 'trapPlaced': {
+      view.traps.set(event.trapId, { id: event.trapId, owner: event.owner, pos: { ...event.pos } });
+      break;
+    }
+    case 'trapTriggered': {
+      // Consumed on trigger (one use), so the marker goes with it.
+      view.traps.delete(event.trapId);
+      break;
+    }
     case 'decoySpawned': {
       view.decoys.set(event.decoyId, { id: event.decoyId, teamId: event.teamId, pos: { ...event.pos } });
       break;
@@ -130,7 +150,7 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
       if (event.result === 'win') view.winner = event.winner;
       break;
     }
-    // phaseStart / abilityFired / trapPlaced / trapTriggered: no board delta.
+    // phaseStart / abilityFired: no board delta.
     default:
       break;
   }
