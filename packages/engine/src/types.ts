@@ -71,6 +71,13 @@ export interface AbilityEffect {
   amount?: number;
   /** Status duration in turns. */
   duration?: number;
+  /**
+   * `trap` only — turns a placed trap survives unfired, counted like a status
+   * `duration`: `lifetime: 2` covers the turn it was placed and the next.
+   * Capped at `TRAP_MAX_LIFETIME` by validation, and defaulted to it when the
+   * data omits it, so no trap can outlive the cap by being under-specified.
+   */
+  lifetime?: number;
 }
 
 export interface AbilityDef {
@@ -214,6 +221,12 @@ export interface TrapState {
   abilityId: string;
   pos: Vec2;
   damage: number;
+  /**
+   * The last turn on which it is still live (TRAP-LIFETIME). Removed unfired at
+   * the **end** of this turn — `placedTurn + lifetime - 1`, the same arithmetic
+   * a `duration: N` status is measured by.
+   */
+  expiresOnTurn: number;
   /** Applied to whoever triggers it. */
   onTrigger: AbilityEffect[];
 }
@@ -346,6 +359,11 @@ export type TurnEvent =
   | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
+  // …and its counterpart: the trap ran out its life without anyone stepping on
+  // it (TRAP-LIFETIME). Distinct from `trapTriggered`, which means somebody did.
+  // Without it a client folding the log keeps a marker over a square that is no
+  // longer dangerous — the same failure `statusRemoved` exists to prevent.
+  | { type: 'trapExpired'; trapId: string; pos: Vec2; owner: TeamId }
   // A catalyst is spent (CAT1) — playback and the HUD's spent-slot greying.
   | { type: 'catalystUsed'; unitId: string; catalystId: string }
   | { type: 'trapTriggered'; trapId: string; unitId: string }

@@ -132,8 +132,11 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
       view.traps.set(event.trapId, { id: event.trapId, owner: event.owner, pos: { ...event.pos } });
       break;
     }
-    case 'trapTriggered': {
-      // Consumed on trigger (one use), so the marker goes with it.
+    case 'trapTriggered':
+    case 'trapExpired': {
+      // Two ways a trap leaves the board — somebody stepped on it, or it ran out
+      // its life (TRAP-LIFETIME) — and the marker goes with it either way. A
+      // marker over a square that is no longer dangerous is worse than none.
       view.traps.delete(event.trapId);
       break;
     }

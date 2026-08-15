@@ -35,7 +35,12 @@ function run(state: GameState, u0: UnitOrders[], u1: UnitOrders[], map = OPEN())
   return resolveTurn(state, map, [{ team: 0 as TeamId, units: u0 }, { team: 1 as TeamId, units: u1 }], roster);
 }
 const unit = (s: GameState, id: string) => s.units.find((u) => u.unitId === id)!;
-const trapAt = (x: number, y: number, owner: TeamId): TrapState => ({ id: `pre-${x}-${y}`, owner, ownerUnitId: `pre-owner-${owner}`, abilityId: 'trap', pos: { x, y }, damage: 20, onTrigger: [{ kind: 'reveal', duration: 2 }] });
+/**
+ * A pre-placed trap. `expiresOnTurn` is deliberately far out: these cases are
+ * about triggering, not about TRAP-LIFETIME's sweep, and a trap that quietly
+ * expired mid-test would fail for the wrong reason. Expiry has its own file.
+ */
+const trapAt = (x: number, y: number, owner: TeamId, expiresOnTurn = 99): TrapState => ({ id: `pre-${x}-${y}`, owner, ownerUnitId: `pre-owner-${owner}`, abilityId: 'trap', pos: { x, y }, damage: 20, expiresOnTurn, onTrigger: [{ kind: 'reveal', duration: 2 }] });
 
 describe('trap placement', () => {
   it('placing a trap in Prep emits trapPlaced and stores it hidden', () => {

@@ -44,6 +44,7 @@ import {
   PASSIVE_ENERGY,
   RESPAWN_TURNS,
   REVEAL_ON_ATTACK_TURNS,
+  TRAP_MAX_LIFETIME,
   ULT_COST,
 } from './constants.js';
 import { getFormat } from './formats.js';
@@ -895,6 +896,11 @@ function placeTraps(
       abilityId: planned.def.id,
       pos: { x: pos.x, y: pos.y },
       damage: trapEffect.amount ?? 0,
+      // TRAP-LIFETIME: stamped at placement, measured exactly like a status
+      // `duration` — `lifetime: 2` covers this turn and the next. An omitted
+      // lifetime lands on the cap rather than living forever, so a trap can only
+      // be *shorter* than the rule by being under-specified, never longer.
+      expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
       onTrigger,
     };
     draft.traps.push(trap);
@@ -1480,6 +1486,19 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
   }
   // Delayed abilities count down (resolution attaches at BACKLOG item 12).
   for (const d of draft.delayed) d.turnsRemaining -= 1;
+
+  // Traps expire unfired at the end of their `expiresOnTurn` (TRAP-LIFETIME),
+  // so a minefield cannot accrete across a match. The event is what lets a
+  // client folding the log clear the marker — a marker over a square that is no
+  // longer dangerous is worse than none. Turn has not advanced yet, so compare
+  // directly, exactly as the decoy sweep below does.
+  draft.traps = draft.traps.filter((t) => {
+    if (draft.turn >= t.expiresOnTurn) {
+      events.push({ type: 'trapExpired', trapId: t.id, pos: t.pos, owner: t.owner });
+      return false;
+    }
+    return true;
+  });
 
   // Decoys expire at the end of their `expiresOnTurn` (cast turn + 1), unless
   // already destroyed (R2). Turn has not yet advanced here, so compare directly.

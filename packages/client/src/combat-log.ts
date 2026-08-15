@@ -136,6 +136,11 @@ export function logEntriesForTurn(turn: number, events: readonly TurnEvent[], na
       case 'trapTriggered':
         out.push({ turn, tone: 'status', unitId: e.unitId, text: `${who(e.unitId)} triggered a trap` });
         break;
+      case 'trapExpired':
+        // Worth a line: a trap you laid and forgot about running out is a plan
+        // that quietly stopped being true, and nothing else on screen says so.
+        out.push({ turn, tone: 'neutral', text: `A trap at ${at(e.pos)} expired` });
+        break;
       case 'gameEnd':
         out.push({
           turn, tone: 'neutral',

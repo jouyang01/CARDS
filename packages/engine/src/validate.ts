@@ -6,7 +6,7 @@ import {
   EFFECT_KINDS,
   TARGET_SHAPES,
 } from './types.js';
-import { MAX_ABILITY_RANGE } from './constants.js';
+import { MAX_ABILITY_RANGE, TRAP_MAX_LIFETIME } from './constants.js';
 
 /**
  * Content validation for data-driven characters and maps.
@@ -35,7 +35,7 @@ export const ABILITY_KEYS = [
 ] as const;
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
-export const EFFECT_KEYS = ['kind', 'amount', 'duration'] as const;
+export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime'] as const;
 
 function isInt(n: unknown): n is number {
   return typeof n === 'number' && Number.isInteger(n);
@@ -136,6 +136,17 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
       }
       if (e.duration !== undefined && (!isInt(e.duration) || e.duration < 1)) {
         errs.push(`${path}.effects[${i}]: duration must be an integer >= 1`);
+      }
+      // TRAP-LIFETIME: the owner's general cap, enforced where every other
+      // content cap is. Rejected on a non-trap effect too — a `lifetime` on a
+      // damage effect does nothing, and a field that silently does nothing is
+      // exactly what VALIDATE-KEYS exists to catch.
+      if (e.lifetime !== undefined) {
+        if (e.kind !== 'trap') {
+          errs.push(`${path}.effects[${i}]: lifetime is only meaningful on a "trap" effect`);
+        } else if (!isInt(e.lifetime) || e.lifetime < 1 || e.lifetime > TRAP_MAX_LIFETIME) {
+          errs.push(`${path}.effects[${i}]: trap lifetime must be an integer 1..${TRAP_MAX_LIFETIME}`);
+        }
       }
     }
   }

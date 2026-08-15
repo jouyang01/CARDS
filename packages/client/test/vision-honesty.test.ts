@@ -48,7 +48,9 @@ const seenBy = (s: GameState, team: TeamId): Set<string> =>
   new Set(fogView(OPEN, s, team).units.map((u) => u.unitId));
 
 const trap = (over: Partial<TrapState> & Pick<TrapState, 'id' | 'owner' | 'pos'>): TrapState => ({
-  ownerUnitId: 'x', abilityId: 'overwatch_trap', damage: 20, onTrigger: [], ...over,
+  // `expiresOnTurn` far out: these cases are about who may *see* a trap, and one
+  // that expired mid-test would pass or fail for the wrong reason.
+  ownerUnitId: 'x', abilityId: 'overwatch_trap', damage: 20, expiresOnTurn: 99, onTrigger: [], ...over,
 });
 
 // ── PREVIEW-FOG ─────────────────────────────────────────────────────────────
@@ -201,6 +203,17 @@ describe('TRAP-INDICATOR: playback folds traps from the log', () => {
       { type: 'trapPlaced', trapId: 't1', pos: { x: 4, y: 4 }, owner: 0 },
     ]);
     expect(view.traps.get('t1')).toEqual({ id: 't1', owner: 0, pos: { x: 4, y: 4 } });
+  });
+
+  it('an expired trap disappears too (TRAP-LIFETIME)', () => {
+    // The other way a trap leaves the board. Folding only `trapTriggered` would
+    // leave a marker over a square that ran out its life.
+    const s = empty();
+    s.traps = [trap({ id: 't1', owner: 0, pos: { x: 4, y: 4 } })];
+    const view = playEvents(s, [
+      { type: 'trapExpired', trapId: 't1', pos: { x: 4, y: 4 }, owner: 0 },
+    ]);
+    expect(view.traps.size).toBe(0);
   });
 
   it('and a triggered trap disappears — the marker is consumed with it', () => {
