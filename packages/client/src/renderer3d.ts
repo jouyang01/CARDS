@@ -89,6 +89,14 @@ const PIP_ROW_Y = 0.38;
 export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
 
 /**
+ * Route lines get their own layers for the same reason the aim overlays do: a
+ * dash ability and a Dash catalyst are two repositions that can be drafted on
+ * one turn (DASH-CAT-ROUTE), and one shared layer would mean the second erased
+ * the first.
+ */
+export type PathLayer = 'path' | 'catalystPath';
+
+/**
  * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
  * its top surface the floor every tile overlay has to clear (FOG-ZORDER).
  */
@@ -204,7 +212,7 @@ export interface Renderer {
   /** Keep a run of squares in frame (auto-camera). Empty = whole board. */
   focusOn(squares: readonly Vec2[]): void;
   /** A stroked path through tile centres plus an endpoint marker (AIM1). */
-  drawPath(squares: readonly Vec2[], color: number, dashed: boolean): void;
+  drawPath(squares: readonly Vec2[], color: number, dashed: boolean, layer?: PathLayer): void;
   /**
    * UI2 Layer 1: fill a closed polygon given in **fractional board coordinates**
    * on the ground plane — the continuous cone/beam/disk the covered tiles
@@ -766,8 +774,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       wantCentre = clampToBoard(wantCentre, wantSpan);
     },
 
-    drawPath(squares, color, dashed) {
-      const g = layerGroup('path');
+    drawPath(squares, color, dashed, layer = 'path') {
+      const g = layerGroup(layer);
       disposeChildren(g);
       if (squares.length === 0) return;
       // A drawn move is a LINE through tile centres, not a field of tiles: it

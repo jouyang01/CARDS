@@ -6,8 +6,10 @@ import {
   findPixels,
   isAimOrange,
   isBrushGreen,
+  isDashYellow,
   isFogged,
   isTeamBlue,
+  isRangeWash,
   isTeamRed,
   pixelAt,
   type Image,
@@ -467,4 +469,49 @@ test('an aimed action floats its numbers before Lock In (PREVIEW-NUMBERS)', asyn
   await lockIn(page).click();
   await page.waitForTimeout(400);
   await expect(previews).toHaveCount(0);
+});
+
+/**
+ * AIM-RANGE + DASH-CAT-ROUTE — "Dash catalyst doesn\'t have a range indicator",
+ * "Overwatch Trap doesn\'t have a range indicator either", "Shift\'s dash
+ * catalyst should show as a yellow movement similar to other dash/blinks."
+ *
+ * The gate and the envelope geometry are unit-covered; what only a browser shows
+ * is that arming these slots actually paints something, since the bug was
+ * precisely that they painted nothing.
+ */
+test('arming a catalyst or a free ability paints a range envelope (AIM-RANGE)', async ({ page }) => {
+  const before = countPixels(await pixels(page), isRangeWash);
+  // A whole envelope is thousands of sampled pixels (Shift's range-3 disc is
+  // ~29 tiles), so the margin is well clear of frame-to-frame jitter while
+  // still failing outright if nothing paints.
+  const ENVELOPE = 1500;
+
+  // The Dash slot — Shift, the one the Dev Note named.
+  await page.locator('.hud-catalyst').nth(1).click();
+  await page.waitForTimeout(220);
+  expect(countPixels(await pixels(page), isRangeWash), 'the Dash catalyst shows no range envelope')
+    .toBeGreaterThan(before + ENVELOPE);
+
+  // …and the free ability slot, which had the same gap.
+  await page.locator('.hud-catalyst').nth(1).click(); // hand the slot back
+  await page.locator('.hud-ability.free').first().click();
+  await page.waitForTimeout(220);
+  expect(countPixels(await pixels(page), isRangeWash), 'the free ability shows no envelope')
+    .toBeGreaterThan(before + ENVELOPE);
+});
+
+test('aiming Shift draws a yellow route to its landing square (DASH-CAT-ROUTE)', async ({ page }) => {
+  const before = countPixels(await pixels(page), isDashYellow);
+
+  await page.locator('.hud-catalyst').nth(1).click(); // Shift
+  // Shift reaches 3, so sweep close to the unit rather than across the board.
+  let painted = before;
+  for (const [fx, fy] of [[0.30, 0.5], [0.26, 0.42], [0.34, 0.58], [0.30, 0.62]] as const) {
+    await pointAt(page, fx, fy);
+    painted = Math.max(painted, countPixels(await pixels(page), isDashYellow));
+    if (painted > before) break;
+  }
+  expect(painted, 'Shift drew no yellow route — it still reads as an area, not a move')
+    .toBeGreaterThan(before);
 });

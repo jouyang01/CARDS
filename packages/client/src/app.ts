@@ -49,6 +49,7 @@ import {
   impactPreview,
   abilityTooltip,
   aimFor,
+  commitAim,
   dashRoute,
   draftAbility,
   draftFreeAbility,
@@ -487,14 +488,29 @@ export function startHotSeat(
 
     const chosen = draftAbility(character, draft);
     const isDash = chosen?.phase === 'dash';
+    // All three aimable slots are resolved up front now: AIM-RANGE needs the
+    // armed one to pick the range envelope, and the envelope is drawn before
+    // the aims it bounds.
+    const freeDef = draftFreeAbility(character, draft);
+    const catalystDef = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
 
-    // ── Layer: the effective-range ENVELOPE (UI1) ────────────────────────────
+    // ── Layer: the effective-range ENVELOPE (UI1 + AIM-RANGE) ────────────────
     // Where an action *could* go, which is a different question from what a
     // given aim covers — and the one a player asks before selecting anything.
     // Hovering a control answers it without touching the draft.
+    //
+    // AIM-RANGE: this used to read `chosen` alone, so arming a free ability or
+    // a catalyst painted **no envelope at all** — "Overwatch Trap doesn't have a
+    // range indicator either", "Dash catalyst doesn't have a range indicator".
+    // The armed slot is whichever mode is live, so one envelope answers for all
+    // three without three layers fighting for the same tiles.
     const { hover } = interaction;
     const hovered = hover.abilityId !== undefined ? findOnCharacter(character, hover.abilityId) : undefined;
-    const envelopeAbility = hovered ?? (hover.move === undefined ? chosen : undefined);
+    const armedDef =
+      interaction.mode === 'free' ? freeDef
+      : interaction.mode === 'catalyst' ? catalystDef
+      : chosen;
+    const envelopeAbility = hovered ?? (hover.move === undefined ? armedDef : undefined);
     renderer.highlight(
       'range',
       envelopeAbility !== undefined ? rangeEnvelope(map, state, unit, envelopeAbility) : [],
@@ -542,7 +558,6 @@ export function startHotSeat(
     // Same reasoning as the catalyst layer below: a trap being placed and a
     // shot being lined up are two decisions on one turn, and a player has to be
     // able to see both at once or the additivity is invisible.
-    const freeDef = draftFreeAbility(character, draft);
     const freeAim = previewFreeAim(map, state, unit, freeDef, draft, interaction);
     renderer.highlight(
       'free',
@@ -555,7 +570,6 @@ export function startHotSeat(
     // A catalyst is a separate slot, so it gets a separate overlay — a Shift's
     // destination and a Rail Shot's beam are two decisions on one turn and have
     // to be readable at the same time.
-    const catalystDef = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
     const catalystAim = previewCatalystAim(map, state, unit, catalystDef, draft, interaction);
     renderer.highlight(
       'catalyst',
@@ -595,6 +609,24 @@ export function startHotSeat(
       route.length > 0 ? [unit.pos, ...route] : [],
       isDash ? DASH_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
       !isDash && draft.sprint, // sprint is the dashed one; a dash reads by colour
+    );
+
+    // ── DASH-CAT-ROUTE: a Dash catalyst is a reposition, so it draws like one ─
+    // "Shift's dash catalyst should show as a yellow movement similar to other
+    // dash/blinks." It used to show only as a catalyst-coloured tile, which
+    // reads as an area effect rather than as "you end up there". Its own path
+    // layer rather than the shared one, because a dash ability and a Shift can
+    // both be drafted on the same turn and each is a separate reposition.
+    // CAT-DASH-COST clears the drawn *move* when a Dash catalyst is armed, so
+    // this yellow line is what replaces it.
+    const catalystRoute = catalystDef?.phase === 'dash'
+      ? dashRoute(unit, catalystDef, catalystAim)
+      : [];
+    renderer.drawPath(
+      catalystRoute.length > 0 ? [unit.pos, ...catalystRoute] : [],
+      DASH_LINE,
+      false,
+      'catalystPath',
     );
   }
 
@@ -792,26 +824,35 @@ export function startHotSeat(
     if (unit === undefined) return;
     const draft = draftFor(unit);
 
+    // AIM-RANGE: every slot commits through `commitAim`, which returns nothing
+    // for an out-of-range click. The slot then stays armed rather than
+    // recording an order the engine will silently drop at resolution — the
+    // behaviour that made Blink and Intercept look like they had no range.
     if (interaction.mode === 'aim') {
       const ability = draftAbility(characterFor(unit), draft);
       if (ability === undefined) return;
       // Exactly the aim the hover was already painting — one resolver, so what
       // you saw is what you committed.
-      const { aim, aimStep } = aimFor(map, state, unit, ability, sq);
-      draft.aim = aim;
-      draft.aimStep = aimStep;
+      const committed = commitAim(map, state, unit, ability, sq);
+      if (committed === undefined) return;
+      draft.aim = committed.aim;
+      draft.aimStep = committed.aimStep;
       interaction = afterCommit();
       render();
     } else if (interaction.mode === 'free') {
       const def = draftFreeAbility(characterFor(unit), draft);
       if (def === undefined) return;
-      draft.freeAim = aimFor(map, state, unit, def, sq).aim;
+      const committed = commitAim(map, state, unit, def, sq);
+      if (committed === undefined) return;
+      draft.freeAim = committed.aim;
       interaction = afterCommit();
       render();
     } else if (interaction.mode === 'catalyst') {
       const def = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
       if (def === undefined) return;
-      draft.catalystAim = aimFor(map, state, unit, def, sq).aim;
+      const committed = commitAim(map, state, unit, def, sq);
+      if (committed === undefined) return;
+      draft.catalystAim = committed.aim;
       interaction = afterCommit();
       render();
     } else if (interaction.mode === 'move' || draft.sprint) {
@@ -868,6 +909,7 @@ export function startHotSeat(
     clearPreviewNumbers();
     for (const layer of ['fog', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
+    renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     renderer.drawShape([], SHAPE);
     renderer.show(viewUnits(player.view), viewDecoys(player.view));
 
@@ -1058,6 +1100,7 @@ export function startHotSeat(
     renderer.show(toRenderUnits(revealedView(state, currentSeat()?.team ?? 0).units), []);
     for (const layer of ['fog', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
+    renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);
     renderer.fitBoard();
