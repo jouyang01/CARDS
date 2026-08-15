@@ -1917,3 +1917,95 @@ The browser test that found this asserts purple pixels are on the board after th
 9. **Carried over, unchanged:** the FREE1/CAT1 `free` + `oncePerMatch` conflict, the
    one-free-action tiebreak, `AbilityOrder.target` becoming optional (OQ 2026-08-26), and the
    PREVIEW-NUMBERS cover-adjustment question (OQ 2026-08-28 #6).
+
+---
+
+## 2026-09-01 — Builder: CAMO-REVEAL's reveal triggers, and what "using an ability" means
+
+The ruled gate is "standing on brush OR carrying `stealth`", evaluated at the moment of acting, and
+that part was unambiguous. Three sub-questions it did not cover, decided minimally:
+
+**Using vs. landing.** The owner's wording is *"if you **used** an offensive ability"*, so the
+trigger is the use, not the hit. A concealed unit whose Bola misses entirely is still revealed. This
+only ever affects concealed units — the pre-existing reveal-on-*dealing*-damage is untouched — and
+the alternative ("only if it connected") would mean a thicket that gives you away on a hit and hides
+you on a whiff, which is not a rule a player could hold.
+
+**Catalysts reveal regardless of colour.** The owner named catalyst use itself as a trigger, not
+"harmful catalyst use", so Second Wind out of a thicket gives you away exactly as Suppression does.
+A once-per-match burst is the kind of tell the rule is about.
+
+**A catalyst's tile is read before its teleport.** Shift moves you, and the square that gives you
+away is the one you acted from, not the one you land on. Reading it after would mean shifting out of
+brush into the open erases the tell, and shifting into brush from the open invents one.
+
+Also: a concealed unit that *deals* damage is revealed exactly **once**. The blast path records
+harmful *use* during the gather loop and applies it only to casters the damage pass did not already
+reveal, so one action never emits two `statusApplied(reveal)` events for one unit.
+
+## 2026-09-01 — Builder: DASH-OCCUPIED part (2) implemented rather than deferred
+
+The spec offered the choice and asked for it to be stated. Implemented, because it turned out not to
+be invasive: `applyDisplacements` is already a self-contained function over `(draft, board, pending,
+displaced, events)`, so clearing a landing square is one call with a one-element queue, placed in
+`runDash` before the teleport. Deferring would have left a ruling with no executable meaning.
+
+It changes **no current behaviour**: the guard fires only for a non-`path` dash whose def carries a
+`knockback`, and no shipped ability matches — every roster teleport is knockback-free and charges
+carry their shove as an area `impact`. A synthetic ability in the test fixture drives it.
+
+Two judgment calls inside it. The shove is directed **away from the dasher's origin**, on the
+reading that a body arriving at speed can only send you onward. And the occupant is displaced
+**once**: the same `knockback` is in `a.def.effects` and would be queued again by the damage pass, so
+the pre-landing shove records its victim and the later `collectDisplacement` skips it.
+
+## 2026-09-01 — Builder: the camouflage tile is lit from state, not from a remembered square
+
+CAMO-REVEAL's client half says "the tile you were standing on turned bright red … for the reveal's
+duration". The engine's `statusApplied(reveal)` event carries no position, so "the tile it fired
+from" is not something the client is told. Rather than invent a per-tile memory, the red tile is
+read straight off state: a **living unit carrying `reveal`, standing on brush**. Derives nothing,
+and it is gated on the same fog view as everything else, so it can never out a unit the seat cannot
+see.
+
+The visible consequence: a revealed unit that walks out of the thicket takes the red with it. That
+is a defensible reading of "the tile you were standing on" and it is the only one available without
+new state or a new event field. Flagged below — if the owner wants the square to keep burning after
+the unit leaves, it needs either a position on the event or a client memory, and that is a spec
+decision rather than a Builder one.
+
+## Open Questions for the Analyzer — 2026-09-01
+
+1. **CAMO-REVEAL red tile follows the unit, not the square (DECISIONS above, `fog.ts` `camoTiles`).**
+   A revealed unit that steps out of the brush takes the red with it, because the `reveal`
+   `statusApplied` event carries no position and I would not invent a memory for it. If "the tile you
+   were standing on" must keep burning for the full two turns, the cheapest fix is a `pos` on the
+   reveal event (engine, one field) — your call, not mine.
+
+2. **CAMO-REVEAL fires on ability *use*, not on the hit landing (DECISIONS above).** A concealed unit
+   whose attack whiffs is still revealed. Confirm — the alternative makes a thicket that gives you
+   away on a hit and hides you on a miss.
+
+3. **Catalysts reveal regardless of colour (DECISIONS above).** Second Wind from a thicket reveals
+   exactly as Suppression does, since the owner named catalyst *use* as the trigger. Confirm.
+
+4. **DASH-OCCUPIED (2) shipped, not deferred (DECISIONS above; `resolve.ts`
+   `clearLandingWithKnockback`).** Zero roster abilities reach it; a synthetic fixture drives it. The
+   shove direction (away from the dasher's origin) is a judgment call worth ratifying before a real
+   skill is authored against it.
+
+5. **`revealedView` has no `map`, so it reports no camo tiles and no ghosts (`fog.ts`).** Correct for
+   its two callers (game-over, flat reveal) but the asymmetry with `fogView` is a trap for the next
+   consumer. Worth either threading `map` in or renaming it to say it is the flat view.
+
+6. **Ghost styling is alpha-only (`renderer3d.ts`, `GHOST_ALPHA = 0.22`).** Distinct from live (1.0)
+   and dead (`DEAD_ALPHA`), but three states separated only by opacity may not read on a busy board.
+   If playtest says so, a wireframe or a desaturated material is the follow-up — not scoped here.
+
+7. **No e2e for ghosts or the red tile.** Both are new render styles and RENDER-VERIFY has caught two
+   bugs that unit tests structurally could not. Neither is reachable from turn 1 of the default match
+   (a ghost needs an enemy to enter *then leave* vision; the red tile needs a concealed unit to act),
+   so both would need a multi-turn drive. Flagged as a coverage gap rather than built blind.
+
+8. **Carried over, unchanged:** `statusRemoved` source attribution (OQ 2026-08-29 #7), the
+   PREVIEW-NUMBERS cover-adjustment question (OQ 2026-08-28 #6).

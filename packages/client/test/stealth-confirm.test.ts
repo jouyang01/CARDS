@@ -15,25 +15,27 @@ import { fogView } from '../src/fog.js';
 /**
  * STEALTH-CONFIRM — "Does Veil's Stealth work? It doesn't seem to be working."
  *
- * Two separable questions, and they have different answers.
+ * Two separable questions. When this file was written they had different
+ * answers; STEALTH-DURATION closed the gap and now they agree.
  *
- * 1. **Does the render path honour Stealth?** Yes. A stealthed Wisp is absent
- *    from the enemy's `fogView` while its decoy is present and enemy-styled, and
- *    its own team still sees the real unit with a purple decoy beside it. That
- *    is the whole of what DECOY-RENDER + STATUS-AUDIT were supposed to buy, and
- *    it holds.
+ * 1. **Does the render path honour Stealth?** Yes, and always did. A stealthed
+ *    Wisp is absent from the enemy's `fogView` while its decoy is present and
+ *    enemy-styled, and its own team still sees the real unit with a purple decoy
+ *    beside it. That is what DECOY-RENDER + STATUS-AUDIT bought.
  *
- * 2. **Can a player ever observe it?** No — and that is the Dev Note. Veil &
- *    Decoy's Stealth is authored `duration: 1`, and GAME_SPEC §6 ticks durations
- *    at end of turn, so a Stealth applied in Prep is removed by that same turn's
- *    tick. The enemy's next look at the board is the following Decision phase,
- *    by which point it is gone. The status is real, correct, and over before
- *    anybody could see it.
+ * 2. **Can a player ever observe it?** Now yes. Veil & Decoy's Stealth shipped
+ *    at `duration: 1`, and GAME_SPEC §6 ticks durations at end of turn, so a
+ *    Stealth applied in Prep was removed by that same turn's tick — gone before
+ *    the enemy's next Decision phase, while the decoy (which expires at
+ *    `castTurn + 1`) was still standing. The enemy saw a Wisp *and* a decoy in
+ *    one square, which read exactly as "Stealth is broken". The owner ruled the
+ *    duration to **2** (STEALTH-DURATION), covering the cast turn and the next,
+ *    so the caster is now hidden through the enemy's next look — which is the
+ *    whole point of the ability.
  *
- * The second case is pinned below as a **regression test on the shipped roster
- * value**, not fixed here: the duration lives in `data/characters/wisp.json` and
- * balance is the Designer's. It fails the moment that value changes, which is
- * exactly when this should be re-read. See docs/DECISIONS.md 2026-08-29.
+ * The second block below was written as a **reproduction of that bug**. It is
+ * now the **proof of the fix**: same casts, inverted expectations. Keeping the
+ * shape makes the diff the argument.
  */
 
 const load = (n: string): CharacterDef =>
@@ -97,7 +99,7 @@ describe('the render path honours Stealth exactly as specified', () => {
   });
 });
 
-describe('but the shipped Veil & Decoy is over before anyone can look at it', () => {
+describe('and the shipped Veil & Decoy now survives to be seen', () => {
   const castVeil = (s: GameState) => resolveTurn(
     s, OPEN,
     [{ team: 0, units: [{ unitId: wispId(s), freeAbility: { abilityId: 'veil_decoy', target: [] } }] },
@@ -110,54 +112,55 @@ describe('but the shipped Veil & Decoy is over before anyone can look at it', ()
     expect(events.some((e) => e.type === 'statusApplied' && e.status === 'stealth')).toBe(true);
   });
 
-  it('…and the same turn\'s end-of-turn tick takes it away again', () => {
-    // `duration: 1` covers exactly the turn it was cast (GAME_SPEC §6). For a
-    // status whose whole job is to change what the ENEMY sees on their next
-    // turn, that is one turn too short.
+  it('…and survives the same turn\'s end-of-turn tick, with a turn left on it', () => {
+    // The inversion. At `duration: 1` this asserted a `statusRemoved` expiry and
+    // an empty status list — the status was gone before anyone could look at it.
+    // At `duration: 2` it ticks to 1 and stands through the enemy's next turn.
     const { state, events } = castVeil(facing());
     expect(events.some((e) => e.type === 'statusRemoved' && e.status === 'stealth' && e.reason === 'expired'))
-      .toBe(true);
-    expect(state.units.find((u) => u.characterId === 'wisp')!.statuses).toEqual([]);
-  });
-
-  it('so on the next Decision phase the enemy simply sees Wisp', () => {
-    // This is the Dev Note, reproduced. The decoy is still standing — it lives
-    // to `cast turn + 1` — so the enemy is shown a Wisp *and* a decoy in the
-    // same place, which reads as the ability having done nothing.
-    const { state } = castVeil(facing());
-    const view = fogView(OPEN, state, 1);
-    expect(view.units.map((u) => u.characterId)).toContain('wisp');
-    expect(view.decoys).toHaveLength(1);
-  });
-
-  it('the roster value is the whole cause, and it is one number', () => {
-    // Named explicitly so the finding is not buried in a behavioural assertion:
-    // this is `data/characters/wisp.json`, which the Designer owns. When it
-    // changes, the three tests above are the ones to re-read.
-    const veil = WISP.abilities.find((a) => a.id === 'veil_decoy')!;
-    expect(veil.effects.find((e) => e.kind === 'stealth')!.duration).toBe(1);
-    expect(veil.free).toBe(true); // the free-action half does work (FREE-UI)
-  });
-
-  it('and with a longer duration the same cast hides Wisp — nothing else is wrong', () => {
-    // The counterfactual, so the diagnosis is not a guess: hand the engine the
-    // identical ability with `duration: 2` and the enemy stops seeing Wisp.
-    const patched: CharacterDef = {
-      ...WISP,
-      abilities: WISP.abilities.map((a) => a.id !== 'veil_decoy' ? a : {
-        ...a,
-        effects: a.effects.map((e) => (e.kind === 'stealth' ? { ...e, duration: 2 } : e)),
-      }),
-    };
-    const s = facing();
-    const { state } = resolveTurn(
-      s, OPEN,
-      [{ team: 0, units: [{ unitId: wispId(s), freeAbility: { abilityId: 'veil_decoy', target: [] } }] },
-        { team: 1, units: [] }],
-      { wisp: patched, vex: VEX },
-    );
+      .toBe(false);
     expect(state.units.find((u) => u.characterId === 'wisp')!.statuses)
       .toEqual([{ kind: 'stealth', remaining: 1 }]);
-    expect(fogView(OPEN, state, 1).units.map((u) => u.characterId)).not.toContain('wisp');
+  });
+
+  it('so on the next Decision phase the enemy sees the decoy and NOT Wisp', () => {
+    // This is the Dev Note, resolved. The decoy is still standing — it lives to
+    // `castTurn + 1` — so the enemy is shown a Wisp-shaped thing in the square
+    // Wisp *was* in, and the real Wisp is nowhere. That is the mind-game the
+    // ability is for, and it did not work before this value changed.
+    const { state } = castVeil(facing());
+    const view = fogView(OPEN, state, 1);
+    expect(view.units.map((u) => u.characterId)).not.toContain('wisp');
+    expect(view.decoys).toHaveLength(1);
+    expect(view.decoys[0]!.asEnemy).toBe(true);
+  });
+
+  it('…while its own team still sees the real unit', () => {
+    const { state } = castVeil(facing());
+    const view = fogView(OPEN, state, 0);
+    expect(view.units.map((u) => u.characterId)).toContain('wisp');
+    expect(view.decoys[0]!.asEnemy).toBe(false);
+  });
+
+  it('the roster value is the whole of the fix, and it is one number', () => {
+    // Named explicitly rather than left implicit in behaviour: if this value is
+    // ever walked back to 1, the three assertions above are the ones that go
+    // with it, and this line says so in one place.
+    const veil = WISP.abilities.find((a) => a.id === 'veil_decoy')!;
+    expect(veil.effects.find((e) => e.kind === 'stealth')!.duration).toBe(2);
+    expect(veil.free).toBe(true); // the free-action half was never the problem
+  });
+
+  it('the decoy is untouched, and outlives nothing it did not already outlive', () => {
+    // The decoy's lifetime is `expiresOnTurn = castTurn + 1`, computed from the
+    // turn counter — `spawnDecoy` never reads the effect's `duration`, so the
+    // `1` sitting beside the stealth entry is dead data. Pinned so nobody
+    // "aligns" it to 2 expecting a longer decoy.
+    const veil = WISP.abilities.find((a) => a.id === 'veil_decoy')!;
+    expect(veil.effects.find((e) => e.kind === 'decoy')!.duration).toBe(1);
+    const s = facing();
+    const { state } = castVeil(s);
+    expect(state.decoys).toHaveLength(1);
+    expect(state.decoys[0]!.expiresOnTurn).toBe(s.turn + 1);
   });
 });

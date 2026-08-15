@@ -80,7 +80,8 @@ describe('tile overlays clear the terrain they are drawn over', () => {
   });
 
   it('keeps its bottom-up stacking order, which is the draw order', () => {
-    const order: (keyof typeof LAYER_LIFT)[] = ['fog', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'];
+    const order: (keyof typeof LAYER_LIFT)[] =
+      ['fog', 'camo', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'];
     expect(LAYERS.length).toBe(order.length); // a new layer must be placed deliberately
     for (let i = 1; i < order.length; i++) {
       expect(LAYER_LIFT[order[i]!], `${order[i]} must sit above ${order[i - 1]}`)

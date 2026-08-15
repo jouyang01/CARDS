@@ -79,6 +79,11 @@ const AUTO_ZOOM_FLOOR = 0.85;
 const DIM_ALPHA = 0.22;
 /** A decoy, seen by its OWNER: unmistakably theirs, unmistakably not a unit. */
 const DECOY_PURPLE = 0xa06bd6;
+/**
+ * A last-known-position ghost (LAST-KNOWN). Fainter than a dead unit, so the
+ * three states a body can be in — alive, dead, remembered — never read alike.
+ */
+const GHOST_ALPHA = 0.22;
 /** The owner's decoy plate sits just above the trap marker in the overlay band. */
 const DECOY_PLATE_LIFT = 0.05;
 /** The status row sits just above the shield bar; its size/gap are shared. */
@@ -94,7 +99,8 @@ const TRAP_SIZE = 0.5;
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
  * covered tile always reads on top of the envelope that contains it.
  */
-export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
+export type HighlightLayer =
+  | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
 
 /**
  * Route lines get their own layers for the same reason the aim overlays do: a
@@ -123,6 +129,10 @@ const OVERLAY_BASE = TERRAIN_HEIGHT.brush + 0.006;
 /** Height above the ground plane per layer, so they never z-fight. */
 export const LAYER_LIFT: Record<HighlightLayer, number> = {
   fog: OVERLAY_BASE,
+  // CAMO-REVEAL's red thicket sits just above the fog and below every planning
+  // overlay: it is board state, not something you are aiming, so an aim drawn
+  // over it must still read on top.
+  camo: OVERLAY_BASE + 0.002,
   range: OVERLAY_BASE + 0.004,
   reach: OVERLAY_BASE + 0.008,
   aim: OVERLAY_BASE + 0.014,
@@ -137,7 +147,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
+  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;
@@ -188,6 +198,13 @@ export interface RenderUnit {
    * decides nothing about which statuses matter.
    */
   pips?: readonly StatusPip[];
+  /**
+   * A last-known-position **ghost** (LAST-KNOWN) rather than a live sighting:
+   * this is where the unit *was*, not where it is. Drawn faint and stripped of
+   * its bars and pips — a ghost that carried a live HP bar would be reporting
+   * information the viewer does not have.
+   */
+  ghost?: boolean;
 }
 
 export interface Renderer {
@@ -197,6 +214,8 @@ export interface Renderer {
    * Highlight squares. Layers stack bottom-up in the order listed here:
    * `fog` is the unseen board (VISION1) and sits underneath everything, so your
    * own aim still reads over darkness — you may shoot where you cannot see.
+   * `camo` is a camouflage tile burning red because the unit on it gave itself
+   * away (CAMO-REVEAL) — board state, so it sits under the planning layers.
    * `range` is the hover envelope (UI1 — where an ability *could* go), `reach`
    * the move envelope, `aim` the tiles an aim actually covers, `impact` a dash's
    * previewed blast discs (DASH-PREVIEW), `select` the current unit and impact
@@ -637,13 +656,16 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         g.visible = true;
         // Dead units read as hollow/faded rather than vanishing, so a corpse
         // still tells you where the fight happened.
-        baseAlpha.set(unit.unitId, unit.alive ? 1 : DEAD_ALPHA);
+        baseAlpha.set(unit.unitId, unit.ghost === true ? GHOST_ALPHA : unit.alive ? 1 : DEAD_ALPHA);
         const bars = g.getObjectByName('bars');
         if (bars instanceof Group) {
-          setBar(bars, 'hp', unit.hp / Math.max(1, unit.maxHp), true);
-          setBar(bars, 'energy', unit.energy / 100, true);
-          setBar(bars, 'shield', (unit.shield ?? 0) / Math.max(1, unit.maxHp), (unit.shield ?? 0) > 0);
-          setPips(bars, unit.alive ? (unit.pips ?? []) : []); // a corpse carries nothing
+          // A ghost reports nothing live: its HP, energy and statuses are all
+          // things the viewer stopped being able to see when it went dark.
+          const known = unit.ghost !== true;
+          setBar(bars, 'hp', unit.hp / Math.max(1, unit.maxHp), known);
+          setBar(bars, 'energy', unit.energy / 100, known);
+          setBar(bars, 'shield', (unit.shield ?? 0) / Math.max(1, unit.maxHp), known && (unit.shield ?? 0) > 0);
+          setPips(bars, unit.alive && known ? (unit.pips ?? []) : []); // a corpse or a ghost carries nothing
         }
         refreshOpacity(unit.unitId);
         live.add(unit.unitId);

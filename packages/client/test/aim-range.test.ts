@@ -12,7 +12,7 @@ import {
   type MapDef,
   type UnitState,
 } from '@cards/engine';
-import { aimFor, aimLegal, commitAim, dashRoute, rangeEnvelope } from '../src/targeting.js';
+import { aimFor, aimLegal, commitAim, dashRoute, isBlockedDashLanding, rangeEnvelope } from '../src/targeting.js';
 import vex from '../../../data/characters/vex.json';
 import wisp from '../../../data/characters/wisp.json';
 import aegis from '../../../data/characters/aegis.json';
@@ -100,11 +100,11 @@ describe('AIM-RANGE: an out-of-range click does not commit', () => {
     for (const target of [{ x: 20, y: 10 }, { x: 12, y: 10 }, { x: 0, y: 0 }]) {
       expect(commitAim(OPEN, s, u, rail, target), `${target.x},${target.y}`).toBeDefined();
     }
-    // A click on your own square is a degenerate direction: `vectorToStep(0,0)`
-    // quantizes to step 0 (east), so it commits rather than refusing. That is
-    // pre-existing AIM2 behaviour and not a range question — pinned here so the
-    // audit records it rather than implying the gate covers it.
-    expect(commitAim(OPEN, s, u, rail, { ...u.pos })?.aimStep).toBe(0);
+    // …but a click on your own square is refused (DASH-OCCUPIED part 4). It used
+    // to commit: `vectorToStep(0,0)` quantizes to step 0, so clicking yourself
+    // fired east. A zero-length drag carries no direction, so there is nothing
+    // there to commit.
+    expect(commitAim(OPEN, s, u, rail, { ...u.pos })).toBeUndefined();
   });
 
   it('a `self` ability ignores the click entirely', () => {
@@ -254,5 +254,111 @@ describe('DASH-CAT-ROUTE: Shift draws a route, not a patch of tiles', () => {
     expect(commitAim(OPEN, s, u, shift, far)).toBeUndefined();
     // …so the aim never reaches the draft, and no route is drawn to it.
     expect(aimLegal(u, shift, [far])).toBe(false);
+  });
+});
+
+/**
+ * DASH-OCCUPIED, client half. Two more reasons `commitAim` says no, both of the
+ * same species as the range refusal: an order the engine will silently discard
+ * is worse than a click that visibly does not take.
+ */
+describe('DASH-OCCUPIED: the client refuses a dash that would fizzle', () => {
+  const occupiedBy = (s: GameState, u: UnitState) => {
+    const other = s.units.find((x) => x.unitId !== u.unitId)!;
+    other.pos = { x: u.pos.x + 2, y: u.pos.y };
+    return other.pos;
+  };
+
+  it('refuses a teleport aimed at a square somebody is standing on', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const taken = occupiedBy(s, u);
+    expect(commitAim(OPEN, s, u, ability(WISP, 'blink'), taken)).toBeUndefined();
+  });
+
+  it('…including an ALLY\'s square — the rule is "another character"', () => {
+    // Friendly fire is on, but bodies are still bodies.
+    const pair: MapDef = { ...OPEN, spawns: [[{ x: 2, y: 10 }, { x: 2, y: 8 }], [{ x: 18, y: 10 }, { x: 18, y: 8 }]] };
+    const s = createMatch(pair, '2v2', [[WISP, VEX], [AEGIS, VEX]]);
+    const u = actor(s, 'wisp');
+    const ally = s.units.find((x) => x.owner === u.owner && x.unitId !== u.unitId)!;
+    ally.pos = { x: u.pos.x + 2, y: u.pos.y };
+    expect(commitAim(pair, s, u, ability(WISP, 'blink'), { ...ally.pos })).toBeUndefined();
+  });
+
+  it('still accepts the neighbouring free square, so the gate is not blanket', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    occupiedBy(s, u);
+    expect(commitAim(OPEN, s, u, ability(WISP, 'blink'), { x: u.pos.x + 1, y: u.pos.y })).toBeDefined();
+  });
+
+  it('a dead unit is not an obstacle', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const taken = occupiedBy(s, u);
+    s.units.find((x) => x.unitId !== u.unitId)!.alive = false;
+    expect(commitAim(OPEN, s, u, ability(WISP, 'blink'), taken)).toBeDefined();
+  });
+
+  it('a CHARGE is still allowed to be aimed at an occupied square', () => {
+    // A `path` dash passes through bodies and rests short rather than fizzling,
+    // so refusing the click would veto a perfectly legal order.
+    const s = match(VEX);
+    const u = actor(s, 'vex');
+    const taken = occupiedBy(s, u);
+    expect(isBlockedDashLanding(s, u, ability(VEX, 'combat_roll'), taken)).toBe(false);
+  });
+
+  it('a dash carrying its own knockback is allowed to aim at an occupant', () => {
+    // The engine clears the square and lands it, so the client must not veto
+    // what the engine will permit.
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const taken = occupiedBy(s, u);
+    const bodycheck: AbilityDef = {
+      ...ability(WISP, 'blink'),
+      effects: [{ kind: 'teleport' }, { kind: 'knockback', amount: 2 }],
+    };
+    expect(isBlockedDashLanding(s, u, bodycheck, taken)).toBe(false);
+  });
+
+  it('a non-teleporting ability is unaffected — you may shoot at a unit', () => {
+    const s = match(VEX);
+    const u = actor(s, 'vex');
+    const taken = occupiedBy(s, u);
+    expect(isBlockedDashLanding(s, u, ability(VEX, 'frag_grenade'), taken)).toBe(false);
+    expect(commitAim(OPEN, s, u, ability(VEX, 'frag_grenade'), taken)).toBeDefined();
+  });
+});
+
+describe('DASH-OCCUPIED: a line or cone aimed at yourself is a no-op', () => {
+  it('refuses the commit rather than firing east', () => {
+    const s = match(VEX);
+    const u = actor(s, 'vex');
+    for (const id of ['rail_shot']) {
+      expect(commitAim(OPEN, s, u, ability(VEX, id), { ...u.pos }), id).toBeUndefined();
+    }
+  });
+
+  it('applies to cones too, not just lines', () => {
+    const s = match(AEGIS, WISP);
+    const u = actor(s, 'aegis');
+    const cone = abilitiesOf(AEGIS).find((a) => a.shape === 'cone')!;
+    expect(commitAim(OPEN, s, u, cone, { ...u.pos })).toBeUndefined();
+  });
+
+  it('but a `self` ability aimed at your own square still commits', () => {
+    // A self-cast has nowhere else to point; refusing it would make Veil & Decoy
+    // uncastable.
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    expect(commitAim(OPEN, s, u, ability(WISP, 'veil_decoy'), { ...u.pos })).toBeDefined();
+  });
+
+  it('and a one-square-away click still gives a direction', () => {
+    const s = match(VEX);
+    const u = actor(s, 'vex');
+    expect(commitAim(OPEN, s, u, ability(VEX, 'rail_shot'), { x: u.pos.x + 1, y: u.pos.y })).toBeDefined();
   });
 });
