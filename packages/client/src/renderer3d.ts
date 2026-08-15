@@ -79,14 +79,30 @@ const AUTO_ZOOM_FLOOR = 0.85;
 const DIM_ALPHA = 0.22;
 /** A decoy, seen by its OWNER: unmistakably theirs, unmistakably not a unit. */
 const DECOY_PURPLE = 0xa06bd6;
+/** The owner's decoy plate sits just above the trap marker in the overlay band. */
+const DECOY_PLATE_LIFT = 0.05;
 /** The status row sits just above the shield bar; its size/gap are shared. */
 const PIP_ROW_Y = 0.38;
+/**
+ * Trap markers: a little smaller than a tile so the grid still reads, and lifted
+ * into the overlay band so brush cannot eat them the way it ate the highlights
+ * (FOG-ZORDER). Below `select`, so the selected-unit ring still reads on top.
+ */
+const TRAP_SIZE = 0.5;
 
 /**
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
  * covered tile always reads on top of the envelope that contains it.
  */
 export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
+
+/**
+ * Route lines get their own layers for the same reason the aim overlays do: a
+ * dash ability and a Dash catalyst are two repositions that can be drafted on
+ * one turn (DASH-CAT-ROUTE), and one shared layer would mean the second erased
+ * the first.
+ */
+export type PathLayer = 'path' | 'catalystPath';
 
 /**
  * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
@@ -123,6 +139,8 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
 const LAYER_INSET: Record<HighlightLayer, number> = {
   fog: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
 };
+/** A trap marker rides in the overlay band, just under the selection ring. */
+const TRAP_LIFT = LAYER_LIFT.select - 0.001;
 /** UI2's continuous shape sits just above the covered tiles it explains. */
 export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
 
@@ -135,7 +153,22 @@ export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
 export interface RenderDecoy {
   id: string;
   pos: Vec2;
+  /** The team that placed it — an impersonated enemy wears *their* colour. */
+  owner: 0 | 1;
   asEnemy: boolean;
+}
+
+/**
+ * A placed trap, as one viewer should see it (TRAP-INDICATOR). Drawn flat on the
+ * ground and marked with a cross, so it reads as *a square you should not step
+ * on* rather than as a unit or as another aim overlay.
+ */
+export interface RenderTrap {
+  id: string;
+  pos: Vec2;
+  owner: 0 | 1;
+  /** The viewing team's own trap — team-safe, and something to route over. */
+  own: boolean;
 }
 
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
@@ -159,7 +192,7 @@ export interface RenderUnit {
 
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
-  show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[]): void;
+  show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[], traps?: readonly RenderTrap[]): void;
   /**
    * Highlight squares. Layers stack bottom-up in the order listed here:
    * `fog` is the unseen board (VISION1) and sits underneath everything, so your
@@ -204,7 +237,7 @@ export interface Renderer {
   /** Keep a run of squares in frame (auto-camera). Empty = whole board. */
   focusOn(squares: readonly Vec2[]): void;
   /** A stroked path through tile centres plus an endpoint marker (AIM1). */
-  drawPath(squares: readonly Vec2[], color: number, dashed: boolean): void;
+  drawPath(squares: readonly Vec2[], color: number, dashed: boolean, layer?: PathLayer): void;
   /**
    * UI2 Layer 1: fill a closed polygon given in **fractional board coordinates**
    * on the ground plane — the continuous cone/beam/disk the covered tiles
@@ -588,7 +621,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   renderer.setSize(width, height);
 
   return {
-    show(units, decoys = []) {
+    show(units, decoys = [], traps = []) {
       // `show()` is the snap-to-truth call: it places every unit on its whole
       // square and drops any in-flight tween state. Cue-driven overrides
       // (`setUnitAt`, `setUnitFade`) are applied *after* it, per frame.
@@ -617,26 +650,69 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       }
       for (const [id, g] of unitObjects) if (!live.has(id)) g.visible = false;
 
+      // TRAP-INDICATOR: flat ground markers, in the owning team's colour so
+      // "whose trap" is answered without a legend. Visibility was already
+      // decided by `fogView` — an enemy trap that reaches here is one this team
+      // can see, and one it cannot is simply absent from the list.
+      const trapLayer = layerGroup('trap');
+      disposeChildren(trapLayer);
+      for (const trap of traps) {
+        const colour = trap.owner === 0 ? palette.team0 : palette.team1;
+        const at = toWorld(map, trap.pos);
+        const plate = new Mesh(
+          new PlaneGeometry(TILE * TRAP_SIZE, TILE * TRAP_SIZE),
+          new MeshBasicMaterial({ color: colour, transparent: true, opacity: trap.own ? 0.28 : 0.42 }),
+        );
+        plate.rotation.x = -Math.PI / 2;
+        plate.position.copy(at).setY(TRAP_LIFT);
+        trapLayer.add(plate);
+        // A cross on top: the plate alone is another coloured tile among many,
+        // and the whole point is that this one square is dangerous.
+        for (const spin of [Math.PI / 4, -Math.PI / 4]) {
+          const bar = new Mesh(
+            new PlaneGeometry(TILE * TRAP_SIZE * 1.1, TILE * 0.08),
+            new MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.9 }),
+          );
+          bar.rotation.x = -Math.PI / 2;
+          bar.rotation.z = spin;
+          bar.position.copy(at).setY(TRAP_LIFT + 0.001);
+          trapLayer.add(bar);
+        }
+      }
+
       const decoyLayer = layerGroup('decoy');
       disposeChildren(decoyLayer);
       for (const decoy of decoys) {
-        // To the team being fooled: a normal enemy unit, indistinguishable —
-        // same geometry and colour a real one gets, fully opaque. Drawing it as
-        // a translucent ghost is what gave every decoy away for free.
-        // To its owner: a solid purple marker, obviously theirs and obviously
-        // not a unit, so they can plan around it.
-        const ghost = new Mesh(
-          decoy.asEnemy
-            ? new BoxGeometry(TILE * 0.7, UNIT_HEIGHT, TILE * 0.7)
-            : new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-          new MeshLambertMaterial(
-            decoy.asEnemy
-              ? { color: palette.team1 }
-              : { color: DECOY_PURPLE, transparent: true, opacity: 0.55 },
-          ),
+        const at = toWorld(map, decoy.pos);
+        if (decoy.asEnemy) {
+          // To the team being fooled: a normal enemy unit, indistinguishable —
+          // same geometry, same colour a real one gets, fully opaque. Drawing it
+          // as a translucent ghost is what gave every decoy away for free.
+          //
+          // The colour is the DECOY'S OWN team, not a constant. It used to be
+          // hardcoded to `team1`, which is only right when the viewer is team 0:
+          // to team 1, a team-0 decoy came out in team 1's own red and read as a
+          // friendly unit — the opposite of impersonating an enemy.
+          const body = new Mesh(
+            new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
+            new MeshLambertMaterial({ color: decoy.owner === 0 ? palette.team0 : palette.team1 }),
+          );
+          body.position.copy(at).setY(UNIT_HEIGHT / 2);
+          decoyLayer.add(body);
+          continue;
+        }
+        // To its owner: a purple **ground plate**, not a body. Veil & Decoy
+        // leaves the decoy on the caster's own square, so a purple box sat
+        // exactly inside Wisp's own unit and was invisible — the owner could not
+        // see the thing they had just placed. A plate wider than a unit shows as
+        // a ring around its feet, and still reads on its own once Wisp moves off.
+        const plate = new Mesh(
+          new PlaneGeometry(TILE * 0.9, TILE * 0.9),
+          new MeshBasicMaterial({ color: DECOY_PURPLE, transparent: true, opacity: 0.75 }),
         );
-        ghost.position.copy(toWorld(map, decoy.pos)).setY(UNIT_HEIGHT / 2);
-        decoyLayer.add(ghost);
+        plate.rotation.x = -Math.PI / 2;
+        plate.position.copy(at).setY(DECOY_PLATE_LIFT);
+        decoyLayer.add(plate);
       }
     },
 
@@ -766,8 +842,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       wantCentre = clampToBoard(wantCentre, wantSpan);
     },
 
-    drawPath(squares, color, dashed) {
-      const g = layerGroup('path');
+    drawPath(squares, color, dashed, layer = 'path') {
+      const g = layerGroup(layer);
       disposeChildren(g);
       if (squares.length === 0) return;
       // A drawn move is a LINE through tile centres, not a field of tiles: it

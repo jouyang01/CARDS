@@ -6,6 +6,11 @@
  * events state and never recomputes an outcome. It cannot say "that would have
  * killed them" or "that shot missed" — only what the log already carries.
  *
+ * Statuses are logged at **both** ends (LOG-STATUS): `statusApplied` says a
+ * debuff landed, `statusRemoved` says it broke or wore off. Only the first half
+ * existed, so a Slow appeared to last forever and a Stealth that an attack broke
+ * left no trace of breaking.
+ *
  * Naming both ends is only possible because A0 put `sourceUnitId`/`abilityId` on
  * `damage` and A0-heal extended it to `heal` and `statusApplied`. Without those
  * a support's whole contribution reads as "Lumen gained 30 shield" — an effect
@@ -96,6 +101,29 @@ export function logEntriesForTurn(turn: number, events: readonly TurnEvent[], na
         out.push({
           turn, tone: 'status', sourceUnitId: e.sourceUnitId, unitId: e.unitId,
           text: `${who(e.unitId)} is ${e.status} for ${e.duration}t — ${via(e.abilityId)}`,
+        });
+        break;
+      }
+      case 'statusRemoved': {
+        // LOG-STATUS. The other half of `statusApplied`: a buff that quietly
+        // stops applying is exactly the thing a player loses track of between
+        // turns, and "why did that only do 40?" has no answer anywhere else.
+        //
+        // Filtered by the same `NOTABLE_STATUSES` set, so the two halves cannot
+        // disagree — logging the end of something whose start was suppressed
+        // (Reveal expiring every single turn) would read as noise from nowhere.
+        // Shields are notable on the way in but not on the way out: the pool is
+        // already tracked on the HP bar, and an expiry line for every shield
+        // would double every support's footprint in the log.
+        if (!NOTABLE_STATUSES.has(e.status)) break;
+        out.push({
+          turn, tone: 'status', unitId: e.unitId,
+          // Broken and expired are genuinely different events — one was done to
+          // you mid-turn, the other is a clock running out — and a player
+          // reading back a turn needs to tell them apart.
+          text: e.reason === 'broken'
+            ? `${who(e.unitId)}'s ${e.status} broke`
+            : `${who(e.unitId)}'s ${e.status} wore off`,
         });
         break;
       }

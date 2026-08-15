@@ -35,9 +35,15 @@ const at = (s: GameState, unitId: string, x: number, y: number): void => {
 /** Vex + Aegis against two Aegis, so both teams have an ally to stand in the way. */
 const board = (): GameState => createMatch(OPEN, '2v2', [[VEX, AEGIS], [AEGIS, VEX]]);
 
+/**
+ * Everyone in sight. PREVIEW-FOG has its own describe below; the polarity tests
+ * are about polarity, so they hand the gate the state where it does nothing.
+ */
+const allSeen = (s: GameState): Set<string> => new Set(s.units.map((u) => u.unitId));
+
 const numbersFor = (s: GameState, casterId: string, def: AbilityDef, aim: { x: number; y: number }[]) => {
   const caster = s.units.find((u) => u.unitId === casterId)!;
-  return previewNumbers(s, caster, [{ def, squares: abilityPreview(OPEN, caster, def, aim) }]);
+  return previewNumbers(s, caster, [{ def, squares: abilityPreview(OPEN, caster, def, aim) }], allSeen(s));
 };
 
 describe('a damaging aim puts a red number on everyone it covers', () => {
@@ -77,7 +83,7 @@ describe('a damaging aim puts a red number on everyone it covers', () => {
   it('nothing at all for an unaimed ability — an empty area previews nothing', () => {
     const s = board();
     const vexUnit = unitOf(s, 'vex');
-    expect(previewNumbers(s, vexUnit, [{ def: ability(VEX, 'rail_shot'), squares: [] }])).toEqual([]);
+    expect(previewNumbers(s, vexUnit, [{ def: ability(VEX, 'rail_shot'), squares: [] }], allSeen(s))).toEqual([]);
   });
 
   it('nothing for a dead unit lying in the area', () => {
@@ -126,7 +132,7 @@ describe('beneficial aims stay on your own team', () => {
       shape: 'circle', radius: 1, range: 3, phase: 'blast',
       effects: [{ kind: 'damage', amount: 30 }, { kind: 'slow', duration: 2 }, { kind: 'might', duration: 1 }],
     };
-    const shown = previewNumbers(s, caster, [{ def: withRider, squares: [caster.pos] }]);
+    const shown = previewNumbers(s, caster, [{ def: withRider, squares: [caster.pos] }], allSeen(s));
     // Exactly one number: the damage. Slow and Might are real effects with no
     // amount to show, and inventing a "0" for them would be noise.
     expect(shown).toEqual([{ unitId: caster.unitId, kind: 'damage', amount: 30 }]);
@@ -145,7 +151,7 @@ describe('several armed actions read as one turn', () => {
     const shown = previewNumbers(s, caster, [
       { def: a, squares: [enemy.pos] },
       { def: b, squares: [enemy.pos] },
-    ]);
+    ], allSeen(s));
     expect(shown.filter((n) => n.unitId === enemy.unitId && n.kind === 'damage'))
       .toEqual([{ unitId: enemy.unitId, kind: 'damage', amount: 35 }]);
   });
@@ -161,7 +167,7 @@ describe('several armed actions read as one turn', () => {
     const shown = previewNumbers(s, caster, [
       { def: hurt, squares: [ally.pos] },
       { def: help, squares: [ally.pos] },
-    ]).filter((n) => n.unitId === ally.unitId);
+    ], allSeen(s)).filter((n) => n.unitId === ally.unitId);
     expect(shown.map((n) => n.kind)).toEqual(['damage', 'shield']);
   });
 
@@ -170,8 +176,8 @@ describe('several armed actions read as one turn', () => {
     const caster = unitOf(s, 'vex');
     const squares = s.units.map((u) => u.pos);
     const def: AbilityDef = { ...ability(VEX, 'rail_shot'), effects: [{ kind: 'damage', amount: 5 }] };
-    const once = previewNumbers(s, caster, [{ def, squares }]);
-    const twice = previewNumbers(s, caster, [{ def, squares }]);
+    const once = previewNumbers(s, caster, [{ def, squares }], allSeen(s));
+    const twice = previewNumbers(s, caster, [{ def, squares }], allSeen(s));
     expect(once).toEqual(twice);
     expect(once.map((n) => n.unitId)).toEqual(s.units.map((u) => u.unitId));
   });
@@ -191,7 +197,7 @@ describe("a dash previews where it DETONATES, not where it lands", () => {
     const shown = previewNumbers(s, caster, [{
       def: strike,
       squares: [...abilityPreview(OPEN, caster, strike, [landing]), ...impact.origin, ...impact.destination],
-    }]);
+    }], allSeen(s));
     const damage = strike.effects.find((e) => e.kind === 'damage')!.amount!;
     expect(shown).toContainEqual({ unitId: enemy.unitId, kind: 'damage', amount: damage });
   });

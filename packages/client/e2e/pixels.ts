@@ -179,3 +179,31 @@ export function pixelAt(image: Image, x: number, y: number): Rgb {
   const at = y * image.width * image.channels + x * image.channels;
   return { r: image.data[at]!, g: image.data[at + 1]!, b: image.data[at + 2]! };
 }
+
+/**
+ * The yellow dash route (`#ffd23f`), drawn as an unlit `LineBasicMaterial` so it
+ * arrives at close to its literal value. Bright, red≈green, very little blue —
+ * which is what separates it from the aim overlay's orange (blue is low there
+ * too, but green sits well under red) and from the pale blue move line.
+ */
+export const isDashYellow = (px: Rgb): boolean =>
+  px.r > 180 && px.g > 150 && Math.abs(px.r - px.g) < 70 && px.b < 110 && px.g - px.b > 60;
+
+/**
+ * The range envelope: `#8fb6ff` at 0.16 over the open floor, which composites to
+ * about `44,52,71`. Bounded on both sides deliberately — the bare floor is
+ * `32,36,47` and only 15 apart in blue, so a loose "blue-shifted" test matches
+ * most of the board and an envelope covering 200 tiles reads as a rounding
+ * error. The upper bound keeps the team-blue unit and the move line out.
+ */
+export const isRangeWash = (px: Rgb): boolean =>
+  px.b - px.r >= 20 && px.b - px.g >= 12 && px.b >= 55 && px.b <= 110;
+
+/**
+ * A decoy seen by its OWNER (`#a06bd6` at 0.55 over the dark floor). Purple is
+ * the one hue nothing else on the board uses — team colours are blue and red,
+ * terrain is grey-green, and every overlay is blue, orange, yellow or green — so
+ * "red and blue both high, green well below both" identifies it on its own.
+ */
+export const isDecoyPurple = (px: Rgb): boolean =>
+  px.b > 60 && px.r > 40 && px.r - px.g > 20 && px.b - px.g > 30 && Math.abs(px.r - px.b) < 70;

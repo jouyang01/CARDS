@@ -417,6 +417,50 @@ export function aimFor(
 }
 
 /**
+ * What a catalyst costs to use (CAT-COST-LABEL).
+ *
+ * One place, because two parts of the client act on it: the HUD tag a player
+ * reads before spending the slot, and the draft rules that clear the move when a
+ * Dash catalyst is armed. Those disagreeing would be worse than either being
+ * wrong — the label would promise something the reducer then took away.
+ *
+ * `'move'` is CAT-DASH-COST: a Dash catalyst buys its effect with the unit's
+ * Move. Prep and Blast catalysts never touched movement, so they stayed free.
+ */
+export type CatalystCost = 'free' | 'move';
+
+export const catalystCost = (def: AbilityDef): CatalystCost =>
+  (def.phase === 'dash' ? 'move' : 'free');
+
+/**
+ * AIM-RANGE — the aim a board click should **commit**, or `undefined` when the
+ * click is not a legal aim for this ability.
+ *
+ * The engine has always enforced range (`aimIsLegal` → `aimInRange`) and simply
+ * dropped an out-of-range order. The client never asked, so `square`/`circle`
+ * abilities — Blink, Intercept, a lobbed grenade — accepted any click anywhere,
+ * committed it, showed it as ordered, and then did nothing at resolution. That
+ * reads as "the skill works wherever I click, but sometimes it just fails",
+ * which is a far worse bug than "the skill refused the click".
+ *
+ * One gate for every slot, so the normal ability, the free ability and the
+ * catalyst cannot drift apart — and it is the *engine's* rule via `aimLegal`,
+ * not a second copy of the range maths. A `path` dash already behaved this way
+ * (`pathToExact` yields an empty route for an unreachable target); this makes
+ * every other shape agree.
+ */
+export function commitAim(
+  map: MapDef,
+  state: GameState,
+  unit: UnitState,
+  ability: AbilityDef,
+  target: Vec2,
+): { aim: Vec2[]; aimStep?: number } | undefined {
+  const resolved = aimFor(map, state, unit, ability, target);
+  return aimLegal(unit, ability, resolved.aim, resolved.aimStep) ? resolved : undefined;
+}
+
+/**
  * The squares a drafted **dash** travels through (UI4), so it can be drawn with
  * the same line-and-marker indicator a move gets — a dash is still a route, and
  * the owner asked for the same indicator in yellow rather than for nothing.
