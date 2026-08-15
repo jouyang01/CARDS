@@ -1,5 +1,5 @@
 {
-  "_comment": "The nine catalysts (CAT1). Every number is transcribed verbatim from docs/design/free-actions-and-catalysts.md §2.2 — the Designer owns any change to them. Three per phase; a character carries one of each. All are free actions (energyGain 0, no cooldown) consumed once per match, and all are built from effect kinds the engine already implements: this system needs no new EFFECT_KIND.",
+  "_comment": "The catalyst pool (CAT1). Numbers transcribed verbatim from docs/design/free-actions-and-catalysts.md — the Designer owns any change. A character carries one catalyst per phase; all are free actions (energyGain 0, no cooldown) consumed once per match. Atlas Reactor's pool is FOUR per phase and this is heading there: prep is still 3 because the fourth (Regenergy) needs the healOverTime effect kind and lands with DOT-HOT. Every effect here is one the engine already implements.",
   "prep": [
     {
       "id": "second_wind",
@@ -11,7 +11,9 @@
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
-      "effects": [{ "kind": "heal", "amount": 30 }],
+      "effects": [
+        { "kind": "heal", "amount": 30 }
+      ],
       "description": "Heal 30. The emergency button: read their burst, survive it, and still act."
     },
     {
@@ -24,7 +26,10 @@
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
-      "effects": [{ "kind": "shield", "amount": 35, "duration": 1 }],
+      "effects": [
+        { "kind": "shield", "amount": 35,
+          "duration": 1 }
+      ],
       "description": "Shield 35 for a turn. Pre-empt a predicted burst — bigger than any kit shield, but once."
     },
     {
@@ -37,7 +42,9 @@
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
-      "effects": [{ "kind": "energized", "duration": 3 }],
+      "effects": [
+        { "kind": "energized", "duration": 3 }
+      ],
       "description": "Energized for 3 turns. Buy your ultimate about two turns early."
     }
   ],
@@ -52,7 +59,9 @@
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
-      "effects": [{ "kind": "teleport" }],
+      "effects": [
+        { "kind": "teleport" }
+      ],
       "description": "Blink up to 3 squares, through walls. Does not consume your Move."
     },
     {
@@ -65,7 +74,9 @@
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
-      "effects": [{ "kind": "untargetable", "duration": 1 }],
+      "effects": [
+        { "kind": "untargetable", "duration": 1 }
+      ],
       "description": "Untargetable for a turn. Dodge without moving — keep your position and your attack."
     },
     {
@@ -78,8 +89,26 @@
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
-      "effects": [{ "kind": "unstoppable", "duration": 2 }],
+      "effects": [
+        { "kind": "unstoppable", "duration": 2 }
+      ],
       "description": "Unstoppable for 2 turns. Walk out of Root and Slow, ignore knockback and pull."
+    },
+    {
+      "id": "fetter",
+      "name": "Fetter",
+      "phase": "dash",
+      "shape": "circle",
+      "range": 0,
+      "radius": 2,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [
+        { "kind": "root", "duration": 1 }
+      ],
+      "description": "Root every enemy within 2 for a turn. The fourth way out of a collapse: don't move — stop them following."
     }
   ],
   "blast": [
@@ -93,7 +122,9 @@
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
-      "effects": [{ "kind": "might", "duration": 2 }],
+      "effects": [
+        { "kind": "might", "duration": 2 }
+      ],
       "description": "Might for 2 turns — and it boosts this turn's attack."
     },
     {
@@ -107,7 +138,9 @@
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
-      "effects": [{ "kind": "weaken", "duration": 2 }],
+      "effects": [
+        { "kind": "weaken", "duration": 2 }
+      ],
       "description": "Weaken every enemy within 2 for 2 turns. Blunt the counter-swing instead of raising your own."
     },
     {
@@ -125,6 +158,22 @@
         { "kind": "haste", "duration": 1 }
       ],
       "description": "Might 1 and Haste 1. The Might lands on this turn's Blast, the Haste on the Move after it."
+    },
+    {
+      "id": "probe",
+      "name": "Probe",
+      "phase": "blast",
+      "shape": "circle",
+      "range": 6,
+      "radius": 2,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [
+        { "kind": "reveal", "duration": 2 }
+      ],
+      "description": "Reveal every enemy in the aimed area for 2 turns, brush included. Answers the ambush you know is coming."
     }
   ]
 }

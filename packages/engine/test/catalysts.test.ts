@@ -69,9 +69,17 @@ describe('CAT1: the pool is content, and it validates', () => {
     expect(validateCatalysts(DATA)).toEqual([]);
   });
 
-  it('is nine catalysts, three per phase, each unique', () => {
-    expect(Object.keys(POOL)).toHaveLength(9);
-    for (const phase of CATALYST_PHASES) expect(DATA[phase]).toHaveLength(3);
+  it('is a four-per-phase pool (prep still 3 until Regenergy lands), each unique', () => {
+    // AR's pool is four per phase and this is heading there. Prep is still 3
+    // because its fourth (Regenergy) needs `healOverTime` — it lands with
+    // DOT-HOT, at which point this becomes 12 and a flat 4 per phase.
+    expect(Object.keys(POOL)).toHaveLength(11);
+    expect(DATA.prep).toHaveLength(3);
+    expect(DATA.dash).toHaveLength(4);
+    expect(DATA.blast).toHaveLength(4);
+    for (const phase of CATALYST_PHASES) {
+      for (const def of DATA[phase]) expect(def.phase, def.id).toBe(phase);
+    }
   });
 
   it('every one is a free, once-per-match action that grants no energy', () => {
@@ -84,10 +92,12 @@ describe('CAT1: the pool is content, and it validates', () => {
   });
 
   it('needs no new EFFECT_KIND — every effect is one the engine already has', () => {
-    // The claim the design rests on: nine catalysts, zero engine surface.
+    // The claim the design rests on: the whole pool, zero engine surface.
+    // (Regenergy will be the first exception — it lands with DOT-HOT, which
+    // adds `healOverTime` deliberately rather than by accident.)
     const kinds = new Set(Object.values(POOL).flatMap((d) => d.effects.map((e) => e.kind)));
     expect([...kinds].sort()).toEqual(
-      ['energized', 'haste', 'heal', 'might', 'shield', 'teleport', 'unstoppable', 'untargetable', 'weaken'],
+      ['energized', 'haste', 'heal', 'might', 'reveal', 'root', 'shield', 'teleport', 'unstoppable', 'untargetable', 'weaken'],
     );
   });
 

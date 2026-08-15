@@ -1,8 +1,8 @@
 # ar-parity-v1.md — Atlas Reactor parity audit across six systems (Designer)
 
-**Date:** 2026-08-14 · **Status:** MIXED — each item below is tagged **RULED** (spec it),
-**CONFIRM** (owner decision needed before speccing), or **VERIFY** (my AR knowledge is not
-solid enough to build on).
+**Date:** 2026-08-14 · **Status:** ALL DECIDED (owner, 2026-08-14). Every item is either **RULED** (spec it — see the
+list in §7) or explicitly not-wanted-now. One item remains **VERIFY** (§1.3) — it is the only
+thing here still waiting on anything, and nothing depends on it.
 
 Sources: the project's own `atlas-reactor-reference.md` (research branch
 `claude/atlas-reactor-cards-research-n553wi`, compiled with citations — **still unmerged**),
@@ -10,7 +10,7 @@ plus measurements against the shipped engine and data. Where I am working from m
 than a source, I say so — AR shut down in 2019, the community wiki is unreachable from this
 environment, and I would rather flag a gap than invent parity.
 
-**Read §7 first if you only read one section** — it is the list of decisions I need from you.
+**Read §7 first if you only read one section** — it is the spec list, with acceptance criteria.
 
 ---
 
@@ -28,7 +28,7 @@ Shields are temporary HP consumed before real HP. All eleven drawable kinds have
 catalyst shipped. One-line doc fix, no engine change — but the Builder reads §6 as normative,
 so leaving it invites a wrong validation rule later.
 
-### 1.2 CONFIRM — no damage-over-time or heal-over-time
+### 1.2 APPROVED — no damage-over-time or heal-over-time
 
 Every effect in CARDS is instantaneous or a flat modifier. AR has **over-time effects**, and
 the project's own research confirms at least one concretely: the Health power-up is
@@ -43,8 +43,8 @@ him.
 tick, so a 2-turn DoT ticks twice). Damage attribution credits the applying unit's team, like
 traps. No new geometry, no float math, deterministic.
 
-**Why I am not just speccing it:** it is two new `EFFECT_KIND`s and a new resolution step —
-the kind of change golden rule #2 says needs an explicit decision, not a Designer assumption.
+**APPROVED by the owner.** Full acceptance criteria in **§7.1 (`DOT-HOT`)**. It unblocks both
+the Regenergy catalyst (§8) and the Health power-up (§7.3).
 
 ### 1.3 VERIFY — incoming-damage modifiers (a "Vulnerable")
 
@@ -80,59 +80,60 @@ Two entries in that table are **stale in our favour** and should be closed out:
   airborne (ignores both). That is exactly AR's distinction. ✅
 - **"Free actions — ❓ open."** Shipped (FREE1). ✅
 
-### 2.1 CONFIRM — Chase orders are the one genuine phase-level gap
+### 2.1 APPROVED — Chase orders are the one genuine phase-level gap
 
 AR lets you right-click an enemy to issue a **chase** rather than a fixed path: you move toward
 wherever they actually ended up, and **chasers resolve at the end of the Move phase**, after
 all normal movement. It is the answer to "I cannot path to a square I cannot predict," and it
 is a real part of AR's Move phase.
 
-CARDS has fixed paths only. Adding it needs an edge-cases ruling for chase-vs-chase and
-chase-into-occupied-square, which is why it is a CONFIRM rather than a spec.
+CARDS has fixed paths only. **APPROVED** — spec in **§7.2 (`CHASE1`)**, which lists the four
+edge cases the Analyzer must rule before the Builder starts.
 
-### 2.2 CONFIRM — the decision timer diverges deliberately
+### 2.2 RULED — the decision timer goes to 40 seconds
 
-AR: **20 s**, Time Bank **2× +5 s**. CARDS: **30 s**, Time Bank **1× +10 s** — chosen because a
-player may control two characters. Flagged as deliberate in the reference doc; I have no reason
-to change it, but it is a parity divergence you should re-affirm rather than inherit silently.
-
----
-
-## 3. Vision — the largest divergence in the project
-
-**This is the one I most need a decision on.**
-
-**AR hides *intent*, not *position*.** You know exactly where all eight enemies are standing at
-all times; the entire game is guessing what they will *do*. The only exceptions are
-**camouflage areas** and **Invisible**, and even then *acting* from concealment gives away your
-position.
-
-**CARDS hides position:** 6-tile vision (Manhattan under MET1), team-shared, plus brush
-concealment and Stealth, with fog rendered client-side.
-
-**Verdict: ❌ not AR parity, and it changes the game's texture.** The project's own research
-called this out and recommended keeping it for 2v2 while treating it as a per-format tunable.
-The cost it names is sharp: *"if I can't see you, aiming at where you'll be is a coin flip
-rather than a deduction, and a coin flip feels like RNG in a game whose whole pitch is 'no
-RNG'."*
-
-**Three options:**
-
-| | Behaviour | Cost |
-|---|---|---|
-| **A — AR parity** | All enemy positions always visible. Concealment only via brush and Stealth. Fog deleted. | Loses scouting and most of the Phantom archetype's job; brush becomes the *only* concealment |
-| **B — keep as-is** | 6-tile fog | Not AR parity; reads become guesses |
-| **C — per-format tunable** (my recommendation) | `visionRange` moves into the format config: **unlimited for 4v4** (AR parity, more bodies to track) and **6 for 2v2** (fewer bodies, fog keeps small formats from going static) | One number in a config that already exists per format; playtestable both ways without a rewrite |
-
-C costs almost nothing to build — `VISION_RANGE` becomes a per-format field alongside
-`killsToWin` and `turnLimit`, which the engine already carries — and it lets you answer the
-question with play instead of argument.
-
-**Also VERIFY:** AR reveals *the action's origin* when you attack from concealment, not the
-unit itself; CARDS applies a 2-turn Reveal to the unit. Ours is stricter. I am fairly confident
-of the AR behaviour but not enough to spec a change.
+AR: **20 s**, Time Bank **2× +5 s**. CARDS was **30 s** — and the owner has moved it to **40 s**
+(Time Bank unchanged at 1× +10 s). A deliberate widening rather than a drift toward AR: a player
+may control two characters, and from FREE1/CAT1 onward a turn can carry a free action, a
+catalyst, an ability and a move. Twenty seconds was sized for a strictly smaller decision.
+Spec: **§7.4 (`TIMER-40`)**.
 
 ---
+
+## 3. Vision — CORRECTED: we are already at parity
+
+**My first draft of this section was wrong, and the owner caught it.** I claimed AR showed every
+enemy position at all times. It does not: **Grey's hawk drone Rio "grants vision above and
+beyond what the character can see,"** a phrase that only means something if characters have a
+limited sight range to begin with. AR also carries a dedicated *Revealed* status.
+
+The error was specific. The project's research doc says positions are *"broadly known"* — a
+deliberate hedge — and I hardened it into "you know exactly where all eight enemies are
+standing," then built a three-option recommendation on the false premise.
+
+Worth recording the near-miss: the **Probe** catalyst *"reveals a target area for 2 turns and
+shows units in camouflage, but does not reveal invisible ones"* — an anti-**camouflage** tool,
+perfectly consistent with the concealment-not-distance model. Probe alone would not have caught
+this. The drone did.
+
+**Corrected picture:** AR characters have a limited vision range, with camouflage areas and
+Invisible layered on top and Revealed as the counter. That is **structurally what CARDS already
+does** — 6-tile vision, brush concealment, Stealth, Reveal. One search result put AR's own
+figure at **6 squares**, exactly our `VISION_RANGE`; I could not open a source to confirm it,
+but it fits everything else.
+
+> **RULED — Vision stands as built (owner, 2026-08-14).** No work. The model is AR parity, not
+> a divergence — and this section's job is now to stop a future session from "fixing" it.
+
+Two observations recorded but **deliberately not scheduled**:
+
+- **Vision is a Manhattan diamond under MET1** — 6 tiles straight but only 3 diagonally, where
+  AR's continuous world makes its 6 round. Same axis bias the aiming-metric ruling removed, and
+  by that ruling's own principle vision is a distance rather than a lattice walk. Playtest note
+  only; the owner has approved vision as it plays.
+- **No vision-*granting* tools.** AR built a Freelancer (Grey) around extending sight; we have
+  Reveal-as-a-debuff but nothing that grants it. Explicitly **not wanted now** — recorded so the
+  design space is known to exist. The new **Probe** catalyst (§8) covers the area-reveal half.
 
 ## 4. UI — the viewport is the bug
 
@@ -178,10 +179,10 @@ I measured both shipped maps against it:
 | `duel-arena` 18×15 | 18 (3) | 8 (4) | 24 (**6**) | 9.6% |
 | `iron-basin` 22×19 | 18 (3) | 8 (4) | 32 (**8**) | 6.2% |
 
-**The brush corridors are the violation, and they are mine.** I built 6-wide and 8-wide
-unbroken brush runs as "concealed flank routes." Under your rule that is exactly too many
-stealth blocks in a row: an 8-long brush corridor is not a route with a concealment *option*,
-it is a lane where a unit is simply unhittable for eight tiles.
+**The brush corridors were the violation, and they were mine.** I built 6-wide and 8-wide
+unbroken brush runs as "concealed flank routes." Under the rule that is exactly too many stealth
+blocks in a row: an 8-long brush corridor is not a route with a concealment *option*, it is a
+lane where a unit is unhittable for eight tiles.
 
 **RULED — authoring caps, to be enforced by a content test:**
 
@@ -196,10 +197,22 @@ be: mirror symmetry, every lane longer than ~8 broken by a wall (our longest non
 and each map having **one thesis** — corridor, open, or low-cover brawl — rather than averaging
 into mush.
 
-**Fix required:** both maps need their brush corridors broken into runs of ≤3. That is my
-error to correct, and I will do it as data-only work once the caps are agreed.
+**FIXED in this PR (data-only).** Both maps' brush was re-cut into runs of exactly 3, keeping
+mirror symmetry:
 
-### 5.1 CONFIRM — power-up pads are AR's map clock, and we have nothing like them
+| map | brush before | brush after | longest run |
+|---|---|---|---|
+| `duel-arena` | 24 tiles, runs of **6** | 24 tiles, two 3-wide patches per row | **3** ✅ |
+| `iron-basin` | 32 tiles, runs of **8** | 24 tiles, two 3-wide patches per row | **3** ✅ |
+
+Re-verified against the engine after the change: mirror symmetry holds, spawn separation is
+still exactly 13, every head-on spawn sightline is still wall-broken, and a turn-1 spawn hit is
+still impossible on both maps. Walls (3) and cover (4) were already inside their caps.
+
+**Still owed by the Builder:** a `content.test.ts` guard enforcing the three caps, so the next
+map cannot reintroduce this. That is the half that stops it happening again.
+
+### 5.1 APPROVED — power-up pads are AR's map clock, and we have nothing like them
 
 AR power-ups spawn **only at fixed, colour-coded pads, on a timer**: Health (10 on pickup, +20
 over 2 turns), Might (+25% damage, 2 turns), Energy (Energized, 2 turns), each with a
@@ -210,7 +223,7 @@ create contested squares at predictable times, so **the map generates fights wit
 It is fully deterministic and would reuse the existing `heal` / `might` / `energized` effects.
 
 Health's "+20 over 2 turns" needs the `healOverTime` kind from §1.2, so these two travel
-together.
+together. **APPROVED** — spec in **§7.3 (`PADS1`)**.
 
 ---
 
@@ -243,18 +256,102 @@ damage events a source), so the data is there.
 
 ---
 
-## 7. What I need from you before the Analyzer specs these
+## 7. Decisions taken (owner, 2026-08-14) — the spec list
 
-| # | Item | Question | My recommendation |
+All seven questions are answered. Nothing in this document is blocked.
+
+| # | Item | Decision | Where it lands |
 |---|---|---|---|
-| 1 | **Vision** (§3) | AR parity (all positions visible), keep 6-tile fog, or make it per-format? | **Per-format**: unlimited at 4v4, 6 at 2v2 — cheap, and settles it by playtest |
-| 2 | **DoT / HoT** (§1.2) | Add `damageOverTime` / `healOverTime` effect kinds? | **Yes** — AR has them, power-ups need them, and turtling has no counter today |
-| 3 | **Vulnerable** (§1.3) | Did AR have an incoming-damage modifier? | Can't verify — **need your recall** before I spec it |
-| 4 | **Chase orders** (§2.1) | Add AR's chase? | **Yes, but later** — it needs its own edge-case rulings; after the UI and scoreboard |
-| 5 | **Power-up pads** (§5.1) | Add them? | **Yes** — it is AR's answer to symmetric-map stalemate, deterministic, and reuses existing effects |
-| 6 | **Decision timer** (§2.2) | Keep 30 s / 1× +10 s, or match AR's 20 s / 2× +5 s? | **Keep ours** — deliberate, for 2-character players |
-| 7 | **Map run caps** (§5) | Agree brush ≤3, cover ≤4, wall ≤5? | **Yes** — and I will fix both maps, which currently break it |
+| 1 | Vision | **Keep as built** — it is parity (§3) | No work |
+| 2 | DoT / HoT | **Add** | `DOT-HOT` (engine) |
+| 3 | Chase orders | **Add** | `CHASE1` (engine + client) |
+| 4 | Power-up pads | **Add** | `PADS1` (engine + data) |
+| 5 | Decision timer | **40 seconds** | `TIMER-40` (one constant) |
+| 6 | Maps | **Fix** | Done in this PR (data) |
+| 7 | UI + scoreboard | **Fix** | `UI-VIEWPORT`, `SCORE1` (client) |
+| — | Catalysts | **Add the AR ones we lack** | Two shipped here; Regenergy rides `DOT-HOT` (§8) |
 
-**Ready to spec without any decision from you:** §1.1 (stale spec line), §2's two stale
-"open" entries, **§4 UI-VIEWPORT**, and **§6 SCORE1**. Those four are unambiguous parity or
-usability wins, and UI-VIEWPORT is the one I would put first.
+### 7.1 `DOT-HOT` — damage- and heal-over-time (engine)
+
+Two new effect kinds, `damageOverTime` and `healOverTime`, each `{ amount, duration }`.
+
+*AC: both apply at **end of turn**, in the engine's existing fixed unit order, **before** the
+status duration tick — so a `duration: 2` DoT ticks on the turn it lands and the turn after.
+Damage credits the applying unit's team for the kill tally, exactly as traps do (attribution
+already exists). Both are subject to FF1 polarity: `damageOverTime` is harmful, `healOverTime`
+beneficial. Neither is affected by Might/Weaken (they are not outgoing hits) — flag for playtest
+rather than assume. Refresh-not-stack, like every other status. Tests: a 2-turn DoT deals its
+amount twice; a unit that dies mid-DoT stops ticking; the tick order is deterministic across
+runs.*
+
+**Blocks:** Regenergy (§8) and the Health power-up (§7.3), both of which need `healOverTime`.
+
+### 7.2 `CHASE1` — chase orders (engine + client)
+
+AR lets you target an enemy rather than a square: you move toward wherever they **actually
+ended up**, and chasers resolve **at the end of the Move phase**, after all normal movement.
+
+*AC: a `UnitOrders` may carry a chase target (a unit id) in place of `movePath`. Normal
+movement resolves first; then chasers path toward their target's **final** position using the
+mover's remaining budget, stopping short of occupied squares per the standing Collisions rule.*
+
+**Edge cases the Analyzer must rule before the Builder starts** — this is why it is its own item:
+- **Chase vs chase** (A chases B, B chases A): both resolve against post-Move positions, so
+  neither target has moved by then. Deterministic, but confirm it does not read as a stalemate.
+- **Chase a target that died** this turn: the order is dropped (the unit holds).
+- **Chase a target you cannot see** (fog): legal or not? Given vision is limited (§3), this is a
+  real question — a chase is a way to track someone you have lost, which may be exactly right or
+  exactly too strong. **Designer lean: legal**, since it is AR's answer to "I cannot path to a
+  square I cannot predict," but it wants an explicit ruling.
+- **Chase + a dash ability** in the same turn: the dash is the movement, so the chase is dropped.
+
+### 7.3 `PADS1` — power-up pads (engine + data)
+
+Fixed, colour-coded pads on a timer — AR's answer to symmetric-map stalemate, and fully
+deterministic.
+
+*AC: `MapDef` gains `powerups: [{ x, y, type, firstTurn, everyTurns }]`. A pad grants its effect
+to the **first unit to occupy it**, resolved at a fixed point in the Move phase (end of Move,
+after chasers — so the last mover can contest it). A consumed pad respawns `everyTurns` later.
+Types reuse existing effects plus §7.1: **Health** (heal 10 + `healOverTime` 10×2), **Might**
+(Might 2 turns), **Energy** (Energized 2 turns).*
+
+**Contested pads:** two units on one pad cannot happen (Collisions), so first-occupier is
+well-defined. Both maps need pad squares added — Designer work once the schema lands.
+
+### 7.4 `TIMER-40` — decision timer
+
+`DECISION_SECONDS` **30 → 40**. Time Bank unchanged (1 charge, +10 s). One constant; the client
+already reads it.
+
+### 7.5 `UI-VIEWPORT` and `SCORE1`
+
+Unchanged from §4 and §6 — both were already ready to spec.
+
+## 8. Catalysts — moving toward AR's four-per-phase pool
+
+AR's real pool is **four per phase**, not three:
+
+| Prep | Dash | Blast |
+|---|---|---|
+| Critical Shot, Brain Juice, **Second Wind**, Regenergy | **Shift**, Fetter, **Fade**, Regroup | **Adrenaline**, Probe, Echo Boost, Chronosurge |
+
+Four of our nine already matched AR by name (Second Wind, Shift, Fade, Adrenaline) and Brainwave
+is Brain Juice renamed — better parity than expected, arrived at independently. **Two more ship
+in this PR**, both built from effect kinds the engine already has:
+
+- **Fetter** (dash) — Root every enemy within 2 for a turn. The fourth way out of a collapse:
+  don't move, stop them following. Distinct from Shift (move), Fade (untargetable) and Unshackle
+  (immunity).
+- **Probe** (blast) — Reveal every enemy in the aimed area for 2 turns, brush included. Answers
+  the ambush you know is coming, and covers the area-reveal gap noted in §3.
+
+**Regenergy** (prep) — heal 12 at end of turn for 3 turns — is specced but **deliberately not in
+`data/`**: it needs `healOverTime`, which does not exist yet, so shipping it would put content in
+`data/` that fails validation. It lands with `DOT-HOT`, completing a flat 4/4/4 pool. Until then
+the pool is 3/4/4 and the tests say so.
+
+Not adopted: **Echo Boost** and **Chronosurge** need buff-extension and turn-manipulation
+mechanics we do not have; **Critical Shot** needs a "next attack" hook; **Regroup** overlaps
+Shift.
+

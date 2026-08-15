@@ -2063,3 +2063,43 @@ this is the standard counter to turtling, which CARDS currently answers only by 
 Two new effect kinds is exactly the sort of change golden rule #2 says needs an explicit
 decision, so it is raised rather than assumed. An incoming-damage modifier ("Vulnerable") is
 the natural pair but I could not source it, so it waits on the owner's recall.
+
+## 2026-08-14 — AR parity: seven owner decisions, and a vision claim I got wrong (Designer)
+
+All seven questions from the parity audit are answered; `docs/design/ar-parity-v1.md` §7 is now
+a spec list rather than a question list. Recording the two things worth remembering.
+
+**(1) I was wrong about AR's vision, and the owner's instinct caught it.** I claimed AR showed
+every enemy position at all times and built a three-option recommendation on it. The owner
+pushed back citing reveal-type tools, and checking found **Grey's hawk drone "grants vision
+above and beyond what the character can see"** — a phrase that is meaningless unless characters
+have a limited sight range. The failure was specific and worth naming: the research doc says
+positions are *"broadly known"*, a deliberate hedge, and I hardened it into a hard fact. The
+correction is happy — our 6-tile vision is **parity, not a divergence**, so the decision is "no
+work," and the section now exists to stop a future session from "fixing" it. Two observations
+are recorded but explicitly not scheduled: vision is a Manhattan diamond under MET1 (same axis
+bias the aiming ruling removed), and we have no vision-*granting* tools (AR built a Freelancer
+around it). Neither is wanted now. Note the near-miss — the **Probe** catalyst reveals
+*camouflage* specifically, so it is consistent with the model I had and would not have caught
+the error; it was the drone that did.
+
+**(2) Content that fails validation does not ship, even when the design is approved.** DoT/HoT
+was approved, so AR's **Regenergy** catalyst (heal-over-time) became designable — but
+`healOverTime` does not exist in `EFFECT_KINDS` yet, and putting it in `data/catalysts.json`
+would have made the shipped pool structurally invalid. So Regenergy is specced in the doc and
+withheld from data until `DOT-HOT` lands, while **Fetter** (root) and **Probe** (area reveal)
+ship now because they use kinds the engine already has. The pool is deliberately 3/4/4 rather
+than a symmetric 4/4/4, and the tests assert that asymmetry with the reason attached — a
+lopsided pool with an explanation is better than either invalid content or a silent wait.
+Reaching AR's four-per-phase pool is the goal; getting there in two steps is the cost of not
+shipping something broken.
+
+**(3) The map rule I broke is fixed, but the guard is the real deliverable.** Both maps' brush
+was re-cut from 6- and 8-tile runs into runs of 3, mirror symmetry and all the M1 invariants
+re-verified (separation 13, sightlines wall-broken, no turn-1 spawn hit). The `content.test.ts`
+guard enforcing brush ≤3 / cover ≤4 / wall ≤5 is owed by the Builder — without it the next map
+reintroduces the same error, which is exactly how this one survived two review passes.
+
+**(4) The decision timer goes to 40 s, away from AR's 20 s, deliberately.** A player may control
+two characters, and since FREE1/CAT1 a turn can carry a free action, a catalyst, an ability and
+a move. AR's 20 seconds was sized for a strictly smaller decision.
