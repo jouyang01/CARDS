@@ -224,6 +224,49 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **RULED — Free-aim into fog.** Players may aim any ability at any legal square,
   seen or unseen. Hitting a stealthed/hidden unit works normally — stealth hides
   position, it is not a dodge.
+- **RULED — Every aimable skill shows its range and is CLAMPED to it, for EVERY slot (AIM-RANGE;
+  owner directive 2026-08-29, "Veil's Blink … should be limited to the range of the skill. Audit
+  to make sure all skills are limited to the range of the skill … Aegis's intercept does the same
+  thing"; also "Dash catalyst doesn't have a range indicator" / "Overwatch Trap doesn't have a
+  range indicator either … audit this to ensure you catch all skills"; backlog AIM-RANGE —
+  CLIENT).** The **engine already enforces range** (`aimIsLegal` → `aimInRange` for
+  `square`/`circle`; a cost-bounded path for `path`) and drops an out-of-range order — so the bug
+  is entirely client-side and has two halves, both of which must hold for **the normal ability,
+  the free ability, AND the catalyst** slot alike:
+  - **Show the range envelope** whenever an aimable slot is armed. Today it is drawn only for the
+    hovered/selected *normal* ability (`app.ts` ~:497 `envelopeAbility = hovered ?? chosen`), so an
+    armed **free ability** (#2, Overwatch Trap) and an armed **catalyst** (#1, Dash catalyst) show
+    none. Extend it to those slots using the same `rangeEnvelope`.
+  - **Reject (or clamp) an out-of-range commit.** `aimFor` for `square`/`circle` returns the raw
+    clicked square (`targeting.ts` ~:413) and `onBoardClick` commits it with **no `aimLegal`
+    gate** — so Blink and Intercept (both `square` teleports) accept any click and the engine then
+    silently drops the order, which reads as "you can use it where you want" but nothing happens.
+    A click outside range must **not commit** (leave the slot armed / show it illegal), matching
+    how a `path` dash already refuses an unreachable target (`pathToExact` → empty). **Audit all
+    shapes × all slots** — the owner asked twice for the audit.
+- **RULED — A plan-time preview must not reveal what the acting team cannot see (PREVIEW-FOG;
+  owner directive 2026-08-29, "The preview of damage/healing cannot show up if the player taking
+  the action does not have vision of the character affected"; backlog PREVIEW-FOG — CLIENT).**
+  `preview-numbers.ts` filters affected units by polarity/team but **not by vision**, so a floating
+  damage number appears over an enemy the actor cannot see — a hidden-information leak (you learn a
+  fogged enemy's exact square by aiming near it). Ruling: a preview number (and any per-unit plan-
+  time hint) is shown for an affected unit **only if the acting seat's team can currently see that
+  unit** — own units always; enemies only when in team vision (`visibleEnemiesForTeam`, the same
+  gate fog uses). You may still *aim into* fog (free-aim stands); you just do not get told what is
+  standing there. Hot-seat is not the security boundary (M3 is), but the leak is avoidable now and
+  the rule is the right one to carry into M3.
+- **RULED — A placed trap is drawn on the ground for whoever may see it (TRAP-INDICATOR; owner
+  directive 2026-08-29, "Traps need an indicator on the ground for the team or teams who can see
+  it"; backlog TRAP-INDICATOR — CLIENT).** Traps are placed in Prep and currently have **no board
+  indicator at all** (only a combat-log line when triggered), so a player cannot see their own
+  minefield. Ruling on visibility: **the placing team always sees its own traps** (you planted it,
+  and it is team-safe — you must route around/over it knowingly); **the enemy team sees a trap only
+  when a unit has vision of its square** (same team-vision gate as units — fogged otherwise). This
+  mirrors AR (traps are a hidden threat until seen) and keeps the client a pure consumer: it needs
+  the trap list with `teamId` + position from the engine and applies the existing
+  `visibleSquaresForTeam` gate. (If the owner later wants own-traps hidden even from their placer,
+  that is a separate call; the directive says "the team … who can see it", so own-team-always is
+  the reading.)
 - **RULED — Client renders fog of war from the engine's existing vision (owner directive
   2026-08-25; backlog VISION1; client).** The engine already models AR-style vision — LoS
   blocked by walls (not cover), Manhattan sight radius (MET1), brush concealment with the
@@ -540,6 +583,21 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   The polarity **table itself is unchanged** (still total over `EFFECT_KINDS`, R7) — what
   changed is that the *harmful* row no longer filters by team. The R7 confirmations (trap
   riders → triggering unit; dash riders → caster at destination) still hold.
+- **RULED — `untargetable` skips the WHOLE harmful half of an AIMED ability; traps still bite
+  (UNTGT1; Builder finding + ratified 2026-08-29).** STATUS-AUDIT revealed the engine never read
+  `untargetable` on any damage path — only `fireCatalyst` checked it — so a Blast aimed at a
+  Fade/Shadowstep unit did full damage. GAME_SPEC §6 ("cannot be hit this phase/turn") means the
+  rule existed and was simply unimplemented; the Builder fixed it. **Scope (ratified):** a unit
+  carrying `untargetable` is **skipped by the entire harmful half of an aimed ability** — direct
+  Blast, a dash's crossed targets and `impact` blasts, a delayed detonation, and a catalyst —
+  **damage, displacement riders, and debuffs together** (splitting them would be "half
+  targetable", not untargetable), and **the attacker earns no energy** from it (nothing was hit).
+  **Beneficial effects still reach it** (hiding from attacks is not hiding from your own support).
+  **Traps are EXCLUDED — an Untargetable unit that walks onto a mine still takes it:** edge-cases
+  already holds placed hazards apart from directly-aimed attacks (team-safe, outside friendly
+  fire), so "untargetable" governs *aimed offence*, not hazards you walk into under your own
+  power. (If the owner later wants "cannot be hit" to mean "cannot be hurt", the trap path is one
+  `if` — flagged, not changed.)
 - **RULED — Beneficial abilities pay `energyGain` on use (confirms Builder OQ,
   2026-08-15).** An ability carrying any beneficial effect banks its energy on use, like
   self/utility abilities — support kits build charge by healing/shielding allies, not only
@@ -745,10 +803,27 @@ Full rationale in the source spec; the RULED text here is authoritative.
   say** — a Blast-phase Might must land before the Blast damage step, or the catalyst boosts
   nothing until next turn and is simply broken. Ablative Field's shield is likewise up before any
   Prep-phase trap damage; a Shift resolves before a dash ability the same unit declared.
-- **RULED — A free dash catalyst (Shift) does NOT consume your Move.** Genuinely additive: a
-  unit may Shift 3 in Dash **and** walk its normal 4 in Move (or dash *and* Shift). A real burst
-  of mobility, affordable because it is once per match. Precedent: Overdrive's Haste already
-  boosts the same turn's Move (the "debuff-now-bites-now" reading of Blast-applied statuses).
+- **RETIRED 2026-08-29 — was "A free dash catalyst (Shift) does NOT consume your Move."** This
+  ruling is **reversed and shipped** (CAT-DASH-COST, PR #37) on the owner's directive *"Dash
+  Catalysts should not be a free action"* + the DO-NOT-HOLD dev overrule. **New rule below.**
+- **RULED — A Dash-colour catalyst SPENDS the unit's Move, uniformly per colour (CAT-DASH-COST,
+  owner directive; shipped PR #37).** A Dash catalyst (Shift, Fade, Unshackle) costs the unit's
+  Move exactly as a dash *ability* does: `planUnit` drops the walk and cancels Sprint for any unit
+  that spends one. **Shift 3 in Dash OR walk 4 in Move, never both.** **Prep and Blast catalysts
+  are untouched — still fully additive/free** (they never touched movement, so repricing them
+  would invent a cost the directive did not ask for); **free *abilities* are untouched** (FREE1's
+  budget independence stands — a regression test pins the change did not leak out of the Dash
+  colour). The client must make the cost visible *before* it is paid (CAT-DASH-COST client):
+  arming a Dash catalyst clears the drawn move, disables Sprint, and the HUD move budget reads 0;
+  choosing to move/sprint hands the catalyst slot back rather than silently voiding it.
+  - **RATIFIED — uniform per colour (Builder OQ 2026-08-28 #3): all three Dash catalysts pay,
+    including Fade and Unshackle, which reposition nobody.** The directive names the *colour*, and
+    "yellow costs your Move" is one rule a player can hold in their head vs. "yellow costs your
+    Move unless it doesn't move you." My earlier PROPOSED version was narrower (only the
+    repositioning catalyst); the shipped uniform reading is accepted as the v1 default. **Open
+    balance flag → Designer/playtest:** Fade at the cost of a full Move may be unplayable; if so,
+    exempting the non-repositioning Dash catalysts is a one-condition change — a Designer call,
+    watched in playtest, not reopened pre-emptively.
 - **ENGINE ASK (CAT1).** (1) Catalyst defs: `data/catalysts.json` is `{prep,dash,blast}`, each
   entry an `AbilityDef` with `cooldown:0, energyGain:0, free:true, oncePerMatch:true` (reuse
   `validateAbility`). (2) `UnitState` gains `catalysts: string[]` (length 3, one per phase) and

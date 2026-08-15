@@ -15,192 +15,161 @@ every session** (CLAUDE.md).
 ## ✅ COMPLETE
 
 - Engine core, teams/formats, movement, FF1, AIM2, RND1, A0(+heal), A1–A3, UI1–UI6, D1(+dash),
-  MET1(+tp), BRUSH1, TT1, C1, MS1, R1–R7, MOVE1, HITBOX1, VISION1, MAPTOGGLE, CI-decouple.
-- **PR #33 (this review):** **FREE1** (free-action *engine* — budget independence), **CAT1**
-  (catalysts: 3 slots, once-per-match, start-of-phase), **CAT2** (catalyst UI slot),
-  **VISION1-opening** (opening frame fogged by construction), **AIM-METRIC** (aiming Euclidean),
-  **CONE-B** (`halfWidth(d)=d` + Euclidean axial, measured bound ratified), **CIRCLE-FIX**
-  (`dx²+dy²≤r²`), **DASH-IMPACT** (`impact` areas; MET1-tp branch deleted), rotation-invariance
-  suite.
+  MET1(+tp), BRUSH1, TT1, C1, MS1, R1–R7, MOVE1, HITBOX1, VISION1(+opening), MAPTOGGLE,
+  CI-decouple, AIM-METRIC, CONE-B, CIRCLE-FIX, DASH-IMPACT, FREE1, CAT1, CAT2.
+- **PR #37 (this review):** **PREP-AOE** (Prep beneficial reaches every ally in area),
+  **VALIDATE-KEYS** (unknown `AbilityDef` key is an error), **FREE-UI** (free abilities get their
+  own draft slot), **DECOY-RENDER** (decoy is viewpoint-styled + fogged), **STATUS-AUDIT**
+  (every status proved end-to-end + on-board pips; **UNTGT1** — `untargetable` now enforced on
+  aimed offence; **`statusRemoved`** event added), **FOG-ZORDER** (overlays lifted above brush),
+  **DASH-PREVIEW** (impact disc while aiming), **PREVIEW-NUMBERS** (float damage/heal/shield),
+  **CAT-DASH-COST** (a Dash catalyst spends your Move, uniform per colour).
 
-Current suite: **628 tests** (engine 423 + client 205), typecheck + build clean, purity green.
+Current suite: **771 tests** (engine 479 + client 292), typecheck + build clean, purity green.
 
-> **This batch is a BUG-FIX + polish pass** on PR #33, driven by nine playtest Dev Notes. The
-> free-action *engine* shipped but its *client* never did (FREE-UI); Prep beneficial AoE only hits
-> the caster (PREP-AOE); and several render/preview gaps make working systems read as broken.
-> One Dev Note (#5) is a **Designer** economy call (CAT-DASH-COST).
+> **This batch is a CLIENT indicator + vision-honesty pass** on eight playtest Dev Notes. The
+> engine already enforces range, vision and polarity; the client isn't *showing* it (range
+> envelopes, trap markers, Shift's route), is *leaking* it (preview numbers over fogged enemies),
+> or isn't *gating* on it (out-of-range teleport clicks the engine then drops). No engine work.
 
 ---
 
-## Engine (do first — correctness)
+## Client — indicators & range (do first)
 
-### PREP-AOE. Prep-phase beneficial AoE applies to all allies in the area (ENGINE) — UNBLOCKED (first)
-**Addresses Dev Note: "Aegis Barrier Pulse is only shielding one ally, should shield all allies in
-the area of effect."** *AC: a Prep beneficial area ability (`heal`/`shield`/buff on a
-`circle`/`square`) applies its effects to **every allied unit whose square is in `a.area`** (the
-caster included, exactly once — no double-application); a Prep ability aimed so two allies stand in
-its radius shields **both**; self-cast and trap Prep abilities are unchanged; energy-on-use
-unchanged.*
-**Spec Notes.** Files: `packages/engine/src/resolve.ts` (`firePrep` ~:599-601 — the non-trap
-branch currently calls `applySelfEffects(draft, unit, …)`, hitting only the caster). Replace with
-the **same beneficial-allies-in-`a.area` loop** the Blast path (`~:1006`) and dash-impact path
-(`~:806`) already use — factor the shared loop if clean, but do not change Blast/impact behaviour.
-FF1 polarity holds (beneficial → own team only). N-unit-safe (iterate the unit list). Ruled in
-edge-cases (FF1 beneficial / PREP-AOE). **Required tests beyond AC:** a Prep shield with the caster
-+ one ally in area shields both, once each; a Prep buff aimed at empty space shields nobody; a
-harmful Prep ability (trap) is untouched. **Out of scope:** any Blast/impact change; new effect
-kinds.
+### AIM-RANGE. Show and enforce range for every aimable slot (CLIENT) — UNBLOCKED (first, HIGH)
+**Addresses Dev Notes: "Veil's Blink looks like you can use it where you want, it should be limited
+to the range of the skill. Audit to make sure all skills are limited to the range of the skill."**
+and **"Aegis's intercept does the same thing."** and **"Dash catalyst doesn't have a range
+indicator"** and **"Overwatch Trap doesn't have a range indicator either."** and **"This means that
+there are skills that do not have indicators, audit this to ensure you catch all skills."** The
+engine enforces range (`aimIsLegal`→`aimInRange`) and drops out-of-range orders; the client neither
+shows nor gates it for some slots/shapes. *AC: (1) arming ANY aimable slot — normal ability, **free
+ability**, **catalyst** — paints its range envelope (`rangeEnvelope`); (2) a board click **outside
+range does not commit** for any shape (today `square`/`circle` commit the raw click and the engine
+silently drops it) — the slot stays armed / previews as illegal, exactly as a `path` dash already
+refuses an unreachable target; (3) an audit covers **every shape × every slot** — verify each
+roster ability, free ability and catalyst shows an envelope and rejects an out-of-range click; a
+client test drives an out-of-range click on a `square` teleport (Blink) and asserts nothing
+commits, and that an armed catalyst/free ability paints an envelope.*
+**Spec Notes.** Files: `packages/client/src/app.ts` (`renderPreviews` ~:491-501 — extend
+`envelopeAbility` to the armed free ability / catalyst def, each in its own layer; `onBoardClick`
+~:795-816 — gate every commit on `aimLegal(unit, def, aimFor(...))`), `targeting.ts` (`aimFor`
+~:413 returns the raw square for `square`/`circle` — either return empty/illegal when out of range
+or let the caller gate via `aimLegal`; keep the engine as the single source of the range rule via
+`aimInRange`). **Do not re-derive range** — call the engine's `aimInRange`/`aimIsLegal`. Ruled in
+edge-cases (AIM-RANGE). **Required tests beyond AC:** a `circle` (grenade) out-of-range click is
+refused; an in-range click still commits; the envelope matches `aimInRange` exactly (no square the
+engine would reject is drawn as legal). **Out of scope:** engine range rules (correct); clamping
+semantics beyond "refuse the commit" (a clamp-to-nearest-legal is optional polish, note it).
 
-### VALIDATE-KEYS. Reject unknown `AbilityDef` keys at validation (ENGINE) — UNBLOCKED (hardening)
-**Closes Builder OQ 2026-08-27 #5.** `validateAbility` rejects unknown `impact` members but still
-accepts unknown top-level keys, so a typo'd field (`impcat`, `destinaton`) is silently dropped.
-*AC: `validateAbility` rejects an `AbilityDef` carrying any key outside the known set (listing the
-offending key); every shipped ability, catalyst and test fixture still validates; a fixture with a
-bogus key fails with a clear message.*
-**Spec Notes.** Files: `packages/engine/src/validate.ts`. Enumerate the allowed `AbilityDef` keys
-in one place. **Gotcha:** run the full `data/` + fixtures through it first — this is why it is its
-own item (it touches every ability at once). Out of scope: `data/` value changes (only reject
-*unknown* keys, don't retune existing ones).
+### DASH-CAT-ROUTE. A dash-phase catalyst renders as a yellow route (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Shift's dash catalyst should show as a yellow movement similar to other
+dash/blinks."** `dashRoute` (the yellow route line + marker) is only drawn for the selected normal
+ability; a Dash catalyst's aim shows as a catalyst-coloured area overlay, not a route. *AC: arming a
+dash-phase catalyst (Shift) and aiming it draws the **same yellow dash route + destination marker**
+a blink/dash ability draws (from the unit to the aimed landing); non-dash catalysts are unchanged; a
+client test asserts a Shift catalyst aim produces a dash route.*
+**Spec Notes.** Files: `packages/client/src/app.ts` (~:593 — the route branch reads `chosen`; add
+the catalyst-def case so a dash-phase catalyst feeds `dashRoute`), `targeting.ts` (`dashRoute`
+already handles a `square` dash by drawing a segment to the destination — reuse it). **Shares the
+catalyst-aim render path with AIM-RANGE — build together.** Note CAT-DASH-COST already clears the
+drawn *move* when a Dash catalyst is armed, so the yellow route is the reposition indicator that
+replaces it. Out of scope: normal-ability-aimed-from-Shift-landing preview (M3).
 
-## Client — playtest blockers (ordered)
+## Client — vision honesty (do together — shared team-vision gate)
 
-### FREE-UI. Free abilities get their own draft slot + arm-mode (CLIENT) — UNBLOCKED (HIGH, unblocks stealth)
-**Addresses Dev Notes: "Overwatch trap should be a free action, but I cannot use overwatch trap and
-attack/spring after."** and **"Veil and Decoy shoudl be a free action, but cannot sprint/attack
-after"** and **"6 & 7 tell me free actions aren't done correctly. I need to be able to use the free
-action AND still take my turn as normal."** The engine's FREE1 is correct; the client has **zero
-`freeAbility` references** — a `free:true` ability fills the normal `abilityId` slot, is sent as
-`order.ability`, and disables Sprint. *AC: selecting a `free:true` ability (Overwatch Trap, Snare
-Bloom, Veil & Decoy) arms it in a **separate slot** — it does **not** clear/replace the normal
-ability selection and does **not** disable Sprint; a turn can carry a free ability **and** a normal
-ability **and** a move/sprint; `toUnitOrders` emits it as `order.freeAbility`; a client test drives
-free-ability + normal-ability + sprint in one turn and asserts all three reach `UnitOrders`.*
-**Spec Notes.** Mirror CAT2 exactly — it already solved this shape for catalysts. Files:
-`targeting.ts` (`OrderDraft` gains `freeAbilityId` + its own aim slot; `toUnitOrders` ~:551 adds
-the `order.freeAbility` branch, and `draftHasOrder` counts it), `order-mode.ts` (`Mode` gains
-`'free'`; a `previewFreeAim` like `previewCatalystAim`), `app.ts` (a `selectFreeAbility`, a `'free'`
-overlay layer, and **remove the Sprint-disable when the only thing chosen is a free ability** —
-`sprintDisabled` must key off the *normal* ability, not a free one), `hud.ts` (free abilities read
-as their own control, or are tagged `free` in the hotbar so the player knows they're additive).
-**Enforce one free action per turn in the UI** (a free ability OR a catalyst, per the ruling — the
-engine already yields the catalyst, but the UI should prevent ordering both). Ruled in edge-cases
-(FREE-UI). **Required tests:** free + normal + sprint all sent; selecting a free ability leaves an
-existing ability draft intact; ordering a free ability + a catalyst is prevented (or the catalyst
-visibly yields). **Out of scope:** the engine (FREE1 is correct); new free abilities.
+### PREVIEW-FOG. A preview never reveals what the acting team cannot see (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "The preview of damage/healing cannot show up if the player taking the action
+does not have vision of the character affected by damage/healing."** `preview-numbers.ts` filters
+by polarity/team but not by vision, so a number floats over a fogged enemy — a hidden-info leak.
+*AC: a per-unit preview number (and any per-unit plan-time hint) shows for an affected unit **only
+if the acting seat's team can currently see it** — own units always, enemies only when in team
+vision; aiming *into* fog is still allowed, it just shows no number there; a client test asserts a
+damage preview aimed over an unseen enemy shows nothing, and over a seen enemy shows the number.*
+**Spec Notes.** Files: `packages/client/src/preview-numbers.ts` (add a vision filter),
+`app.ts`/`fog.ts` (feed `visibleEnemiesForTeam` for the acting seat — the same gate `fogView`
+already computes; reuse it, don't recompute). Ruled in edge-cases (PREVIEW-FOG). **Out of scope:**
+the free-aim rule (you may still aim into fog); cover-adjusted amounts (Builder OQ #6 — separate).
 
-### DECOY-RENDER. Decoy renders team-aware and is fogged (CLIENT) — UNBLOCKED (unblocks stealth read)
-**Addresses Dev Note: "decoy should show as an enemy for the enemy team and a unique purple color
-for ally team."** (part of "Stealth is not working"). `app.ts:409` draws all decoys as bare
-positions — no team styling, no fog. *AC: to the **enemy** team the decoy renders **as a normal
-enemy Wisp** (same model/colour as a real enemy unit, frozen cast-time HP bar — indistinguishable);
-to **Wisp's own** team it renders in a **unique purple**; the decoy is **only shown to the enemy
-when a teammate has vision of its square** (fogged like a real enemy); a client test asserts an
-out-of-sight decoy is not drawn for the enemy and a visible one draws as an enemy-styled unit.*
-**Spec Notes.** Files: `packages/client/src/app.ts` (the `paintFog`/`renderer.show` decoy path
-~:409 — pass decoys through the same `visibleSquaresForTeam` gate `fogView` uses for units, tagged
-with viewer-relative styling), `fog.ts` (extend `FogView` to carry the visible decoys for the
-team, so the client still derives no visibility itself), `renderer3d.ts` (a purple decoy style +
-the enemy-Wisp style). Ruled in edge-cases (R2 rendering). **Out of scope:** decoy engine
-behaviour (unchanged — it's already a separate `decoys` list); last-known ghosts.
+### TRAP-INDICATOR. Draw placed traps on the ground, fogged by team vision (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Traps need an indicator on the ground for the team or teams who can see it."**
+Traps are in `state.traps` (`owner`, `pos`) but drawn nowhere. *AC: a placed trap shows a ground
+marker; the **placing team always** sees its own traps; the **enemy** sees a trap only when a unit
+has team vision of its square (fogged otherwise); the marker clears when the trap is consumed
+(`trapTriggered`/expiry); a client test asserts an own-team trap is drawn and an out-of-vision enemy
+trap is not.*
+**Spec Notes.** Files: `packages/client/src/fog.ts` (extend `FogView` with the visible traps for
+the team, styled by own/enemy — mirror the `FogDecoy` pattern DECOY-RENDER added), `app.ts`
+(`paintFog` draws them), `renderer3d.ts` (a ground trap marker). Pure consumer: reads `state.traps`
++ `visibleSquaresForTeam`; derives no visibility. **Shares the team-vision gate with PREVIEW-FOG —
+build together.** Ruled in edge-cases (TRAP-INDICATOR). Out of scope: hiding own traps from their
+placer; trap *rules* (unchanged — team-safe, trigger on entry).
 
-### STATUS-AUDIT. Verify every buff/debuff end-to-end + surface it in the client (ENGINE tests + CLIENT) — UNBLOCKED (depends on FREE-UI, DECOY-RENDER for stealth)
-**Addresses Dev Note: "Stealth and Slow are not working, audit to make sure all buffs and debuffs
-work correctly."** The engine status math is correct (Slow shrinks `movementBudget`; Stealth hides
-via `canSee`; durations tick at end of turn) — the failures are **surfacing** and the two upstream
-bugs. *AC: (1) an engine regression test per status kind proving it changes a **resolved** outcome
-— `slow` shortens a resolved Move, `haste` lengthens it, `weaken`/`might` change dealt damage,
-`root` zeroes Move, `stealth` removes the unit from `visibleEnemiesForTeam`, `reveal` re-adds it,
-`shield` absorbs, `energized` scales earned energy, `unstoppable` ignores displacement,
-`untargetable` blocks being targeted; (2) the client shows a **visible indicator** on a unit
-carrying a status (icon or tint) during Decision and playback, so a landed debuff is legible.*
-**Spec Notes.** Engine: consolidate/extend `status.test.ts` + `resolve.test.ts` — most kinds have
-partial coverage; the point is one clear per-kind end-to-end assertion. Client: promote **status
-indicators** from "observed-not-requested" to scoped (a small billboarded icon row or a body
-tint keyed to `unit.statuses`); read straight off the engine state, derive nothing. **Depends on
-FREE-UI + DECOY-RENDER** for stealth specifically to *read* as working (Veil & Decoy is a free
-ability; the decoy currently gives away the stealthed square). Out of scope: any status *rule*
-change (raise separately if a rule is actually wrong — the audit's job is to prove/reveal, not
-re-balance).
+## Client — HUD & verification (smaller)
 
-### FOG-ZORDER. Brush tiles must not occlude the aim/reach overlays (CLIENT render) — UNBLOCKED
-**Addresses Dev Note: "The green stealth squares are STILL hiding aoe effect and movement options.
-This needs to be fixed."** The green tiles are **brush** (`BOARD_COLORS.brush`); the highlight
-layers lose the z-fight against the brush tile geometry. *AC: an aim/AoE overlay and a move/reach
-envelope drawn over brush tiles are **fully visible** (not hidden by the green); brush is still
-visually distinct; RENDER-VERIFY asserts a highlight over a brush square is drawn.*
-**Spec Notes.** Files: `packages/client/src/renderer3d.ts` (raise the highlight layers above the
-base board tiles — a small y-offset or explicit `renderOrder`/`depthTest` on the highlight meshes),
-`app.ts` layer list `['fog','range','reach','aim','catalyst','select']`. **This is a WebGL layering
-bug unit tests cannot see — verify via RENDER-VERIFY** (composite a frame with an AoE over brush
-and assert the highlight pixels are present). Out of scope: changing brush *rules* or colour.
+### CAT-COST-LABEL. Catalyst slots show their cost (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Prep Catalyst and Blast Catalyst are not showing as free actions."** Free
+*abilities* show a "free" tag; catalyst slots show none. Post-CAT-DASH-COST the cost differs by
+colour. *AC: each catalyst slot shows its cost — **Prep and Blast: "free"** (additive); **Dash:
+"costs Move"** (or equivalent, matching CAT-DASH-COST); a client test asserts the tag per colour.*
+**Spec Notes.** Files: `packages/client/src/hud.ts` (`HudCatalyst` gains a cost field; render it
+beside `phase`), `app.ts` (populate it — Dash colour = costs Move, else free). Trivial; keep the
+wording consistent with how free abilities are already tagged. Out of scope: the cost *rules*
+(CAT-DASH-COST shipped).
 
-### DASH-PREVIEW. Preview a dash's impact area(s) while aiming (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "Shadowstep Strike needs to show what boxes are being hit, not just the box
-of arrival."** (also Builder OQ 2026-08-27 #3). DASH-IMPACT shipped without a preview. *AC: aiming a
-dash that carries `impact` paints the impact disc(s) — an `impact.destination` circle at the
-**aimed landing square** and, if present, an `impact.origin` circle at the takeoff square — using
-`circleSquares`, in a preview overlay; a dash with no `impact` is unchanged; a client test asserts a
-dash with `impact:{destination:r}` paints an r-radius disc at the aimed square.*
-**Spec Notes.** Files: `packages/client/src/targeting.ts` / `app.ts` (a client-side overlay reading
-the ability's `impact` radii). **Do NOT overload `expandShape.a.area`** — it means "aimed area" at
-plan time but the engine detonates at the *actual* rest square (a charge stopped short), so making
-them the same field makes the preview lie. This is a **plan-time estimate** (aimed landing);
-resolution playback already shows the true detonation. Ruled in edge-cases (DASH-PREVIEW). Out of
-scope: engine change; previewing a normal ability aimed from a Shift landing (M3).
+### STEALTH-CONFIRM. Prove Veil's stealth reads correctly in-browser (CLIENT e2e) — UNBLOCKED
+**Addresses Dev Note: "Does Veil's Stealth work? It doesn't seem to be working."** STATUS-AUDIT
+proved stealth engine-side; FREE-UI (castable) and DECOY-RENDER (fogged, viewpoint-styled decoy)
+shipped this batch, so it should now read correctly — most likely a pre-batch build. *AC: an e2e
+(RENDER-VERIFY) drives Wisp casting Veil & Decoy, then from the **enemy** seat asserts the stealthed
+Wisp is **not** drawn (absent from the render) while the **decoy** is drawn as an enemy Wisp; from
+Wisp's **own** seat the real unit is drawn and the decoy shows purple.*
+**Spec Notes.** Files: `packages/client/e2e/render.spec.ts` (+ `pixels.ts` families). If the e2e
+**fails**, this becomes a real bug — re-open with the specific failing seat/frame; if it passes,
+it closes Dev Note #4 with evidence rather than assertion. **Out of scope:** engine stealth
+(proved); a rules change.
 
-### PREVIEW-NUMBERS. Floating damage/heal/shield numbers on aim, before lock (CLIENT) — UNBLOCKED (new)
-**Addresses Dev Note: "I want to implement Preview damage and healing and shielding done above the
-character model when confirming action (before locking in). Players should know what their action
-is going to do."** and **"It can show as a red (damage), green (healing) or blue (shielding) number
-above the affected character's model."** *AC: while an action is aimed (pre-lock), each unit whose
-square is in the action's area shows a floating number above its model — **red** for damage,
-**green** for healing, **blue** for shielding — of the amount that action would apply to it; the
-numbers clear on de-select/lock; polarity/targeting respects FF1 (a harmful action previews on
-allies in-area too; a beneficial one only on allies); a client test asserts a damage ability aimed
-at a unit shows a red number of the right amount.*
-**Spec Notes.** Files: `packages/client/src/app.ts` / `renderer3d.ts` (billboarded text over the
-affected units), reading the aimed `expandShape` area + the ability's effect `amount`s. **Derive
-nothing new** — the amount is the ability's effect value (before Might/Weaken/cover, unless cheap
-to include; keep it the *nominal* number for v1 and note it). Reuse the UI5 float-number machinery
-if present. Out of scope: exact post-mitigation math (nominal is fine for a plan-time preview);
-DoT/delayed previews.
+### LOG-STATUS. Render `statusRemoved` in the combat log (CLIENT) — UNBLOCKED (small)
+**Closes Builder OQ 2026-08-28 #4.** The engine now emits `statusRemoved { unitId, status, reason:
+'broken' | 'expired' }` but UI6 doesn't render it. *AC: the combat log shows a line when a status is
+broken or expires (e.g. "Vex's Haste wore off", "Wisp's Stealth broke"); a client test asserts a
+`statusRemoved` event produces a log line with the right tone.*
+**Spec Notes.** Files: `packages/client/src/combat-log.ts` (add the `statusRemoved` case, mirroring
+`statusApplied`). Pure consumer of the log. Out of scope: filtering/config (UI6 cap already exists).
 
-## Blocked on Designer
+## Blocked / Designer
 
-### CAT-DASH-COST. Dash catalysts are not free actions (RULING → Designer, then ENGINE) — BLOCKED
-**Addresses Dev Note: "Dash catalysts should not be free actions."** Reverses the CAT1 "Shift does
-not consume Move" ruling for the Dash colour. **Blocked:** the Designer must rule the economy —
-Analyzer recommendation (PROPOSED in edge-cases): a Dash catalyst competes with a dash ability and
-**spends the Move** for its reposition (not additive); Prep/Blast catalysts stay free; confirm
-whether Fade/Unshackle (no reposition) also lose additivity or only Shift. Once ruled: engine makes
-Dash catalysts consume the relevant budget + a test; CAT2/HUD reflects it. Until then the shipped
-fully-free behaviour stands. **Do not implement before the Designer rules.**
+- **CAT-DASH-COST — Fade/Unshackle balance flag (Designer/playtest, NOT a build item).** All three
+  Dash catalysts pay the Move (uniform per colour, shipped). Fade at the cost of a full Move may be
+  unplayable; exempting the non-repositioning Dash catalysts is a one-condition change **only if
+  playtest shows it** — a Designer call, watched, not built pre-emptively.
+- **UNTGT1 trap carve-out (Designer, if wanted).** `untargetable` skips aimed offence but a walked-
+  onto trap still bites. If the owner wants "cannot be hit" = "cannot be hurt", the trap path is
+  one `if` — route a Dev Note if so; default stands.
 
 ## Deferred — do NOT schedule
 
 - **A4** per-ability FX — blocked on M3 + roster lock.
-- **CL1/CL2/E2**, **flat `energy` effect kind**, **vision metric change**, **tunable cone angle**
-  (ENGINE ASK if the Designer ever wants a non-45° cone) — not scheduled.
-- **Optimistic move validation** (so a Blast-Haste can *extend* the same-turn walk; Builder OQ #8)
-  — changes move semantics for every ability; revisit only if Overdrive reads weak in playtest.
+- **CL1/CL2/E2**, **flat `energy` effect kind**, **vision metric change**, **tunable cone angle**,
+  **optimistic move validation** (Blast-Haste extends the same-turn walk) — not scheduled.
+- **PREVIEW-NUMBERS cover-adjustment** (show post-cover amounts) — fold in only if playtest reports
+  the preview "lying" over a unit in cover (Builder OQ #6).
+- **Status-pip pixel test** — add a per-pip colour family only if a pip regression happens (OQ #5).
 
 ## M3+ — the next milestone
 
 21. Worker + DO rooms; **map + format selection lobby** (supersedes MAPTOGGLE) with **per-character
-    catalyst selection** and **the CAT2 Shift teleport-preview / normal-ability-aimed-from-Shift-
-    landing preview**; team-seat + **duplicate-pick validation (R3)**; per-player hidden submission
-    → per-team orders; **per-team hidden information for fog (VISION1) and the combat log (UI6)** —
-    the real security boundary the hot-seat only approximates; per-player timer + Time Bank; decoy
-    fog; reconnect/replay; deploy to Pages + wrangler.
+    catalyst selection** and the **normal-ability-aimed-from-Shift-landing preview**; team-seat +
+    **duplicate-pick validation (R3)**; per-player hidden submission → per-team orders; **per-team
+    hidden information for fog (VISION1), previews (PREVIEW-FOG), traps (TRAP-INDICATOR) and the
+    combat log (UI6)** — the real security boundary the hot-seat only approximates; per-player timer
+    + Time Bank; decoy fog; reconnect/replay; deploy to Pages + wrangler.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **Ravok undertuned interim** — Bullrush knockback 2→1 is live and `impact` is now live too (PR
-  #33), so this is resolved; re-check his three overlapping AoEs (Bullrush + Shockwave + Seismic
-  Rupture) — if too much, cut Shockwave's radius, not Bullrush's.
-- **8-tile melee cones** (four `range:2` kits) — owner approved; if oppressive prefer a damage cut.
-  **Seismic Rupture at 29 tiles** (~11% of the map). **Cone raggedness** at shallow angles.
+- **8-tile melee cones**, **Seismic Rupture at 29 tiles**, **cone raggedness** at shallow angles.
 - **Overdrive's Haste** can't buy Move squares this turn (only offset a Slow) — watch if it reads
-  weak. **Free-action / catalyst** feel: one free action per turn too tight? Shift as default Yellow
-  (drop to 2)? Catalyst hoarding? **Kestrel** untested through MAPTOGGLE (8-of-9 dev draft).
-- **Turn-1 spawn margin one tile** — hold `MAX_ABILITY_RANGE = 8` and the spawn columns.
+  weak. **Fade at full-Move cost** (see CAT-DASH-COST flag). **Free-action / catalyst** feel: one
+  free action per turn too tight? Shift as default Yellow? Catalyst hoarding? **Kestrel** untested
+  through MAPTOGGLE (8-of-9 dev draft). **Turn-1 spawn margin one tile** — hold
+  `MAX_ABILITY_RANGE = 8` and the spawn columns.
