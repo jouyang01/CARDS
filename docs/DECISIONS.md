@@ -1869,3 +1869,51 @@ square, and the owner-view decoy was a body box the same size as a unit at the s
 it sat entirely inside Wisp and was invisible. It is now a purple ground plate wider than a unit,
 which reads as a ring around its feet while co-located and stands on its own once Wisp moves off.
 The browser test that found this asserts purple pixels are on the board after the cast.
+
+## Open Questions for the Analyzer — 2026-08-29
+
+1. **Veil & Decoy's Stealth is `duration: 1` and therefore unobservable (STEALTH-CONFIRM, Dev
+   Note #4).** The one that needs a decision. Applied in Prep, gone by that turn's end-of-turn
+   tick, so the enemy never sees it — while the decoy stands through the next Decision phase.
+   `duration: 2` fixes it and a test demonstrates that; the value is in
+   `data/characters/wisp.json` and it is the Designer's. Until it changes, Dev Note #4 stays open
+   and STEALTH-CONFIRM is a *reproduction*, not a closure.
+
+2. **Two DECOY-RENDER bugs fixed in this batch, both shipped in PR #37.** An `asEnemy` decoy wore
+   a hardcoded `team1` colour (wrong for every team-1 viewer), and the owner's decoy was a body
+   box co-located with its own caster and therefore invisible. Worth noting in the review because
+   neither was catchable by the tests that item shipped with: the view model was right and only
+   the renderer was wrong. RENDER-VERIFY caught both.
+
+3. **AIM-RANGE refuses out-of-range clicks; it does not clamp.** The AC allowed either and called
+   clamp-to-nearest-legal optional polish. Refusing is what shipped, matching how a `path` dash
+   already behaves. If playtest reports it as unresponsive rather than as bounded, the clamp is a
+   small change in `commitAim` alone.
+
+4. **A `line`/`cone` click on your own square commits step 0 (east) rather than refusing.**
+   Pre-existing AIM2 behaviour, pinned by a test in `aim-range.test.ts` rather than changed —
+   it is not a range question and it is not in the item. Worth a ruling if a self-click should be
+   a no-op.
+
+5. **The range envelope follows the *armed* slot, one layer.** Only one slot can be armed at a
+   time, so this covers the AC without three envelopes fighting for the same tiles — but a
+   *committed* catalyst aim stops showing its envelope once you arm the ability. Confirm that is
+   the wanted read; per-slot envelope layers are the alternative.
+
+6. **Hovering a catalyst slot paints no envelope, only arming it does.** `hoverAbility` is wired
+   to the hotbar buttons and the catalyst row reuses it for the tooltip, but the envelope keys off
+   `findOnCharacter`, which does not know catalysts. Arming covers the Dev Note; hover parity is a
+   small follow-up if wanted.
+
+7. **`statusRemoved` log lines carry no source.** Nobody causes an expiry, and crediting the
+   original caster for a clock running out would be wrong — but a Stealth *broken* by an attack
+   does have an author the event does not carry. Adding one would be an engine change; flagged,
+   not proposed.
+
+8. **PREVIEW-FOG uses `fogView().units`, which includes corpses.** A dead unit is never a preview
+   target (`previewNumbers` skips `!alive`), so this is currently harmless, but the gate is
+   "drawn" rather than "visible" and those diverge if corpses ever stop being drawn.
+
+9. **Carried over, unchanged:** the FREE1/CAT1 `free` + `oncePerMatch` conflict, the
+   one-free-action tiebreak, `AbilityOrder.target` becoming optional (OQ 2026-08-26), and the
+   PREVIEW-NUMBERS cover-adjustment question (OQ 2026-08-28 #6).
