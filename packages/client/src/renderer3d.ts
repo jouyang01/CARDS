@@ -94,7 +94,8 @@ const TRAP_SIZE = 0.5;
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
  * covered tile always reads on top of the envelope that contains it.
  */
-export type HighlightLayer = 'fog' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
+export type HighlightLayer =
+  | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
 
 /**
  * Route lines get their own layers for the same reason the aim overlays do: a
@@ -123,6 +124,10 @@ const OVERLAY_BASE = TERRAIN_HEIGHT.brush + 0.006;
 /** Height above the ground plane per layer, so they never z-fight. */
 export const LAYER_LIFT: Record<HighlightLayer, number> = {
   fog: OVERLAY_BASE,
+  // CAMO-REVEAL's red thicket sits just above the fog and below every planning
+  // overlay: it is board state, not something you are aiming, so an aim drawn
+  // over it must still read on top.
+  camo: OVERLAY_BASE + 0.002,
   range: OVERLAY_BASE + 0.004,
   reach: OVERLAY_BASE + 0.008,
   aim: OVERLAY_BASE + 0.014,
@@ -137,7 +142,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
+  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;
@@ -197,6 +202,8 @@ export interface Renderer {
    * Highlight squares. Layers stack bottom-up in the order listed here:
    * `fog` is the unseen board (VISION1) and sits underneath everything, so your
    * own aim still reads over darkness — you may shoot where you cannot see.
+   * `camo` is a camouflage tile burning red because the unit on it gave itself
+   * away (CAMO-REVEAL) — board state, so it sits under the planning layers.
    * `range` is the hover envelope (UI1 — where an ability *could* go), `reach`
    * the move envelope, `aim` the tiles an aim actually covers, `impact` a dash's
    * previewed blast discs (DASH-PREVIEW), `select` the current unit and impact

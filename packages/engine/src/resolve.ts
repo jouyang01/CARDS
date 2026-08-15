@@ -184,6 +184,76 @@ function breakStealth(unit: UnitState, events: TurnEvent[]): void {
   }
 }
 
+/**
+ * CAMO-REVEAL — is this unit hidden *right now*, for the purpose of the
+ * camouflage penalty?
+ *
+ * Deliberately a property of the **tile**, not of any observer. `isConcealedFrom`
+ * (vision.ts) takes an observer because the brush adjacency exception makes
+ * concealment per-observer — a unit in brush is hidden from a distant enemy and
+ * plainly visible to an adjacent one — so "am I concealed?" has no
+ * observer-free answer there, and gating a reveal on it would reveal you to some
+ * enemies and not others off a single action. The owner's rule is "*while inside
+ * a camouflage zone*": a place you are standing.
+ *
+ * `at` is passed rather than read off the unit because a catalyst can move you
+ * (Shift) before this is asked — the tile that matters is the one you acted from.
+ */
+function isConcealed(board: Board, unit: UnitState, at: Vec2): boolean {
+  return terrainAt(board, at) === 'brush' || hasStatus(unit, 'stealth');
+}
+
+/** Apply the 2-turn Reveal and log it. The caller owns the "should I?" question. */
+function applyReveal(unit: UnitState, abilityId: string, events: TurnEvent[]): void {
+  applyStatus(unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
+  events.push({
+    type: 'statusApplied', unitId: unit.unitId, status: 'reveal',
+    duration: REVEAL_ON_ATTACK_TURNS, sourceUnitId: unit.unitId, abilityId,
+  });
+}
+
+/**
+ * CAMO-REVEAL — acting from concealment gives you away for this turn and the
+ * next, and turns the camouflage tile red.
+ *
+ * **Additive.** Dealing damage already reveals you whether you were hidden or
+ * not, and that stays exactly as it was — dropping it would let a unit shoot
+ * from open ground and vanish into brush the next turn for free. What this adds
+ * is the three triggers the owner named that were silent before: using a
+ * catalyst, using a harmful ability that deals no damage, and taking a hit.
+ *
+ * Stealth breaks with it: GAME_SPEC §6 says Reveal only *masks* Stealth, so
+ * leaning on the Reveal alone would re-hide the unit the moment it expired.
+ */
+function revealIfConcealed(
+  board: Board, unit: UnitState, at: Vec2, abilityId: string, events: TurnEvent[],
+): void {
+  if (!unit.alive || !isConcealed(board, unit, at)) return;
+  breakStealth(unit, events);
+  applyReveal(unit, abilityId, events);
+}
+
+/**
+ * Taking damage: Stealth always breaks (GAME_SPEC §6), and a unit that was
+ * *concealed* when it was hit is additionally revealed (CAMO-REVEAL) — a
+ * brush-hidden unit that takes a hit used to keep its concealment next turn,
+ * which is the half of the owner's rule the engine was missing.
+ *
+ * Order matters: concealment is read **before** `breakStealth`, or a stealthed
+ * unit standing in the open would have its own gate cleared out from under it.
+ */
+function onDamageTaken(
+  board: Board, victim: UnitState, abilityId: string, events: TurnEvent[],
+): void {
+  const concealed = isConcealed(board, victim, victim.pos);
+  breakStealth(victim, events);
+  if (concealed) applyReveal(victim, abilityId, events);
+}
+
+/** Does this ability count as "an offensive ability" for CAMO-REVEAL? */
+const isHarmfulUse = (def: AbilityDef): boolean =>
+  def.effects.some((e) => HARMFUL_KINDS.has(e.kind));
+
 /** Does using this ability grant its energy even without hitting an enemy? */
 function isSelfOrUtility(def: AbilityDef): boolean {
   return (
@@ -337,6 +407,12 @@ function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: Planne
   events.push({ type: 'abilityFired', unitId: unit.unitId, abilityId: c.def.id, area: c.area });
 
   const source = sourceOf(unit, c.def.id);
+  // CAMO-REVEAL: "used a catalyst … while inside a camouflage zone". Read the
+  // tile BEFORE the teleport below — Shift moves you, and the square that gives
+  // you away is the one you acted from, not the one you land on. Every catalyst
+  // counts, harmful or not: the owner named catalyst use itself as the trigger,
+  // and a once-per-match burst out of a thicket is exactly the tell.
+  revealIfConcealed(board, unit, unit.pos, c.def.id, events);
   if (c.def.effects.some((e) => e.kind === 'teleport')) {
     teleport(draft, board, unit, c.aim[0], events);
   }
@@ -485,14 +561,14 @@ const sourceOf = (unit: UnitState, abilityId: string): Source => ({ unitId: unit
  * merely *starts* on a freshly-placed trap never calls this, so it is safe until
  * it re-enters. Returns true if the victim died.
  */
-function triggerTrapsOnEntry(draft: GameState, unit: UnitState, events: TurnEvent[]): boolean {
+function triggerTrapsOnEntry(draft: GameState, board: Board, unit: UnitState, events: TurnEvent[]): boolean {
   if (!unit.alive) return false;
   for (const trap of draft.traps.filter((t) => t.owner !== unit.owner && vecEq(t.pos, unit.pos))) {
     draft.traps = draft.traps.filter((t) => t.id !== trap.id); // consumed
     events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
     const res = applyDamage(unit, trap.damage);
     events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: trap.ownerUnitId, abilityId: trap.abilityId });
-    breakStealth(unit, events); // taking damage breaks Stealth
+    onDamageTaken(board, unit, trap.abilityId, events); // CAMO-REVEAL: + reveal if concealed
     for (const e of trap.onTrigger) {
       if (isStatusKind(e.kind)) {
         applyStatus(unit, e.kind, e.duration ?? 1);
@@ -626,20 +702,26 @@ function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: Turn
   // the only phase that needs the pass — and going first is the ordering
   // catalysts will need, so there is one rule rather than two.
   for (const plan of orderedPlans(draft, plans)) {
-    if (plan.freeAbility !== undefined) firePrep(draft, plan.unit, plan.freeAbility, events);
+    if (plan.freeAbility !== undefined) firePrep(draft, board, plan.unit, plan.freeAbility, events);
   }
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'prep') continue;
-    firePrep(draft, plan.unit, a, events);
+    firePrep(draft, board, plan.unit, a, events);
   }
 }
 
 /** Resolve one Prep-phase ability for `unit`: traps place, everything else self-applies. */
-function firePrep(draft: GameState, unit: UnitState, a: PlannedAbility, events: TurnEvent[]): void {
+function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbility, events: TurnEvent[]): void {
   if (!unit.alive) return;
   events.push({ type: 'abilityFired', unitId: unit.unitId, abilityId: a.def.id, area: a.area });
   markAbilityUsed(unit, a, events);
+
+  // CAMO-REVEAL: firing an offensive ability from a camouflage tile gives you
+  // away. Prep's harmful content is placement (traps are `trap`, a NEUTRAL kind,
+  // so a laid mine is not "using an offensive ability") — but a Prep debuff
+  // would be, so the check is on the effects rather than on the phase.
+  if (isHarmfulUse(a.def)) revealIfConcealed(board, unit, unit.pos, a.def.id, events);
 
   const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
   if (trapEffect !== undefined) {
@@ -834,7 +916,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // not the post-pass-through position — combat semantics stay as today.
     const origin: Vec2 = { x: plan.unit.pos.x, y: plan.unit.pos.y };
     let crossed: UnitState[] = [];
-    if (a.def.shape === 'path') crossed = walkCharge(draft, plan.unit, a.aim, events);
+    if (a.def.shape === 'path') crossed = walkCharge(draft, board, plan.unit, a.aim, events);
     else teleport(draft, board, plan.unit, a.aim[0], events);
 
     // DASH-IMPACT: an optional AoE at takeoff and/or landing, expanded from the
@@ -870,7 +952,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
         const behindCover = isBehindCover(board, from, victim.pos, a.def.range);
         const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
         events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
-        breakStealth(victim, events);
+        onDamageTaken(board, victim, a.def.id, events); // CAMO-REVEAL: + reveal if concealed
         if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
         if (res.died) killUnit(draft, victim, plan.unit.owner, events);
         else collectDisplacement(pending, a.def.effects, victim, from, plan.unit.unitId);
@@ -907,6 +989,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
     applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
+    // CAMO-REVEAL: a dash that lands no damage still gives a concealed dasher
+    // away if it carried a debuff or a shove. Measured from `origin` — the tile
+    // it launched from is the one that hid it. The `hitEnemy` branch below is
+    // the pre-existing unconditional reveal, left exactly as it was.
+    if (!hitEnemy && isHarmfulUse(a.def)) revealIfConcealed(board, plan.unit, origin, a.def.id, events);
     if (hitEnemy) {
       breakStealth(plan.unit, events);
       applyStatus(plan.unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
@@ -930,7 +1017,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
  * square lies on the path, in path order — allies included (FF1-charge) — and the
  * caller applies `chargeHits` to take the first or all of them.
  */
-function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState[] {
+function walkCharge(draft: GameState, board: Board, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState[] {
   const occupiedAt = (p: Vec2) => draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
   // Furthest square the charger may rest on (last free square in the path).
   let restIndex = -1;
@@ -954,7 +1041,7 @@ function walkCharge(draft: GameState, unit: UnitState, path: readonly Vec2[], ev
     const from = unit.pos;
     unit.pos = { x: step.x, y: step.y };
     events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-    if (triggerTrapsOnEntry(draft, unit, events)) return crossed; // died mid-charge
+    if (triggerTrapsOnEntry(draft, board, unit, events)) return crossed; // died mid-charge
   }
   return crossed;
 }
@@ -968,7 +1055,7 @@ function teleport(draft: GameState, board: Board, unit: UnitState, dest: Vec2 | 
   const from = unit.pos;
   unit.pos = { x: dest.x, y: dest.y };
   events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-  triggerTrapsOnEntry(draft, unit, events);
+  triggerTrapsOnEntry(draft, board, unit, events);
   return true;
 }
 
@@ -1013,11 +1100,18 @@ function runBlast(
   // their locked squares, folded into this turn's simultaneous damage.
   detonateDelayedBlasts(draft, roster, hits, debuffs, benefits, events);
 
+  // CAMO-REVEAL: who *used* an offensive ability this phase, whether or not it
+  // landed. Recorded during the gather loop and applied after the damage pass,
+  // so a caster that did land damage takes the unconditional reveal instead and
+  // nobody is revealed twice off one action.
+  const harmfulUse = new Map<string, string>(); // unitId → abilityId
+
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'blast' || !plan.unit.alive) continue;
     events.push({ type: 'abilityFired', unitId: plan.unit.unitId, abilityId: a.def.id, area: a.area });
     markAbilityUsed(plan.unit, a, events);
+    if (isHarmfulUse(a.def)) harmfulUse.set(plan.unit.unitId, a.def.id);
 
     // A delayed ability (e.g. a grenade) is armed now and detonates on a later
     // turn at these locked squares (GAME_SPEC §2); no immediate effect.
@@ -1076,7 +1170,7 @@ function runBlast(
       hit.fixedDamage ?? computeDamage(hit.raw, hit.attacker, isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range));
     const res = applyDamage(hit.victim, final);
     events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: hit.attacker.unitId, abilityId: hit.abilityId });
-    breakStealth(hit.victim, events); // taking damage breaks Stealth
+    onDamageTaken(board, hit.victim, hit.abilityId, events); // CAMO-REVEAL: + reveal if concealed
     if (!hit.delayed) dealtDamage.set(hit.attacker.unitId, hit.abilityId);
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
@@ -1099,12 +1193,26 @@ function runBlast(
   }
 
   // A *damaging* attack reveals you and breaks your own Stealth (GAME_SPEC §6).
+  // Unconditional — concealed or not — and unchanged by CAMO-REVEAL: dropping it
+  // for open attackers would let a unit shoot from open ground and disappear
+  // into brush the next turn with no penalty at all.
   for (const unit of draft.units) {
     const abilityId = dealtDamage.get(unit.unitId);
     if (abilityId === undefined) continue;
     breakStealth(unit, events);
     applyStatus(unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
     events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS, sourceUnitId: unit.unitId, abilityId });
+  }
+
+  // CAMO-REVEAL adds the case that loop cannot see: a concealed unit that USED
+  // an offensive ability which dealt no damage — a pure debuff, a shove, or a
+  // shot that whiffed. `dealtDamage` is keyed on damage actually landing, so
+  // these units are absent from it; skipping them is what let a Bola fired out
+  // of a thicket leave the thicket un-given-away.
+  for (const unit of draft.units) {
+    if (dealtDamage.has(unit.unitId)) continue; // already revealed above
+    const def = harmfulUse.get(unit.unitId);
+    if (def !== undefined) revealIfConcealed(board, unit, unit.pos, def, events);
   }
 }
 
@@ -1193,7 +1301,7 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
 
   const maxLen = Math.max(...movers.map((m) => m.path.length));
   for (let step = 0; step < maxLen; step++) {
-    stepMovers(draft, movers, step, events);
+    stepMovers(draft, board, movers, step, events);
   }
 
   // A decoy is destroyed by an enemy that *ends a move* on its square (R2).
@@ -1214,7 +1322,7 @@ function destroyDecoysUnderEnemies(draft: GameState, units: readonly UnitState[]
 }
 
 /** Resolve one simultaneous step across all still-moving units. */
-function stepMovers(draft: GameState, movers: Mover[], step: number, events: TurnEvent[]): void {
+function stepMovers(draft: GameState, board: Board, movers: Mover[], step: number, events: TurnEvent[]): void {
   const active = movers.filter((m) => !m.halted && m.unit.alive && step < m.path.length);
   if (active.length === 0) return;
 
@@ -1269,7 +1377,7 @@ function stepMovers(draft: GameState, movers: Mover[], step: number, events: Tur
       const to = target.get(m)!;
       m.unit.pos = { x: to.x, y: to.y };
       events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
-      if (triggerTrapsOnEntry(draft, m.unit, events)) m.halted = true; // died → path discarded
+      if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died → path discarded
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
     }

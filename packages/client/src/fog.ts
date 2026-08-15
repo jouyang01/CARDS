@@ -61,6 +61,12 @@ export interface FogTrap {
 
 /** What a renderer should draw for one viewer. */
 export interface FogView {
+  /**
+   * Camouflage squares lit **red** because the unit standing on them gave
+   * itself away (CAMO-REVEAL). The owner's tell: acting from a thicket turns
+   * the thicket red for the reveal's duration.
+   */
+  camoTiles: Vec2[];
   /** The units to draw — hidden enemies are simply absent. */
   units: UnitState[];
   /** The decoys to draw, styled for this viewer. Hidden ones are absent. */
@@ -90,12 +96,52 @@ export function fogView(map: MapDef, state: GameState, team: TeamId): FogView {
       if (!lit.has(`${x},${y}`)) fogged.push({ x, y });
     }
   }
+  const units = state.units.filter((u) => u.owner === team || !u.alive || seen.has(u.unitId));
   return {
-    units: state.units.filter((u) => u.owner === team || !u.alive || seen.has(u.unitId)),
+    units,
     decoys: visibleDecoys(state, team, lit),
     traps: visibleTraps(state, team, lit),
+    // Only over units this viewer can already see. A red tile is a *tell*, and a
+    // tell you could read through fog would be a better tracker than the fog it
+    // sits under — you would learn a hidden unit's exact square from the glow.
+    camoTiles: camoTiles(map, units.map((u) => ({
+      pos: u.pos,
+      alive: u.alive,
+      revealed: u.statuses.some((st) => st.kind === 'reveal' && st.remaining > 0),
+    }))),
     fogged,
   };
+}
+
+/** The minimum a camouflage-tile check needs to know about a unit. */
+export interface CamoCandidate {
+  pos: Vec2;
+  alive: boolean;
+  revealed: boolean;
+}
+
+/**
+ * The brush squares that should burn red: a living unit carrying `reveal`,
+ * standing on brush (CAMO-REVEAL).
+ *
+ * Read straight off whatever the caller is already drawing — no memory, no
+ * derivation. The engine decides who is revealed and for how long; this only
+ * asks which of them are still standing in the thicket that gave them away. A
+ * unit that walks out of the brush takes the red with it, which is the honest
+ * reading of "the tile you were standing on": the client is never told which
+ * square the reveal fired from, and inventing a memory for it is LAST-KNOWN's
+ * kind of problem, not this one's.
+ *
+ * Shape-agnostic on purpose. Decision draws from `GameState` units and playback
+ * from folded `ViewUnit`s, and the rule must not be written twice.
+ */
+export function camoTiles(map: MapDef, units: Iterable<CamoCandidate>): Vec2[] {
+  const brush = new Set(map.brush.map(vecKey));
+  const out: Vec2[] = [];
+  for (const u of units) {
+    if (u.alive && u.revealed && brush.has(vecKey(u.pos))) out.push({ ...u.pos });
+  }
+  return out;
 }
 
 /**
@@ -155,6 +201,10 @@ export function revealedView(state: GameState, team: TeamId): FogView {
     // Likewise still viewpoint-styled: "revealed" means everyone sees it, not
     // that everyone sees it as theirs.
     traps: state.traps.map((t) => ({ id: t.id, pos: { ...t.pos }, owner: t.owner, own: t.owner === team })),
+    // No camouflage tells once everything is revealed: the tile is a warning to
+    // an enemy who cannot see you, and here everyone can. (`revealedView` has no
+    // `map` to test brush against either — it is the game-over/flat view.)
+    camoTiles: [],
     fogged: [],
   };
 }

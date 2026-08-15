@@ -12,7 +12,7 @@ import {
   type TeamId,
   type TrapState,
 } from '@cards/engine';
-import { fogView, revealedView } from '../src/fog.js';
+import { camoTiles, fogView, revealedView } from '../src/fog.js';
 import { previewNumbers } from '../src/preview-numbers.js';
 import { initView, playEvents } from '../src/playback.js';
 import vex from '../../../data/characters/vex.json';
@@ -217,5 +217,76 @@ describe('TRAP-INDICATOR: playback folds traps from the log', () => {
     s.traps = [trap({ id: 't1', owner: 0, pos: { x: 4, y: 4 } })];
     const view = playEvents(s, [{ type: 'phaseStart', phase: 'blast' }]);
     expect(view.traps.size).toBe(1);
+  });
+});
+
+
+// ── CAMO-REVEAL (client half) ───────────────────────────────────────────────
+
+/**
+ * The red thicket. The engine decides who is revealed; this only asks which of
+ * them are still standing in the brush that gave them away, and — like every
+ * other client consumer — refuses to say it about a unit the viewer cannot see.
+ */
+describe('CAMO-REVEAL: a camouflage tile burns red under a revealed unit', () => {
+  const BRUSH = { x: 6, y: 7 };
+  /** Wisp-side unit standing in a one-square thicket, enemy 3 away and looking. */
+  const thicket = (revealed: boolean): GameState => {
+    const m: MapDef = { ...OPEN, brush: [BRUSH] };
+    const s = createMatch(m, '1v1', [[VEX], [AEGIS]]);
+    const hider = s.units[0]!;
+    hider.pos = { ...BRUSH };
+    if (revealed) hider.statuses = [{ kind: 'reveal', remaining: 2 }];
+    s.units[1]!.pos = { x: 9, y: 7 };
+    return s;
+  };
+  const mapWithBrush: MapDef = { ...OPEN, brush: [BRUSH] };
+
+  it('lights the square the revealed unit is standing on', () => {
+    expect(fogView(mapWithBrush, thicket(true), 0).camoTiles).toEqual([BRUSH]);
+  });
+
+  it('and lights nothing while the unit is merely hidden', () => {
+    expect(fogView(mapWithBrush, thicket(false), 0).camoTiles).toEqual([]);
+  });
+
+  it('the ENEMY sees the tell too — that is the entire point of it', () => {
+    // Reveal beats brush, so the unit is visible to them; the red tile is the
+    // thing that says "and it is standing right there".
+    expect(fogView(mapWithBrush, thicket(true), 1).camoTiles).toEqual([BRUSH]);
+  });
+
+  it('a revealed unit standing in the OPEN lights nothing', () => {
+    const s = thicket(true);
+    s.units[0]!.pos = { x: 2, y: 7 }; // same reveal, no thicket
+    expect(fogView(mapWithBrush, s, 0).camoTiles).toEqual([]);
+  });
+
+  it('never lights a tile over a unit the viewer cannot see', () => {
+    // The leak this would be: a red glow readable through fog is a better
+    // tracker than the fog it sits under.
+    const s = thicket(true);
+    s.units[1]!.pos = { x: 24, y: 14 }; // enemy far away, sees nothing
+    expect(fogView(mapWithBrush, s, 1).camoTiles).toEqual([]);
+  });
+
+  it('a dead unit lying in brush lights nothing', () => {
+    const s = thicket(true);
+    s.units[0]!.alive = false;
+    expect(fogView(mapWithBrush, s, 0).camoTiles).toEqual([]);
+  });
+
+  it('the rule is written once and works on any unit shape', () => {
+    // `camoTiles` is shape-agnostic so Decision (engine units) and playback
+    // (folded view units) cannot drift apart. Same map, same answer.
+    const asView = [{ pos: BRUSH, alive: true, revealed: true }];
+    expect(camoTiles(mapWithBrush, asView)).toEqual([BRUSH]);
+    expect(camoTiles(mapWithBrush, [{ pos: BRUSH, alive: true, revealed: false }])).toEqual([]);
+    expect(camoTiles(mapWithBrush, [{ pos: { x: 2, y: 7 }, alive: true, revealed: true }])).toEqual([]);
+  });
+
+  it('a board with no brush at all lights nothing, whoever is revealed', () => {
+    const s = thicket(true);
+    expect(fogView(OPEN, s, 0).camoTiles).toEqual([]);
   });
 });
