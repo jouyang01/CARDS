@@ -11,6 +11,7 @@ import {
   isFogged,
   isTeamBlue,
   isRangeWash,
+  isSceneBackground,
   isTeamRed,
   pixelAt,
   type Image,
@@ -333,31 +334,78 @@ test.describe('the dev map/format toggle', () => {
 });
 
 /**
- * UI-responsive — the HUD and log are `position: fixed`, so on a laptop they
- * cover the board rather than pushing it. The board subtracts their *measured*
- * sizes, which is the part that silently regresses: a breakpoint changes the
- * chrome and the fit keeps using yesterday's numbers.
+ * UI-VIEWPORT — the scene fills the viewport and the HUD overlays it.
+ *
+ * The board used to be the app frame: a DOM box the chrome was subtracted from,
+ * so a bigger map pushed the controls off the bottom of the screen. `iron-basin`
+ * at 22×19 is where that stopped being theoretical. The canvas is full-bleed
+ * now and the *camera* frames the board into whatever the chrome leaves, so map
+ * size and control placement are no longer the same question — which is exactly
+ * the claim this drives at both required resolutions on both maps.
  */
-test.describe('the layout survives a laptop-sized window', () => {
-  for (const viewport of [{ width: 1280, height: 800 }, { width: 1024, height: 700 }]) {
-    test(`${viewport.width}x${viewport.height}: the board fits and still draws`, async ({ page }) => {
-      await page.setViewportSize(viewport);
-      await page.waitForTimeout(400);
+test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay on it', () => {
+  const MAPS = [
+    { map: 'duel-arena', query: './?map=duel-arena' },
+    { map: 'iron-basin', query: './?map=iron-basin&format=4v4' },
+  ];
+  const SIZES = [{ width: 1280, height: 720 }, { width: 1920, height: 1080 }];
+  /** Everything a player has to be able to hit. */
+  const CONTROLS = '.hud-ability, .hud-catalyst, .hud-move, .hud-lock, .hud-small';
 
-      const board = (await boardCanvas(page).boundingBox())!;
-      const hud = (await page.locator('.hud').boundingBox())!;
+  for (const { map, query } of MAPS) {
+    for (const viewport of SIZES) {
+      test(`${map} at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+        await page.setViewportSize(viewport);
+        await page.goto(query);
+        await expect(boardCanvas(page)).toBeVisible();
+        await page.waitForTimeout(700);
 
-      // Fully on screen, and clear of the fixed chrome rather than under it.
-      expect(board.x, 'board runs off the left').toBeGreaterThanOrEqual(-1);
-      expect(board.x + board.width, 'board runs off the right').toBeLessThanOrEqual(viewport.width + 1);
-      expect(board.y + board.height, 'board is hidden behind the HUD').toBeLessThanOrEqual(hud.y + 2);
-      // Not collapsed to the minimum: it should still use most of the width.
-      expect(board.width).toBeGreaterThan(viewport.width * 0.4);
+        // 1. The canvas IS the viewport.
+        const canvas = (await boardCanvas(page).boundingBox())!;
+        expect(Math.round(canvas.width), 'canvas does not span the viewport width').toBe(viewport.width);
+        expect(Math.round(canvas.height), 'canvas does not span the viewport height').toBe(viewport.height);
+        expect(Math.round(canvas.x)).toBe(0);
+        expect(Math.round(canvas.y)).toBe(0);
 
-      // And it is still a live scene, not a stretched empty canvas.
-      const image = await pixels(page);
-      expect(countPixels(image, isTeamBlue), 'units stopped drawing at this size').toBeGreaterThan(0);
-    });
+        // 2. No control falls outside the visible area, at any map size.
+        const controls = page.locator(CONTROLS);
+        const count = await controls.count();
+        expect(count, 'no controls found — the selector or the HUD moved').toBeGreaterThan(4);
+        for (let i = 0; i < count; i++) {
+          const el = controls.nth(i);
+          if (!(await el.isVisible())) continue;
+          const box = (await el.boundingBox())!;
+          const label = (await el.textContent())?.trim().slice(0, 24) ?? `#${i}`;
+          expect(box.x, `"${label}" runs off the left`).toBeGreaterThanOrEqual(-1);
+          expect(box.y, `"${label}" runs off the top`).toBeGreaterThanOrEqual(-1);
+          expect(box.x + box.width, `"${label}" runs off the right`).toBeLessThanOrEqual(viewport.width + 1);
+          expect(box.y + box.height, `"${label}" runs off the bottom`).toBeLessThanOrEqual(viewport.height + 1);
+
+          // 3. …and is big enough to hit rather than aim at.
+          expect(box.width, `"${label}" is ${Math.round(box.width)}px wide`).toBeGreaterThanOrEqual(44);
+          expect(box.height, `"${label}" is ${Math.round(box.height)}px tall`).toBeGreaterThanOrEqual(44);
+        }
+
+        // 4. The whole board is in frame: the corners of the *uncovered* region
+        //    show scene background, so no rank of the board is clipped by an
+        //    edge or hidden under the chrome.
+        const image = await pixels(page);
+        const hud = (await page.locator('.hud').boundingBox())!;
+        const log = (await page.locator('.log').boundingBox())!;
+        const logIsColumn = log.width < viewport.width * 0.6;
+        const rightEdge = logIsColumn ? Math.round(log.x) - 12 : image.width - 6;
+        for (const [name, at] of [
+          ['top-left', { x: 6, y: 6 }],
+          ['top-right', { x: rightEdge, y: 6 }],
+          ['bottom-left', { x: 6, y: Math.round(hud.y) - 12 }],
+        ] as const) {
+          expect(isSceneBackground(pixelAt(image, at.x, at.y)), `board is clipped at the ${name}`).toBe(true);
+        }
+
+        // 5. And it is a live scene, not a stretched empty canvas.
+        expect(countPixels(image, isTeamBlue), 'units stopped drawing at this size').toBeGreaterThan(0);
+      });
+    }
   }
 });
 

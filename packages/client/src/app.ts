@@ -132,14 +132,16 @@ const DASH_LINE = 0xffd23f;
  * is this number and nothing else.
  */
 const MS_PER_BEAT = 460;
-/** Board shape and the space page chrome claims around it. */
-const BOARD_ASPECT = 0.58;
-const MAX_BOARD_WIDTH_PX = 1180;
-const MIN_BOARD_PX = { width: 320, height: 240 };
-/** Title + status line above the board; the HUD and log are measured instead. */
-const TOP_CHROME_PX = 120;
-/** Breathing room either side of the board. */
-const GUTTER_PX = 32;
+/**
+ * Title + status line, overlaid on the top-left of the canvas (UI-VIEWPORT).
+ * The only chrome whose size is assumed rather than measured — it is a text
+ * block with a fixed font, and measuring an overlay that never wraps would be
+ * ceremony. The HUD and the log ARE measured, because both have breakpoints.
+ *
+ * The board's own shape, max width and minimum are gone with the DOM-framed
+ * board: the camera frames the board now, so those numbers no longer exist.
+ */
+const TOP_CHROME_PX = 96;
 /**
  * How far a floating readout rises over its lifetime, and where it starts —
  * above the billboarded bars, so a number never sits on top of the HP it just
@@ -277,7 +279,15 @@ export function startHotSeat(
    * The board's own container is still never measured — the canvas is its only
    * child, so that would feed the canvas its own width back and pin it.
    */
-  const sizeToContainer = (): void => {
+  const sizeToViewport = (): void => {
+    // UI-VIEWPORT: the canvas IS the viewport. The board used to be the app
+    // frame — a DOM box the chrome was subtracted from — which meant a bigger
+    // map pushed the controls off the bottom of the screen (`iron-basin` at
+    // 22×19 is where it stopped being theoretical). Now the chrome overlays a
+    // full-bleed canvas and the *camera* frames the board, so map size and
+    // control placement stop being the same question.
+    renderer.resize(globalThis.innerWidth, globalThis.innerHeight);
+
     // The log is a right-hand column on a wide screen and a strip above the HUD
     // on a narrow one, so it costs width in one layout and height in the other.
     // Which one is *read off the box*, not branched on a pixel threshold — the
@@ -285,18 +295,14 @@ export function startHotSeat(
     // two drift apart silently.
     const logBox = ui.log?.getBoundingClientRect();
     const logIsColumn = logBox !== undefined && logBox.width < globalThis.innerWidth * 0.6;
-    const sideChrome = logIsColumn ? logBox.width : 0;
-    const bottomChrome =
-      ui.controls.getBoundingClientRect().height
-      + (logIsColumn ? 0 : (logBox?.height ?? 0))
-      + TOP_CHROME_PX;
-    const w = Math.max(MIN_BOARD_PX.width, Math.min(globalThis.innerWidth - sideChrome - GUTTER_PX, MAX_BOARD_WIDTH_PX));
-    const h = Math.max(MIN_BOARD_PX.height, Math.min(Math.round(w * BOARD_ASPECT), globalThis.innerHeight - bottomChrome));
-    // Keep the aspect when height is the binding constraint, so a short window
-    // narrows the board rather than stretching it.
-    renderer.resize(Math.min(Math.round(h / BOARD_ASPECT), w), h);
+    renderer.setSafeInsets({
+      top: TOP_CHROME_PX,
+      right: logIsColumn ? (logBox?.width ?? 0) : 0,
+      bottom: ui.controls.getBoundingClientRect().height + (logIsColumn ? 0 : (logBox?.height ?? 0)),
+      left: 0,
+    });
   };
-  sizeToContainer();
+  sizeToViewport();
   fitCamera();
   // The renderer drives its own frames now: the orbit, the auto-camera's easing
   // and the billboarded bars all need continuous frames, not one render per
@@ -305,7 +311,7 @@ export function startHotSeat(
   // The camera eases every frame, so the DOM-anchored plan-time numbers have to
   // be re-placed against the frame that was just drawn or they trail the board.
   renderer.onFrame(placePreviewNumbers);
-  globalThis.addEventListener('resize', () => { sizeToContainer(); fitCamera(); });
+  globalThis.addEventListener('resize', () => { sizeToViewport(); fitCamera(); });
   ui.board.addEventListener('click', onBoardClick);
   ui.board.addEventListener('mousemove', onBoardHover);
 
@@ -386,7 +392,7 @@ export function startHotSeat(
 
   // The HUD and log are what `sizeToContainer` measures, so re-fit now that both
   // exist and carry content — the first pass ran before either was populated.
-  sizeToContainer();
+  sizeToViewport();
   fitCamera();
 
   // Ability hover tooltip (TT1) — one reused element, positioned by the button.
