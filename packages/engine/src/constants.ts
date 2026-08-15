@@ -15,7 +15,7 @@ export const PASSIVE_ENERGY = 5;
 export const ULT_COST = 100;
 // KILLS_TO_WIN and TURN_LIMIT are per-format now — see `formats.ts` / GAME_SPEC §1.
 export const RESPAWN_TURNS = 1;
-export const DECISION_SECONDS = 30;
+export const DECISION_SECONDS = 40;
 export const TIMEBANK_CHARGES = 1;
 export const TIMEBANK_SECONDS = 10;
 /**
