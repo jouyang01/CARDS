@@ -147,7 +147,14 @@ const MS_PER_BEAT = 460;
  * The board's own shape, max width and minimum are gone with the DOM-framed
  * board: the camera frames the board now, so those numbers no longer exist.
  */
-const TOP_CHROME_PX = 96;
+/**
+ * Fallback for the top chrome when nothing has laid out yet (the very first
+ * `sizeToViewport`, before the scoreboard has been filled in). Every call after
+ * that measures the real thing — the readout's height depends on how many
+ * characters the format fields, so a constant would be wrong for 4v4 the moment
+ * SCORE1 landed.
+ */
+const TOP_CHROME_FALLBACK_PX = 96;
 /**
  * How far a floating readout rises over its lifetime, and where it starts —
  * above the billboarded bars, so a number never sits on top of the HP it just
@@ -287,6 +294,12 @@ export function startHotSeat(
    * The board's own container is still never measured — the canvas is its only
    * child, so that would feed the canvas its own width back and pin it.
    */
+  // SCORE1's readout lives in its own element under the status line, so the
+  // HUD's in-place update never has to know about it and vice versa.
+  const scoreEl = document.createElement('div');
+  scoreEl.className = 'scoreboard';
+  ui.status.after(scoreEl);
+
   const sizeToViewport = (): void => {
     // UI-VIEWPORT: the canvas IS the viewport. The board used to be the app
     // frame — a DOM box the chrome was subtracted from — which meant a bigger
@@ -304,7 +317,10 @@ export function startHotSeat(
     const logBox = ui.log?.getBoundingClientRect();
     const logIsColumn = logBox !== undefined && logBox.width < globalThis.innerWidth * 0.6;
     renderer.setSafeInsets({
-      top: TOP_CHROME_PX,
+      // Measured, not assumed: the scoreboard's strip grows with the format's
+      // character count, so a fixed number would frame the board under it in
+      // 4v4 and leave a gap in 1v1.
+      top: Math.max(scoreEl.getBoundingClientRect().bottom + 8, TOP_CHROME_FALLBACK_PX),
       right: logIsColumn ? (logBox?.width ?? 0) : 0,
       bottom: ui.controls.getBoundingClientRect().height + (logIsColumn ? 0 : (logBox?.height ?? 0)),
       left: 0,
@@ -342,12 +358,6 @@ export function startHotSeat(
 
   // Persistent corner phase label (A3): it stays put and changes text, so the
   // eye never has to hunt for which phase is playing.
-  // SCORE1's readout lives in its own element under the status line, so the
-  // HUD's in-place update never has to know about it and vice versa.
-  const scoreEl = document.createElement('div');
-  scoreEl.className = 'scoreboard';
-  ui.status.after(scoreEl);
-
   const phaseLabel = document.createElement('div');
   phaseLabel.className = 'phase-label';
   phaseLabel.style.display = 'none';

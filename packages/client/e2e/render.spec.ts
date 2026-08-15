@@ -61,15 +61,44 @@ const lockIn = (page: Page): Locator => page.locator('.hud-right .hud-lock');
 /**
  * The composited board, as PNG bytes — the only honest view of the render.
  *
- * Clipped to the canvas's own box rather than `locator.screenshot()`, which
- * captures the element's region *after* scrolling it into view and so drags in
- * page chrome. Anti-aliased title text was enough stray colour to keep a
- * "no units drew" mutation passing, which is the failure mode this suite exists
- * to catch.
+ * Clipped to the canvas's **uncovered** region rather than to its bounding box.
+ * Since UI-VIEWPORT the canvas fills the whole viewport and the HUD, the
+ * scoreboard and the combat log are drawn *over* it, so its box is the page. A
+ * screenshot of that is a screenshot of the chrome as much as of the board —
+ * and the chrome is painted in the same two team colours the probes below use
+ * to prove units drew, which turns every one of those assertions into a
+ * tautology. Anti-aliased title text was already enough stray colour to keep a
+ * "no units drew" mutation passing once; a team-coloured HUD is that failure
+ * with the volume up.
+ *
+ * The insets mirror `app.ts`'s `sizeToViewport`, which is what the camera
+ * itself frames the board into — so this samples exactly the region the board
+ * was fitted to.
  */
+async function boardClip(page: Page): Promise<{ x: number; y: number; width: number; height: number }> {
+  const box = (await boardCanvas(page).boundingBox())!;
+  const chrome = await page.evaluate(() => {
+    const rect = (sel: string): DOMRect | undefined =>
+      document.querySelector(sel)?.getBoundingClientRect();
+    const controls = rect('#controls');
+    const log = rect('#log');
+    const logIsColumn = log !== undefined && log.width < globalThis.innerWidth * 0.6;
+    return {
+      top: (rect('.scoreboard')?.bottom ?? rect('#status')?.bottom ?? 0) + 8,
+      right: logIsColumn ? (log?.width ?? 0) : 0,
+      bottom: (controls?.height ?? 0) + (logIsColumn ? 0 : (log?.height ?? 0)),
+    };
+  });
+  return {
+    x: box.x,
+    y: box.y + chrome.top,
+    width: Math.max(1, box.width - chrome.right),
+    height: Math.max(1, box.height - chrome.top - chrome.bottom),
+  };
+}
+
 async function frame(page: Page): Promise<Buffer> {
-  const clip = (await boardCanvas(page).boundingBox())!;
-  return await page.screenshot({ clip });
+  return await page.screenshot({ clip: await boardClip(page) });
 }
 
 /** The composited board, decoded to pixels. */
@@ -80,15 +109,25 @@ async function pixels(page: Page): Promise<Image> {
 const same = (a: Buffer, b: Buffer): boolean => a.equals(b);
 
 /** Point at a fraction of the board and settle a frame. */
+/**
+ * Fractions address the **uncovered board region**, not the canvas box.
+ *
+ * Since UI-VIEWPORT the canvas is the whole viewport, so `0.55, 0.85` of its box
+ * is inside the hotbar — and hovering a hotbar button paints a range envelope,
+ * which changes the frame. That is the app working correctly; it is the
+ * fractions that stopped meaning "somewhere on the board". Routing them through
+ * the same clip `frame()` samples keeps the two in step: what a test points at
+ * is inside what it then looks at.
+ */
 async function pointAt(page: Page, fx: number, fy: number): Promise<void> {
-  const box = (await boardCanvas(page).boundingBox())!;
-  await page.mouse.move(box.x + box.width * fx, box.y + box.height * fy);
+  const clip = await boardClip(page);
+  await page.mouse.move(clip.x + clip.width * fx, clip.y + clip.height * fy);
   await page.waitForTimeout(180);
 }
 
 async function clickAt(page: Page, fx: number, fy: number): Promise<void> {
-  const box = (await boardCanvas(page).boundingBox())!;
-  await page.mouse.click(box.x + box.width * fx, box.y + box.height * fy);
+  const clip = await boardClip(page);
+  await page.mouse.click(clip.x + clip.width * fx, clip.y + clip.height * fy);
   await page.waitForTimeout(220);
 }
 
@@ -136,7 +175,9 @@ test('the opening frame is already fogged — no turn-1 grace reveal', async ({ 
   for (let i = 0; i < 8; i++) {
     const box = await boardCanvas(page).boundingBox();
     if (box !== null && box.width > 0) {
-      const image = decodePng(await page.screenshot({ clip: box }));
+      // Same uncovered-region clip the rest of the suite uses — the HUD is
+      // painted in the team colours this test is looking for.
+      const image = decodePng(await page.screenshot({ clip: await boardClip(page) }));
       // Only judge frames that have actually drawn something — an empty canvas
       // before the first composite is not evidence either way.
       if (countPixels(image, isTeamBlue) > 0) {
@@ -389,15 +430,14 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
         // 4. The whole board is in frame: the corners of the *uncovered* region
         //    show scene background, so no rank of the board is clipped by an
         //    edge or hidden under the chrome.
+        //    `pixels` already clips to that region, so the corners are the
+        //    image's own — reading page-absolute coordinates into a clipped
+        //    image would index past its edge and prove nothing.
         const image = await pixels(page);
-        const hud = (await page.locator('.hud').boundingBox())!;
-        const log = (await page.locator('.log').boundingBox())!;
-        const logIsColumn = log.width < viewport.width * 0.6;
-        const rightEdge = logIsColumn ? Math.round(log.x) - 12 : image.width - 6;
         for (const [name, at] of [
           ['top-left', { x: 6, y: 6 }],
-          ['top-right', { x: rightEdge, y: 6 }],
-          ['bottom-left', { x: 6, y: Math.round(hud.y) - 12 }],
+          ['top-right', { x: image.width - 6, y: 6 }],
+          ['bottom-left', { x: 6, y: image.height - 6 }],
         ] as const) {
           expect(isSceneBackground(pixelAt(image, at.x, at.y)), `board is clipped at the ${name}`).toBe(true);
         }

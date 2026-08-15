@@ -33,10 +33,18 @@
          the bottom of the screen. Now the board fills the viewport and every
          piece of chrome overlays it — map size and control placement stop being
          the same question. */
+      /* The board is a SIBLING of the overlay, not a child of it. Since
+         UI-VIEWPORT all three layers are full-viewport and stacked, so `#app`
+         needs a z-index above the log for the HUD to be clickable — and if the
+         board lived inside `#app` it would inherit that and paint over the log.
+         Being siblings lets each layer state its own depth: board under log
+         under overlay. It also means the board is not inside a
+         `pointer-events: none` subtree, so it receives clicks without opting
+         back in. */
       #board { position: fixed; inset: 0; z-index: 0; background: var(--panel); }
-      /* The title/status layer floats over the board and must never eat a click
+      /* The title/status layer floats over everything and must never eat a click
          meant for a tile; its children opt back in if they ever need to. */
-      #app { position: fixed; inset: 0; z-index: 1; pointer-events: none;
+      #app { position: fixed; inset: 0; z-index: 5; pointer-events: none;
         padding: 14px 18px; }
       h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0.5px;
         text-shadow: 0 2px 10px rgb(0 0 0 / 0.9); }
@@ -226,11 +234,11 @@
     </style>
   </head>
   <body>
+    <div id="board"></div>
     <aside id="log" class="log"></aside>
     <div id="app">
       <h1>CARDS — Duel Arena</h1>
       <div id="status"></div>
-      <div id="board"></div>
       <div id="controls" class="hud"></div>
       <footer>M2 hot-seat · order entry, resolution & playback driven entirely by the engine</footer>
     </div>
