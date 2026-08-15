@@ -48,9 +48,11 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > 3. **`DOT-HOT`** — new `damageOverTime` / `healOverTime` effect kinds, applying at end of turn
 >    **before** the status tick, FF1-polarised, credited like traps. Blocks Regenergy and the
 >    Health power-up.
-> 4. **`CHASE1`** — AR chase orders, resolving at the **end** of the Move phase. **Four edge
->    cases need Analyzer rulings before the Builder starts** (chase-vs-chase, dead target,
->    chasing a target you cannot see, chase + dash) — listed in §7.2.
+> 4. **`CHASE1`** — AR chase orders, resolving at the **end** of the Move phase. **All four edge
+>    cases are now RULED (2026-09-01)** — see "Chase orders" under Movement below. The load-bearing
+>    one: **you cannot chase a target your team cannot see** — a chase heads to the last-known
+>    square and stops there, it does not pursue into fog (owner ruling, overrides the Designer's
+>    "lean: legal").
 > 5. **`PADS1`** — power-up pads: `MapDef.powerups`, first-occupier at end of Move, Health /
 >    Might / Energy reusing existing effects plus `healOverTime`.
 > 6. **`TIMER-40`** — `DECISION_SECONDS` 30 → 40 (owner). Time Bank unchanged.
@@ -201,6 +203,54 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   move). Damage applies immediately; if it kills, remaining path/actions are discarded.
   A unit that *starts* on a freshly placed trap square does not trigger it until it
   re-enters.
+- **RULED — Traps expire: Overwatch Trap 2 turns, every trap ≤3 turns (owner directive
+  2026-09-01, "Overwatch Traps should only last for 2 turns total. Traps in general should only
+  last for up to 3 turns max"; backlog TRAP-LIFETIME — engine + data + validation).** A placed
+  trap currently **never expires** — it sits until triggered, which lets a Vex minefield accrete
+  across a match. Ruling: a trap **expires unfired at the end of `placedTurn + lifetime − 1`** (a
+  `lifetime: 2` trap covers the turn it is placed and the next, then is gone), mirroring how a
+  `duration: N` status is measured. **`TrapState` gains a lifetime/expiry**, populated from the
+  ability's trap effect; **Vex's Overwatch Trap is `2`**; **validation rejects any trap `lifetime`
+  > 3** (the general cap), the same shape as the other content caps. The client's TRAP-INDICATOR
+  marker clears when the trap expires (an expiry event or the trap simply leaving `state.traps`).
+  Ships with tests: an Overwatch Trap placed on turn *t* is gone by turn *t+2* if never triggered;
+  a trap authored with `lifetime: 4` fails validation; a trap still triggers normally within its
+  life. **Deterministic** (integer turn arithmetic, N-trap-safe list). Out of scope: re-arming or
+  moving traps; per-trap balance beyond the owner's two numbers.
+- **RULED — Chase orders resolve at the end of Move, and the four edge cases (CHASE1; Designer
+  ar-parity §7.2 + owner ruling 2026-09-01; backlog CHASE1 — engine + client).** A `UnitOrders`
+  may carry a **chase target** (an enemy unit id) instead of a `movePath`: normal movement resolves
+  first, then chasers path toward their target with the mover's **remaining budget**, stopping short
+  of occupied squares per Collisions. The four cases:
+  - **Chase a target you CANNOT see → go to the last-known square, and STOP there (owner ruling,
+    OVERRIDES the Designer's "lean: legal into fog").** *"You cannot chase a target you cannot see;
+    you will go to their last known square if possible, but not chase it past where you lost
+    vision."* A chase must **never use hidden information** (golden rule #5) — pathing to a target's
+    true fogged position would leak exactly what fog hides. So at chase resolution: **if the
+    chaser's team currently sees the target, path toward its actual (post-Move) square; otherwise
+    path toward the team's LAST-KNOWN square for that target and stop there** — do not continue past
+    it toward the unseen true position. This requires **engine-side, per-team last-known state**
+    (LAST-KNOWN shipped client-only; the engine needs its own authoritative record because chase
+    resolution is engine logic). Define it deterministically: the engine records, per `(team,
+    enemyUnitId)`, the enemy's position **as of the most recent turn boundary at which the team
+    could see it** (updated in end-of-turn processing, integer, N-unit-safe); a chase against an
+    unseen target uses that stored square. If the team has **never** seen the target, the chase is
+    dropped (the unit holds) — you cannot chase a rumor. A target seen at plan time but lost during
+    this turn's resolution resolves to the last square the team saw it (which, at turn granularity,
+    is its start-of-turn square).
+  - **Chase vs chase (A chases B, B chases A).** Both chasers resolve against the **same snapshot**
+    — positions after all normal movement — so neither target has moved by the time the other paths
+    to it. Simultaneous and symmetric; each closes toward the other's post-Move square with its own
+    budget, stopping short per Collisions (they cannot co-occupy). Deterministic; not a stalemate
+    (they converge). Confirm it reads right in playtest.
+  - **Chase a target that died this turn.** The order is **dropped** — the unit holds position
+    (Designer lean, ratified). A dead unit has no square to chase.
+  - **Chase + a dash ability in the same turn.** The **dash is the movement**, so the chase is
+    **dropped** (same rule as a dash dropping a `movePath`). One reposition per turn.
+  - **Determinism + N-unit safety:** chasers resolve in a fixed unit order against the frozen
+    post-Move snapshot; last-known is integer per-team state. No float, no RNG, no clock. Ships with
+    tests: chase-into-fog stops at last-known; never-seen target holds; chase-vs-chase converges;
+    dead/dashing target drops the chase.
 - **RULED — Walked dash vs teleport; `shape` is the authority (R4, updated 2026-08-19).**
   Two dash models, distinguished by `shape` — and `shape` alone decides *how* a reposition
   happens; a `teleport` **effect** only says *that* the caster repositions (which makes it a
@@ -958,10 +1008,24 @@ Full rationale in the source spec; the RULED text here is authoritative.
     including Fade and Unshackle, which reposition nobody.** The directive names the *colour*, and
     "yellow costs your Move" is one rule a player can hold in their head vs. "yellow costs your
     Move unless it doesn't move you." My earlier PROPOSED version was narrower (only the
-    repositioning catalyst); the shipped uniform reading is accepted as the v1 default. **Open
-    balance flag → Designer/playtest:** Fade at the cost of a full Move may be unplayable; if so,
-    exempting the non-repositioning Dash catalysts is a one-condition change — a Designer call,
-    watched in playtest, not reopened pre-emptively.
+    repositioning catalyst); the shipped uniform reading is accepted as the v1 default.
+  - **SUPERSEDED 2026-09-01 — a Dash catalyst is now your FULL action (owner directive, "Dash
+    Catalyst should count as your full action"; backlog CAT-DASH-FULL — engine + client).** The
+    "spends your Move" cost above is **not enough** — the owner has ruled a Dash catalyst consumes
+    the unit's **whole active turn**: it costs the **normal ability slot AND the Move** (and
+    Sprint), exactly as if it *were* the unit's ability-and-movement for the turn. So a turn that
+    arms a Dash catalyst may **not** also declare a normal ability, a dash, a Move, or a Sprint.
+    (Prep/Blast catalysts are unchanged — still free/additive; a **free ability** is a separate
+    free action and is still allowed alongside, per the one-free-action rule.) Rationale: a free
+    ≤3 teleport (Shift) or a 2-turn Untargetable (Fade) that only cost a Move was still the
+    strongest thing a turn could do; making it the whole action prices it like the once-per-match
+    power it is. **Engine:** a unit with a `catalyst` order whose catalyst is Dash-phase drops its
+    `ability`, `movePath` and `sprint` (mirror how a dash ability already drops the Move, extended
+    to also drop the ability). **Client:** arming a Dash catalyst disables the ability hotbar, Move
+    and Sprint (not just Move); choosing any of them hands the catalyst slot back. Ships with a
+    test that a Dash-catalyst turn carries no ability/move/sprint, and that Prep/Blast catalysts
+    still stack with an ability + move. This **reverses the "Fade at full-Move cost may be
+    unplayable" flag** — the owner has decided the cost deliberately, so that flag is closed.
 - **ENGINE ASK (CAT1).** (1) Catalyst defs: `data/catalysts.json` is `{prep,dash,blast}`, each
   entry an `AbilityDef` with `cooldown:0, energyGain:0, free:true, oncePerMatch:true` (reuse
   `validateAbility`). (2) `UnitState` gains `catalysts: string[]` (length 3, one per phase) and
