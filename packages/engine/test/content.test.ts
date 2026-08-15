@@ -147,7 +147,7 @@ describe('MAP-CAPS: the run-cap guard actually catches a bad map', () => {
 
   it('counts a run as broken by a gap, not merely by the row ending', () => {
     const gapped: MapDef = {
-      id: 'g', name: 'g', width: 12, height: 3, walls: [], cover: [], brush: [],
+      id: 'g', name: 'g', width: 12, height: 3, walls: [], cover: [],
       spawns: [[{ x: 0, y: 0 }], [{ x: 11, y: 0 }]],
       brush: [0, 1, 2, 4, 5, 6].map((x) => ({ x, y: 1 })),
     };
