@@ -195,6 +195,29 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   Content guardrail (R4, optional): a test may assert no `shape: "path"` ability ever
   resolves through the teleport branch, so a refactor can't silently make Combat Roll
   wall-crossing.
+- **RULED — A dash may not END on a square held by another character, EXCEPT when the skill's own
+  knockback clears it first (owner directive 2026-08-30, "you should not be able to dash onto the
+  same square as another character unless there's a knockback associated with the skill"; backlog
+  DASH-OCCUPIED — engine tests + client aim-gating).** The **prohibition already holds in the
+  engine** and this ruling pins it: a **teleport** (`square`) onto an occupied square **fizzles**
+  (`teleport()` ~:292 returns false on a living occupant), and a **charge** (`path`) **rests on
+  the furthest FREE square** (`walkCharge` ~:933-937), never on top of a unit. Decoys are not in
+  `state.units`, so this is about real characters; a dash *ending* on a decoy destroys it (R2).
+  The two owed pieces:
+  - **The knockback exception (engine).** A dash whose **own effect knocks the destination's
+    occupant away** may land on the vacated square: the clearing displacement resolves **as part
+    of the dash landing (in the Dash phase, before the dasher settles)**, not deferred to the
+    end-of-Blast displacement pass — otherwise the occupant is still standing when the dasher
+    tries to land and it fizzles/rests-short. Order: knock the occupant out → land the dasher.
+    **No current roster dash exercises this** (charges rest-short and carry their knockback as an
+    area `impact`; no teleport both aims at an occupied square and knocks its occupant off it), so
+    this is forward-looking — implement the resolution order + a synthetic test now so a future
+    knockback-dash works, or, if cheaper, rule it PROPOSED and document the order for when a skill
+    needs it. Either way the **prohibition ships with regression tests** across charge, teleport,
+    and the Shift catalyst (all three must refuse an occupied destination without the exception).
+  - **Client aim-gating.** A teleport/dash aim at an occupied square should be **refused at commit**
+    (it silently fizzles otherwise), same as AIM-RANGE refuses out-of-range clicks — the client
+    marks an occupied destination illegal rather than sending an order the engine drops.
 - **RULED — Charge breadth via optional `chargeHits` (R1b, Designer 2026-08-13; ENGINE ASK,
   backlog).** `AbilityDef` gains `chargeHits?: "first" | "all"`, default `"first"`. On
   `"all"` a damaging `path` dash applies its effects to **every** enemy crossed (Kestrel's
@@ -490,6 +513,51 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   (`REVEAL_ON_ATTACK_TURNS = 2`): applied during resolution it survives this turn's
   end-of-turn tick and next turn's. A pure knockback/pull or a missed shot does not
   reveal. (Supersedes the earlier "1 turn" parenthetical, which under-counted the tick.)
+  **REFINED 2026-08-30 by the owner's vision rules — reveal is a CAMOUFLAGE penalty, and it
+  fires on more than a damaging attack (see the two rulings below).**
+- **RULED — Positional concealment (fog: out of range / behind walls) is NOT broken by
+  attacking (owner vision rule 2026-08-30, "Attacking from the Fog of War"; backlog LAST-KNOWN
+  — client).** A unit standing **outside the enemy's vision radius or behind cover/walls** may
+  fire abilities freely and **its model stays hidden** — the enemy sees the *trajectory* of the
+  attack crossing their visible area, not the attacker. The engine already delivers the hidden
+  half for free: `canSee` tests **range then line-of-sight BEFORE concealment** (`vision.ts`
+  ~:253-255), and `reveal` overrides only brush/Stealth, never range or walls — so applying
+  `reveal` to a positionally-hidden attacker is a harmless no-op, and it stays off the enemy's
+  board. Two client pieces are owed:
+  - **Last-known position (LAST-KNOWN, client).** An enemy the team has lost sight of stays drawn
+    as a **ghost at its last-spotted square** until it re-enters team vision (then the ghost moves
+    to the new sighting). This is a per-team, per-enemy memory the client keeps across turns; it
+    reveals *nothing new* (only where the unit **was** last seen), so it is not a hidden-info
+    leak. Was "out of scope (optional AR nicety)" through 2026-08-25; the owner has now asked for
+    it, so it is scoped.
+  - **Trajectory through fog (client).** The enemy sees the attack's path/area animate across
+    their visible tiles even when the attacker's model is hidden — playback already reveals the
+    resolved actions; verify the projectile/area reads even when the source tile is fogged.
+- **RULED — Camouflage-tile reveal penalty: acting or being hit WHILE CONCEALED reveals you this
+  turn and next, and turns the tile red (owner vision rule 2026-08-30, "The Exception: Camouflage
+  Tiles"; backlog CAMO-REVEAL — engine + client).** The rule changes entirely for a unit
+  concealed by a **camouflage tile (brush) or by Stealth**: if, *while concealed*, it **uses an
+  offensive ability, uses a catalyst, or takes damage**, it is **revealed for the rest of this
+  turn and all of the next** (the existing 2-turn Reveal) and its Stealth breaks. Deltas from the
+  shipped engine:
+  - **Expand the reveal triggers.** Today `reveal` is applied only on **dealing damage**
+    (`resolve.ts` ~:911, ~:1101). Add: **using a catalyst** while concealed, and **taking
+    damage** while concealed (today taking damage only calls `breakStealth` (~:1079/~:495) — a
+    brush-hidden unit with no `stealth` status is therefore *not* revealed next turn, which is the
+    bug the owner is describing). "Offensive ability" reads as any *harmful* ability (damage,
+    debuff or displacement), not damage alone.
+  - **Gate the penalty on being concealed at the moment of acting.** Reveal-on-action fires **iff
+    the unit is in a brush patch OR carries `stealth`** when it acts/takes the hit — so acting in
+    the **open** does not arm a future reveal (it is a no-op anyway, but this makes the rule match
+    the owner's wording and avoids an "acted in the open, then hid, got revealed" false positive).
+    This refines the current "reveal on any damaging attack" to "reveal on any qualifying action
+    *while concealed*."
+  - **Client: the tile turns red.** The camouflage tile the unit stood on when it revealed itself
+    renders **bright red** for the reveal's duration — the visible tell the owner described. Drive
+    it off the `reveal` `statusApplied` event + the unit's tile.
+  - Engine behavior change → ships with tests: a brush-hidden unit that takes damage is revealed
+    next turn; a brush-hidden unit that fires a catalyst is revealed; a unit acting **in the open**
+    gains no reveal; movement through brush (no offensive action) does **not** reveal.
 - **RULED — Stealth ends on attack/damage; Reveal only masks it (BACKLOG item 6; see
   review 2026-08-12).** `canSee` checks Reveal before Stealth, so an attacker who gains
   Reveal-for-one-turn merely *appears* to leave Stealth. GAME_SPEC §6 says Stealth is
@@ -506,10 +574,21 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   - **Spawn** in Prep at the caster's square, in the same effect resolution as the Stealth
     it accompanies. It never moves or acts.
   - **Lifetime:** expires at the end of `castTurn + 1` (the literal "end of the next turn").
-    **Confirmed 2026-08-20 (implemented `expiresOnTurn = draft.turn + 1`):** this outlives
-    the accompanying 1-turn Stealth by a turn, and that is correct — the decoy must stand
-    through the enemy's *next* decision to fool anyone; the "matching the 1-turn Stealth"
-    phrasing was imprecise, `castTurn + 1` stands. Cast-turn-only remains the playtest lever.
+    **Confirmed 2026-08-20 (implemented `expiresOnTurn = draft.turn + 1`):** the decoy must stand
+    through the enemy's *next* decision to fool anyone; `castTurn + 1` stands.
+  - **RULED — Stealth lasts one turn AFTER the cast, matching the decoy (owner Dev Note Ruling
+    2026-08-30: "Veil & Decoy effects, Stealth/Decoy should last one turn AFTER the skill is
+    used"; backlog STEALTH-DURATION — data; resolves Builder OQ 2026-08-29 #1).** Veil & Decoy's
+    Stealth ships at **`duration: 1`**, which — because durations tick at end of turn (GAME_SPEC
+    §6) — covers *only the cast turn* and is gone by the time the enemy next looks, so stealth is
+    **unobservable** (STEALTH-CONFIRM proved the render path is correct; the value is the bug).
+    Set Wisp's Stealth to **`duration: 2`** so it covers the cast turn **and the following turn**,
+    aligning it with the decoy's `castTurn + 1` — now the decoy stands *and* the caster is hidden
+    through the enemy's next Decision, which is the whole point of the ability. The owner has ruled
+    the value, so it overrides "never rebalance"; it is a one-line change in
+    `data/characters/wisp.json` (`veil_and_decoy` → the `stealth` effect's `duration: 1 → 2`).
+    **This reverses every prior "1-turn Stealth" note above** — the imprecise phrasing is now a
+    ruled `duration: 2`.
   - **Destruction:** *any* damage destroys it (no HP pool). An enemy that **ends a voluntary
     reposition on its square — Move *or* Dash — destroys it** (you walked/dashed onto the
     ghost). **Confirmed/widened 2026-08-20:** the shipped code destroys on Move-onto only;
