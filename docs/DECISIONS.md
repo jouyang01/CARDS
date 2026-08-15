@@ -2009,3 +2009,97 @@ decision rather than a Builder one.
 
 8. **Carried over, unchanged:** `statusRemoved` source attribution (OQ 2026-08-29 #7), the
    PREVIEW-NUMBERS cover-adjustment question (OQ 2026-08-28 #6).
+
+## 2026-08-14 — Atlas Reactor parity audit across six systems (Designer)
+
+Audited statuses, turn phases, vision, UI, map design and the scoreboard against AR at the
+owner's request. Full findings and the decision list in `docs/design/ar-parity-v1.md` §7.
+Sourced from the project's own (still unmerged) `atlas-reactor-reference.md`, plus
+measurements; AR shut down in 2019 and the community wiki is unreachable from this
+environment, so items I could not source are marked VERIFY rather than asserted as parity.
+
+**(1) Turn phases are the system we copied most faithfully — no gaps.** Phase order,
+simultaneous hidden planning, 4/8 movement, dash-forbids-move, displacement-cancels-Move and
+emergent dash immunity all match. Two entries the AR reference still lists as open are stale
+in our favour and should be closed: ground-vs-airborne dashes already exist as `path` vs
+`square`, and free actions shipped as FREE1. The one genuine gap is **chase orders**, which
+need their own edge-case rulings (chase-vs-chase, chase-into-occupied) and so are a decision,
+not a spec.
+
+**(2) Vision is the largest divergence in the project, and it is not a bug.** AR hides
+*intent*, not *position* — all eight enemies are always visible, and only camouflage and
+Invisible conceal. Ours hides position behind 6-tile fog. The project's own research already
+flagged the cost: unseen enemies turn reads into coin flips, which feels like RNG in a game
+whose pitch is "no RNG." Recommended resolution is to move `visionRange` into the **per-format
+config** that already carries `killsToWin` and `turnLimit` — unlimited at 4v4 (AR parity, more
+bodies to track), 6 at 2v2 (fog keeps small formats from going static). That settles it by
+playtest rather than by argument, for the cost of one field.
+
+**(3) The UI complaint is a viewport bug, not a HUD rebuild.** The client treats *the board* as
+the application frame, so controls fall outside it; AR fills the viewport with the scene and
+overlays the HUD on top, which is why nothing can be off-board there. The HUD module is already
+structured for this, so the fix is layout and hit-target sizing (min 44×44 px). `iron-basin` at
+22×19 is the case that exposes it — the bug gets worse as maps get bigger, which is the wrong
+direction. This is the highest-value item in the audit: it is the only one a player hits within
+ten seconds of opening the game.
+
+**(4) No scoreboard exists anywhere** — not in the client, the backlog, or any doc. Most
+notable omission: a player cannot see **turn X of Y**, and the turn limit is the clock the
+entire Support anti-stall balance depends on. Damage and healing totals are not accumulated in
+engine state, but since the event log is the rendering contract the client can fold them during
+playback — so the useful half needs no engine change.
+
+**(5) I broke my own map rule, and the measurement caught it.** The owner's principle — AR maps
+never run too much cover, pillar or stealth in a row — is violated by **both maps I authored**:
+brush corridors run 6 tiles on `duel-arena` and 8 on `iron-basin`. I built them as "concealed
+flank routes," but an 8-long brush run is not a route with a concealment option, it is a lane
+where a unit is unhittable for eight tiles. Proposed caps (brush ≤3, cover ≤4, wall ≤5
+unbroken) with a content test to enforce them, and both maps are mine to fix.
+
+**(6) Statuses match on the core set; the real gap is over-time effects.** Every CARDS effect
+is instantaneous or a flat modifier, while AR has damage- and heal-over-time — confirmed
+concretely by AR's Health power-up ("10 on pickup, +20 more over 2 turns"). Beyond power-ups
+this is the standard counter to turtling, which CARDS currently answers only by out-positioning.
+Two new effect kinds is exactly the sort of change golden rule #2 says needs an explicit
+decision, so it is raised rather than assumed. An incoming-damage modifier ("Vulnerable") is
+the natural pair but I could not source it, so it waits on the owner's recall.
+
+## 2026-08-14 — AR parity: seven owner decisions, and a vision claim I got wrong (Designer)
+
+All seven questions from the parity audit are answered; `docs/design/ar-parity-v1.md` §7 is now
+a spec list rather than a question list. Recording the two things worth remembering.
+
+**(1) I was wrong about AR's vision, and the owner's instinct caught it.** I claimed AR showed
+every enemy position at all times and built a three-option recommendation on it. The owner
+pushed back citing reveal-type tools, and checking found **Grey's hawk drone "grants vision
+above and beyond what the character can see"** — a phrase that is meaningless unless characters
+have a limited sight range. The failure was specific and worth naming: the research doc says
+positions are *"broadly known"*, a deliberate hedge, and I hardened it into a hard fact. The
+correction is happy — our 6-tile vision is **parity, not a divergence**, so the decision is "no
+work," and the section now exists to stop a future session from "fixing" it. Two observations
+are recorded but explicitly not scheduled: vision is a Manhattan diamond under MET1 (same axis
+bias the aiming ruling removed), and we have no vision-*granting* tools (AR built a Freelancer
+around it). Neither is wanted now. Note the near-miss — the **Probe** catalyst reveals
+*camouflage* specifically, so it is consistent with the model I had and would not have caught
+the error; it was the drone that did.
+
+**(2) Content that fails validation does not ship, even when the design is approved.** DoT/HoT
+was approved, so AR's **Regenergy** catalyst (heal-over-time) became designable — but
+`healOverTime` does not exist in `EFFECT_KINDS` yet, and putting it in `data/catalysts.json`
+would have made the shipped pool structurally invalid. So Regenergy is specced in the doc and
+withheld from data until `DOT-HOT` lands, while **Fetter** (root) and **Probe** (area reveal)
+ship now because they use kinds the engine already has. The pool is deliberately 3/4/4 rather
+than a symmetric 4/4/4, and the tests assert that asymmetry with the reason attached — a
+lopsided pool with an explanation is better than either invalid content or a silent wait.
+Reaching AR's four-per-phase pool is the goal; getting there in two steps is the cost of not
+shipping something broken.
+
+**(3) The map rule I broke is fixed, but the guard is the real deliverable.** Both maps' brush
+was re-cut from 6- and 8-tile runs into runs of 3, mirror symmetry and all the M1 invariants
+re-verified (separation 13, sightlines wall-broken, no turn-1 spawn hit). The `content.test.ts`
+guard enforcing brush ≤3 / cover ≤4 / wall ≤5 is owed by the Builder — without it the next map
+reintroduces the same error, which is exactly how this one survived two review passes.
+
+**(4) The decision timer goes to 40 s, away from AR's 20 s, deliberately.** A player may control
+two characters, and since FREE1/CAT1 a turn can carry a free action, a catalyst, an ability and
+a move. AR's 20 seconds was sized for a strictly smaller decision.

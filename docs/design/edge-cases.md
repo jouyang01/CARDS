@@ -35,6 +35,39 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > Manhattan; MET1 stands for walking). The three `impact` fields in
 > `data/characters/{aegis,ravok,wisp}.json` are already written and inert until DASH-IMPACT.
 
+> **⚠ NOT YET FOLDED IN — AR parity audit, ruled 2026-08-14 (Designer + owner).**
+> `docs/design/ar-parity-v1.md` audits six systems against Atlas Reactor. **All seven owner
+> decisions are in; nothing is blocked.** Spec list with acceptance criteria in its §7:
+> 1. **`UI-VIEWPORT`** — the renderer canvas must fill the *viewport*, HUD overlaid against the
+>    viewport rather than the board, min 44×44 px hit targets. Controls fall off-screen today,
+>    and `iron-basin` (22×19) is the case that exposes it — the bug worsens as maps grow.
+> 2. **`SCORE1`** — no scoreboard exists at all. In-match: kill tally vs target, **turn X of Y**
+>    (the clock the Support anti-stall balance depends on), per-character HP/energy/respawn.
+>    End-of-match: kills, deaths, damage, healing. Damage/healing totals are not in engine state,
+>    but the client can fold them from the event log — no engine change for the useful half.
+> 3. **`DOT-HOT`** — new `damageOverTime` / `healOverTime` effect kinds, applying at end of turn
+>    **before** the status tick, FF1-polarised, credited like traps. Blocks Regenergy and the
+>    Health power-up.
+> 4. **`CHASE1`** — AR chase orders, resolving at the **end** of the Move phase. **Four edge
+>    cases need Analyzer rulings before the Builder starts** (chase-vs-chase, dead target,
+>    chasing a target you cannot see, chase + dash) — listed in §7.2.
+> 5. **`PADS1`** — power-up pads: `MapDef.powerups`, first-occupier at end of Move, Health /
+>    Might / Energy reusing existing effects plus `healOverTime`.
+> 6. **`TIMER-40`** — `DECISION_SECONDS` 30 → 40 (owner). Time Bank unchanged.
+> 7. **Map run caps** — brush ≤3, cover ≤4, wall ≤5 unbroken. **Both maps are already fixed in
+>    data**; what is owed is a `content.test.ts` guard so the next map cannot reintroduce it.
+>
+> **Vision was CORRECTED and needs no work** — my claim that AR shows all enemy positions was
+> wrong (Grey's drone "grants vision above and beyond what the character can see"), so our
+> 6-tile vision is **parity, not a divergence**. Recorded so a future session does not "fix" it.
+>
+> **Catalysts:** AR's pool is four per phase. **Fetter** (dash, root r2) and **Probe** (blast,
+> area Reveal 2) ship in data now; **Regenergy** is specced but withheld until `DOT-HOT` lands,
+> because `healOverTime` does not exist yet and shipping it would put invalid content in
+> `data/`. Pool is 3/4/4 until then, and the tests assert exactly that.
+>
+> Still open, and nothing depends on it: whether AR had an incoming-damage modifier (§1.3).
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
