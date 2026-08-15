@@ -35,6 +35,30 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > Manhattan; MET1 stands for walking). The three `impact` fields in
 > `data/characters/{aegis,ravok,wisp}.json` are already written and inert until DASH-IMPACT.
 
+> **⚠ NOT YET FOLDED IN — AR parity audit, 2026-08-14 (Designer).**
+> `docs/design/ar-parity-v1.md` audits six systems against Atlas Reactor. **Four items are
+> ready to spec with no owner decision needed:**
+> 1. **UI-VIEWPORT (highest value)** — the renderer canvas must fill the *viewport*, with the
+>    HUD overlaid against the viewport rather than the board, min 44×44 px hit targets. Today
+>    controls fall off-screen, and `iron-basin` (22×19) is the case that exposes it.
+> 2. **SCORE1** — no scoreboard exists at all. In-match: kill tally vs target, **turn X of Y**
+>    (the clock the Support anti-stall balance depends on), per-character HP/energy/respawn.
+>    End-of-match: per-character kills, deaths, damage, healing. Damage/healing totals are not
+>    accumulated anywhere, but the client can fold them from the event log — no engine change.
+> 3. **GAME_SPEC §6 is stale** — Untargetable is still annotated "(ults only)", untrue since
+>    the Fade catalyst shipped.
+> 4. **Two stale "❓ open" rows** in the AR reference comparison are already shipped: ground vs
+>    airborne dashes (= `path` vs `square`) and free actions (FREE1).
+>
+> **Three items are blocked on an owner decision** (doc §7): vision (AR shows all positions —
+> ours fogs; recommend making `visionRange` per-format), damage/heal-over-time effect kinds
+> (AR has them; power-ups need them; turtling has no counter today), and power-up pads.
+> **One needs the owner's AR recall:** whether AR had an incoming-damage modifier.
+>
+> **Also — a Designer error to fix:** the map authoring caps in §5 (brush ≤3, cover ≤4, wall
+> ≤5 unbroken) are broken by **both shipped maps**, whose brush corridors run 6 and 8 tiles.
+> Data-only fix, mine to make once the caps are agreed.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
