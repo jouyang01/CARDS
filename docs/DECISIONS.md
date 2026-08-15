@@ -1825,3 +1825,47 @@ invariant is otherwise intact — a Dash catalyst still never touches the chosen
 9. **Carried over, still open:** the FREE1/CAT1 `free` + `oncePerMatch` conflict resolution, the
    one-free-action tiebreak, and `AbilityOrder.target` becoming optional (Builder OQ 2026-08-26,
    1–11). None of this session's work resolved them.
+
+---
+
+## 2026-08-29 — Builder: STEALTH-CONFIRM found a real bug, and it is a data value
+
+STEALTH-CONFIRM was written on the expectation that it would close Dev Note #4 with evidence.
+It did the opposite, and the Analyzer's own AC anticipated this: *"If the e2e fails, this becomes
+a real bug."*
+
+**The render path is correct.** A stealthed Wisp is absent from the enemy's `fogView` while its
+decoy is present and enemy-styled; from Wisp's own seat the real unit is drawn with a purple
+marker beside it. DECOY-RENDER and STATUS-AUDIT bought what they were supposed to.
+
+**The ability is nonetheless unobservable.** `data/characters/wisp.json` authors Veil & Decoy's
+Stealth as `duration: 1`. GAME_SPEC §6 ticks durations at end of turn, and a duration-1 status
+"covers exactly the turn it was cast" — so a Stealth applied in Prep is removed by that same
+turn's tick. The enemy's next look at the board is the following Decision phase, by which point
+it is gone, while the decoy (which expires on `cast turn + 1`) is still standing. The enemy is
+shown a Wisp *and* a decoy in the same square, which reads exactly like "Stealth is not working".
+For a status whose only job is to change what the enemy sees on *their* turn, one turn is one
+turn too short.
+
+**Not fixed here.** The duration is a roster value and balance is the Designer's ("never
+rebalance"). Pinned instead as a regression test naming the value, plus a counterfactual that
+hands the engine the identical ability at `duration: 2` and shows the enemy stops seeing Wisp —
+so the diagnosis is demonstrated rather than asserted. Both fail the moment the value changes,
+which is when they should be re-read. Routed in Open Questions.
+
+## 2026-08-29 — Builder: two DECOY-RENDER bugs found while proving it in a browser
+
+Both shipped in PR #37 and neither had a test that could catch it.
+
+**The impersonated enemy wore the wrong colour.** `renderer3d` painted `asEnemy` decoys with a
+hardcoded `palette.team1`. That is only right when the viewer is team 0. To team 1, a team-0
+decoy came out in team 1's *own* colour and read as a friendly unit — the exact opposite of
+impersonating an enemy, and a straight giveaway. `RenderDecoy`/`FogDecoy` now carry the placing
+team and the colour follows it. The old fog tests could not catch this because they asserted the
+view model, and the view model was right; only the renderer was wrong.
+
+**The owner could not see their own decoy.** Veil & Decoy leaves the decoy on the caster's own
+square, and the owner-view decoy was a body box the same size as a unit at the same position — so
+it sat entirely inside Wisp and was invisible. It is now a purple ground plate wider than a unit,
+which reads as a ring around its feet while co-located and stands on its own once Wisp moves off.
+The browser test that found this asserts purple pixels are on the board after the cast.

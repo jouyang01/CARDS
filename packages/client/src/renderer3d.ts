@@ -79,6 +79,8 @@ const AUTO_ZOOM_FLOOR = 0.85;
 const DIM_ALPHA = 0.22;
 /** A decoy, seen by its OWNER: unmistakably theirs, unmistakably not a unit. */
 const DECOY_PURPLE = 0xa06bd6;
+/** The owner's decoy plate sits just above the trap marker in the overlay band. */
+const DECOY_PLATE_LIFT = 0.05;
 /** The status row sits just above the shield bar; its size/gap are shared. */
 const PIP_ROW_Y = 0.38;
 /**
@@ -151,6 +153,8 @@ export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
 export interface RenderDecoy {
   id: string;
   pos: Vec2;
+  /** The team that placed it — an impersonated enemy wears *their* colour. */
+  owner: 0 | 1;
   asEnemy: boolean;
 }
 
@@ -679,23 +683,36 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       const decoyLayer = layerGroup('decoy');
       disposeChildren(decoyLayer);
       for (const decoy of decoys) {
-        // To the team being fooled: a normal enemy unit, indistinguishable —
-        // same geometry and colour a real one gets, fully opaque. Drawing it as
-        // a translucent ghost is what gave every decoy away for free.
-        // To its owner: a solid purple marker, obviously theirs and obviously
-        // not a unit, so they can plan around it.
-        const ghost = new Mesh(
-          decoy.asEnemy
-            ? new BoxGeometry(TILE * 0.7, UNIT_HEIGHT, TILE * 0.7)
-            : new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-          new MeshLambertMaterial(
-            decoy.asEnemy
-              ? { color: palette.team1 }
-              : { color: DECOY_PURPLE, transparent: true, opacity: 0.55 },
-          ),
+        const at = toWorld(map, decoy.pos);
+        if (decoy.asEnemy) {
+          // To the team being fooled: a normal enemy unit, indistinguishable —
+          // same geometry, same colour a real one gets, fully opaque. Drawing it
+          // as a translucent ghost is what gave every decoy away for free.
+          //
+          // The colour is the DECOY'S OWN team, not a constant. It used to be
+          // hardcoded to `team1`, which is only right when the viewer is team 0:
+          // to team 1, a team-0 decoy came out in team 1's own red and read as a
+          // friendly unit — the opposite of impersonating an enemy.
+          const body = new Mesh(
+            new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
+            new MeshLambertMaterial({ color: decoy.owner === 0 ? palette.team0 : palette.team1 }),
+          );
+          body.position.copy(at).setY(UNIT_HEIGHT / 2);
+          decoyLayer.add(body);
+          continue;
+        }
+        // To its owner: a purple **ground plate**, not a body. Veil & Decoy
+        // leaves the decoy on the caster's own square, so a purple box sat
+        // exactly inside Wisp's own unit and was invisible — the owner could not
+        // see the thing they had just placed. A plate wider than a unit shows as
+        // a ring around its feet, and still reads on its own once Wisp moves off.
+        const plate = new Mesh(
+          new PlaneGeometry(TILE * 0.9, TILE * 0.9),
+          new MeshBasicMaterial({ color: DECOY_PURPLE, transparent: true, opacity: 0.75 }),
         );
-        ghost.position.copy(toWorld(map, decoy.pos)).setY(UNIT_HEIGHT / 2);
-        decoyLayer.add(ghost);
+        plate.rotation.x = -Math.PI / 2;
+        plate.position.copy(at).setY(DECOY_PLATE_LIFT);
+        decoyLayer.add(plate);
       }
     },
 

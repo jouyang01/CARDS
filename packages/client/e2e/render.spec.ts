@@ -7,6 +7,7 @@ import {
   isAimOrange,
   isBrushGreen,
   isDashYellow,
+  isDecoyPurple,
   isFogged,
   isTeamBlue,
   isRangeWash,
@@ -514,4 +515,54 @@ test('aiming Shift draws a yellow route to its landing square (DASH-CAT-ROUTE)',
   }
   expect(painted, 'Shift drew no yellow route — it still reads as an area, not a move')
     .toBeGreaterThan(before);
+});
+
+/**
+ * STEALTH-CONFIRM — "Does Veil's Stealth work? It doesn\'t seem to be working."
+ *
+ * The unit suite answers the render question (a stealthed Wisp is absent from
+ * the enemy view, the decoy is enemy-styled) and pins the reason a player cannot
+ * observe it: the shipped `duration: 1` is over by the enemy\'s next Decision
+ * phase. What only a browser can say is that the *cast* works end to end — that
+ * the free action is reachable from the hotbar, survives a lock-in, resolves,
+ * and leaves a decoy the owner can actually see on the board.
+ */
+test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CONFIRM)', async ({ page }) => {
+  const status = page.locator('#status');
+  const lock = lockIn(page);
+
+  // Walk the hot-seat until Wisp is on the clock, casting nothing on the way.
+  let cast = false;
+  for (let i = 0; i < 6 && !cast; i++) {
+    if ((await status.textContent())?.includes('Wisp') === true) {
+      const veil = page.locator('.hud-ability.free').first();
+      await expect(veil).toBeVisible();
+      await veil.click();
+      // A `self` free action commits on selection — no board click to make.
+      await expect(veil).toHaveClass(/sel/);
+      cast = true;
+    }
+    await lock.click();
+    await page.waitForTimeout(200);
+  }
+  expect(cast, "never reached Wisp's seat to cast Veil & Decoy").toBe(true);
+
+  // Lock the remaining seats so the turn resolves, then let playback finish.
+  for (let i = 0; i < 4; i++) {
+    if (await page.locator('.hud-playback').isVisible()) break;
+    if (!(await lock.isVisible())) break;
+    await lock.click();
+    await page.waitForTimeout(200);
+  }
+  const skip = page.locator('.hud-playback');
+  if (await skip.isVisible()) await skip.click();
+  await page.waitForTimeout(600);
+
+  // The log is the engine\'s own account of the turn: the decoy went down.
+  await expect(page.locator('.log')).toContainText(/stealth/i);
+
+  // …and the board shows it, in the purple only a decoy\'s owner ever sees.
+  await expect(status).toContainText('Turn 2');
+  expect(countPixels(await pixels(page), isDecoyPurple), 'no purple decoy on the board')
+    .toBeGreaterThan(0);
 });

@@ -405,6 +405,7 @@ export function startHotSeat(
     return [...view.decoys.values()].map((d) => ({
       id: d.id,
       pos: { ...d.pos },
+      owner: d.teamId,
       asEnemy: d.teamId !== viewer,
     }));
   };

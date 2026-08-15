@@ -235,7 +235,7 @@ describe('DECOY-RENDER: a decoy is drawn from a viewpoint', () => {
   it('carries its id and position through unchanged', () => {
     const m = map({ spawns: [[{ x: 8, y: 4 }], [{ x: 11, y: 4 }]] });
     const s = decoyAt(match(m), { x: 9, y: 4 }, 1);
-    expect(fogView(m, s, 0).decoys).toEqual([{ id: 'd1', pos: { x: 9, y: 4 }, asEnemy: true }]);
+    expect(fogView(m, s, 0).decoys).toEqual([{ id: 'd1', pos: { x: 9, y: 4 }, owner: 1, asEnemy: true }]);
   });
 
   it('playback reveals it, but still from a viewpoint', () => {
@@ -251,5 +251,43 @@ describe('DECOY-RENDER: a decoy is drawn from a viewpoint', () => {
   it('a match with no decoys draws none', () => {
     const m = map({});
     expect(fogView(m, match(m), 0).decoys).toEqual([]);
+  });
+});
+
+/**
+ * DECOY-RENDER, second pass. A decoy impersonating an enemy has to wear the
+ * colour of the team that PLACED it, not a constant — the renderer hardcoded
+ * `team1`, which is only right when the viewer happens to be team 0. To team 1,
+ * a team-0 decoy came out in team 1's own colour and read as a friendly unit,
+ * which is the exact opposite of impersonating an enemy.
+ */
+describe('DECOY-RENDER: an impersonated enemy wears its own team colour', () => {
+  const decoyAt = (s: ReturnType<typeof match>, pos: { x: number; y: number }, teamId: 0 | 1) => ({
+    ...s,
+    decoys: [{ id: 'd1', teamId, pos, expiresOnTurn: s.turn + 1 }],
+  });
+
+  it('carries the placing team through, whichever side placed it', () => {
+    const m = map({ spawns: [[{ x: 8, y: 4 }], [{ x: 11, y: 4 }]] });
+    for (const owner of [0, 1] as const) {
+      const s = decoyAt(match(m), { x: 9, y: 4 }, owner);
+      for (const viewer of [0, 1] as const) {
+        const [decoy] = fogView(m, s, viewer).decoys;
+        if (decoy === undefined) continue; // fogged for that viewer; covered above
+        expect(decoy.owner, `owner ${owner} seen by ${viewer}`).toBe(owner);
+        expect(decoy.asEnemy).toBe(owner !== viewer);
+      }
+    }
+  });
+
+  it('the owner tag is independent of who is looking — asEnemy is the viewpoint', () => {
+    // Two separate facts: `owner` says which colour to paint, `asEnemy` says
+    // whether to paint a body at all or the owner's marker. Collapsing them is
+    // how the colour ended up wrong in the first place.
+    const m = map({ spawns: [[{ x: 8, y: 4 }], [{ x: 11, y: 4 }]] });
+    const s = decoyAt(match(m), { x: 9, y: 4 }, 0);
+    const mine = fogView(m, s, 0).decoys[0]!;
+    expect(mine.owner).toBe(0);
+    expect(mine.asEnemy).toBe(false);
   });
 });

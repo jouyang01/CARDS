@@ -39,6 +39,8 @@ import {
 export interface FogDecoy {
   id: string;
   pos: Vec2;
+  /** The team that placed it — an impersonated enemy has to wear *their* colour. */
+  owner: TeamId;
   /** True for the team being fooled: draw it exactly like an enemy unit. */
   asEnemy: boolean;
 }
@@ -131,7 +133,7 @@ function visibleTraps(state: GameState, team: TeamId, lit: ReadonlySet<string>):
 function visibleDecoys(state: GameState, team: TeamId, lit: ReadonlySet<string>): FogDecoy[] {
   return state.decoys
     .filter((d) => d.teamId === team || lit.has(vecKey(d.pos)))
-    .map((d) => ({ id: d.id, pos: { ...d.pos }, asEnemy: d.teamId !== team }));
+    .map((d) => ({ id: d.id, pos: { ...d.pos }, owner: d.teamId, asEnemy: d.teamId !== team }));
 }
 
 /**
@@ -149,7 +151,7 @@ export function revealedView(state: GameState, team: TeamId): FogView {
     units: [...state.units],
     // Even revealed, a decoy is still drawn from a viewpoint — "everyone sees
     // it" is not the same as "everyone sees it as the same thing".
-    decoys: state.decoys.map((d) => ({ id: d.id, pos: { ...d.pos }, asEnemy: d.teamId !== team })),
+    decoys: state.decoys.map((d) => ({ id: d.id, pos: { ...d.pos }, owner: d.teamId, asEnemy: d.teamId !== team })),
     // Likewise still viewpoint-styled: "revealed" means everyone sees it, not
     // that everyone sees it as theirs.
     traps: state.traps.map((t) => ({ id: t.id, pos: { ...t.pos }, owner: t.owner, own: t.owner === team })),

@@ -198,3 +198,12 @@ export const isDashYellow = (px: Rgb): boolean =>
  */
 export const isRangeWash = (px: Rgb): boolean =>
   px.b - px.r >= 20 && px.b - px.g >= 12 && px.b >= 55 && px.b <= 110;
+
+/**
+ * A decoy seen by its OWNER (`#a06bd6` at 0.55 over the dark floor). Purple is
+ * the one hue nothing else on the board uses — team colours are blue and red,
+ * terrain is grey-green, and every overlay is blue, orange, yellow or green — so
+ * "red and blue both high, green well below both" identifies it on its own.
+ */
+export const isDecoyPurple = (px: Rgb): boolean =>
+  px.b > 60 && px.r > 40 && px.r - px.g > 20 && px.b - px.g > 30 && Math.abs(px.r - px.b) < 70;
