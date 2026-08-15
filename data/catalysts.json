@@ -1,5 +1,5 @@
 {
-  "_comment": "The catalyst pool (CAT1). Numbers transcribed verbatim from docs/design/free-actions-and-catalysts.md — the Designer owns any change. A character carries one catalyst per phase; all are free actions (energyGain 0, no cooldown) consumed once per match. Atlas Reactor's pool is FOUR per phase and this is heading there: prep is still 3 because the fourth (Regenergy) needs the healOverTime effect kind and lands with DOT-HOT. Every effect here is one the engine already implements.",
+  "_comment": "The catalyst pool (CAT1). Numbers transcribed verbatim from docs/design/free-actions-and-catalysts.md — the Designer owns any change. A character carries one catalyst per phase; all are free actions (energyGain 0, no cooldown) consumed once per match. Atlas Reactor's pool is FOUR per phase and this is it: four prep, four dash, four blast. Every effect here is one the engine already implements.",
   "prep": [
     {
       "id": "second_wind",
@@ -46,6 +46,21 @@
         { "kind": "energized", "duration": 3 }
       ],
       "description": "Energized for 3 turns. Buy your ultimate about two turns early."
+    },
+    {
+      "id": "regenergy",
+      "name": "Regenergy",
+      "phase": "prep",
+      "shape": "self",
+      "range": 0,
+      "cooldown": 0,
+      "energyGain": 0,
+      "free": true,
+      "oncePerMatch": true,
+      "effects": [
+        { "kind": "healOverTime", "amount": 12, "duration": 3 }
+      ],
+      "description": "Heal 12 at the end of each of the next 3 turns. Second Wind's opposite: no answer to burst, but 36 HP if you can stay out of it."
     }
   ],
   "dash": [

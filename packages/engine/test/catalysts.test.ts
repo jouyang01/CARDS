@@ -69,12 +69,12 @@ describe('CAT1: the pool is content, and it validates', () => {
     expect(validateCatalysts(DATA)).toEqual([]);
   });
 
-  it('is a four-per-phase pool (prep still 3 until Regenergy lands), each unique', () => {
-    // AR's pool is four per phase and this is heading there. Prep is still 3
-    // because its fourth (Regenergy) needs `healOverTime` — it lands with
-    // DOT-HOT, at which point this becomes 12 and a flat 4 per phase.
-    expect(Object.keys(POOL)).toHaveLength(11);
-    expect(DATA.prep).toHaveLength(3);
+  it('is a flat four-per-phase pool, each unique', () => {
+    // AR's pool is four per phase and this is now it. Prep's fourth (Regenergy)
+    // was withheld until `healOverTime` existed rather than shipped as content
+    // that would fail validation; DOT-HOT landed, so it is here.
+    expect(Object.keys(POOL)).toHaveLength(12);
+    expect(DATA.prep).toHaveLength(4);
     expect(DATA.dash).toHaveLength(4);
     expect(DATA.blast).toHaveLength(4);
     for (const phase of CATALYST_PHASES) {
@@ -92,12 +92,14 @@ describe('CAT1: the pool is content, and it validates', () => {
   });
 
   it('needs no new EFFECT_KIND — every effect is one the engine already has', () => {
-    // The claim the design rests on: the whole pool, zero engine surface.
-    // (Regenergy will be the first exception — it lands with DOT-HOT, which
-    // adds `healOverTime` deliberately rather than by accident.)
+    // The claim the design rests on: the whole pool, zero engine surface. The
+    // list is spelled out rather than checked against `EFFECT_KINDS` so that a
+    // catalyst reaching for a *new* mechanic has to say so here — `healOverTime`
+    // is on it because DOT-HOT added the kind first and Regenergy followed, not
+    // the other way round.
     const kinds = new Set(Object.values(POOL).flatMap((d) => d.effects.map((e) => e.kind)));
     expect([...kinds].sort()).toEqual(
-      ['energized', 'haste', 'heal', 'might', 'reveal', 'root', 'shield', 'teleport', 'unstoppable', 'untargetable', 'weaken'],
+      ['energized', 'haste', 'heal', 'healOverTime', 'might', 'reveal', 'root', 'shield', 'teleport', 'unstoppable', 'untargetable', 'weaken'],
     );
   });
 
@@ -154,6 +156,22 @@ describe('CAT1: catalysts resolve at the START of their phase', () => {
     // spent for nothing — which is exactly how it would fail.
     expect(boostedDealt).toBe(20 + Math.floor((20 * MIGHT_PCT) / 100));
     expect(hasStatus(unit(boosted.state, 'a'), 'might')).toBe(true);
+  });
+
+  it('Regenergy heals 12 at the end of each of 3 turns — the pool\'s fourth prep slot', () => {
+    // The catalyst DOT-HOT unblocked. Worth an outcome test rather than a data
+    // assertion: the whole reason it was withheld is that `healOverTime` did not
+    // exist, so what matters is that it now actually pays out three times.
+    let s = withCatalyst(setup(), 'regenergy');
+    unit(s, 'a').hp = 40;
+    ({ state: s } = run(s, [{ unitId: 'a', catalyst: { abilityId: 'regenergy' } }]));
+    expect(unit(s, 'a').hp, 'ticks the turn it is spent').toBe(52);
+    ({ state: s } = run(s, []));
+    expect(unit(s, 'a').hp).toBe(64);
+    ({ state: s } = run(s, []));
+    expect(unit(s, 'a').hp).toBe(76);
+    ({ state: s } = run(s, []));
+    expect(unit(s, 'a').hp, 'and then it is spent').toBe(76);
   });
 
   it('Suppression weakens enemies within 2, blunting their counter-swing', () => {
