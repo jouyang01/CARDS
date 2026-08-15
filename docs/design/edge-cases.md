@@ -251,6 +251,14 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     post-Move snapshot; last-known is integer per-team state. No float, no RNG, no clock. Ships with
     tests: chase-into-fog stops at last-known; never-seen target holds; chase-vs-chase converges;
     dead/dashing target drops the chase.
+  - **RULED — vision is a TEAM resource: a unit may chase anything its TEAM can see, even if that
+    unit itself cannot (Builder OQ 2026-09-02 #6, ratified).** `teamCanSee` is the gate, matching
+    team-shared sight everywhere else (GAME_SPEC §3, golden rule #5) — a teammate spotting the
+    quarry is enough. Correct, not a bug; recorded so it does not read as one in playtest.
+  - **RULED — a malformed order carrying BOTH `chase` and `movePath` resolves as the chase
+    (Builder OQ 2026-09-02 #6/decision 6, ratified).** A well-formed client sends one or the other;
+    the chase is the more specific statement of intent, exactly as a dash supersedes a walk. The
+    client enforces the same in `nextDraft`, so the two never disagree.
 - **RULED — Walked dash vs teleport; `shape` is the authority (R4, updated 2026-08-19).**
   Two dash models, distinguished by `shape` — and `shape` alone decides *how* a reposition
   happens; a `teleport` **effect** only says *that* the caster repositions (which makes it a
@@ -829,6 +837,17 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   biggest hits (Lance of Dawn+Might into cover: 28 shipped vs 27 reversed); the shipped order
   matches Haste/Slow, tells the more intuitive story, and is tested. Flag closed — revisit
   only on a concrete playtest complaint (the known one-line change).
+- **RULED — Over-time effects are NOT modified by Might/Weaken in v1 (DOT-HOT; Builder OQ
+  2026-09-02 #2, ratified; ar-parity §7.1 flag closed).** `damageOverTime`/`healOverTime` apply
+  their **authored amount** at end of turn — they are not outgoing *hits*, so the Might/Weaken
+  outgoing-modifier step does not touch them (the shipped behaviour). A burn is the amount it was
+  lit at; it does not swell because the applier later gained Might, nor shrink under Weaken. This
+  keeps the tick a pure integer payout with no cross-status coupling, and keeps attribution clean
+  (a refresh re-authors — a burn someone re-lit is their kill). **Revisit only if a character is
+  designed around a boosted burn** — then it is a two-line change in `tickOverTime`, a Designer
+  balance call, not reopened pre-emptively. (Cover and shields still apply to `damageOverTime` at
+  tick time as to any damage — this ruling is about the *outgoing* Might/Weaken step only; confirm
+  the shipped tick composes cover/shield, which the damage path already does.)
 - **RULED — Support archetype is unblocked (R6, Designer 2026-08-13).** Its two engine
   prerequisites shipped (no-friendly-fire polarity + beneficial-on-use energy, 2026-08-15),
   and the 1v1-only deferral no longer applies now that 2v2 is default. Lumen and Thorn ship
@@ -1015,8 +1034,14 @@ Full rationale in the source spec; the RULED text here is authoritative.
     the unit's **whole active turn**: it costs the **normal ability slot AND the Move** (and
     Sprint), exactly as if it *were* the unit's ability-and-movement for the turn. So a turn that
     arms a Dash catalyst may **not** also declare a normal ability, a dash, a Move, or a Sprint.
-    (Prep/Blast catalysts are unchanged — still free/additive; a **free ability** is a separate
-    free action and is still allowed alongside, per the one-free-action rule.) Rationale: a free
+    (Prep/Blast catalysts are unchanged — still free/additive. **CORRECTED 2026-09-02 (Builder OQ
+    #1):** a **free ability** is NOT allowed alongside a Dash catalyst — my original parenthetical
+    was self-contradictory. The **one-free-action rule** (conservative v1) already makes a catalyst
+    and a free ability **mutually exclusive**, and the catalyst yields, so a Dash-catalyst turn
+    carries no free ability either. That predates CAT-DASH-FULL and is the correct shipped
+    behaviour; making the Dash catalyst the one exception that rides beside a free action would be a
+    change to the *one-free-action* ruling and needs an explicit owner call — not assumed here.)
+    Rationale: a free
     ≤3 teleport (Shift) or a 2-turn Untargetable (Fade) that only cost a Move was still the
     strongest thing a turn could do; making it the whole action prices it like the once-per-match
     power it is. **Engine:** a unit with a `catalyst` order whose catalyst is Dash-phase drops its
