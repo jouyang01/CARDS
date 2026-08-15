@@ -60,7 +60,7 @@ export function createMatch(map: MapDef, format: FormatId, teams: [CharacterDef[
       units.push(spawnUnit(character, `${character.id}-t${team}-${i}`, team, spawn));
     });
   }
-  return { turn: 1, units, traps: [], delayed: [], decoys: [], powerups: [], kills: [0, 0], format, status: 'active', suddenDeath: false };
+  return { turn: 1, units, traps: [], delayed: [], decoys: [], powerups: [], lastKnown: [], kills: [0, 0], format, status: 'active', suddenDeath: false };
 }
 
 /**
@@ -79,6 +79,7 @@ export function createInitialState(map: MapDef, p0: CharacterDef, p1: CharacterD
     delayed: [],
     decoys: [],
     powerups: [],
+    lastKnown: [],
     kills: [0, 0],
     format: '1v1',
     status: 'active',

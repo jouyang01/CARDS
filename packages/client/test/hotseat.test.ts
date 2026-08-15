@@ -11,7 +11,7 @@ function mkUnit(unitId: string, owner: 0 | 1, x: number, y: number) {
   return { unitId, characterId: 'test-char', owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], catalysts: [], catalystsUsed: [] };
 }
 function mkState(units: GameState['units'], over: Partial<GameState> = {}): GameState {
-  return { turn: 1, units, traps: [], delayed: [], decoys: [], powerups: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false, ...over };
+  return { turn: 1, units, traps: [], delayed: [], decoys: [], powerups: [], lastKnown: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false, ...over };
 }
 
 describe('seat model — player ↔ character control', () => {

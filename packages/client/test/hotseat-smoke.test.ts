@@ -36,7 +36,7 @@ describe('C1: a full hot-seat turn, playback board == engine board', () => {
     const state: GameState = {
       turn: 1,
       units: [mkUnit('A0', 0, 1, 5), mkUnit('A1', 0, 1, 3), mkUnit('B0', 1, 5, 5), mkUnit('B1', 1, 5, 3)],
-      traps: [], delayed: [], decoys: [], powerups: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false,
+      traps: [], delayed: [], decoys: [], powerups: [], lastKnown: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false,
     };
     const seats = deriveSeats(state, [2, 1]); // team 0: two players; team 1: one player, both chars
 

@@ -303,6 +303,28 @@ export interface PowerupState {
   availableOnTurn: number;
 }
 
+/**
+ * Where a team last *saw* an enemy (CHASE1). Recorded at each turn boundary for
+ * every enemy that team could see at the time, and left stale otherwise — which
+ * is the whole point: a chase against a target you have lost heads here, not to
+ * where the target actually is.
+ *
+ * A flat array rather than a nested record because `GameState` must survive
+ * `structuredClone` and the determinism hash as plain JSON, and because object
+ * key order must never be able to affect an outcome (golden rule #1). Entries
+ * are appended in team-then-`units` order and updated in place, so the list
+ * order is a function of the match, not of iteration.
+ */
+export interface LastKnownPos {
+  /** The team doing the remembering. */
+  team: TeamId;
+  /** The enemy unit remembered. */
+  unitId: string;
+  pos: Vec2;
+  /** The turn the sighting was recorded — for a client wanting to age a ghost. */
+  turn: number;
+}
+
 export interface PendingDelayedAbility {
   casterUnitId: string;
   abilityId: string;
@@ -321,6 +343,12 @@ export interface GameState {
   decoys: DecoyState[];
   /** Respawn timers for power-up pads already taken this match (PADS1). */
   powerups: PowerupState[];
+  /**
+   * Per-team last-known enemy positions (CHASE1). The authoritative copy, kept
+   * engine-side because chase resolution is engine logic and must never reach
+   * for a target's true fogged square (golden rule #5).
+   */
+  lastKnown: LastKnownPos[];
   /** Per-team kill tally, `kills[teamId]`. */
   kills: [number, number];
   /** Match format id (GAME_SPEC §1) — sets kill target and turn limit. */
@@ -372,6 +400,16 @@ export interface UnitOrders {
   catalyst?: AbilityOrder;
   /** Move-phase path, first square = first step. Empty/absent = hold. */
   movePath?: Vec2[];
+  /**
+   * A chase order (CHASE1): an **enemy** unit id to close on, declared *instead
+   * of* `movePath`. The engine picks the route at the end of Move, once
+   * everybody else has finished moving, so a chase tracks its target rather than
+   * a square guessed at plan time.
+   *
+   * It never uses the target's true position when the chaser's team cannot see
+   * it — a chase into fog goes to the team's last-known square and stops there.
+   */
+  chase?: string;
   /** True = no ability, extended move range. A free action never blocks it. */
   sprint?: boolean;
 }
@@ -423,6 +461,12 @@ export type TurnEvent =
   // Without it a client folding the log keeps a marker over a square that is no
   // longer dangerous — the same failure `statusRemoved` exists to prevent.
   | { type: 'trapExpired'; trapId: string; pos: Vec2; owner: TeamId }
+  // A chase resolved (CHASE1). `to` is the square the chaser actually set off
+  // for — the target's real square when its team could see it, the team's
+  // last-known square when it could not — so the client can draw the route the
+  // engine took without re-deriving vision, and without ever being told where an
+  // unseen target really is. Absent entirely when the chase was dropped.
+  | { type: 'chaseResolved'; unitId: string; targetUnitId: string; to: Vec2; seen: boolean }
   // A power-up pad was picked up (PADS1). The effects it grants arrive as the
   // ordinary `heal`/`statusApplied` events immediately before this one, so the
   // only thing the client learns here is that the pad went dark.
