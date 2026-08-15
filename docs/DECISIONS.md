@@ -2103,3 +2103,124 @@ reintroduces the same error, which is exactly how this one survived two review p
 **(4) The decision timer goes to 40 s, away from AR's 20 s, deliberately.** A player may control
 two characters, and since FREE1/CAT1 a turn can carry a free action, a catalyst, an ability and
 a move. AR's 20 seconds was sized for a strictly smaller decision.
+
+---
+
+## Builder session — 2026-09-02
+
+**(1) A Dash catalyst yields the ability slot, so CAT-DASH-FULL's "a free ability is still
+allowed alongside" was implemented as-is rather than as an exception.** The AC's parenthetical
+reads as though a Dash catalyst and a free ability can be declared together. The shipped
+one-free-action rule (edge-cases, conservative v1) already makes them mutually exclusive —
+`planUnit` spends the catalyst only when no free ability was declared, and the catalyst is the
+one that yields, because burning a once-per-match resource by accident is the worse mistake.
+I kept that exclusivity rather than carving CAT-DASH-FULL out of it: the parenthetical is best
+read as "a free ability is not the thing CAT-DASH-FULL takes away", which is true — it is the
+one-free-action rule that takes it, and that rule predates this one. Flagged for the Analyzer
+below in case the owner meant to change it.
+
+**(2) Over-time effects tick before durations decrement, and Might/Weaken do not touch a tick.**
+`tickOverTime` runs at end of turn *before* `tickStatuses`, so a `duration: 2` effect pays out
+on the turn it lands and the turn after — the same "covers exactly N turns" arithmetic every
+other duration uses. Ticking after would silently cost every over-time effect its first turn.
+`StatusInstance` gained an optional `sourceUnitId`/`abilityId`, stamped **only** on the two
+over-time kinds (`authorOf`), so every other status instance keeps its exact `{kind, remaining}`
+shape and nothing about `structuredClone`, the determinism hash or an equality assertion moves.
+A refresh re-authors: a burn somebody else re-lit is their kill. Might and Weaken deliberately
+do not modify a tick (ar-parity §7.1 flags it for playtest) — applying them would be a balance
+call the Builder does not get to make.
+
+**(3) A power-up pad resolves on occupancy, not on travel.** Pads settle at a single fixed point
+at the end of Move, **after** chasers and the decoy sweep, and unconditionally rather than
+inside the "did anyone move?" branch. A unit knocked onto a pad, or one already standing on a
+pad the turn it respawns, has exactly as much claim to it as one that walked there — the
+question a pad asks is "who is standing here", and answering "who walked here" would make a
+knockback into a way to deny a pad rather than to take one. "Contested is impossible" needed no
+tie-break of its own: Collisions already means two units stepping onto one square on the same
+step leaves neither in it, so there is no tie, and the pad simply survives to next turn.
+
+**(4) Pad flavours are a rule; pad placement is data.** `MapDef.powerups` places pads and the
+Designer owns those squares and timings (the shipped ones are Builder placeholders at
+`firstTurn: 2, everyTurns: 4`). What a Health pad *does* is not per-map, so `POWERUP_EFFECTS`
+lives in `packages/engine/src/powerups.ts` as one three-entry table — retunable by editing three
+literals rather than by finding the branch in `resolve.ts`. `GameState.powerups` is
+append-on-take: it records only pads actually picked up, so the state reads as a record of the
+match rather than as a copy of the map.
+
+**(5) The engine's chase last-known record is written at the turn boundary, both ends.** The
+edge-case ruling says "updated in end-of-turn processing"; the same ruling also says a target
+seen at plan time but lost during resolution resolves to "the last square the team saw it, which
+at turn granularity is its start-of-turn square". Those agree from turn 2 onward, because nothing
+moves between turns — but on turn 1 there has been no end-of-turn yet, so every chase would have
+silently dropped. `recordLastKnown` therefore also runs at the start of `resolveTurn`. I chose
+that over special-casing turn 1: "the boundary view is recorded at the boundary" is one rule,
+and "…except on the first turn" is a bug waiting to be rediscovered. The stored entry carries the
+turn it was taken, which resolution does not need — it is there so a client can fade a ghost by
+its age rather than inventing a decay of its own.
+
+**(6) An order carrying both a `chase` and a `movePath` resolves as the chase.** The AC says a
+chase is declared "instead of" a `movePath`, so a well-formed client never sends both and this is
+only a question about malformed input. The chase wins because it is the more specific statement
+of intent, exactly as a dash ability's reposition supersedes a walk. The client enforces the same
+thing in `nextDraft`, so the two can never disagree about which one survived.
+
+**(7) A chase stops at the last-known square as a consequence of how the route is chosen, not as
+a special case.** `pathToward` takes the reachable square *closest to the goal*; every square
+past the goal is further from it, so a chase cannot overshoot into the fog beyond. There is no
+"and then stop" branch to get wrong, and the fog test asserts on the chaser's final **position**
+rather than only on the event, so an implementation that read `target.pos` fails it.
+
+**(8) The scoreboard counts `amount + absorbed` as damage dealt, and credits a kill to the unit
+the preceding `damage` named.** A `death` event names a *team*, so a per-character kill count has
+to come from somewhere; the immediately preceding `damage` is the same one-step attribution the
+combat log already uses, and when nothing precedes it nobody is credited rather than guessed at.
+Counting only the HP portion of damage would make a support look like they deleted damage from
+the match rather than absorbing it, so the shielded portion counts too. Both are folded from the
+event log with no engine change, per the item's own spec note.
+
+## Open Questions for the Analyzer — 2026-09-02
+
+1. **CAT-DASH-FULL's "a free ability is still allowed alongside" (decision 1).** The shipped
+   one-free-action rule makes a catalyst and a free ability mutually exclusive, so a Dash
+   catalyst turn carries no free ability either. I implemented the minimal compliant version
+   (existing exclusivity kept, nothing carved out). If the owner meant that a Dash catalyst
+   should be the exception — the one catalyst that *can* ride beside a free action — that is a
+   change to the one-free-action ruling, not to CAT-DASH-FULL, and it needs an explicit call.
+
+2. **Might/Weaken vs an over-time tick (decision 2).** ar-parity §7.1 flags it for playtest and I
+   left it unmodified. Worth a ruling before a character is designed around a boosted burn:
+   whichever way it goes, `tickOverTime` is where it lands and it is two lines.
+
+3. **Power-up pad placement and timings are unreviewed Designer work.** Three mirrored pairs per
+   map (one Health, one Might, one Energy) at `firstTurn: 2, everyTurns: 4`. The squares are
+   plausible, not designed — the centre-line pairs in particular make the middle of both maps
+   worth contesting in a way nobody has playtested. The `content.test.ts` guard asserts a pad's
+   mirror exists with the same flavour and timings, so retuning is safe.
+
+4. **Pads are invisible in the client.** PADS1 is scoped ENGINE + DATA and I did not widen it, so
+   both shipped maps now carry pads that no player can see. The pickup shows in the combat log
+   and nowhere else. A pad marker is the analogue of TRAP-INDICATOR and wants scheduling before
+   anyone playtests the maps, or the pads will read as random buffs.
+
+5. **A chase is drawn as a prediction, and the prediction can be wrong.** The client draws the
+   route toward where the target is *now*; the engine resolves against where it ends up. That is
+   inherent to the mechanic and I think it is correct — but the dashed orange line is the only
+   thing on screen saying "this is a guess", and it may want a stronger tell after playtest.
+
+6. **A chase against a target the chaser's team can see, but the *chaser* cannot, is legal.**
+   `teamCanSee` is a team-wide question, which is the shipped vision model and what golden rule
+   #5 protects. So a unit can chase somebody only its teammate can see. I believe that is right
+   (vision is a team resource) but it is not explicitly ruled anywhere, and it is the kind of
+   thing that reads as a bug the first time it happens in a playtest.
+
+7. **SCORE1's kill attribution is the log's, not the engine's.** Per-character kills come from
+   "whoever last damaged them"; the engine's own `kills` tally is per team and is what decides
+   the match. The two can legitimately disagree — a friendly-fire kill scores for nobody in both,
+   but a trap or DoT kill credits a team in the engine and a unit in the scoreboard. If a
+   per-character kill count ever needs to be authoritative, that is an engine ask (a `killerUnitId`
+   on the `death` event), not a client fix.
+
+8. **The end-of-match `reason` is derived, not reported.** `matchResult` infers kill-target vs
+   turn-limit vs sudden-death from the finished state, because the engine does not say. It is
+   right for every case I could construct, but a `gameEnd` event carrying the reason would remove
+   the inference entirely and is a one-field engine change if the Analyzer thinks it is worth it.

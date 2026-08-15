@@ -97,7 +97,7 @@ const unitState = (unitId: string, statuses: { kind: EffectKind; remaining: numb
 });
 const stateWith = (statuses: { kind: EffectKind; remaining: number }[] = []): GameState => ({
   turn: 1, status: 'active', kills: [0, 0], units: [unitState('a', statuses)],
-  traps: [], decoys: [], delayed: [],
+  traps: [], decoys: [], delayed: [], powerups: [], lastKnown: [],
 } as unknown as GameState);
 
 const applied = (status: EffectKind, duration = 2): TurnEvent =>

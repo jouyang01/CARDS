@@ -41,6 +41,10 @@ const STATUS_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'stealth',
   'untargetable',
   'shield',
+  // DOT-HOT: timed instances like the rest, and they carry an amount the way a
+  // shield does — so nothing about the tick, the refresh or the expiry is new.
+  'damageOverTime',
+  'healOverTime',
 ]);
 
 /** Is `kind` something that lives on `unit.statuses` (vs. an instant effect)? */
@@ -75,16 +79,37 @@ export function applyStatus(
   kind: EffectKind,
   duration: number,
   amount?: number,
+  /** DOT-HOT: who applied it, so a tick that kills can credit a team (A0). */
+  source?: { unitId: string; abilityId: string },
 ): void {
   if (duration <= 0) return;
   const existing = unit.statuses.find((s) => s.kind === kind);
   if (existing !== undefined) {
     existing.remaining = duration;
     if (amount !== undefined) existing.amount = amount;
+    // Refresh-not-stack takes the *new* author too: a second Ember Bolt landing
+    // on a burning target replaces the burn, so the kill belongs to whoever
+    // last applied it rather than to whoever started it.
+    if (source !== undefined) {
+      existing.sourceUnitId = source.unitId;
+      existing.abilityId = source.abilityId;
+    }
     return;
   }
-  unit.statuses.push(amount === undefined ? { kind, remaining: duration } : { kind, remaining: duration, amount });
+  const next: StatusInstance = { kind, remaining: duration };
+  if (amount !== undefined) next.amount = amount;
+  if (source !== undefined) {
+    next.sourceUnitId = source.unitId;
+    next.abilityId = source.abilityId;
+  }
+  unit.statuses.push(next);
 }
+
+/** DOT-HOT: the two amount-per-turn kinds, which tick before durations do. */
+export const OVER_TIME_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
+  'damageOverTime',
+  'healOverTime',
+]);
 
 /**
  * Remove every instance of `kind` outright (e.g. Stealth broken by attacking).

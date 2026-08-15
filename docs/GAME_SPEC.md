@@ -53,7 +53,7 @@ Every turn = **Decision Phase** then **Resolution**.
 - All players simultaneously choose, for **each character they control**: **one
   ability** (optional) with its target, and a **move path** (optional), OR **sprint**
   (move only, longer range).
-- **Timer: 30 seconds** (constant `DECISION_SECONDS`, configurable per room later),
+- **Timer: 40 seconds** (constant `DECISION_SECONDS`, configurable per room later),
   per player, regardless of how many characters that player controls. Each player has
   **1 Time Bank charge** per match: if the timer expires without a lock-in, the charge
   is consumed automatically for **+10 seconds** (extending only that player's
@@ -148,7 +148,7 @@ Every turn = **Decision Phase** then **Resolution**.
 | Energized | +50% energy gain | |
 | Unstoppable | Immune to knockback/pull/root/slow | |
 | Stealth | Hidden even outside brush; broken by attacking or taking damage | |
-| Untargetable | Cannot be hit this phase/turn (ults only) | |
+| Untargetable | Cannot be hit this phase/turn | Ults **and** catalysts (Fade) |
 
 - Durations are in turns, tick at end of turn. Same-status applications refresh (do
   not stack) unless the ability says otherwise.
@@ -158,7 +158,7 @@ Every turn = **Decision Phase** then **Resolution**.
 
 Global constants in `packages/engine/src/constants.ts`:
 `MOVE_RANGE 4 · SPRINT_RANGE 8 · VISION_RANGE 6 · COVER_REDUCTION 50% · PASSIVE_ENERGY 5 ·
-ULT_COST 100 · RESPAWN_TURNS 1 · DECISION_SECONDS 30 · TIMEBANK_CHARGES 1 ·
+ULT_COST 100 · RESPAWN_TURNS 1 · DECISION_SECONDS 40 · TIMEBANK_CHARGES 1 ·
 TIMEBANK_SECONDS 10`
 
 `KILLS_TO_WIN` and `TURN_LIMIT` are **per-format** (table in §1) and live in the

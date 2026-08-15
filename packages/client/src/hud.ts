@@ -24,7 +24,11 @@ export interface HudAbility {
   isUlt: boolean;
   available: boolean;
   /** Why it is unavailable, straight from `abilityOptions`. */
-  reason?: 'cooldown' | 'energy';
+  /**
+   * Why it is unavailable. A closed set, not free text: the HUD owns the
+   * wording (`3t`, `energy`, `catalyst`), the caller owns the fact.
+   */
+  reason?: 'cooldown' | 'energy' | 'catalyst';
   cooldown: number;
   selected: boolean;
   /**
@@ -80,6 +84,12 @@ export interface HudModel {
   /** The three catalyst slots, in phase order. Empty if the match has no pool. */
   catalysts: HudCatalyst[];
   move: { budget: number; drawing: boolean; sprinting: boolean; sprintDisabled: boolean };
+  /**
+   * The chase control (CHASE1). `targetName` is who is being chased, so the
+   * button can say so — a chase is the one order whose subject is a unit rather
+   * than a square, and "Chase" alone would not tell you whom.
+   */
+  chase: { armed: boolean; disabled: boolean; targetName?: string };
   lock: { label: string };
   view: { projection: string; orbit: boolean };
 }
@@ -90,6 +100,7 @@ export interface HudHandlers {
   selectCatalyst(catalystId: string): void;
   hoverAbility(abilityId: string | undefined, control?: HTMLElement, def?: AbilityDef): void;
   selectMove(sprint: boolean): void;
+  selectChase(): void;
   hoverMove(kind: 'move' | 'sprint' | undefined): void;
   hold(): void;
   lock(): void;
@@ -170,13 +181,16 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   moveBtn.textContent = 'Move';
   const sprintBtn = el('button', 'hud-move');
   sprintBtn.textContent = 'Sprint';
+  const chaseBtn = el('button', 'hud-move');
+  chaseBtn.textContent = 'Chase';
   const holdBtn = el('button', 'hud-move');
   holdBtn.textContent = 'Clear';
-  moveRow.append(moveBtn, sprintBtn, holdBtn);
+  moveRow.append(moveBtn, sprintBtn, chaseBtn, holdBtn);
   centre.append(catalystRow, hotbar, moveRow);
 
   moveBtn.onclick = () => handlers.selectMove(false);
   sprintBtn.onclick = () => handlers.selectMove(true);
+  chaseBtn.onclick = () => handlers.selectChase();
   holdBtn.onclick = () => handlers.hold();
   for (const [btn, kind] of [[moveBtn, 'move'], [sprintBtn, 'sprint']] as const) {
     btn.addEventListener('mouseenter', () => handlers.hoverMove(kind));
@@ -271,7 +285,11 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
         // Cooldown/energy is the more urgent note when both apply — "free" tells
         // you how it costs, "3t" tells you that you cannot have it at all.
         const note = !ability.available
-          ? (ability.reason === 'cooldown' ? `${ability.cooldown}t` : 'energy')
+          ? ability.reason === 'cooldown' ? `${ability.cooldown}t`
+            // CAT-DASH-FULL: the Dash catalyst is the turn, so the hotbar is not
+            // "on cooldown" or "too expensive" — it is spoken for.
+            : ability.reason === 'catalyst' ? 'catalyst'
+            : 'energy'
           : ability.free ? 'free' : '';
         if (note !== '') {
           const el2 = el('span', 'hud-ability-note');
@@ -312,12 +330,12 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
         // CAT-COST-LABEL: "Prep Catalyst and Blast Catalyst are not showing as
         // free actions." Free abilities already carried a `free` tag and the
         // catalyst row carried none, so the two additive mechanics on screen at
-        // once looked like different kinds of thing. Post-CAT-DASH-COST the
+        // once looked like different kinds of thing. Post-CAT-DASH-FULL the
         // answer differs by colour, which makes the tag load-bearing rather than
-        // decorative: Dash is the one slot that prices your turn.
+        // decorative: Dash is the one slot that *is* your turn.
         if (!catalyst.spent) {
           const cost = el('span', `hud-catalyst-cost ${catalyst.cost}`);
-          cost.textContent = catalyst.cost === 'move' ? 'costs Move' : 'free';
+          cost.textContent = catalyst.cost === 'action' ? 'your action' : 'free';
           btn.appendChild(cost);
         }
         btn.disabled = catalyst.spent;
@@ -334,6 +352,12 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
       moveBtn.classList.toggle('sel', model.move.drawing && !model.move.sprinting);
       sprintBtn.classList.toggle('sel', model.move.sprinting);
       sprintBtn.disabled = model.move.sprintDisabled;
+
+      // A chase names its quarry (CHASE1): the order's subject is a unit, not a
+      // square, so the label is the only place on screen that says whom.
+      chaseBtn.textContent = model.chase.targetName === undefined ? 'Chase' : `Chase ${model.chase.targetName}`;
+      chaseBtn.classList.toggle('sel', model.chase.armed);
+      chaseBtn.disabled = model.chase.disabled;
 
       lockBtn.textContent = model.lock.label;
       projBtn.textContent = model.view.projection;

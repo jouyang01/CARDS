@@ -76,6 +76,8 @@ export function makeState(units: UnitState[], overrides: Partial<GameState> = {}
     traps: [],
     delayed: [],
     decoys: [],
+    powerups: [],
+    lastKnown: [],
     kills: [0, 0],
     // Tests default to the 1v1 dev format (3 kills / turn 12) unless they override.
     format: '1v1',

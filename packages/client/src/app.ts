@@ -49,6 +49,7 @@ import {
   impactPreview,
   abilityTooltip,
   aimFor,
+  abilitiesAllowed,
   catalystCost,
   commitAim,
   dashRoute,
@@ -73,6 +74,10 @@ import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, typ
 import { type ViewState } from './playback.js';
 import { statusPips } from './status-pips.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
+import {
+  clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
+  type MatchTotals,
+} from './scoreboard.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -124,6 +129,8 @@ const FOG_OPACITY = 0.62;
 const MOVE_LINE = 0x9fc4ff;
 const SPRINT_LINE = 0x8fd6ff;
 const DASH_LINE = 0xffd23f;
+/** CHASE1's route + quarry ring: orange, distinct from move blue and dash yellow. */
+const CHASE_LINE = 0xff8a3d;
 
 /**
  * The single pacing constant: one beat of `choreograph`'s timeline in
@@ -131,14 +138,23 @@ const DASH_LINE = 0xffd23f;
  * is this number and nothing else.
  */
 const MS_PER_BEAT = 460;
-/** Board shape and the space page chrome claims around it. */
-const BOARD_ASPECT = 0.58;
-const MAX_BOARD_WIDTH_PX = 1180;
-const MIN_BOARD_PX = { width: 320, height: 240 };
-/** Title + status line above the board; the HUD and log are measured instead. */
-const TOP_CHROME_PX = 120;
-/** Breathing room either side of the board. */
-const GUTTER_PX = 32;
+/**
+ * Title + status line, overlaid on the top-left of the canvas (UI-VIEWPORT).
+ * The only chrome whose size is assumed rather than measured — it is a text
+ * block with a fixed font, and measuring an overlay that never wraps would be
+ * ceremony. The HUD and the log ARE measured, because both have breakpoints.
+ *
+ * The board's own shape, max width and minimum are gone with the DOM-framed
+ * board: the camera frames the board now, so those numbers no longer exist.
+ */
+/**
+ * Fallback for the top chrome when nothing has laid out yet (the very first
+ * `sizeToViewport`, before the scoreboard has been filled in). Every call after
+ * that measures the real thing — the readout's height depends on how many
+ * characters the format fields, so a constant would be wrong for 4v4 the moment
+ * SCORE1 landed.
+ */
+const TOP_CHROME_FALLBACK_PX = 96;
 /**
  * How far a floating readout rises over its lifetime, and where it starts —
  * above the billboarded bars, so a number never sits on top of the HP it just
@@ -177,6 +193,8 @@ export function startHotSeat(
   catalysts: CatalystPool = {},
 ): void {
   let state = createMatch(map, format, teams);
+  /** SCORE1's running ledger, folded from each turn's event log as it plays. */
+  let totals: MatchTotals = initTotals(state);
   const seats = deriveSeats(state, playersPerTeam);
 
   // UI1's Lock-In ruling: a seat's characters are all orderable at once and the
@@ -276,7 +294,21 @@ export function startHotSeat(
    * The board's own container is still never measured — the canvas is its only
    * child, so that would feed the canvas its own width back and pin it.
    */
-  const sizeToContainer = (): void => {
+  // SCORE1's readout lives in its own element under the status line, so the
+  // HUD's in-place update never has to know about it and vice versa.
+  const scoreEl = document.createElement('div');
+  scoreEl.className = 'scoreboard';
+  ui.status.after(scoreEl);
+
+  const sizeToViewport = (): void => {
+    // UI-VIEWPORT: the canvas IS the viewport. The board used to be the app
+    // frame — a DOM box the chrome was subtracted from — which meant a bigger
+    // map pushed the controls off the bottom of the screen (`iron-basin` at
+    // 22×19 is where it stopped being theoretical). Now the chrome overlays a
+    // full-bleed canvas and the *camera* frames the board, so map size and
+    // control placement stop being the same question.
+    renderer.resize(globalThis.innerWidth, globalThis.innerHeight);
+
     // The log is a right-hand column on a wide screen and a strip above the HUD
     // on a narrow one, so it costs width in one layout and height in the other.
     // Which one is *read off the box*, not branched on a pixel threshold — the
@@ -284,18 +316,17 @@ export function startHotSeat(
     // two drift apart silently.
     const logBox = ui.log?.getBoundingClientRect();
     const logIsColumn = logBox !== undefined && logBox.width < globalThis.innerWidth * 0.6;
-    const sideChrome = logIsColumn ? logBox.width : 0;
-    const bottomChrome =
-      ui.controls.getBoundingClientRect().height
-      + (logIsColumn ? 0 : (logBox?.height ?? 0))
-      + TOP_CHROME_PX;
-    const w = Math.max(MIN_BOARD_PX.width, Math.min(globalThis.innerWidth - sideChrome - GUTTER_PX, MAX_BOARD_WIDTH_PX));
-    const h = Math.max(MIN_BOARD_PX.height, Math.min(Math.round(w * BOARD_ASPECT), globalThis.innerHeight - bottomChrome));
-    // Keep the aspect when height is the binding constraint, so a short window
-    // narrows the board rather than stretching it.
-    renderer.resize(Math.min(Math.round(h / BOARD_ASPECT), w), h);
+    renderer.setSafeInsets({
+      // Measured, not assumed: the scoreboard's strip grows with the format's
+      // character count, so a fixed number would frame the board under it in
+      // 4v4 and leave a gap in 1v1.
+      top: Math.max(scoreEl.getBoundingClientRect().bottom + 8, TOP_CHROME_FALLBACK_PX),
+      right: logIsColumn ? (logBox?.width ?? 0) : 0,
+      bottom: ui.controls.getBoundingClientRect().height + (logIsColumn ? 0 : (logBox?.height ?? 0)),
+      left: 0,
+    });
   };
-  sizeToContainer();
+  sizeToViewport();
   fitCamera();
   // The renderer drives its own frames now: the orbit, the auto-camera's easing
   // and the billboarded bars all need continuous frames, not one render per
@@ -304,7 +335,7 @@ export function startHotSeat(
   // The camera eases every frame, so the DOM-anchored plan-time numbers have to
   // be re-placed against the frame that was just drawn or they trail the board.
   renderer.onFrame(placePreviewNumbers);
-  globalThis.addEventListener('resize', () => { sizeToContainer(); fitCamera(); });
+  globalThis.addEventListener('resize', () => { sizeToViewport(); fitCamera(); });
   ui.board.addEventListener('click', onBoardClick);
   ui.board.addEventListener('mousemove', onBoardHover);
 
@@ -351,6 +382,7 @@ export function startHotSeat(
     selectCharacter: selectUnit,
     selectAbility,
     selectCatalyst,
+    selectChase: armChase,
     hoverAbility: (abilityId, control, def) => {
       if (abilityId === undefined || control === undefined || def === undefined) hideTip();
       else showTip(control, def);
@@ -385,7 +417,7 @@ export function startHotSeat(
 
   // The HUD and log are what `sizeToContainer` measures, so re-fit now that both
   // exist and carry content — the first pass ran before either was populated.
-  sizeToContainer();
+  sizeToViewport();
   fitCamera();
 
   // Ability hover tooltip (TT1) — one reused element, positioned by the button.
@@ -676,12 +708,30 @@ export function startHotSeat(
     // you chose and in what order. A DASH is the same indicator in yellow (UI4)
     // — it is still a route, so it gets route geometry rather than nothing, and
     // colour carries the fact that it resolves in a different phase.
-    const route = isDash ? dashRoute(unit, chosen, preview.aim) : previewMovePath(map, state, unit, draft, interaction);
+    //
+    // A CHASE (CHASE1) draws the same geometry to a different destination: the
+    // route the engine would take toward the target *as this seat sees it*.
+    // Dashed and in its own colour, because unlike a drawn move it is a
+    // prediction — the target has not moved yet, and where it ends up is what
+    // the chase actually resolves against.
+    const chaseTarget = draft.chaseTargetId === undefined ? undefined : chaseableEnemies()
+      .find((u) => u.unitId === draft.chaseTargetId);
+    const chaseRoute = chaseTarget === undefined
+      ? []
+      : pathTo(map, state, unit, chaseTarget.pos, movementBudget(unit, draft.sprint));
+    const route = isDash
+      ? dashRoute(unit, chosen, preview.aim)
+      : chaseTarget !== undefined
+        ? chaseRoute
+        : previewMovePath(map, state, unit, draft, interaction);
     renderer.drawPath(
       route.length > 0 ? [unit.pos, ...route] : [],
-      isDash ? DASH_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
-      !isDash && draft.sprint, // sprint is the dashed one; a dash reads by colour
+      isDash ? DASH_LINE : chaseTarget !== undefined ? CHASE_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
+      !isDash && (draft.sprint || chaseTarget !== undefined),
     );
+    // …and the quarry is ringed, so the order reads as "that one" rather than
+    // as a line that happens to end near somebody.
+    renderer.highlight('chase', chaseTarget === undefined ? [] : [chaseTarget.pos], CHASE_LINE, 0.45);
 
     // ── DASH-CAT-ROUTE: a Dash catalyst is a reposition, so it draws like one ─
     // "Shift's dash catalyst should show as a yellow movement similar to other
@@ -718,6 +768,53 @@ export function startHotSeat(
     ui.status.textContent =
       `Turn ${state.turn} · ${teamName(seat?.team ?? 0)} · seat ${seat?.seatId ?? '?'}` +
       ` — ${characterFor(unit).name} (${done}/${roster.length} locked)`;
+    renderScoreboard();
+  }
+
+  /**
+   * SCORE1 — the in-match readout: both kill tallies against the format's
+   * target, the clock, and a per-character strip. It sits in its own element so
+   * it survives the HUD's in-place update, and it is rebuilt wholesale because
+   * it is a handful of nodes with no hover state to preserve.
+   */
+  function renderScoreboard(): void {
+    const readout = scoreReadout(state, unitName);
+    scoreEl.replaceChildren();
+    const head = document.createElement('div');
+    head.className = 'score-head';
+    for (const team of [0, 1] as const) {
+      const side = document.createElement('span');
+      side.className = 'score-team';
+      side.style.color = TEAM_CSS[team];
+      side.textContent = `${teamName(team)} ${tally(readout.kills[team], readout.killTarget)}`;
+      head.appendChild(side);
+    }
+    const turn = document.createElement('span');
+    turn.className = 'score-clock';
+    // Sudden death is the one thing here that changes how a turn should be
+    // played, so it replaces the clock rather than sitting beside it.
+    turn.textContent = readout.suddenDeath ? 'SUDDEN DEATH' : clock(readout.turn, readout.turnLimit);
+    head.appendChild(turn);
+    scoreEl.appendChild(head);
+
+    const strip = document.createElement('div');
+    strip.className = 'score-strip';
+    for (const row of readout.rows) {
+      const cell = document.createElement('span');
+      cell.className = row.alive ? 'score-unit' : 'score-unit dead';
+      cell.style.borderColor = TEAM_CSS[row.owner];
+      cell.textContent = row.alive
+        ? `${row.name} ${row.hp}/${row.maxHp} · ult ${row.ultPct}%`
+        : `${row.name} — down (${row.respawnIn})`;
+      strip.appendChild(cell);
+    }
+    scoreEl.appendChild(strip);
+  }
+
+  /** A unit's character name, for the scoreboard and the end screen. */
+  function unitName(unitId: string): string {
+    const u = unitById(unitId);
+    return u === undefined ? unitId : roster[u.characterId]?.name ?? unitId;
   }
 
   /** One character as the HUD's view of it — presentation data only. */
@@ -751,8 +848,14 @@ export function startHotSeat(
         id: opt.def.id,
         name: opt.def.name,
         isUlt: opt.isUlt,
-        available: opt.available,
-        reason: opt.reason,
+        // CAT-DASH-FULL: a Dash catalyst is the whole active turn, so the normal
+        // hotbar goes dark with Move and Sprint. Free abilities are exempt —
+        // they are a separate free action and the ruling leaves them alone.
+        available: opt.available
+          && (opt.def.free === true || abilitiesAllowed(dashCatalystArmed(draft))),
+        reason: opt.available && !abilitiesAllowed(dashCatalystArmed(draft)) && opt.def.free !== true
+          ? 'catalyst' as const
+          : opt.reason,
         cooldown: opt.cooldown,
         // A free ability lives in its own slot, so it is "selected" from the
         // free draft — never from `abilityId`, which it must never occupy.
@@ -787,6 +890,16 @@ export function startHotSeat(
         // catalyst does disable it: it is no longer a free action.
         sprintDisabled: !sprintAllowed(draft, dashCatalystArmed(draft)),
       },
+      // CHASE1. Disabled for exactly the reasons the engine would drop the
+      // order anyway: a dash ability or a Dash catalyst already owns the
+      // reposition, and there is nobody visible to chase.
+      chase: {
+        armed: interaction.mode === 'chase' || draft.chaseTargetId !== undefined,
+        disabled: currentIsDash(draft, character) || dashCatalystArmed(draft) || chaseableEnemies().length === 0,
+        targetName: draft.chaseTargetId === undefined
+          ? undefined
+          : roster0(draft.chaseTargetId)?.name,
+      },
       lock: { label: last ? 'Lock In & resolve ⚔' : 'Lock In ▸' },
       view: {
         projection: projection === 'isometric' ? 'Isometric' : 'Top-down',
@@ -807,7 +920,7 @@ export function startHotSeat(
    */
   const dashCatalystArmed = (draft: OrderDraft): boolean => {
     const def = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
-    return def !== undefined && catalystCost(def) === 'move';
+    return def !== undefined && catalystCost(def) === 'action';
   };
 
   /**
@@ -834,7 +947,12 @@ export function startHotSeat(
     const isDash = chosen?.phase === 'dash';
     // Choosing another ability before Lock In simply replaces the last one
     // (UI1) — `nextDraft` owns the exclusivity rules (sprint, dash-owns-move).
-    const draft = nextDraft(prev, { type: 'selectAbility', abilityId, isDash }, isDash);
+    const draft = nextDraft(
+      prev,
+      { type: 'selectAbility', abilityId, isDash },
+      isDash,
+      dashCatalystArmed(prev),
+    );
     if (chosen && chosen.shape === 'self') draft.aim = [{ ...unit.pos }];
     draft.aimStep = undefined;
     drafts.set(unit.unitId, draft);
@@ -869,6 +987,35 @@ export function startHotSeat(
     if (draft.catalystId !== undefined && def.shape === 'self') draft.catalystAim = [{ ...unit.pos }];
     drafts.set(unit.unitId, draft);
     interaction = arm(draft.catalystId !== undefined && def.shape !== 'self' ? 'catalyst' : 'idle');
+    render();
+  }
+
+  /**
+   * Enemies this seat may currently chase (CHASE1): the ones it can actually
+   * see. The engine drops a chase against a never-seen target, and offering one
+   * the player cannot see would either be a dead control or — worse — a way to
+   * confirm somebody is out there. The list comes from `currentFog`, the same
+   * view that decides what is drawn, so the affordance and the fog can never
+   * disagree about who is on screen.
+   */
+  function chaseableEnemies(): UnitState[] {
+    const me = selectedUnit();
+    if (me === undefined) return [];
+    const shown = new Set(currentFog(me.owner).units.map((u) => u.unitId));
+    return state.units.filter((u) => u.alive && u.owner !== me.owner && shown.has(u.unitId));
+  }
+
+  /** A chaseable enemy's display name, for the HUD's "Chase <name>" label. */
+  const roster0 = (unitId: string): CharacterDef | undefined => {
+    const u = unitById(unitId);
+    return u === undefined ? undefined : roster[u.characterId];
+  };
+
+  /** Arm chase mode: the next board click on a visible enemy sets the target. */
+  function armChase(): void {
+    const unit = selectedUnit();
+    if (unit === undefined) return;
+    interaction = arm('chase');
     render();
   }
 
@@ -928,6 +1075,21 @@ export function startHotSeat(
       const committed = commitAim(map, state, unit, def, sq);
       if (committed === undefined) return;
       draft.catalystAim = committed.aim;
+      interaction = afterCommit();
+      render();
+    } else if (interaction.mode === 'chase') {
+      // A chase names a UNIT, so the click resolves to whoever is standing on
+      // the square — and only if this seat can see them. Clicking empty ground
+      // leaves the mode armed rather than silently dropping the order.
+      const target = chaseableEnemies().find((u) => u.pos.x === sq.x && u.pos.y === sq.y);
+      if (target === undefined) return;
+      const next = nextDraft(
+        draft,
+        { type: 'selectChase', targetUnitId: target.unitId },
+        currentIsDash(draft, characterFor(unit)),
+        dashCatalystArmed(draft),
+      );
+      drafts.set(unit.unitId, next);
       interaction = afterCommit();
       render();
     } else if (interaction.mode === 'move' || draft.sprint) {
@@ -1018,6 +1180,10 @@ export function startHotSeat(
     finish();
 
     state = result.state;
+    // SCORE1 — the damage/healing ledger is folded from the same log playback
+    // just consumed, so the scoreboard and the animation can never describe
+    // different turns.
+    totals = foldTurn(totals, result.events);
     if (state.status !== 'active') return renderGameOver();
     beginTurn();
   }
@@ -1189,9 +1355,33 @@ export function startHotSeat(
     renderer.setSpotlight(null);
     renderer.fitBoard();
     hud.clear();
-    ui.status.textContent = state.status === 'draw'
-      ? 'Double KO — the match is a draw.'
-      : `${teamName(state.winner ?? 0)} wins! (${state.kills[0]}–${state.kills[1]})`;
+    const result = matchBreakdown(state, unitName, totals);
+    ui.status.textContent = endReasonText(result);
+    // SCORE1's end-of-match breakdown: what each character actually did, from
+    // the folded log. It replaces the scoreboard rather than sitting under it —
+    // the tally it was showing is now the final score on the line above.
+    scoreEl.replaceChildren();
+    const table = document.createElement('table');
+    table.className = 'score-table';
+    const header = document.createElement('tr');
+    for (const h of ['', 'Kills', 'Deaths', 'Dmg dealt', 'Dmg taken', 'Healing']) {
+      const th = document.createElement('th');
+      th.textContent = h;
+      header.appendChild(th);
+    }
+    table.appendChild(header);
+    for (const row of result.rows) {
+      const tr = document.createElement('tr');
+      const cells = [row.name, row.kills, row.deaths, row.damageDealt, row.damageTaken, row.supportGiven];
+      for (const [i, value] of cells.entries()) {
+        const td = document.createElement('td');
+        td.textContent = String(value);
+        if (i === 0) td.style.color = TEAM_CSS[row.owner];
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    scoreEl.appendChild(table);
   }
 
   const teamName = (t: number) => (t === 0 ? 'Team 1' : 'Team 2');

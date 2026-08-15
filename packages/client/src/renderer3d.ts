@@ -100,7 +100,7 @@ const TRAP_SIZE = 0.5;
  * covered tile always reads on top of the envelope that contains it.
  */
 export type HighlightLayer =
-  | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'select';
+  | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'chase' | 'select';
 
 /**
  * Route lines get their own layers for the same reason the aim overlays do: a
@@ -139,6 +139,10 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
   impact: OVERLAY_BASE + 0.016,
   free: OVERLAY_BASE + 0.018,
   catalyst: OVERLAY_BASE + 0.020,
+  // CHASE1's quarry ring sits just under the selection ring: it marks a unit
+  // rather than a target area, so it must read above every aim overlay and
+  // still yield to "this is the character you are ordering".
+  chase: OVERLAY_BASE + 0.022,
   select: OVERLAY_BASE + 0.024,
 };
 /**
@@ -147,7 +151,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, select: 0.92,
+  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, chase: 0.98, select: 0.92,
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;
@@ -276,6 +280,12 @@ export interface Renderer {
    */
   onFrame(cb: (() => void) | undefined): void;
   resize(width: number, height: number): void;
+  /**
+   * Tell the camera how much of the canvas the overlaid chrome covers, in CSS
+   * pixels (UI-VIEWPORT). The board is then framed into what is left, so no rank
+   * of it hides behind the hotbar or the log.
+   */
+  setSafeInsets(next: { top: number; right: number; bottom: number; left: number }): void;
   render(): void;
   dispose(): void;
 }
@@ -498,10 +508,17 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     const aspect = width / height;
     const halfH = span / 2;
     const halfW = halfH * aspect;
-    camera.left = -halfW;
-    camera.right = halfW;
-    camera.top = halfH;
-    camera.bottom = -halfH;
+    // UI-VIEWPORT: an **asymmetric** frustum, so the board is centred in the
+    // *uncovered* part of the canvas rather than in the canvas. A bottom inset
+    // (the hotbar) shifts the world window down, which moves the board up and
+    // clear of it. Symmetric when there are no insets, which is the old
+    // behaviour to the pixel.
+    const shiftX = ((insets.left - insets.right) / width) * halfW;
+    const shiftY = ((insets.bottom - insets.top) / height) * halfH;
+    camera.left = -halfW - shiftX;
+    camera.right = halfW - shiftX;
+    camera.top = halfH - shiftY;
+    camera.bottom = -halfH - shiftY;
 
     // Pitch is the whole projection story: 90° looks straight down, ~35.264°
     // gives true isometric. Yaw swings that same camera around the board, so a
@@ -521,13 +538,31 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     camera.updateProjectionMatrix();
   }
 
-  /** The span that frames the whole board at the current pitch. */
+  /**
+   * UI-VIEWPORT — how much of the canvas is covered by chrome, in CSS pixels.
+   *
+   * The canvas fills the whole viewport now, so the HUD and the log sit *over*
+   * it rather than beside it. The camera has to know that, or the bottom rank of
+   * the board is framed perfectly and then hidden behind the hotbar.
+   */
+  let insets = { top: 0, right: 0, bottom: 0, left: 0 };
+  const visibleW = (): number => Math.max(1, width - insets.left - insets.right);
+  const visibleH = (): number => Math.max(1, height - insets.top - insets.bottom);
+
+  /** The span that frames the whole board **in the uncovered region**. */
   const boardSpan = (): number => {
     // Depth foreshortens by sin(pitch) — at true isometric the board is only
     // ~58% as tall on screen as it is deep, so framing by raw height would
     // leave the board floating in a letterbox.
     const projectedDepth = map.height * Math.sin(rad(pitchDeg));
-    return Math.max(projectedDepth, map.width / (width / height)) * 1.08;
+    // `span` is the world height of the FULL canvas, so fitting the board into a
+    // fraction of that canvas means scaling the requirement up by the reciprocal
+    // of that fraction. With no insets both terms collapse to the old
+    // `max(projectedDepth, map.width / aspect)` exactly.
+    return Math.max(
+      projectedDepth * (height / visibleH()),
+      map.width * (height / visibleW()),
+    ) * 1.08;
   };
 
   /**
@@ -933,6 +968,11 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       if (frameHandle === undefined) return;
       globalThis.cancelAnimationFrame(frameHandle);
       frameHandle = undefined;
+    },
+
+    setSafeInsets(next) {
+      insets = { ...next };
+      applyCamera();
     },
 
     resize(w, h) {

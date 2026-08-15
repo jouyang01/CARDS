@@ -207,3 +207,11 @@ export const isRangeWash = (px: Rgb): boolean =>
  */
 export const isDecoyPurple = (px: Rgb): boolean =>
   px.b > 60 && px.r > 40 && px.r - px.g > 20 && px.b - px.g > 30 && Math.abs(px.r - px.b) < 70;
+
+/**
+ * The scene background (`#12141a`) — what shows *around* the board when the whole
+ * board is in frame. Matched tightly: it is a flat unlit clear colour, not a
+ * Lambert-shaded surface, so it arrives at very close to its literal value.
+ */
+export const isSceneBackground = (px: Rgb): boolean =>
+  Math.abs(px.r - 0x12) <= 4 && Math.abs(px.g - 0x14) <= 4 && Math.abs(px.b - 0x1a) <= 4;

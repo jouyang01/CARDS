@@ -62,6 +62,11 @@ export const EFFECT_KINDS = [
   'decoy',
   'teleport',
   'untargetable',
+  // DOT-HOT (ar-parity §7.1): amount-per-turn effects. They ride the status
+  // machinery — same refresh-not-stack, same end-of-turn tick — because
+  // "something that lasts N turns" already has one implementation here.
+  'damageOverTime',
+  'healOverTime',
 ] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
@@ -71,6 +76,13 @@ export interface AbilityEffect {
   amount?: number;
   /** Status duration in turns. */
   duration?: number;
+  /**
+   * `trap` only — turns a placed trap survives unfired, counted like a status
+   * `duration`: `lifetime: 2` covers the turn it was placed and the next.
+   * Capped at `TRAP_MAX_LIFETIME` by validation, and defaulted to it when the
+   * data omits it, so no trap can outlive the cap by being under-specified.
+   */
+  lifetime?: number;
 }
 
 export interface AbilityDef {
@@ -156,6 +168,28 @@ export interface CharacterDef {
 
 export type TerrainKind = 'wall' | 'cover' | 'brush';
 
+/** The three power-up pad flavours (PADS1, ar-parity §7.3). */
+export const POWERUP_TYPES = ['health', 'might', 'energy'] as const;
+export type PowerupType = (typeof POWERUP_TYPES)[number];
+
+/**
+ * A power-up pad as authored on a map (PADS1). Flat `x`/`y` rather than a
+ * `Vec2` because that is the authored shape the backlog fixed, and a pad is a
+ * map *feature* rather than a square with attributes.
+ *
+ * The pad's square is its identity: two pads may not share one, so validation
+ * rejects duplicates and the live state keys off the position.
+ */
+export interface PowerupPad {
+  x: number;
+  y: number;
+  type: PowerupType;
+  /** The first turn it may be taken. */
+  firstTurn: number;
+  /** Turns from being taken to being takeable again. */
+  everyTurns: number;
+}
+
 export interface MapDef {
   id: string;
   name: string;
@@ -169,6 +203,12 @@ export interface MapDef {
   brush: Vec2[];
   /** spawns[teamId] = list of that team's spawn squares (one per character). */
   spawns: [Vec2[], Vec2[]];
+  /**
+   * Power-up pads (PADS1). Optional: a map with no pads is a legal map, and
+   * every fixture that predates them stays valid rather than being forced to
+   * declare an empty array it does not care about.
+   */
+  powerups?: PowerupPad[];
 }
 
 // ── Live state ──────────────────────────────────────────────────────────────
@@ -177,8 +217,16 @@ export interface StatusInstance {
   kind: EffectKind;
   /** Turns remaining; ticks at end of turn. */
   remaining: number;
-  /** For shields: remaining absorb amount. */
+  /** For shields: remaining absorb amount. For DoT/HoT: the per-turn amount. */
   amount?: number;
+  /**
+   * Who applied it, for the over-time kinds (DOT-HOT). A DoT that kills has to
+   * credit somebody's team — the same problem a trap has, solved the same way —
+   * and the `damage`/`heal` events it emits carry A0 attribution like any other.
+   * Absent on the ordinary statuses, which need no author to tick.
+   */
+  sourceUnitId?: string;
+  abilityId?: string;
 }
 
 export interface UnitState {
@@ -214,6 +262,12 @@ export interface TrapState {
   abilityId: string;
   pos: Vec2;
   damage: number;
+  /**
+   * The last turn on which it is still live (TRAP-LIFETIME). Removed unfired at
+   * the **end** of this turn — `placedTurn + lifetime - 1`, the same arithmetic
+   * a `duration: N` status is measured by.
+   */
+  expiresOnTurn: number;
   /** Applied to whoever triggers it. */
   onTrigger: AbilityEffect[];
 }
@@ -233,6 +287,44 @@ export interface DecoyState {
   expiresOnTurn: number;
 }
 
+/**
+ * A power-up pad that has been taken at least once (PADS1). The pad itself
+ * lives on the map; all the live state needs to remember is when it comes back.
+ *
+ * Append-on-take rather than seeded-at-match-start: a pad nobody has contested
+ * has nothing to say, and this way `powerups` is a record of what happened in
+ * the match rather than a copy of the map. Absent from the list = live from the
+ * pad's `firstTurn`.
+ */
+export interface PowerupState {
+  /** The pad's square — the key back into `MapDef.powerups`. */
+  pos: Vec2;
+  /** The first turn it may be taken again (`takenOn + everyTurns`). */
+  availableOnTurn: number;
+}
+
+/**
+ * Where a team last *saw* an enemy (CHASE1). Recorded at each turn boundary for
+ * every enemy that team could see at the time, and left stale otherwise — which
+ * is the whole point: a chase against a target you have lost heads here, not to
+ * where the target actually is.
+ *
+ * A flat array rather than a nested record because `GameState` must survive
+ * `structuredClone` and the determinism hash as plain JSON, and because object
+ * key order must never be able to affect an outcome (golden rule #1). Entries
+ * are appended in team-then-`units` order and updated in place, so the list
+ * order is a function of the match, not of iteration.
+ */
+export interface LastKnownPos {
+  /** The team doing the remembering. */
+  team: TeamId;
+  /** The enemy unit remembered. */
+  unitId: string;
+  pos: Vec2;
+  /** The turn the sighting was recorded — for a client wanting to age a ghost. */
+  turn: number;
+}
+
 export interface PendingDelayedAbility {
   casterUnitId: string;
   abilityId: string;
@@ -249,6 +341,14 @@ export interface GameState {
   delayed: PendingDelayedAbility[];
   /** Wisp decoys (edge-cases R2), kept out of `units`. */
   decoys: DecoyState[];
+  /** Respawn timers for power-up pads already taken this match (PADS1). */
+  powerups: PowerupState[];
+  /**
+   * Per-team last-known enemy positions (CHASE1). The authoritative copy, kept
+   * engine-side because chase resolution is engine logic and must never reach
+   * for a target's true fogged square (golden rule #5).
+   */
+  lastKnown: LastKnownPos[];
   /** Per-team kill tally, `kills[teamId]`. */
   kills: [number, number];
   /** Match format id (GAME_SPEC §1) — sets kill target and turn limit. */
@@ -300,6 +400,16 @@ export interface UnitOrders {
   catalyst?: AbilityOrder;
   /** Move-phase path, first square = first step. Empty/absent = hold. */
   movePath?: Vec2[];
+  /**
+   * A chase order (CHASE1): an **enemy** unit id to close on, declared *instead
+   * of* `movePath`. The engine picks the route at the end of Move, once
+   * everybody else has finished moving, so a chase tracks its target rather than
+   * a square guessed at plan time.
+   *
+   * It never uses the target's true position when the chaser's team cannot see
+   * it — a chase into fog goes to the team's last-known square and stops there.
+   */
+  chase?: string;
   /** True = no ability, extended move range. A free action never blocks it. */
   sprint?: boolean;
 }
@@ -346,6 +456,21 @@ export type TurnEvent =
   | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
+  // …and its counterpart: the trap ran out its life without anyone stepping on
+  // it (TRAP-LIFETIME). Distinct from `trapTriggered`, which means somebody did.
+  // Without it a client folding the log keeps a marker over a square that is no
+  // longer dangerous — the same failure `statusRemoved` exists to prevent.
+  | { type: 'trapExpired'; trapId: string; pos: Vec2; owner: TeamId }
+  // A chase resolved (CHASE1). `to` is the square the chaser actually set off
+  // for — the target's real square when its team could see it, the team's
+  // last-known square when it could not — so the client can draw the route the
+  // engine took without re-deriving vision, and without ever being told where an
+  // unseen target really is. Absent entirely when the chase was dropped.
+  | { type: 'chaseResolved'; unitId: string; targetUnitId: string; to: Vec2; seen: boolean }
+  // A power-up pad was picked up (PADS1). The effects it grants arrive as the
+  // ordinary `heal`/`statusApplied` events immediately before this one, so the
+  // only thing the client learns here is that the pad went dark.
+  | { type: 'powerupTaken'; unitId: string; pos: Vec2; powerup: PowerupType }
   // A catalyst is spent (CAT1) — playback and the HUD's spent-slot greying.
   | { type: 'catalystUsed'; unitId: string; catalystId: string }
   | { type: 'trapTriggered'; trapId: string; unitId: string }

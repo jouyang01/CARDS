@@ -69,12 +69,12 @@ describe('CAT1: the pool is content, and it validates', () => {
     expect(validateCatalysts(DATA)).toEqual([]);
   });
 
-  it('is a four-per-phase pool (prep still 3 until Regenergy lands), each unique', () => {
-    // AR's pool is four per phase and this is heading there. Prep is still 3
-    // because its fourth (Regenergy) needs `healOverTime` — it lands with
-    // DOT-HOT, at which point this becomes 12 and a flat 4 per phase.
-    expect(Object.keys(POOL)).toHaveLength(11);
-    expect(DATA.prep).toHaveLength(3);
+  it('is a flat four-per-phase pool, each unique', () => {
+    // AR's pool is four per phase and this is now it. Prep's fourth (Regenergy)
+    // was withheld until `healOverTime` existed rather than shipped as content
+    // that would fail validation; DOT-HOT landed, so it is here.
+    expect(Object.keys(POOL)).toHaveLength(12);
+    expect(DATA.prep).toHaveLength(4);
     expect(DATA.dash).toHaveLength(4);
     expect(DATA.blast).toHaveLength(4);
     for (const phase of CATALYST_PHASES) {
@@ -92,12 +92,14 @@ describe('CAT1: the pool is content, and it validates', () => {
   });
 
   it('needs no new EFFECT_KIND — every effect is one the engine already has', () => {
-    // The claim the design rests on: the whole pool, zero engine surface.
-    // (Regenergy will be the first exception — it lands with DOT-HOT, which
-    // adds `healOverTime` deliberately rather than by accident.)
+    // The claim the design rests on: the whole pool, zero engine surface. The
+    // list is spelled out rather than checked against `EFFECT_KINDS` so that a
+    // catalyst reaching for a *new* mechanic has to say so here — `healOverTime`
+    // is on it because DOT-HOT added the kind first and Regenergy followed, not
+    // the other way round.
     const kinds = new Set(Object.values(POOL).flatMap((d) => d.effects.map((e) => e.kind)));
     expect([...kinds].sort()).toEqual(
-      ['energized', 'haste', 'heal', 'might', 'reveal', 'root', 'shield', 'teleport', 'unstoppable', 'untargetable', 'weaken'],
+      ['energized', 'haste', 'heal', 'healOverTime', 'might', 'reveal', 'root', 'shield', 'teleport', 'unstoppable', 'untargetable', 'weaken'],
     );
   });
 
@@ -154,6 +156,22 @@ describe('CAT1: catalysts resolve at the START of their phase', () => {
     // spent for nothing — which is exactly how it would fail.
     expect(boostedDealt).toBe(20 + Math.floor((20 * MIGHT_PCT) / 100));
     expect(hasStatus(unit(boosted.state, 'a'), 'might')).toBe(true);
+  });
+
+  it('Regenergy heals 12 at the end of each of 3 turns — the pool\'s fourth prep slot', () => {
+    // The catalyst DOT-HOT unblocked. Worth an outcome test rather than a data
+    // assertion: the whole reason it was withheld is that `healOverTime` did not
+    // exist, so what matters is that it now actually pays out three times.
+    let s = withCatalyst(setup(), 'regenergy');
+    unit(s, 'a').hp = 40;
+    ({ state: s } = run(s, [{ unitId: 'a', catalyst: { abilityId: 'regenergy' } }]));
+    expect(unit(s, 'a').hp, 'ticks the turn it is spent').toBe(52);
+    ({ state: s } = run(s, []));
+    expect(unit(s, 'a').hp).toBe(64);
+    ({ state: s } = run(s, []));
+    expect(unit(s, 'a').hp).toBe(76);
+    ({ state: s } = run(s, []));
+    expect(unit(s, 'a').hp, 'and then it is spent').toBe(76);
   });
 
   it('Suppression weakens enemies within 2, blunting their counter-swing', () => {
@@ -226,12 +244,16 @@ describe('CAT1: catalysts resolve at the START of their phase', () => {
   });
 });
 
-describe('CAT-DASH-COST: a Dash catalyst SPENDS your Move', () => {
+describe('CAT-DASH-FULL: a Dash catalyst IS your whole active turn', () => {
   /**
-   * Owner directive 2026-08-28 — "Dash Catalysts should not be a free action."
-   * This reverses CAT1's "a free dash catalyst does NOT consume your Move" for
-   * the Dash colour: Shift 3 in Dash *or* walk 4 in Move, never both. The tests
-   * below are the shape of that reversal, so a re-ruling has one place to land.
+   * Owner directive 2026-09-01 — "Dash Catalyst should count as your full
+   * action" — superseding 2026-08-28's "it spends your Move".
+   *
+   * A free ≤3 teleport or a 2-turn Untargetable that cost only a Move was still
+   * the strongest thing a turn could do. Priced at the whole action it reads
+   * like the once-per-match power it is: no ability, no Move, no Sprint. Prep
+   * and Blast catalysts are untouched, and the tests that say so are the ones
+   * that stop this leaking out of the Dash colour.
    */
   it('a unit that Shifts 3 in Dash does not also walk in Move', () => {
     const s = setup();
@@ -313,14 +335,38 @@ describe('CAT-DASH-COST: a Dash catalyst SPENDS your Move', () => {
     expect(state.units[0]!.pos).toEqual({ x: 4, y: 1 });
   });
 
-  it('Shift plus a dash ability is legal — a catalyst is not the unit’s ability', () => {
+  it('Shift DROPS a declared dash ability — the catalyst is the whole turn', () => {
+    // The inversion. Under CAT-DASH-COST this asserted the charge also ran and
+    // the unit ended at (6,7); the catalyst only cost the Move. It now costs the
+    // ability slot too, so the Shift lands and the charge never fires.
+    const { state, events } = run(setup(), [{
+      unitId: 'a',
+      catalyst: { abilityId: 'shift', target: [{ x: 4, y: 7 }] },
+      ability: { abilityId: 'charge', target: [{ x: 5, y: 7 }, { x: 6, y: 7 }] },
+    }]);
+    expect(unit(state, 'a').pos).toEqual({ x: 4, y: 7 }); // the Shift, and only the Shift
+    expect(events.some((e) => e.type === 'abilityFired' && e.abilityId === 'charge')).toBe(false);
+  });
+
+  it('…and drops a BLAST ability too — it is the slot, not the phase', () => {
+    const { state, events } = run(setup(), [{
+      unitId: 'a',
+      catalyst: { abilityId: 'shift', target: [{ x: 4, y: 7 }] },
+      ability: { abilityId: 'shot', target: [{ x: 12, y: 10 }] },
+    }]);
+    expect(events.some((e) => e.type === 'abilityFired' && e.abilityId === 'shot')).toBe(false);
+    expect(unit(state, 'e').hp).toBe(100); // nothing was fired at it
+  });
+
+  it('the ability is not merely un-fired — its cooldown is untouched', () => {
+    // A dropped order must cost nothing. Spending the cooldown on an ability
+    // that never resolved would be the worst of both readings.
     const { state } = run(setup(), [{
       unitId: 'a',
       catalyst: { abilityId: 'shift', target: [{ x: 4, y: 7 }] },
       ability: { abilityId: 'charge', target: [{ x: 5, y: 7 }, { x: 6, y: 7 }] },
     }]);
-    // Shift first (catalysts resolve at the start of the phase), then the charge.
-    expect(unit(state, 'a').pos).toEqual({ x: 6, y: 7 });
+    expect(unit(state, 'a').cooldowns['charge'] ?? 0).toBe(0);
   });
 
   it('does not reduce the move budget or block Sprint', () => {

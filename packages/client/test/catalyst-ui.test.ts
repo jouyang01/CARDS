@@ -9,7 +9,7 @@ import {
   type CharacterDef,
   type MapDef,
 } from '@cards/engine';
-import { createHud, type HudCatalyst, type HudCharacter, type HudModel } from '../src/hud.js';
+import { createHud, type HudAbility, type HudCatalyst, type HudCharacter, type HudModel } from '../src/hud.js';
 import { catalystCost, emptyDraft, nextDraft, sprintAllowed, toUnitOrders } from '../src/targeting.js';
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
@@ -77,8 +77,10 @@ describe('CAT2: selecting a catalyst never replaces the ability selection', () =
   });
 
   it('re-picking the same catalyst hands the slot back without clearing the turn', () => {
-    const on = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
-    const off = nextDraft(on, { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false, true);
+    // A PREP catalyst, which never touched the rest of the turn. (The Dash
+    // colour now clears the ability on the way in — CAT-DASH-FULL below.)
+    const on = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'second_wind', isDash: false }, false);
+    const off = nextDraft(on, { type: 'selectCatalyst', catalystId: 'second_wind', isDash: false }, false);
     expect(off.catalystId).toBeUndefined();
     expect(off.catalystAim).toEqual([]);
     expect(off.abilityId).toBe('rail_shot'); // the rest of the turn is untouched
@@ -104,7 +106,7 @@ describe('CAT2: selecting a catalyst never replaces the ability selection', () =
  * separate-slot invariant above still holds for everything else: it never
  * touches the chosen ability or its aim, only the Move it is now paying with.
  */
-describe('CAT-DASH-COST: a Dash catalyst and the Move are one choice', () => {
+describe('CAT-DASH-FULL: a Dash catalyst and the whole active turn are one choice', () => {
   const armed = () => ({
     ...emptyDraft('vex-t0-0'),
     abilityId: 'rail_shot',
@@ -120,11 +122,29 @@ describe('CAT-DASH-COST: a Dash catalyst and the Move are one choice', () => {
     expect(after.sprint).toBe(false);
   });
 
-  it('…but still not the ability or its aim — it is a separate slot, not a replacement', () => {
+  it('…and the ability and its aim with it — it IS the active turn now', () => {
+    // The inversion. Under CAT-DASH-COST this asserted the ability survived
+    // untouched; the catalyst only bought the Move. Owner ruling 2026-09-01
+    // prices it at the whole action, so a drafted ability left sitting beside it
+    // would promise something the engine is going to throw away.
     const after = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
+    expect(after.abilityId).toBeUndefined();
+    expect(after.aim).toEqual([]);
+    expect(after.aimStep).toBeUndefined();
+  });
+
+  it('choosing an ability hands the Dash catalyst back, rather than voiding it later', () => {
+    const shifted = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
+    const armedAbility = nextDraft(shifted, { type: 'selectAbility', abilityId: 'rail_shot', isDash: false }, false, true);
+    expect(armedAbility.abilityId).toBe('rail_shot');
+    expect(armedAbility.catalystId).toBeUndefined();
+  });
+
+  it('but a PREP catalyst still stacks with an ability and a move', () => {
+    const after = nextDraft(armed(), { type: 'selectCatalyst', catalystId: 'second_wind', isDash: false }, false);
+    expect(after.catalystId).toBe('second_wind');
     expect(after.abilityId).toBe('rail_shot');
-    expect(after.aim).toEqual([{ x: 14, y: 7 }]);
-    expect(after.aimStep).toBe(12);
+    expect(after.movePath).toHaveLength(2);
   });
 
   it('applies to every Dash catalyst, not only the one that repositions', () => {
@@ -221,13 +241,14 @@ const model = (over: Partial<HudModel> = {}): HudModel => ({
   abilities: [],
   catalysts: [slot('second_wind'), slot('shift'), slot('adrenaline')],
   move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
+  chase: { armed: false, disabled: false },
   lock: { label: 'Lock In ▸' },
   view: { projection: 'Isometric', orbit: false },
   ...over,
 });
 const handlers = () => ({
   selectCharacter: vi.fn(), selectAbility: vi.fn(), selectCatalyst: vi.fn(), hoverAbility: vi.fn(),
-  selectMove: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
+  selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
   toggleProjection: vi.fn(), toggleOrbit: vi.fn(),
 });
 
@@ -245,7 +266,7 @@ describe('CAT2: three slots, in phase order, greyed out once spent', () => {
     hud.update(model());
     expect(slots().map((b) => b.dataset['phase'])).toEqual(['prep', 'dash', 'blast']);
     expect(slots().map((b) => b.textContent))
-      .toEqual(['Second Windprepfree', 'Shiftdashcosts Move', 'Adrenalineblastfree']);
+      .toEqual(['Second Windprepfree', 'Shiftdashyour action', 'Adrenalineblastfree']);
   });
 
   it('a spent slot is disabled, marked, and still says what it was', () => {
@@ -299,24 +320,24 @@ describe('CAT2: three slots, in phase order, greyed out once spent', () => {
 describe('CAT-COST-LABEL: each slot says what it costs', () => {
   const costs = () => [...root.querySelectorAll('.hud-catalyst-cost')] as HTMLElement[];
 
-  it('tags Prep and Blast free, and Dash as costing the Move', () => {
+  it('tags Prep and Blast free, and Dash as costing your whole action', () => {
     const hud = createHud(root, handlers());
     hud.update(model());
-    expect(costs().map((n) => n.textContent)).toEqual(['free', 'costs Move', 'free']);
+    expect(costs().map((n) => n.textContent)).toEqual(['free', 'your action', 'free']);
   });
 
   it('marks them with distinct classes, so the exception can be styled as one', () => {
     const hud = createHud(root, handlers());
     hud.update(model());
     expect(costs().map((n) => n.className)).toEqual([
-      'hud-catalyst-cost free', 'hud-catalyst-cost move', 'hud-catalyst-cost free',
+      'hud-catalyst-cost free', 'hud-catalyst-cost action', 'hud-catalyst-cost free',
     ]);
   });
 
   it('derives the cost from the phase, for every catalyst in the pool', () => {
-    // Nine catalysts, one rule: yellow prices your turn, the other two do not.
+    // One rule: yellow IS your turn, the other two colours cost nothing.
     for (const def of Object.values(POOL)) {
-      expect(catalystCost(def), def.id).toBe(def.phase === 'dash' ? 'move' : 'free');
+      expect(catalystCost(def), def.id).toBe(def.phase === 'dash' ? 'action' : 'free');
     }
   });
 
@@ -331,6 +352,39 @@ describe('CAT-COST-LABEL: each slot says what it costs', () => {
     const hud = createHud(root, handlers());
     hud.update(model());
     expect(slots()[1]!.textContent).toContain('dash');
-    expect(slots()[1]!.textContent).toContain('costs Move');
+    expect(slots()[1]!.textContent).toContain('your action');
+  });
+});
+
+/**
+ * CAT-DASH-FULL, the hotbar half. The reducer clearing the ability is only half
+ * a rule — if the buttons stay lit, the player learns it by having their turn
+ * silently rewritten.
+ */
+describe('CAT-DASH-FULL: the hotbar goes dark while a Dash catalyst is armed', () => {
+  const hudAbility = (over: Partial<HudAbility> = {}): HudAbility => ({
+    id: 'rail_shot', name: 'Rail Shot', isUlt: false, available: true,
+    cooldown: 0, selected: false, free: false, def: VEX.abilities[0]!, ...over,
+  });
+  const buttons = () => [...root.querySelectorAll('.hud-ability')] as HTMLButtonElement[];
+
+  it('disables a normal ability button when the model says it is unavailable', () => {
+    const hud = createHud(root, handlers());
+    hud.update(model({
+      abilities: [hudAbility({ available: false, reason: 'catalyst' })],
+    }));
+    expect(buttons()[0]!.disabled).toBe(true);
+    // Not "cooldown" and not "energy": the slot is spoken for, which is a third
+    // reason and reads as one.
+    expect(buttons()[0]!.textContent).toContain('catalyst');
+  });
+
+  it('leaves a FREE ability usable — it is a separate free action', () => {
+    // The ruling prices the *active* turn; a free action was never part of it.
+    const hud = createHud(root, handlers());
+    hud.update(model({
+      abilities: [hudAbility({ id: 'overwatch_trap', name: 'Overwatch Trap', free: true, available: true })],
+    }));
+    expect(buttons()[0]!.disabled).toBe(false);
   });
 });

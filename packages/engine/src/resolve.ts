@@ -44,12 +44,15 @@ import {
   PASSIVE_ENERGY,
   RESPAWN_TURNS,
   REVEAL_ON_ATTACK_TURNS,
+  TRAP_MAX_LIFETIME,
   ULT_COST,
 } from './constants.js';
 import { getFormat } from './formats.js';
-import { movementBudget, pathWithinBudget, stepCost, validateMovePath } from './movement.js';
+import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
+import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
-import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
+import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
+import { buildVision, teamCanSee } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
@@ -60,6 +63,7 @@ import type {
   EffectKind,
   GameState,
   AbilityOrder,
+  LastKnownPos,
   MapDef,
   PlayerOrders,
   TeamId,
@@ -110,6 +114,12 @@ interface UnitPlan {
   /** A catalyst (CAT1), likewise additive and likewise invisible to pricing. */
   catalyst?: PlannedAbility;
   /**
+   * A chase target's unit id (CHASE1) — the alternative to `movePath`, resolved
+   * at the end of Move rather than planned as squares, because the point of a
+   * chase is that it tracks where the target ends up.
+   */
+  chase?: string;
+  /**
    * Where a Shift will drop this unit, when it declared one. Everything from
    * Dash onward was planned from that square, so if the teleport turns out to be
    * blocked those plans no longer describe anything and are discarded.
@@ -137,6 +147,7 @@ export const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'knockback',
   'pull',
   'reveal',
+  'damageOverTime', // DOT-HOT: it damages, so FF1 reaches allies in the area too
 ]);
 export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'heal',
@@ -147,6 +158,7 @@ export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'unstoppable',
   'stealth',
   'untargetable', // R7 (2026-08-19): concealing/protecting a unit is friendly
+  'healOverTime', // DOT-HOT: a heal is a heal, own team only
 ]);
 export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'teleport',
@@ -290,7 +302,9 @@ function planUnit(
   const after = shiftTo === undefined ? unit : { ...unit, pos: shiftTo };
 
   const declared = planAbility(board, unit, roster, order.ability);
-  const ability = declared?.def.phase === 'prep'
+  // What the player asked for, before CAT-DASH-FULL below decides whether they
+  // are allowed to have it.
+  const declaredAbility = declared?.def.phase === 'prep'
     ? declared
     : planAbility(board, after, roster, order.ability);
 
@@ -299,7 +313,7 @@ function planUnit(
   // the normal slot: ordering the same trap twice would fire it twice off one
   // cooldown, which is the one way this slot could be abused.
   let freeAbility = planAbility(board, unit, roster, order.freeAbility);
-  if (freeAbility?.def.free !== true || freeAbility.def.id === ability?.def.id) freeAbility = undefined;
+  if (freeAbility?.def.free !== true || freeAbility.def.id === declaredAbility?.def.id) freeAbility = undefined;
 
 
   // **At most one free action per turn** (edge-cases, the conservative v1
@@ -310,28 +324,42 @@ function planUnit(
   // what decides the Move below.
   const spentCatalyst = freeAbility === undefined ? catalyst : undefined;
 
-  // CAT-DASH-COST — a **Dash catalyst is not a free action** (owner directive,
-  // 2026-08-28: "Dash Catalysts should not be a free action"). It buys its
-  // effect with the unit's Move, exactly as a dash ability does: Shift 3 in Dash
-  // *or* walk 4 in Move, never both. This reverses CAT1's "a free dash catalyst
-  // does NOT consume your Move" for the Dash colour only — Prep and Blast
-  // catalysts stay fully additive, because they never touched movement.
+  // CAT-DASH-FULL — a **Dash catalyst is your whole active turn** (owner
+  // directive 2026-09-01: "Dash Catalyst should count as your full action",
+  // superseding CAT-DASH-COST's "it spends your Move").
   //
-  // Applied uniformly across all three Dash catalysts, not just the one that
-  // repositions. The directive names the colour, not Shift, and one rule per
-  // colour is the reading a player can hold in their head; see DECISIONS
-  // 2026-08-28 for the sub-question this leaves open for the Designer.
+  // A free ≤3 teleport (Shift) or a 2-turn Untargetable (Fade) that cost only a
+  // Move was still the strongest thing a turn could do; priced at the whole
+  // action it reads like the once-per-match power it is. So a Dash-catalyst turn
+  // carries no normal ability, no Move and no Sprint — exactly as if the
+  // catalyst *were* the unit's ability-and-movement.
+  //
+  // Uniform across all three Dash catalysts, Fade and Unshackle included. The
+  // directive names the colour, and "yellow is your turn" is one rule a player
+  // can hold; "yellow is your turn unless it doesn't move you" is a footnote.
+  // Prep and Blast catalysts are untouched — still free, still additive.
   const dashCatalyst = spentCatalyst?.def.phase === 'dash';
+
+  // The ability slot goes with it. Dropped here rather than at the fire sites so
+  // there is one answer to "did this unit act this turn" — the plan — and every
+  // phase reads the same one.
+  //
+  // Safe to drop *after* the free-ability duplicate check above: a Dash catalyst
+  // is only ever `spent` when no free ability was declared (the one-free-action
+  // rule makes the catalyst yield), so in every branch that reaches here the
+  // check had nothing to compare against anyway.
+  const ability = dashCatalyst ? undefined : declaredAbility;
 
   // Sprint is "move only": it is ignored the moment a real ability is used —
   // and a free action is **not** one. Reading `ability` alone here was the whole
-  // of FREE1's budget independence; a Dash catalyst now joins it, because it is
-  // no longer free. `movementBudget` still takes only the unit and this flag, so
-  // a *free* action still cannot shrink a move or cancel a Sprint.
+  // of FREE1's budget independence; a Dash catalyst joins it, because it is no
+  // longer free. `movementBudget` still takes only the unit and this flag, so a
+  // *free* action still cannot shrink a move or cancel a Sprint.
   const sprint = ability === undefined && !dashCatalyst && order.sprint === true;
 
   // A dash ability IS the unit's movement this turn; a separate Move path is
-  // dropped (see docs/DECISIONS.md). A Dash catalyst now costs the same.
+  // dropped (see docs/DECISIONS.md). A Dash catalyst costs the same, and now the
+  // ability slot on top.
   let movePath: Vec2[] = [];
   const dashing = ability?.def.phase === 'dash';
   if (!dashing && !dashCatalyst && order.movePath !== undefined && order.movePath.length > 0) {
@@ -343,6 +371,29 @@ function planUnit(
     if (check.valid) movePath = order.movePath.map((p) => ({ x: p.x, y: p.y }));
   }
 
+  // CHASE1 — a chase is the *other* way to spend the Move, so everything that
+  // takes the Move away takes it too: a dash ability, a Dash catalyst. The
+  // ruling is explicit for the dash case ("the dash is the movement, so the
+  // chase is dropped — one reposition per turn") and the catalyst follows from
+  // CAT-DASH-FULL.
+  //
+  // A never-seen target is dropped here rather than at resolution, because "you
+  // cannot chase a rumour" is a fact about the order, not about how it resolves:
+  // if the team has no record of this enemy, there is nothing to chase toward.
+  // Everything else — the target dying, the team losing sight of it — happens
+  // during the turn and is answered at resolution.
+  let chase: string | undefined;
+  if (!dashing && !dashCatalyst && order.chase !== undefined) {
+    const target = draft.units.find((u) => u.unitId === order.chase);
+    const known = target !== undefined
+      && (teamCanSee(buildVision(board), draft, team, target) || lastKnownFor(draft, team, target.unitId) !== undefined);
+    if (target !== undefined && target.owner !== team && known) chase = target.unitId;
+  }
+  // Declared alongside a path, the chase is the more specific statement of
+  // intent and the path yields — the same way a dash ability's reposition
+  // supersedes a walk. A well-formed client never sends both.
+  if (chase !== undefined) movePath = [];
+
   return {
     unit,
     ability,
@@ -350,8 +401,14 @@ function planUnit(
     catalyst: spentCatalyst,
     shiftTo: freeAbility === undefined ? shiftTo : undefined,
     movePath,
+    chase,
     sprint,
   };
+}
+
+/** This team's memory of where `unitId` was, or `undefined` if never seen. */
+function lastKnownFor(draft: GameState, team: TeamId, unitId: string): LastKnownPos | undefined {
+  return draft.lastKnown.find((k) => k.team === team && k.unitId === unitId);
 }
 
 /** Where a teleport catalyst will put its caster, if it is one. */
@@ -823,8 +880,13 @@ function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly A
     } else if (e.kind === 'decoy') {
       spawnDecoy(draft, unit, events); // R2: a static fake at the caster's square
     } else if (isStatusKind(e.kind)) {
-      applyStatus(unit, e.kind, e.duration ?? 1);
-      events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1, sourceUnitId: source.unitId, abilityId: source.abilityId });
+      // DOT-HOT rides here too: the amount is per-turn rather than a shield
+      // pool, and the author is carried so a tick that kills can credit a team.
+      // Only for the over-time kinds — every other status instance stays the
+      // exact `{kind, remaining}` shape it has always been, so nothing about
+      // `structuredClone`, the determinism hash or an equality assertion moves.
+      applyStatus(unit, e.kind, e.duration ?? 1, e.amount, authorOf(e.kind, source));
+      events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1, amount: e.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
     }
   }
 }
@@ -879,6 +941,11 @@ function placeTraps(
       abilityId: planned.def.id,
       pos: { x: pos.x, y: pos.y },
       damage: trapEffect.amount ?? 0,
+      // TRAP-LIFETIME: stamped at placement, measured exactly like a status
+      // `duration` — `lifetime: 2` covers this turn and the next. An omitted
+      // lifetime lands on the cap rather than living forever, so a trap can only
+      // be *shorter* than the rule by being under-specified, never longer.
+      expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
       onTrigger,
     };
     draft.traps.push(trap);
@@ -1231,8 +1298,8 @@ function runBlast(
   // Non-displacement debuffs on surviving enemies.
   for (const { victim, effect, source } of debuffs) {
     if (!victim.alive) continue;
-    applyStatus(victim, effect.kind, effect.duration ?? 1);
-    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, sourceUnitId: source.unitId, abilityId: source.abilityId });
+    applyStatus(victim, effect.kind, effect.duration ?? 1, effect.amount, authorOf(effect.kind, source));
+    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, amount: effect.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
   }
 
   // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
@@ -1350,15 +1417,145 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
     const path = pathWithinBudget(plan.movePath, plan.unit.pos, budget);
     if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false });
   }
+
+  runSteps(draft, board, movers, events);
+
+  // CHASE1 — chasers go after the normal movers, against the board they leave
+  // behind, so a chase closes on where its target actually finished rather than
+  // on a square guessed when orders were written.
+  const chasers = planChases(draft, board, plans, displaced, events);
+  runSteps(draft, board, chasers, events);
+
+  // A decoy is destroyed by an enemy that *ends a move* on its square (R2) —
+  // and a chaser ends a move like anyone else.
+  const arrived = [...movers, ...chasers].map((m) => m.unit);
+  if (arrived.length > 0) destroyDecoysUnderEnemies(draft, arrived, events);
+
+  // Power-up pads settle last, once every square has its final occupant
+  // (PADS1) — and unconditionally, not only when somebody moved: a unit
+  // knocked onto a pad, or one standing on a pad the moment it respawns, has
+  // just as much claim to it as one that walked there.
+  resolvePowerups(draft, board, events);
+}
+
+/** Advance a set of movers on one shared clock until every path is spent. */
+function runSteps(draft: GameState, board: Board, movers: Mover[], events: TurnEvent[]): void {
   if (movers.length === 0) return;
-
   const maxLen = Math.max(...movers.map((m) => m.path.length));
-  for (let step = 0; step < maxLen; step++) {
-    stepMovers(draft, board, movers, step, events);
-  }
+  for (let step = 0; step < maxLen; step++) stepMovers(draft, board, movers, step, events);
+}
 
-  // A decoy is destroyed by an enemy that *ends a move* on its square (R2).
-  destroyDecoysUnderEnemies(draft, movers.map((m) => m.unit), events);
+/**
+ * CHASE1 — turn every surviving chase order into a path, against the **frozen
+ * post-Move snapshot**: every chaser reads the same board, the one left after
+ * normal movement, so A-chases-B and B-chases-A see each other where they
+ * finished walking rather than one seeing the other mid-chase. Symmetric,
+ * convergent, and independent of the order the chasers are visited in.
+ *
+ * The load-bearing rule is the one about fog (owner ruling 2026-09-01, golden
+ * rule #5): **a chase never uses a position its team cannot see.** If the
+ * chaser's team can see the target now, the goal is the target's real square.
+ * If it cannot, the goal is the team's last-known square for that target — and
+ * the chase stops there rather than continuing toward the true position, which
+ * is exactly the leak fog exists to prevent.
+ */
+function planChases(
+  draft: GameState,
+  board: Board,
+  plans: UnitPlan[],
+  displaced: ReadonlySet<string>,
+  events: TurnEvent[],
+): Mover[] {
+  const chasing = orderedPlans(draft, plans).filter((p) => p.chase !== undefined);
+  if (chasing.length === 0) return [];
+
+  const vision = buildVision(board);
+  // One snapshot, read by every chaser: taking each chaser's goal from the live
+  // board would let the first one to resolve move the second one's target.
+  const snapshot = new Map(draft.units.map((u) => [u.unitId, { x: u.pos.x, y: u.pos.y }]));
+
+  const chasers: Mover[] = [];
+  for (const plan of chasing) {
+    const chaser = plan.unit;
+    if (!chaser.alive) continue;
+    if (displaced.has(chaser.unitId)) continue;          // knocked back → loses Move
+    if (hasStatus(chaser, 'root')) continue;             // rooted → loses Move
+
+    const target = draft.units.find((u) => u.unitId === plan.chase);
+    // A target that died this turn is dropped: a corpse has no square to chase.
+    if (target === undefined || !target.alive) continue;
+
+    const seen = teamCanSee(vision, draft, chaser.owner, target);
+    const goal = seen ? snapshot.get(target.unitId) : lastKnownFor(draft, chaser.owner, target.unitId)?.pos;
+    if (goal === undefined) continue;                    // never seen → nothing to chase
+
+    const path = pathToward(board, draft, chaser, goal, movementBudget(chaser, plan.sprint));
+    events.push({ type: 'chaseResolved', unitId: chaser.unitId, targetUnitId: target.unitId, to: { x: goal.x, y: goal.y }, seen });
+    if (path.length > 0) chasers.push({ unit: chaser, path, halted: false });
+  }
+  return chasers;
+}
+
+/**
+ * The best legal route `unit` can take toward `goal` on `budget`: the goal
+ * itself when it is reachable and standable, otherwise the reachable square
+ * that gets closest to it. Empty when the unit cannot improve on where it
+ * stands — including when it is already there.
+ *
+ * Closest-to-goal is what keeps "go to the last-known square and STOP" honest:
+ * every square past the goal is *further* from it, so a chase can never
+ * overshoot into the fog beyond.
+ *
+ * Deterministic: `reachableSquares` returns squares in ascending cost under a
+ * fixed expansion order, and the scan below keeps the first strict improvement,
+ * so equal candidates resolve the same way on every machine.
+ */
+function pathToward(board: Board, draft: GameState, unit: UnitState, goal: Vec2, budget: number): Vec2[] {
+  if (budget <= 0) return [];
+  const squares = reachableSquares(board, draft, unit, budget);
+  let best: Vec2 | undefined;
+  let bestDist = distance(unit.pos, goal);
+  for (const sq of squares) {
+    if (!sq.canStop) continue;
+    const d = distance(sq.pos, goal);
+    if (d < bestDist) {
+      bestDist = d;
+      best = sq.pos;
+    }
+  }
+  if (best === undefined) return [];
+  return reconstructPath(squares, unit.pos, best) ?? [];
+}
+
+/**
+ * Award every live power-up pad to whoever is standing on it (PADS1), at the
+ * single fixed point at the end of Move.
+ *
+ * "First occupier" needs no tie-break in practice — Collisions forbid two units
+ * on one square — but the scan runs in `draft.units` order anyway so that if a
+ * future mechanic ever does allow co-occupancy the pad still goes to a fixed
+ * unit rather than to whichever the iteration happened to reach first.
+ */
+function resolvePowerups(draft: GameState, board: Board, events: TurnEvent[]): void {
+  const pads = board.map.powerups ?? [];
+  if (pads.length === 0) return;
+  for (const pad of pads) {
+    const pos = { x: pad.x, y: pad.y };
+    const record = draft.powerups.find((p) => vecEq(p.pos, pos));
+    // Dormant until `firstTurn`, then dark until `everyTurns` after being taken.
+    if (draft.turn < pad.firstTurn) continue;
+    if (record !== undefined && draft.turn < record.availableOnTurn) continue;
+
+    const taker = draft.units.find((u) => u.alive && vecEq(u.pos, pos));
+    if (taker === undefined) continue;
+
+    applySelfEffects(draft, taker, POWERUP_EFFECTS[pad.type], { unitId: taker.unitId, abilityId: powerupSourceId(pad.type) }, events);
+    events.push({ type: 'powerupTaken', unitId: taker.unitId, pos, powerup: pad.type });
+
+    const availableOnTurn = draft.turn + pad.everyTurns;
+    if (record !== undefined) record.availableOnTurn = availableOnTurn;
+    else draft.powerups.push({ pos, availableOnTurn });
+  }
 }
 
 /** Destroy any decoy an enemy of its team currently stands on (R2 move-onto). */
@@ -1439,7 +1636,97 @@ function stepMovers(draft: GameState, board: Board, movers: Mover[], step: numbe
 
 // ── End of turn ─────────────────────────────────────────────────────────────
 
-function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, events: TurnEvent[]): void {
+/**
+ * The author to stamp on a status instance — only the over-time kinds need one
+ * (DOT-HOT), because only they act on their own later and can kill.
+ *
+ * Deliberately narrow: stamping every status would widen `StatusInstance` for
+ * the ten kinds that have no use for it, and a `might` carrying an `abilityId`
+ * is state that exists only to be serialised, hashed and compared.
+ */
+const authorOf = (kind: EffectKind, source: Source): Source | undefined =>
+  (OVER_TIME_KINDS.has(kind) ? source : undefined);
+
+/**
+ * DOT-HOT — apply every damage/heal-over-time instance for one turn.
+ *
+ * Runs at end of turn and **before** `tickStatuses`, so a `duration: 2` effect
+ * ticks twice: the turn it landed and the turn after. Ticking after the duration
+ * decrement would quietly cost every over-time effect its first turn, which is
+ * the kind of off-by-one nobody notices until a burn reads a tick short.
+ *
+ * A DoT that kills credits the team of whoever applied it — the same problem a
+ * trap has, solved the same way — and both kinds emit the ordinary `damage` /
+ * `heal` events, so playback, the combat log and SCORE1's totals need to know
+ * nothing about over-time at all.
+ *
+ * Deterministic: `draft.units` order (fixed), integer amounts, no float.
+ */
+function tickOverTime(draft: GameState, events: TurnEvent[]): void {
+  for (const unit of draft.units) {
+    if (!unit.alive) continue;
+    // Snapshot: a kill inside the loop can mutate `statuses` (death clears them),
+    // and iterating a list while it is being emptied is how a tick goes missing.
+    for (const s of [...unit.statuses]) {
+      if (!OVER_TIME_KINDS.has(s.kind) || s.remaining <= 0) continue;
+      const amount = s.amount ?? 0;
+      if (amount <= 0) continue;
+      const sourceUnitId = s.sourceUnitId ?? unit.unitId;
+      const abilityId = s.abilityId ?? s.kind;
+
+      if (s.kind === 'healOverTime') {
+        const healed = applyHeal(unit, amount);
+        if (healed > 0) events.push({ type: 'heal', unitId: unit.unitId, amount: healed, sourceUnitId, abilityId });
+        continue;
+      }
+      // Not routed through `computeDamage`: an over-time tick is not an outgoing
+      // hit, so Might/Weaken and cover do not apply (ar-parity §7.1 flags the
+      // Might/Weaken half for playtest rather than deciding it here).
+      const res = applyDamage(unit, amount);
+      events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId, abilityId });
+      if (res.died) {
+        const killer = draft.units.find((u) => u.unitId === sourceUnitId);
+        killUnit(draft, unit, killer?.owner ?? unit.owner, events);
+        break; // dead units stop ticking
+      }
+    }
+  }
+}
+
+/**
+ * CHASE1 — record, per team, where each enemy is *right now* if that team can
+ * see it; leave the previous record alone if it cannot.
+ *
+ * Run at the turn boundary so "last known" means "as of the most recent turn we
+ * could see you", which is the granularity a chase order is written at. A dead
+ * enemy is skipped rather than erased: the record is where you last saw them,
+ * and a chase against a corpse is dropped on its own account anyway.
+ *
+ * Iterates teams then `draft.units`, so entries are appended in a fixed order
+ * and the serialised state is a function of the match, not of iteration.
+ */
+function recordLastKnown(draft: GameState, board: Board): void {
+  const vision = buildVision(board);
+  for (const team of [0, 1] as const) {
+    for (const u of draft.units) {
+      if (u.owner === team || !u.alive) continue;
+      if (!teamCanSee(vision, draft, team, u)) continue;
+      const existing = lastKnownFor(draft, team, u.unitId);
+      if (existing === undefined) {
+        draft.lastKnown.push({ team, unitId: u.unitId, pos: { x: u.pos.x, y: u.pos.y }, turn: draft.turn });
+      } else {
+        existing.pos = { x: u.pos.x, y: u.pos.y };
+        existing.turn = draft.turn;
+      }
+    }
+  }
+}
+
+function endOfTurn(draft: GameState, map: MapDef, board: Board, deadAtStart: Set<string>, events: TurnEvent[]): void {
+  // Before anything expires or respawns: what each team can see at this turn's
+  // end is what they get to remember (CHASE1).
+  recordLastKnown(draft, board);
+
   // Passive energy for the living (a corpse does not build charge). The flat
   // drip is NOT boosted by Energized (E1) — pass scale:false.
   for (const u of draft.units) {
@@ -1453,6 +1740,15 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
       u.cooldowns[id] = Math.max(0, (u.cooldowns[id] ?? 0) - 1);
     }
   }
+  // DOT-HOT: over-time effects resolve **before** the duration tick, so a
+  // `duration: 2` DoT ticks the turn it lands and the turn after — the same
+  // "covers exactly N turns" arithmetic every other duration uses. Ticking after
+  // would silently cost every over-time effect its first turn.
+  //
+  // In `draft.units` order, which is fixed, so two units burning to death in the
+  // same turn always resolve in the same order and credit the same teams.
+  tickOverTime(draft, events);
+
   // Status durations tick for the living. What expired is logged, in
   // `unit.statuses` order, so the client can retire an indicator without
   // re-deriving durations of its own.
@@ -1464,6 +1760,19 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
   }
   // Delayed abilities count down (resolution attaches at BACKLOG item 12).
   for (const d of draft.delayed) d.turnsRemaining -= 1;
+
+  // Traps expire unfired at the end of their `expiresOnTurn` (TRAP-LIFETIME),
+  // so a minefield cannot accrete across a match. The event is what lets a
+  // client folding the log clear the marker — a marker over a square that is no
+  // longer dangerous is worse than none. Turn has not advanced yet, so compare
+  // directly, exactly as the decoy sweep below does.
+  draft.traps = draft.traps.filter((t) => {
+    if (draft.turn >= t.expiresOnTurn) {
+      events.push({ type: 'trapExpired', trapId: t.id, pos: t.pos, owner: t.owner });
+      return false;
+    }
+    return true;
+  });
 
   // Decoys expire at the end of their `expiresOnTurn` (cast turn + 1), unless
   // already destroyed (R2). Turn has not yet advanced here, so compare directly.
@@ -1572,6 +1881,19 @@ export function resolveTurn(
   }
 
   if (draft.status === 'active') {
+    // CHASE1 — take each team's view at the **turn boundary**, before anything
+    // moves. That is the granularity a chase order is written at, and it is what
+    // makes the ruled case work: a target seen when orders were locked but lost
+    // during resolution is chased to "the last square the team saw it", which at
+    // turn granularity is its start-of-turn square.
+    //
+    // After turn 1 this agrees with the record `endOfTurn` left behind, since
+    // nothing moves between turns. It runs anyway rather than being special-cased
+    // to turn 1, because "the boundary view is recorded at the boundary" is one
+    // rule, and "…except on the first turn, where chases silently drop" is a bug
+    // waiting to be rediscovered.
+    recordLastKnown(draft, board);
+
     const pending: Displacement[] = [];
     const displaced = new Set<string>();
     runPrep(draft, board, plans, events);
@@ -1579,7 +1901,7 @@ export function resolveTurn(
     runBlast(draft, board, roster, plans, pending, events);
     applyDisplacements(draft, board, pending, displaced, events);
     runMove(draft, board, plans, displaced, events);
-    endOfTurn(draft, map, deadAtStart, events);
+    endOfTurn(draft, map, board, deadAtStart, events);
     resolveOutcome(draft, events);
   }
 

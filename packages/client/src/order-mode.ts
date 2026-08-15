@@ -22,7 +22,7 @@ import { aimFor, pathTo, type OrderDraft } from './targeting.js';
  * an ability or Move must be armed first, which is the "click the skill to set
  * the mode" half of the owner's note.
  */
-export type Mode = 'idle' | 'aim' | 'move' | 'catalyst' | 'free';
+export type Mode = 'idle' | 'aim' | 'move' | 'catalyst' | 'free' | 'chase';
 
 /**
  * Purely presentational pointer state. **Nothing here is ever written into a

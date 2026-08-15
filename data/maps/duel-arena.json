@@ -72,5 +72,13 @@
       { "x": 15, "y": 4 },
       { "x": 15, "y": 10 }
     ]
+  ],
+  "powerups": [
+    { "x": 8, "y": 7, "type": "health", "firstTurn": 2, "everyTurns": 4 },
+    { "x": 9, "y": 7, "type": "health", "firstTurn": 2, "everyTurns": 4 },
+    { "x": 8, "y": 3, "type": "might", "firstTurn": 2, "everyTurns": 4 },
+    { "x": 9, "y": 3, "type": "might", "firstTurn": 2, "everyTurns": 4 },
+    { "x": 8, "y": 11, "type": "energy", "firstTurn": 2, "everyTurns": 4 },
+    { "x": 9, "y": 11, "type": "energy", "firstTurn": 2, "everyTurns": 4 }
   ]
 }

@@ -168,7 +168,7 @@ describe('AIM-RANGE: the audit — every shipped ability, on every slot', () => 
     // A guard on the guard: if this file silently stopped loading the roster,
     // every audit below would pass vacuously.
     expect(ROSTER.length).toBeGreaterThanOrEqual(9);
-    expect(Object.keys(POOL)).toHaveLength(11);
+    expect(Object.keys(POOL)).toHaveLength(12); // a flat 4/4/4 since Regenergy landed
     expect(cases.filter((c) => targeted(c.def)).length).toBeGreaterThanOrEqual(15);
   });
 
