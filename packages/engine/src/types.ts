@@ -62,6 +62,11 @@ export const EFFECT_KINDS = [
   'decoy',
   'teleport',
   'untargetable',
+  // DOT-HOT (ar-parity §7.1): amount-per-turn effects. They ride the status
+  // machinery — same refresh-not-stack, same end-of-turn tick — because
+  // "something that lasts N turns" already has one implementation here.
+  'damageOverTime',
+  'healOverTime',
 ] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
@@ -184,8 +189,16 @@ export interface StatusInstance {
   kind: EffectKind;
   /** Turns remaining; ticks at end of turn. */
   remaining: number;
-  /** For shields: remaining absorb amount. */
+  /** For shields: remaining absorb amount. For DoT/HoT: the per-turn amount. */
   amount?: number;
+  /**
+   * Who applied it, for the over-time kinds (DOT-HOT). A DoT that kills has to
+   * credit somebody's team — the same problem a trap has, solved the same way —
+   * and the `damage`/`heal` events it emits carry A0 attribution like any other.
+   * Absent on the ordinary statuses, which need no author to tick.
+   */
+  sourceUnitId?: string;
+  abilityId?: string;
 }
 
 export interface UnitState {

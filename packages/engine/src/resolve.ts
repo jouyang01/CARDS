@@ -50,7 +50,7 @@ import {
 import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, stepCost, validateMovePath } from './movement.js';
 import { aimInRange, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
-import { applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
+import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
@@ -138,6 +138,7 @@ export const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'knockback',
   'pull',
   'reveal',
+  'damageOverTime', // DOT-HOT: it damages, so FF1 reaches allies in the area too
 ]);
 export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'heal',
@@ -148,6 +149,7 @@ export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'unstoppable',
   'stealth',
   'untargetable', // R7 (2026-08-19): concealing/protecting a unit is friendly
+  'healOverTime', // DOT-HOT: a heal is a heal, own team only
 ]);
 export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'teleport',
@@ -840,8 +842,13 @@ function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly A
     } else if (e.kind === 'decoy') {
       spawnDecoy(draft, unit, events); // R2: a static fake at the caster's square
     } else if (isStatusKind(e.kind)) {
-      applyStatus(unit, e.kind, e.duration ?? 1);
-      events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1, sourceUnitId: source.unitId, abilityId: source.abilityId });
+      // DOT-HOT rides here too: the amount is per-turn rather than a shield
+      // pool, and the author is carried so a tick that kills can credit a team.
+      // Only for the over-time kinds — every other status instance stays the
+      // exact `{kind, remaining}` shape it has always been, so nothing about
+      // `structuredClone`, the determinism hash or an equality assertion moves.
+      applyStatus(unit, e.kind, e.duration ?? 1, e.amount, authorOf(e.kind, source));
+      events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1, amount: e.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
     }
   }
 }
@@ -1253,8 +1260,8 @@ function runBlast(
   // Non-displacement debuffs on surviving enemies.
   for (const { victim, effect, source } of debuffs) {
     if (!victim.alive) continue;
-    applyStatus(victim, effect.kind, effect.duration ?? 1);
-    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, sourceUnitId: source.unitId, abilityId: source.abilityId });
+    applyStatus(victim, effect.kind, effect.duration ?? 1, effect.amount, authorOf(effect.kind, source));
+    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, amount: effect.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
   }
 
   // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
@@ -1461,6 +1468,63 @@ function stepMovers(draft: GameState, board: Board, movers: Mover[], step: numbe
 
 // ── End of turn ─────────────────────────────────────────────────────────────
 
+/**
+ * The author to stamp on a status instance — only the over-time kinds need one
+ * (DOT-HOT), because only they act on their own later and can kill.
+ *
+ * Deliberately narrow: stamping every status would widen `StatusInstance` for
+ * the ten kinds that have no use for it, and a `might` carrying an `abilityId`
+ * is state that exists only to be serialised, hashed and compared.
+ */
+const authorOf = (kind: EffectKind, source: Source): Source | undefined =>
+  (OVER_TIME_KINDS.has(kind) ? source : undefined);
+
+/**
+ * DOT-HOT — apply every damage/heal-over-time instance for one turn.
+ *
+ * Runs at end of turn and **before** `tickStatuses`, so a `duration: 2` effect
+ * ticks twice: the turn it landed and the turn after. Ticking after the duration
+ * decrement would quietly cost every over-time effect its first turn, which is
+ * the kind of off-by-one nobody notices until a burn reads a tick short.
+ *
+ * A DoT that kills credits the team of whoever applied it — the same problem a
+ * trap has, solved the same way — and both kinds emit the ordinary `damage` /
+ * `heal` events, so playback, the combat log and SCORE1's totals need to know
+ * nothing about over-time at all.
+ *
+ * Deterministic: `draft.units` order (fixed), integer amounts, no float.
+ */
+function tickOverTime(draft: GameState, events: TurnEvent[]): void {
+  for (const unit of draft.units) {
+    if (!unit.alive) continue;
+    // Snapshot: a kill inside the loop can mutate `statuses` (death clears them),
+    // and iterating a list while it is being emptied is how a tick goes missing.
+    for (const s of [...unit.statuses]) {
+      if (!OVER_TIME_KINDS.has(s.kind) || s.remaining <= 0) continue;
+      const amount = s.amount ?? 0;
+      if (amount <= 0) continue;
+      const sourceUnitId = s.sourceUnitId ?? unit.unitId;
+      const abilityId = s.abilityId ?? s.kind;
+
+      if (s.kind === 'healOverTime') {
+        const healed = applyHeal(unit, amount);
+        if (healed > 0) events.push({ type: 'heal', unitId: unit.unitId, amount: healed, sourceUnitId, abilityId });
+        continue;
+      }
+      // Not routed through `computeDamage`: an over-time tick is not an outgoing
+      // hit, so Might/Weaken and cover do not apply (ar-parity §7.1 flags the
+      // Might/Weaken half for playtest rather than deciding it here).
+      const res = applyDamage(unit, amount);
+      events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId, abilityId });
+      if (res.died) {
+        const killer = draft.units.find((u) => u.unitId === sourceUnitId);
+        killUnit(draft, unit, killer?.owner ?? unit.owner, events);
+        break; // dead units stop ticking
+      }
+    }
+  }
+}
+
 function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, events: TurnEvent[]): void {
   // Passive energy for the living (a corpse does not build charge). The flat
   // drip is NOT boosted by Energized (E1) — pass scale:false.
@@ -1475,6 +1539,15 @@ function endOfTurn(draft: GameState, map: MapDef, deadAtStart: Set<string>, even
       u.cooldowns[id] = Math.max(0, (u.cooldowns[id] ?? 0) - 1);
     }
   }
+  // DOT-HOT: over-time effects resolve **before** the duration tick, so a
+  // `duration: 2` DoT ticks the turn it lands and the turn after — the same
+  // "covers exactly N turns" arithmetic every other duration uses. Ticking after
+  // would silently cost every over-time effect its first turn.
+  //
+  // In `draft.units` order, which is fixed, so two units burning to death in the
+  // same turn always resolve in the same order and credit the same teams.
+  tickOverTime(draft, events);
+
   // Status durations tick for the living. What expired is logged, in
   // `unit.statuses` order, so the client can retire an indicator without
   // re-deriving durations of its own.
