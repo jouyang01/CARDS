@@ -17,7 +17,7 @@
  * about one message type rather than about the whole protocol.
  */
 
-import type { FormatId, GameState, TurnEvent, UnitOrders } from '@cards/engine';
+import type { FormatId, GameState, TurnEvent, UnitOrders, Vec2 } from '@cards/engine';
 import type { JoinRejection, Room, Seat } from './room.js';
 
 /** Bumped whenever a message's meaning changes. Clients send it on connect. */
@@ -70,19 +70,27 @@ export type ServerMessage =
   /** Sent to everybody else: the room changed. */
   | { type: 'roomUpdated'; room: RoomView }
   | { type: 'seatLeft'; seatId: string; room: RoomView }
-  /** The match began: here is the board and who you are ordering. */
-  | { type: 'matchStarted'; room: RoomView; state: GameState; unitIds: string[] }
+  /**
+   * The match began: the board **as this seat's team may see it**, and who this
+   * seat is ordering. Per-seat, never broadcast (M3-HIDDEN).
+   */
+  | { type: 'matchStarted'; room: RoomView; state: GameState; visibleSquares: Vec2[]; unitIds: string[] }
+  /**
+   * The Decision phase, as this seat may see it (M3-HIDDEN).
+   *
+   * `orders` is **its own team's submissions only**, keyed by seat — teammates
+   * included, because hidden information is team-vs-team and a side that cannot
+   * coordinate is a different game. The enemy's plans are simply not here.
+   */
+  | { type: 'decision'; turn: number; state: GameState; visibleSquares: Vec2[]; orders: Record<string, UnitOrders[]>; locked: string[]; of: number }
   /** This seat's submission was accepted; `locked` is the count so far. */
   | { type: 'submitted'; locked: number; of: number }
   /**
-   * A turn resolved. `state` is the authoritative post-turn state and `events`
-   * is the log to animate.
-   *
-   * **INTERIM — the same payload goes to every seat.** Withholding the opposing
-   * team's plans is M3-HIDDEN, kept as its own item so that boundary is one
-   * focused change rather than a detail buried in this one.
+   * A turn resolved (M3-HIDDEN). `state` and `events` are **filtered for this
+   * seat's team**; `orders` is the reveal — both teams' submissions, which is
+   * the whole point of locking in.
    */
-  | { type: 'turnResolved'; turn: number; state: GameState; events: TurnEvent[] }
+  | { type: 'turnResolved'; turn: number; state: GameState; visibleSquares: Vec2[]; events: TurnEvent[]; orders: Record<string, UnitOrders[]> }
   | { type: 'pong' }
   | { type: 'error'; code: ErrorCode; message: string };
 

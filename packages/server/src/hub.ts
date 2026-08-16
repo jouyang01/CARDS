@@ -15,6 +15,12 @@
  * the last one lands it calls `resolveRoomTurn` — which is `mergeSeatOrders`
  * plus one `resolveTurn`, both the engine's. The hub decides *when* a turn
  * resolves; it never decides *what* a turn does.
+ *
+ * M3-HIDDEN makes every outgoing match payload **per-seat**. There is no
+ * `broadcast(state)` left: `#sendMatch` builds a separate, team-filtered message
+ * for each seat, and the filtering lives in `view.ts` where it can be read as
+ * one rule rather than found in five call sites. That is deliberate — the moment
+ * one shared payload exists again, somebody will put a position in it.
  */
 
 import type { CatalystPool, CharacterDef, MapDef, Roster, UnitOrders } from '@cards/engine';
@@ -27,6 +33,7 @@ import {
   type ServerMessage,
 } from './protocol.js';
 import { canStart, join, leave, resolveRoomTurn, seatBounds, startMatch, type Room } from './room.js';
+import { filterEvents, ordersForTeam, teamView, visibleEnemyIds } from './view.js';
 
 /**
  * What the hub needs to run a match: the board, the characters and the
@@ -168,11 +175,40 @@ export class RoomHub {
     // delivered per-seat because "which of these am I ordering" is the one
     // question a client cannot answer from the state alone.
     for (const seat of this.#room.seats) {
+      const view = teamView(this.#config.map, this.#room.state!, seat.team);
       this.#send(seat.seatId, {
         type: 'matchStarted',
         room: this.#view(),
-        state: this.#room.state!,
+        state: view.state,
+        visibleSquares: view.visibleSquares,
         unitIds: [...seat.unitIds],
+      });
+    }
+    this.#sendDecision();
+  }
+
+  /**
+   * Send every seat the Decision phase as **its** team may see it (M3-HIDDEN).
+   *
+   * Per-seat and never broadcast: the whole point is that no two teams receive
+   * the same bytes. `orders` carries this team's submissions — teammates
+   * included — and the enemy's are simply not in the message. There is nothing
+   * for a client to be trusted with, because there is nothing there.
+   */
+  #sendDecision(): void {
+    if (this.#config === undefined || this.#room.state === undefined) return;
+    const state = this.#room.state;
+    for (const seat of this.#room.seats) {
+      const view = teamView(this.#config.map, state, seat.team);
+      const mine = this.#room.seats.filter((s) => s.team === seat.team).map((s) => s.seatId);
+      this.#send(seat.seatId, {
+        type: 'decision',
+        turn: state.turn,
+        state: view.state,
+        visibleSquares: view.visibleSquares,
+        orders: ordersForTeam(this.#submissions, mine),
+        locked: this.locked,
+        of: this.#room.seats.length,
       });
     }
   }
@@ -199,7 +235,11 @@ export class RoomHub {
     this.#submissions.set(seatId, orders);
     const of = this.#room.seats.length;
     this.#broadcast({ type: 'submitted', locked: this.#submissions.size, of });
-    if (this.#submissions.size >= of) this.resolveNow();
+    if (this.#submissions.size >= of) return this.resolveNow();
+    // A teammate's plan is not hidden information, so the side that just gained
+    // one is re-sent its Decision view. The enemy's `decision` message is
+    // rebuilt too and still contains none of this.
+    this.#sendDecision();
   }
 
   /**
@@ -220,15 +260,29 @@ export class RoomHub {
     this.#room = resolved.room;
     // Cleared before the broadcast, so a client that submits the moment it sees
     // the result is submitting into an empty turn rather than a stale one.
+    // The reveal: both teams' submissions, which is what locking in buys. Taken
+    // before the clear, because the clear is what makes the *next* turn secret.
+    const revealed: Record<string, UnitOrders[]> = {};
+    for (const [seatId, o] of this.#submissions) revealed[seatId] = o;
     this.#submissions.clear();
-    this.#broadcast({
-      type: 'turnResolved',
-      turn: resolved.room.turn,
-      state: resolved.room.state!,
-      // INTERIM: every seat gets the same payload. M3-HIDDEN is where this
-      // becomes a per-team projection.
-      events: resolved.events,
-    });
+
+    const state = resolved.room.state!;
+    for (const seat of this.#room.seats) {
+      const view = teamView(this.#config.map, state, seat.team);
+      this.#send(seat.seatId, {
+        type: 'turnResolved',
+        turn: resolved.room.turn,
+        state: view.state,
+        visibleSquares: view.visibleSquares,
+        // The log is filtered too, or the fog would be undone by the animation:
+        // a client folding an unfiltered log learns every position the state
+        // withheld. Acting reveals, so an attacker's whole exchange survives.
+        events: filterEvents(resolved.events, state, seat.team, visibleEnemyIds(this.#config.map, state, seat.team)),
+        orders: revealed,
+      });
+    }
+    // …and the next Decision phase opens, already fogged.
+    this.#sendDecision();
   }
 
   /**
