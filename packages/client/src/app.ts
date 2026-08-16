@@ -1697,4 +1697,18 @@ export function startHotSeat(
   const teamName = (t: number) => (t === 0 ? 'Team 1' : 'Team 2');
 
   beginTurn();
+
+  // …and re-fit once more, now that the top strip has actually been drawn.
+  //
+  // Both earlier calls run before `beginTurn` fills the scoreboard, so they
+  // measure an empty element and fall back to `TOP_CHROME_FALLBACK_PX`. That was
+  // harmless while the strip was two lines of text — the fallback was *larger*
+  // than the real thing, so the board was framed conservatively. UI-TOPBAR's
+  // portrait row is taller than the fallback, and a camera framing the board
+  // into a region that starts above the chrome puts the top rank underneath it.
+  //
+  // The fallback stays for the first pass (nothing has laid out yet); this is
+  // the measurement that replaces it.
+  sizeToViewport();
+  fitCamera();
 }
