@@ -61,7 +61,9 @@ export type ErrorCode =
   /** Submitted twice in one turn. */
   | 'alreadyLocked'
   /** Ordered a character this seat does not control. */
-  | 'notYours';
+  | 'notYours'
+  /** Joined a room whose match has already begun (M3-JOIN-GUARD). */
+  | 'inProgress';
 
 /** Server → client. */
 export type ServerMessage =
@@ -160,6 +162,7 @@ export const ERROR_TEXT: Record<ErrorCode, string> = {
   noMatch: 'the match has not started',
   alreadyLocked: 'this seat has already locked in this turn',
   notYours: 'that character belongs to another seat',
+  inProgress: 'this match has already started',
 };
 
 export const errorMessage = (code: ErrorCode): ServerMessage =>
