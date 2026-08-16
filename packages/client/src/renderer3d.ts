@@ -272,6 +272,12 @@ export interface RenderUnit {
    */
   nameplate?: Nameplate;
   /**
+   * UI-INTENT: an allied unit's queued plan, as a short label. Absent means the
+   * unit has nothing queued — or, for an enemy, that plans are never drawn.
+   * The renderer does not decide which: it is handed the badge or it is not.
+   */
+  intent?: { label: string; locked: boolean };
+  /**
    * A last-known-position **ghost** (LAST-KNOWN) rather than a live sighting:
    * this is where the unit *was*, not where it is. Drawn faint and stripped of
    * its bars and pips — a ghost that carried a live HP bar would be reporting
@@ -382,6 +388,45 @@ const PLATE_INK = {
   energy: '#e0c04f',
   ult: '#ffd76a',
 } as const;
+
+/**
+ * UI-INTENT — the small action tile above an allied unit.
+ *
+ * Its own cache, because the label space is tiny (a slot number and a couple of
+ * marks) and shared across every unit that queued the same thing.
+ */
+const intentTextures = new Map<string, CanvasTexture>();
+
+function intentTexture(label: string, locked: boolean): CanvasTexture | null {
+  const key = `${label}|${locked ? 'L' : ''}`;
+  const cached = intentTextures.get(key);
+  if (cached !== undefined) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 160;
+  canvas.height = 52;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) return null;
+  // Locked reads green, unlocked amber: "still deciding" and "committed" is the
+  // distinction a teammate is actually watching for, and it should survive
+  // being glanced at rather than read.
+  ctx.fillStyle = locked ? 'rgba(24, 58, 38, 0.95)' : 'rgba(48, 40, 14, 0.95)';
+  ctx.beginPath();
+  ctx.roundRect(6, 4, 148, 44, 10);
+  ctx.fill();
+  ctx.strokeStyle = locked ? '#6fbf73' : '#e0c04f';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.font = '700 26px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = locked ? '#b6f0c0' : '#f4e3a6';
+  ctx.fillText(label, 80, 27);
+
+  const texture = new CanvasTexture(canvas);
+  intentTextures.set(key, texture);
+  return texture;
+}
 
 function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | null {
   const key = nameplateKey(plate, team);
@@ -643,8 +688,27 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     const pips = new Group();
     pips.name = 'pips';
     pips.position.y = PIP_ROW_Y;
-    bars.add(pips);
+    // UI-INTENT's tile sits above the nameplate — the plan is the newest thing
+    // on screen and the one a teammate is scanning for, so it leads.
+    const intent = new Mesh(
+      new PlaneGeometry(0.62, 0.2),
+      new MeshBasicMaterial({ transparent: true, depthWrite: false }),
+    );
+    intent.name = 'intent';
+    intent.position.y = PLATE_H / 2 + 0.14;
+    intent.visible = false;
+    bars.add(pips, intent);
     return bars;
+  };
+
+  /** Point a unit's intent tile at the right texture, or hide it. */
+  const setIntent = (bars: Group, intent: { label: string; locked: boolean } | undefined): void => {
+    const mesh = bars.getObjectByName('intent');
+    if (!(mesh instanceof Mesh)) return;
+    mesh.visible = intent !== undefined;
+    if (intent === undefined) return;
+    (mesh.material as MeshBasicMaterial).map = intentTexture(intent.label, intent.locked);
+    (mesh.material as MeshBasicMaterial).needsUpdate = true;
   };
 
   /**
@@ -972,6 +1036,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           // things the viewer stopped being able to see when it went dark.
           const known = unit.ghost !== true;
           setPlate(bars, known && unit.alive ? unit.nameplate : undefined, unit.owner);
+          setIntent(bars, known && unit.alive ? unit.intent : undefined);
           setPips(bars, unit.alive && known ? (unit.pips ?? []) : []); // a corpse or a ghost carries nothing
         }
         refreshOpacity(unit.unitId);

@@ -80,6 +80,7 @@ import {
   decoyNameplate, snapshotDecoy, unitNameplate, type DecoySnapshot,
 } from './nameplates.js';
 import { inspectDecoy, inspectUnit } from './inspect.js';
+import { intentBadges } from './intent.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
   clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
@@ -265,7 +266,20 @@ export function startHotSeat(
    * depends on who is reading it. Everything else about a visible unit is
    * public — if you can see them, you can see that they are Rooted.
    */
-  const toRenderUnits = (units: readonly UnitState[], viewer: TeamId): RenderUnit[] => units.map((u) => {
+  /**
+   * UI-INTENT — the queued plans this viewer's team may see, by unit id.
+   *
+   * Rebuilt per paint rather than cached: a draft changes on every click, and a
+   * stale plan tile above a teammate is worse than none. Cheap — it is at most
+   * four units and a string each.
+   */
+  const intentFor = (viewer: TeamId): Map<string, { label: string; locked: boolean }> =>
+    new Map(intentBadges(state.units, roster, drafts, locked, viewer)
+      .map((b) => [b.unitId, { label: b.label, locked: b.locked }]));
+
+  const toRenderUnits = (units: readonly UnitState[], viewer: TeamId): RenderUnit[] => {
+  const plans = intentFor(viewer);
+  return units.map((u) => {
     // UI-NAMEPLATES: one model, and the icon row comes out of it too — the
     // plate and the floating icons must never disagree about what is on a unit,
     // and the surest way to guarantee that is to build them once.
@@ -280,8 +294,12 @@ export function startHotSeat(
       // numeral, so the row says how long as well as what.
       pips: plate.pips,
       nameplate: plate,
+      // UI-INTENT: allied plans only — `intentBadges` filtered by owner, so an
+      // enemy simply has no entry here and the renderer draws nothing.
+      ...(plans.has(u.unitId) ? { intent: plans.get(u.unitId)! } : {}),
     };
   });
+  };
 
   /**
    * UI-NAMEPLATES — what each decoy's fake plate says, frozen at the cast.
