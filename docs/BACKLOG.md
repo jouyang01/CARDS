@@ -14,195 +14,194 @@ them. **`@cards/server` imports `@cards/engine` only, never the client.** **Move
 
 ## ✅ COMPLETE
 
-- The full local hot-seat game (engine core through SCORE1; AR parity; vision/stealth/camo;
-  DASH-OCCUPIED; PADS-INDICATOR/RENDER-COVERAGE; TRAP-LIFETIME-TUNE; PREVIEW-DECOY; AIM-SMOOTH).
-- **M3 so far:** **M3-ROOM** (Worker + DO room), **M3-PROTOCOL** (submit → merge → resolve →
-  broadcast), **M3-HIDDEN** (per-team filtered views — the security boundary), **M3-JOIN-GUARD**
-  (started room refuses joins), **M3-START** (`POST /rooms/:code/start` for short rooms — *interim,
-  unauthenticated; removed at M3-LOBBY / gated at M3-DEPLOY*).
-- **PR #51/#52 dev-note items:** **PADS-SPREAD** (no two pads within Chebyshev 1), **PADS-PASS** (a
-  pad is taken by being on its square at any point in the turn), **BUFF-UI** (a named, counted-down
-  status strip for the active character), and the Designer's **screenshot UI batch spec**
-  (ar-parity §4.1–4.6 — scheduled below).
+- The full local hot-seat game + AR parity + the screenshot UI batch.
+- **M3 so far:** M3-ROOM, M3-PROTOCOL, M3-HIDDEN, M3-JOIN-GUARD, M3-START, **M3-LOCKLIST**.
+- **PR #54 (this review):** **STATUS-ICONS** (glyphs), **UI-NAMEPLATES** (vision-gated), **UI-INSPECT**
+  (hover any visible unit), **UI-INTENT** (teammate plans), **UI-TOPBAR** (portraits/score/turn +
+  a scoreboard-measurement fix), **UI-TIMER** (countdown + bank pip), **PREVIEW-MODIFIERS** (the
+  preview shows Might/Weaken/cover-adjusted damage).
 
-Current suite: **1217 tests** (engine 628 + client 468 + server 121), typecheck + build clean
-(run `npm install` after pulling), purity green.
+Current suite: **1354 unit tests** (engine 628 + client 602 + server 124), typecheck + build clean.
+**Two RENDER-COVERAGE e2e drives fail (pre-existing on `main`)** — see RENDER-DRIVE-FIX.
 
-> **This batch = the owner's screenshot UI batch (priority) + the preview-modifier Dev Note**, then
-> M3 resumes with **M3-LOBBY**. The owner supplied an AR screenshot and two Dev Notes, so the local
-> client's AR-fidelity UI comes first. **Do not touch vision** (per-format `visionRange` superseded
-> by ar-parity §3). Pad rulings (PADS-PASS/SPREAD/knockback) are now folded into edge-cases.
+> **This batch is COMBAT-CORRECTNESS FIRST** (four Dev Notes are real engine/spec bugs: attacks
+> through walls, melee vs cover, a move-preview hidden-info leak, sprint-chase), then client polish,
+> the pad schedule, the e2e fix, and a small refactor — then **M3-LOBBY**. **Do not touch vision**
+> (per-format `visionRange` superseded by ar-parity §3).
 
 ### Build order and dependencies
 
-**STATUS-ICONS** (foundation for the nameplate/inspect icon row) → **UI-NAMEPLATES** → **UI-INSPECT**
-→ **UI-INTENT** → **UI-TOPBAR** → **UI-TIMER** → **PREVIEW-MODIFIERS** → **M3-LOCKLIST** (small
-server). Then **M3-LOBBY** (large) and **CAMO-E2E-FINISH** (low). All the UI items are client and
-anchor to UI-VIEWPORT's overlay (shipped); STATUS-ICONS must precede the two items that draw its
-icons. Realistic one-session cut: the UI batch + PREVIEW-MODIFIERS + M3-LOCKLIST; M3-LOBBY carries.
+**LOS-OCCLUSION → MELEE-COVER → CHASE-SPRINT** (engine) → **MOVE-FOG** (client) → **PADS-LIGHTS,
+STATUS-ICONS-SIZE, ANIM-SLOW** (client polish, independent) → **RENDER-DRIVE-FIX** (green the e2e) →
+**RENDERER-SPLIT** (small refactor) → **M3-LOBBY** (large). **PADS-SCHEDULE** + the melee list are
+Designer data. Realistic one-session cut: the engine bugs + client polish + RENDER-DRIVE-FIX;
+M3-LOBBY carries.
 
 ---
 
-## Owner UI batch (client — priority; specced by the Designer in ar-parity §4.1–4.6)
+## Engine — combat correctness (do first)
 
-### STATUS-ICONS. Replace the colour pips with AR's icon vocabulary (CLIENT) — UNBLOCKED (first)
-**Addresses Dev Note: "Look for the Atlas Reactor UI design spec that was just made and be sure to
-account for it."** (ar-parity §4.2; owner: Might = sword, Revealed = eye.) *AC: each drawable status
-renders as a **drawn glyph** (canvas/SVG, no external assets) in its fixed `PIP_ORDER` slot —
-Root=chained boot, Slow=hourglass, Weaken=broken sword, Reveal=eye, Shield=bubble **with the
-remaining amount as a numeral**, Might=sword, Haste=wing, Energized=bolt, Unstoppable=ram,
-Untargetable=ghost, **Stealth=mask rendered to the OWNING team only**; durations render as a small
-numeral on the icon; the floating pips and any HUD strip read the same vocabulary (no divergence).*
-**Spec Notes.** Files: `packages/client/src/status-pips.ts` (extend the pip vocabulary to glyphs;
-keep `PIP_ORDER`/`PIP_COLORS` and BUFF-UI's `statusChips` reading the same source), `renderer3d.ts`
-(draw the glyph textures). Weaken/Might and Root/Haste read as broken/whole pairs on purpose.
-**Stealth's icon is owner-team-only** (an enemy-visible stealth marker is a contradiction). This is
-the foundation for the icon row in UI-NAMEPLATES and UI-INSPECT — build it first. Out of scope:
-per-unit placement (that's UI-NAMEPLATES).
+### LOS-OCCLUSION. A cone/line is occluded by walls, not clipped at them (ENGINE) — UNBLOCKED (first, HIGH)
+**Addresses Dev Note: "LoS should block make it so attacks cannot hit you. There are some weird
+cases where my conal/straight line attacks are going past the gray blocks."** `coneSquares` drops
+wall tiles but does **not** occlude tiles behind them, so a cone reaches through a wall; a line's
+half-tile side-band can too. *AC: a `line`/`cone` covered tile is dropped when the caster has **no
+line of sight** to it — filter by `hasLineOfSight(board, casterCentre, tileCentre)` (walls block,
+**cover does not**); a cone aimed through a wall covers nothing behind it; a cone aimed past a
+**cover** block still covers behind it; a line's side-band behind a wall is dropped; `circle`/
+`square` are **unchanged** (lobbed over walls); the HITBOX1 cross-engine golden signature is
+regenerated; the no-trig guard still passes.*
+**Spec Notes.** Files: `packages/engine/src/shapes.ts` (`coneSquares`/`lineSquares`/`expandShape` —
+apply the LoS filter after wedge/band membership), `shapes.test.ts` + the regression. Reuse
+`hasLineOfSight` from `vision.ts` (integer, deterministic — do **not** reinvent it). **Determinism-
+critical** — a fixed shape+aim+board must yield the identical tile set. Ruled in edge-cases
+(LOS-OCCLUSION). **Out of scope:** `circle`/`square` occlusion (lobbed — unchanged); cover as a
+sight blocker (it is not — GAME_SPEC §3); any damage-number change (that's the shape only).
 
-### UI-NAMEPLATES. Overhead name / HP+shield / energy+ULT / status row, vision-gated (CLIENT) — BLOCKED on STATUS-ICONS
-(ar-parity §4.1.) *AC: above every **visible** unit — **name** (character name until M3 gives player
-names); **HP bar with the numeral inside**, shield as a distinct appended segment; **energy as a
-thin bar under HP** with an **"ULT" tag when energy ≥ 100**; the **STATUS-ICONS row** under the bar;
-**vision-gated** — a nameplate renders only while `canSee` holds (own team always; fogged/stealthed
-units show nothing), same rule as PREVIEW-FOG; a **decoy carries a full fake nameplate** (name,
-frozen cast-time HP, empty status row — see the decoy snapshot ruling). A client test asserts a
-fogged enemy shows no nameplate and a decoy shows a Wisp nameplate with an empty status row.*
-**Spec Notes.** Files: `app.ts`/`renderer3d.ts` (billboarded nameplates anchored to units),
-`fog.ts` (the visible-unit set + the decoy snapshot fields). **Never a better scout than vision** —
-consume `canSee`/`FogView`; derive nothing. Ruled in edge-cases (decoy snapshot carries nameplate
-fields). Out of scope: player names (M3); last-known ghost nameplates (a ghost is DECOY-RENDER/
-LAST-KNOWN's own render).
+### MELEE-COVER. Melee attacks ignore cover, by an ability flag (ENGINE + Designer data) — UNBLOCKED
+**Addresses Dev Note: "Melee attacks should ignore COVER, but not the full vision."** The `range ≤ 1`
+heuristic misfires because a Manhattan melee ability is often range 2 (diagonal reach). *AC:
+`AbilityDef` gains **`melee?: boolean`**; when an ability is `melee: true`, `computeDamage` is
+called with `behindCover = false` (cover reduction skipped) **regardless of range**; LoS/walls still
+apply (a melee attack cannot hit through a wall — LOS-OCCLUSION); validation accepts the flag; a
+`melee` ability into a cover-protected target deals full damage, a non-melee one is still reduced,
+neither hits through a wall.*
+**Spec Notes.** Files: `packages/engine/src/types.ts` (`AbilityDef.melee`), `resolve.ts` (the
+damage path passes `melee ? false : isBehindCover(...)`), `validate.ts` (accept the flag). The
+range-≤1 heuristic in `isBehindCover` may stay as a harmless fallback or be removed — Builder's
+call. **The "which abilities are `melee`" data pass routes to the Designer** (mark the short-range
+strikers). Ruled in edge-cases (MELEE-COVER). **Out of scope:** the melee data (Designer); redefining
+cover geometry.
 
-### UI-INSPECT. Hover any visible unit for its cooldowns / catalysts / statuses (CLIENT) — BLOCKED on STATUS-ICONS
-**Addresses owner directive (ar-parity §4.3): "Player can see cooldowns of other characters and the
-buffs/debuffs/energy/hp status when they have vision of the character."** *AC: hover (or click-hold)
-a **visible** unit → a panel with its five ability slots + **current cooldown numbers**, ult charge,
-**catalysts remaining vs spent** (spent greyed), and active statuses with durations; **own team
-always inspectable, enemies only while `canSee`** (fog/Stealth hide the panel); a **decoy shows
-Wisp's kit at the cast snapshot** (cooldowns frozen), never live data and never a refusal; **zero
-engine change** (reads state the client already holds). A client test asserts a fogged enemy is not
-inspectable and a decoy shows cast-time cooldowns.*
-**Spec Notes.** Files: `app.ts`/`hud.ts` (the inspect panel), reusing STATUS-ICONS. Same vision gate
-as nameplates. Ruled in edge-cases (decoy snapshot). Out of scope: last-known inspect data (no ghost
-kit in v1).
+### CHASE-SPRINT. A chase may sprint when the turn spends no normal ability (ENGINE + CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Chase should be able to sprint or move depending on how many actions the
+character has. If I choose chase and haven't used an attack or only a free action, I should get full
+sprinting chase."** *AC: a chase's budget is `movementBudget(chaser, sprint=true)` (**8**) when the
+unit declared **no normal ability**, and move budget (**4**) when it did; a **free action does not
+block** the sprint-chase; a dash ability still cancels the chase; the client offers/defaults a chase
+to sprint-budget when no ability is armed; a chase with no ability closes up to 8, with an ability
+at most 4, with only a free action still sprints.*
+**Spec Notes.** Files: `packages/engine/src/resolve.ts` (`planChases` already reads
+`movementBudget(chaser, plan.sprint)` — the gap is that a chase order carries the sprint flag under
+the same "sprint iff no ability" validation a move uses), `targeting.ts`/`app.ts` (the chase control
+defaults to sprint when no ability is armed). Ruled in edge-cases (CHASE-SPRINT). Out of scope: the
+chase target rules (unchanged).
 
-### UI-INTENT. Teammates' queued plans on the board (CLIENT) — UNBLOCKED
-(ar-parity §4.6; closes the ruled-but-invisible "Teammate information".) *AC: during Decision, above
-each **allied** unit: the queued ability's **slot number** (plus a free-action/catalyst marker when
-declared) and a **lock-state tick** once that seat locks in; enemies show nothing (hidden info is
-team-vs-team); a client test asserts an ally's queued slot shows and an enemy's does not.*
-**Spec Notes.** Files: `app.ts`/`renderer3d.ts`. In the hot-seat this reads the other seat's draft;
-over the network it reads the Decision payload's own-team lock/plan info (which M3-LOCKLIST keeps
-per-seat for own team). Out of scope: showing the enemy's plan (never).
+## Client — hidden-info leak
 
-### UI-TOPBAR. The match strip: portraits · score · turn (CLIENT) — UNBLOCKED (extends SCORE1)
-(ar-parity §4.4.) *AC: a top overlay strip — **friendly portraits · team score · turn number ·
-enemy score · enemy portraits**; each portrait carries a mini HP bar and a dead/respawn-count state;
-centre shows **kills vs target for both teams with the turn counter between them** (Turn X of Y);
-verified on-screen at both map sizes (UI-VIEWPORT overlay).*
-**Spec Notes.** Files: `app.ts`/`hud.ts` (or a `scoreboard.ts` extension from SCORE1). Reads engine
-state + SCORE1's folds; no engine change. Out of scope: the end-of-match breakdown (SCORE1 already).
+### MOVE-FOG. Plan-time reachability must not use a fogged enemy's position (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Move command is blocked if an enemy is out of line of sight but on the tile
+that you are trying to move. This is giving unintentional information."** The client's move preview
+treats fogged enemies as obstacles, leaking their position. *AC: at plan time `reachableSquares`/
+`pathTo` use the **team-visible unit set only** (own units + `visibleEnemiesForTeam`); a path
+planned toward a tile held by an out-of-sight enemy is drawn as if the tile were free (no reveal);
+the engine (true board) stops the mover short at resolution, which is where the enemy is revealed; a
+client test asserts the plan does not reroute around an invisible enemy.*
+**Spec Notes.** Files: `packages/client/src/targeting.ts` (feed `pathTo`/`reachableSquares` a
+fog-filtered occupancy), `app.ts`/`fog.ts` (the visible-unit set — reuse `fogView`). **Engine
+unchanged** — resolution uses the true board (the reveal-at-contact is correct). Ruled in edge-cases
+(MOVE-FOG). Out of scope: the engine collision rule (unchanged); showing the enemy before contact.
 
-### UI-TIMER. Countdown with urgency + Time Bank pip (CLIENT) — UNBLOCKED (extends TIMER-40)
-(ar-parity §4.5.) *AC: a countdown beside LOCK IN — **whole seconds above 10 s, tenths + a colour
-shift below 10 s**; the **Time Bank rendered as one pip** (we have 1 charge); the +10 s extension
-**animates visibly** when it fires (never silent); counts from `DECISION_SECONDS` (40).*
-**Spec Notes.** Files: `hud.ts`/`app.ts`. Presentation only (the timer value is `TIMER-40`'s
-constant; server-authoritative timing is M3-TIMER). Out of scope: per-player networked timing.
+## Client — polish (independent)
 
-### PREVIEW-MODIFIERS. The damage preview accounts for Might/Weaken/cover (CLIENT + engine export) — UNBLOCKED
-**Addresses Dev Note: "Should account for Might + Cover + Weakness."** *AC: a damage preview number
-(PREVIEW-NUMBERS + the decoy/nameplate previews) shows the **post-modifier** damage — the attacker's
-**current Might/Weaken** applied, then **cover** reduction if the target is behind cover from the
-attacker — computed by **reusing the engine's `computeDamage`/`isBehindCover`** (not reinvented); a
-Might'd attacker's preview is higher, a Weakened one lower, a target-in-cover shows the reduced
-number, each matching a direct `computeDamage` call; a status **applied this turn** (Adrenaline at
-Blast start) is NOT predicted — the preview reflects current state.*
-**Spec Notes.** Files: `packages/client/src/preview-numbers.ts`; export `computeDamage`/
-`isBehindCover` from `@cards/engine` if not already (pure — correct surface-widening, like
-`orders.ts`). **Shields flagged, not required** — the owner named Might/Cover/Weaken; keep the number
-the post-cover damage for v1 (the nameplate shows the shield pool separately). Ruled in edge-cases
-(preview accounts for Might/Weaken/cover). Out of scope: engine damage rules (unchanged); predicting
-post-lock statuses.
+### STATUS-ICONS-SIZE. Bigger buff/debuff glyphs (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "The icons for buffs/debuffs are too small on the screen UI."** *AC: the
+floating status glyphs (and the HUD strip) render at a larger, legible size; interactive elements
+respect UI-VIEWPORT's 44×44 minimum where clickable; the vocabulary/order is unchanged.*
+**Spec Notes.** Files: `status-pips.ts`/`renderer3d.ts` (glyph texture size + billboard scale).
+Small. Out of scope: the icon set (STATUS-ICONS shipped it).
 
-## M3 — small fix + the lobby
+### ANIM-SLOW. Slow the resolution playback so it reads (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "The resolution animations are hard to tell what's going on. We should slow
+them down."** *AC: resolution playback is slowed (raise `MS_PER_BEAT` / per-phase pacing) so a
+turn's Prep→Dash→Blast→Move is legible; skip==watch still holds (no board state in the animation
+layer); a test pins the pacing constant.*
+**Spec Notes.** Files: `packages/client/src/app.ts` (`MS_PER_BEAT` / playback pacing). Presentation
+only. Consider per-phase or per-event beats if a flat slowdown drags quiet turns. Out of scope: the
+engine (pacing is client).
 
-### M3-LOCKLIST. Enemy lock state → a count, not seat ids (SERVER) — UNBLOCKED (small)
-**Addresses Builder OQ 2026-08-16 third #4.** *AC: a Decision payload keeps **own-team** lock state
-per-seat (UI-INTENT needs it) but reports the **enemy team's readiness as a bare locked-count**, not
-seat ids; the M3-HIDDEN test that excludes enemy fields still passes and a new test asserts no enemy
-seat id appears in a pre-reveal payload.*
-**Spec Notes.** Files: `packages/server/src/hub.ts` (the `decision` payload shape). Do it **before**
-M3-LOBBY builds a waiting UI on the richer shape. Ruled in edge-cases (Decision payload lock list).
+### PADS-LIGHTS. Four-light respawn countdown on a pad (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Respawn Timer: 4 turns (tracked visually by four colored lights on the
+spawning pad)."** *AC: a consumed pad shows **four coloured lights**, one per remaining turn until
+respawn, counting down each turn; a live pad shows its glyph; extends PADS-INDICATOR; a client test
+asserts the light count matches the turns-to-respawn.*
+**Spec Notes.** Files: `renderer3d.ts`/`app.ts` (the pad marker). Reads `state.powerups` +
+`everyTurns`. Ruled in edge-cases (PADS-SCHEDULE / PADS-LIGHTS). Out of scope: pad placement/timings
+(Designer — PADS-SCHEDULE).
 
-### M3-LOBBY. Map/format/catalyst/character selection + team-seat + R3 + the network client (SERVER + CLIENT) — UNBLOCKED (large)
+## e2e + refactor
+
+### RENDER-DRIVE-FIX. Green the two pre-existing RENDER-COVERAGE drives (CLIENT e2e) — UNBLOCKED
+**Addresses Builder OQ 2026-09-06 #10.** `arming a chase draws a route` and `an enemy is drawn on a
+fogged board (LAST-KNOWN)` fail on `main` — `walkToCentre` advances ~1 square/turn around
+`duel-arena`'s central wall, so 5 turns never bring a unit into sight (likely the PADS-SPREAD pad
+re-placement made a marginal drive fail). *AC: both drives get a unit into enemy sight and pass;
+fix the helper — drive with **`Sprint`**, aim at a **wall-free row**, or **raise the turn cap** —
+without weakening what each test asserts.*
+**Spec Notes.** Files: `packages/client/e2e/render.spec.ts` (the `walkToCentre` helper). The
+screen-to-board mapping is fine (the Builder pinned it off the pads); the fault is budget vs
+distance. Out of scope: the render code (it's correct — the drive is the problem).
+
+### RENDERER-SPLIT. Extract `textures.ts` from `renderer3d.ts` (CLIENT refactor) — UNBLOCKED (small)
+**Addresses Builder OQ 2026-09-06 #7.** `renderer3d.ts` is ~1250 lines with three texture caches
+(glyphs, nameplates, intent tiles). *AC: the texture caches move to `textures.ts` with **no
+behavioural change**; the full suite still passes; `renderer3d.ts` imports them.*
+**Spec Notes.** Pure extraction; do it **before** M3-LOBBY adds a network client on top. Out of
+scope: any behaviour change.
+
+## M3 — the lobby (the remaining unblocked M3 work)
+
+### M3-LOBBY. Map/format/catalyst/character selection + team-seat + R3 + the network client (SERVER + CLIENT) — UNBLOCKED (large, multi-session)
 *AC: a lobby picks map + format + each player's catalyst triad + character, seats players, enforces
-**R3 duplicate-pick** (unique within a team, mirrors legal); its start button calls `RoomHub.start()`
-and **deletes the temporary `POST /rooms/:code/start` route**; supersedes MAPTOGGLE and M3-START's
-interim; replaces M3-PROTOCOL's deterministic deal with player picks; **the client consumes a
-`decision` and a filtered `turnResolved` over the socket** — proving M3-HIDDEN end-to-end (Builder
-OQ #7).* Folds in per-character catalyst selection + the Shift-landing preview.
-**Spec Notes.** The first item to build the **network client** (socket layer) — until now the client
-is hot-seat only and has never consumed M3-HIDDEN's payloads (chosen to be a `GameState` with things
-missing, so it reads with the existing renderer). Large; may span sessions. Out of scope: reconnect
-(M3-RECONNECT), server-authoritative timing (M3-TIMER).
+**R3 duplicate-pick**; its start button calls `RoomHub.start()` and **deletes the temporary `POST
+/rooms/:code/start` route**; the **client consumes a `decision` and a filtered `turnResolved`** over
+the socket (proving M3-HIDDEN end-to-end) — written against M3-LOCKLIST's shape (`locked.length/of`
+= own team, `enemyLocked/enemyOf` the other half); supersedes MAPTOGGLE and M3-START's interim.*
+**Spec Notes.** The first item to build the **network client** (socket layer). Large; explicitly
+multi-session. Out of scope: reconnect (M3-RECONNECT), server-authoritative timing (M3-TIMER).
 
 ### CAMO-E2E-FINISH. Composited proof of the camo red tile (CLIENT e2e) — UNBLOCKED (low)
-**Re-specced per Builder OQ 2026-08-16 third #1** (the `pixelAt` technique can't work — no
-board→pixel map in the e2e). *AC: `findPixels(before, isBrushGreen)` captures the brush coords;
-drive the `?scenario=in-brush` unit to **attack from inside brush**; assert a meaningful number of
-**those same coordinates** now match `isCamoRed` (a before/after delta at fixed coords — dodges both
-the projection and the counting problem).*
-**Spec Notes.** Files: `e2e/render.spec.ts` + `pixels.ts`. **Not "small"** — a multi-turn browser
-drive that gets a unit attacking from brush. Low priority; the *rule* is unit-covered
-(`camo-reveal.test.ts`), only the compositing is unproven.
+Re-specced (before/after-delta at fixed coords). A real multi-turn browser drive; low priority; the
+*rule* is unit-covered (`camo-reveal.test.ts`). Fold with RENDER-DRIVE-FIX if convenient.
 
 ## M3 — the rest of the roadmap (blocked in sequence)
 
 ### M3-TIMER. Server-authoritative per-player timer + Time Bank (SERVER + CLIENT) — BLOCKED on M3-LOBBY
 *AC: the DO enforces each player's `DECISION_SECONDS` (40) deadline; a missed submission resolves as
-**hold-position** (settle the OPEN partial-disconnect ruling at build — lean: hold, then a teammate
-gains the abandoned characters after one fully missed turn); Time Bank (1× +10 s) extends only that
-player's deadline; the client shows UI-TIMER's countdown driven by the server clock.*
+**hold-position** (settle the OPEN partial-disconnect ruling at build); **Time Bank scope matches
+the hot-seat** (per-seat per decision window, `TIMEBANK_CHARGES = 1` — Builder OQ #2, do not ship a
+different answer); the client shows UI-TIMER's countdown driven by the server clock, and this is
+where a real deadline actually fires (hot-seat UI-TIMER intentionally does nothing at zero — OQ #1).*
 
 ### M3-RECONNECT. Rejoin by code + reclaim a held seat + replay to current (SERVER + CLIENT) — BLOCKED on M3-LOBBY
-*AC: a dropped browser rejoins by room code, **reclaims its original seat** (identity-matched — the
-seat M3-JOIN-GUARD reserves) with its control map intact, and the DO re-syncs it to the current turn
-from stored state (not a re-simulation).*
+*AC: a dropped browser rejoins by room code, reclaims its original seat (identity-matched — the seat
+M3-JOIN-GUARD reserves), and the DO re-syncs it to the current turn from stored state.*
 
-### M3-DEPLOY. Wrangler deploy + Pages integration + first real-runtime smoke (CI) — BLOCKED on M3-LOBBY
-*AC: a `wrangler deploy` path (ARCHITECTURE §110); the client points at the deployed Worker;
-core-CI/Pages gates hold; a `wrangler dev`/miniflare **smoke check** proves the Worker boots for real
-(Builder OQ #6); **the `POST /rooms/:code/start` route is gone or gated** (M3-START #5).* **Needs
-owner infra decisions (account, route) — coordinate before building.**
+### M3-DEPLOY. Wrangler deploy + Pages + first real-runtime smoke (CI) — BLOCKED on M3-LOBBY
+*AC: a `wrangler deploy` path; the client points at the deployed Worker; core-CI/Pages gates hold; a
+`wrangler dev`/miniflare **smoke check** proves the Worker boots (OQ #9); the `POST …/start` route
+is gone or gated.* **Needs owner infra decisions — coordinate before building.**
 
 ## Routed to Designer (data / balance — not Builder build items)
 
-- **Pad placement + timings** — Builder re-laid both maps' pads as mirrored singles only to satisfy
-  PADS-SPREAD (`duel-arena` now stacks all six in the two central columns) — satisfies the rule and
-  the mirror guard "and nothing else." **Designer owns real placement** (lanes, sightlines, which
-  pad is worth contesting). **Pad COLOURS are coupled to the render e2e** (`isPadTeal`/`isTeamBlue`
-  clamp) — squares/timings free, colours are not without moving those predicates.
+- **PADS-SCHEDULE (data):** set per-pad **Might `firstTurn: 2`, regular `firstTurn: 4`, every pad
+  `everyTurns: 4`** on both maps (owner Dev Notes #5/#6 — Might is the turn-2 rush). Schema already
+  carries the fields; no engine change. The PADS1 mirror + PADS-SPREAD guards keep it honest.
+- **Melee ability list (data):** mark which abilities are `melee: true` (MELEE-COVER) — the
+  short-range strikers.
+- **Pad placement** — real squares/lanes (the Builder's are mirror-satisfying placeholders); pad
+  **colours** are coupled to the render e2e (`isPadTeal`/`isTeamBlue`).
 
-## Flags (optional / playtest-gated — not scheduled)
+## Flags / deferred (not scheduled)
 
-- **PREVIEW-MODIFIERS shields** — showing HP-loss-after-shield is a natural extension; the owner
-  named Might/Cover/Weaken, so v1 shows post-cover damage only. Fold in if playtest wants it.
-- **Pad contest feel** (a charge steals a pad from a closer walker — Builder OQ #8), **AIM-SMOOTH
-  angle-uniform table** (only if 512 falls short), `killerUnitId`/`gameEnd` events, Might/Weaken vs
-  over-time (ruled off), CAT-DASH-FULL vs one-free-action — unchanged, not scheduled.
-
-## Deferred — do NOT schedule
-
-- **A4** per-ability FX — blocked on M3 + roster lock (revisit after M3-LOBBY).
-- **Spectators**, **CL1/CL2/E2**, **flat `energy` effect kind**, **vision metric change**, **tunable
-  cone angle**, **optimistic move validation**, **`vulnerable`**, **Echo Boost / Chronosurge /
-  Critical Shot / Regroup catalysts** — not scheduled.
+- **UI-TIMER hot-seat auto-lock** (OQ #1) — only if the owner wants a deadline that fires before
+  M3-TIMER. **Touch input** for UI-INSPECT (OQ #3) — desktop-only v1. **UI composited e2e** (OQ #5)
+  — unit-covered for now. **PREVIEW-MODIFIERS shields**, **pad contest feel**, **AIM-SMOOTH table**,
+  `killerUnitId`/`gameEnd`, **A4**, **spectators**, **CL1/CL2/E2**, **`vulnerable`**, the four
+  un-adopted catalysts — unchanged, not scheduled.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **Pad centre-line contest & Dash-beats-Move**, **DoT/HoT vs Might/Weaken** (ruled off),
-  **chase prediction tell**, **8-tile melee cones**, **Fade full-action**, **catalyst hoarding**,
-  **Kestrel** untested via MAPTOGGLE, **turn-1 spawn margin one tile**, **vision Manhattan diamond**
-  (owner-approved), **aim-rotation angular evenness**.
+- **Might turn-2 rush** (new — playtest the contest), **pad Dash-beats-Move**, **DoT/HoT vs
+  Might/Weaken** (ruled off), **chase prediction tell**, **8-tile melee cones**, **Fade full-action**,
+  **Kestrel** untested via MAPTOGGLE, **turn-1 spawn margin one tile**, **vision Manhattan diamond**.
