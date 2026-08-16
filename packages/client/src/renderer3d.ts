@@ -42,7 +42,7 @@ import {
   WebGLRenderer,
   type Material,
 } from 'three';
-import type { MapDef, Vec2 } from '@cards/engine';
+import type { MapDef, PowerupType, Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
 import { PIP_GAP, PIP_SIZE, pipOffsets, type StatusPip } from './status-pips.js';
 
@@ -94,6 +94,8 @@ const PIP_ROW_Y = 0.38;
  * (FOG-ZORDER). Below `select`, so the selected-unit ring still reads on top.
  */
 const TRAP_SIZE = 0.5;
+/** PADS-INDICATOR: a pad plate is bigger than a trap's — it is an invitation. */
+const PAD_SIZE = 0.62;
 
 /**
  * Tile-overlay layers, listed bottom-up — the order is the draw order, so a
@@ -155,6 +157,14 @@ const LAYER_INSET: Record<HighlightLayer, number> = {
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;
+/**
+ * PADS-INDICATOR — a power-up pad sits low, just above CAMO-REVEAL's red
+ * thicket and **below** every planning overlay. Same argument the camo tile
+ * makes: a pad is *board state*, not something you are aiming, so a range
+ * envelope or an AoE drawn over it must still read on top. A trap earns its
+ * near-the-top lift by being a warning; a pad is terrain with a colour.
+ */
+export const PAD_LIFT = LAYER_LIFT.camo + 0.001;
 /** UI2's continuous shape sits just above the covered tiles it explains. */
 export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
 
@@ -185,6 +195,34 @@ export interface RenderTrap {
   own: boolean;
 }
 
+/**
+ * A power-up pad, as the board shows it (PADS-INDICATOR). **Public terrain** —
+ * both teams see every pad, so unlike a trap there is no per-viewer variant and
+ * no fog question to ask. `armed` is the only state: a consumed pad is still
+ * *there*, it just has nothing to give until it respawns, and drawing it as
+ * absent would make a square that is about to matter disappear from the plan.
+ */
+export interface RenderPad {
+  pos: Vec2;
+  type: PowerupType;
+  armed: boolean;
+}
+
+/**
+ * Pad colours by flavour — the marker's only identifier.
+ *
+ * Chosen to sit **outside every family the render tests already match on**, so
+ * a pad on the board can never be counted as a unit, an aim overlay, a decoy or
+ * lit brush. The obvious picks all collided: a green pad reads as brush, an
+ * orange one as the aim overlay, a plain blue one as a team-0 unit. Teal,
+ * magenta and cyan are the three unclaimed hues.
+ */
+const PAD_COLOUR: Record<PowerupType, number> = {
+  health: 0x2fe0a0,
+  might: 0xff4f9d,
+  energy: 0x3fe8ff,
+};
+
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
   unitId: string;
@@ -213,7 +251,7 @@ export interface RenderUnit {
 
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
-  show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[], traps?: readonly RenderTrap[]): void;
+  show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[], traps?: readonly RenderTrap[], pads?: readonly RenderPad[]): void;
   /**
    * Highlight squares. Layers stack bottom-up in the order listed here:
    * `fog` is the unseen board (VISION1) and sits underneath everything, so your
@@ -675,7 +713,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   renderer.setSize(width, height);
 
   return {
-    show(units, decoys = [], traps = []) {
+    show(units, decoys = [], traps = [], pads = []) {
       // `show()` is the snap-to-truth call: it places every unit on its whole
       // square and drops any in-flight tween state. Cue-driven overrides
       // (`setUnitAt`, `setUnitFade`) are applied *after* it, per frame.
@@ -706,6 +744,39 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         live.add(unit.unitId);
       }
       for (const [id, g] of unitObjects) if (!live.has(id)) g.visible = false;
+
+      // PADS-INDICATOR: a plate per pad, coloured by flavour. Rebuilt wholesale
+      // each `show` like the trap layer — a handful of static meshes with no
+      // tween state, so reconciling them would be ceremony.
+      const padLayer = layerGroup('pad');
+      disposeChildren(padLayer);
+      for (const pad of pads) {
+        const colour = PAD_COLOUR[pad.type];
+        const at = toWorld(map, pad.pos);
+        const plate = new Mesh(
+          new PlaneGeometry(TILE * PAD_SIZE, TILE * PAD_SIZE),
+          // A consumed pad keeps its square and loses its glow: still there,
+          // nothing to give yet. Drawing it as absent would make a square that
+          // is about to matter vanish from the plan.
+          new MeshBasicMaterial({ color: colour, transparent: true, opacity: pad.armed ? 0.5 : 0.14 }),
+        );
+        plate.rotation.x = -Math.PI / 2;
+        plate.position.copy(at).setY(PAD_LIFT);
+        padLayer.add(plate);
+        if (!pad.armed) continue;
+        // An armed pad wears a plus. The plate alone is one more coloured tile
+        // among many; the cross is what says "stand here and get something".
+        for (const spin of [0, Math.PI / 2]) {
+          const bar = new Mesh(
+            new PlaneGeometry(TILE * PAD_SIZE * 0.78, TILE * 0.09),
+            new MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.95 }),
+          );
+          bar.rotation.x = -Math.PI / 2;
+          bar.rotation.z = spin;
+          bar.position.copy(at).setY(PAD_LIFT + 0.001);
+          padLayer.add(bar);
+        }
+      }
 
       // TRAP-INDICATOR: flat ground markers, in the owning team's colour so
       // "whose trap" is answered without a legend. Visibility was already

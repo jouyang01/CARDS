@@ -12,7 +12,7 @@
  * kills, shields and energy are all reproducible from the log alone, no recomputation.
  */
 
-import { PHASES, type EffectKind, type GameState, type Phase, type TurnEvent, type Vec2 } from '@cards/engine';
+import { PHASES, type EffectKind, type GameState, type MapDef, type Phase, type PowerupType, type TurnEvent, type Vec2 } from '@cards/engine';
 
 export interface ViewUnit {
   unitId: string;
@@ -53,6 +53,14 @@ export interface ViewState {
   /** Live traps, keyed by id — placed and consumed straight from the event log. */
   traps: Map<string, ViewTrap>;
   kills: [number, number];
+  /**
+   * Pad squares consumed **during this turn's playback** (PADS-INDICATOR),
+   * keyed `"x,y"`. The engine's own `state.powerups` only carries the respawn
+   * turn, and it does not exist until the turn has finished resolving — so
+   * without this the marker would stay lit through the whole animation and go
+   * dark after it, which is the one moment a player is watching the square.
+   */
+  takenPowerups: Set<string>;
   status: GameState['status'];
   winner?: 0 | 1;
 }
@@ -69,7 +77,10 @@ export function initView(state: GameState): ViewState {
   for (const d of state.decoys) decoys.set(d.id, { id: d.id, teamId: d.teamId, pos: { ...d.pos } });
   const traps = new Map<string, ViewTrap>();
   for (const t of state.traps) traps.set(t.id, { id: t.id, owner: t.owner, pos: { ...t.pos } });
-  return { units, decoys, traps, kills: [state.kills[0], state.kills[1]], status: state.status, winner: state.winner };
+  return {
+    units, decoys, traps, takenPowerups: new Set<string>(),
+    kills: [state.kills[0], state.kills[1]], status: state.status, winner: state.winner,
+  };
 }
 
 /** Apply one event's stated delta to the view. Never derives new game logic. */
@@ -140,6 +151,10 @@ export function applyEvent(view: ViewState, event: TurnEvent): void {
       view.traps.delete(event.trapId);
       break;
     }
+    case 'powerupTaken': {
+      view.takenPowerups.add(`${event.pos.x},${event.pos.y}`);
+      break;
+    }
     case 'decoySpawned': {
       view.decoys.set(event.decoyId, { id: event.decoyId, teamId: event.teamId, pos: { ...event.pos } });
       break;
@@ -196,4 +211,38 @@ export function segmentByPhase(events: readonly TurnEvent[]): PhaseSegment[] {
   // Guarantee canonical order/coverage for a well-formed log.
   const byPhase = new Map(segments.map((s) => [s.phase, s]));
   return PHASES.map((p) => byPhase.get(p) ?? { phase: p, events: [] });
+}
+
+/** A pad as the board should draw it (PADS-INDICATOR). */
+export interface PadView {
+  pos: Vec2;
+  type: PowerupType;
+  armed: boolean;
+}
+
+/**
+ * Every pad on the map, with whether it currently has anything to give.
+ *
+ * A pure consumer, like the rest of this module: the arithmetic is the engine's
+ * own (`turn >= firstTurn`, and `turn >= availableOnTurn` once it has been
+ * taken), read off `MapDef.powerups` and `GameState.powerups` rather than
+ * re-derived. `takenThisTurn` layers the in-flight playback on top, so a pad
+ * picked up in the Move phase goes dark as it happens rather than a beat later.
+ *
+ * Pads are **public terrain** — both teams see every one — so unlike traps and
+ * decoys there is no viewer argument and no fog question to ask.
+ */
+export function padViews(
+  map: MapDef,
+  state: GameState,
+  takenThisTurn: ReadonlySet<string> = new Set(),
+): PadView[] {
+  return (map.powerups ?? []).map((pad) => {
+    const key = `${pad.x},${pad.y}`;
+    const record = state.powerups.find((p) => p.pos.x === pad.x && p.pos.y === pad.y);
+    const armed = state.turn >= pad.firstTurn
+      && (record === undefined || state.turn >= record.availableOnTurn)
+      && !takenThisTurn.has(key);
+    return { pos: { x: pad.x, y: pad.y }, type: pad.type, armed };
+  });
 }

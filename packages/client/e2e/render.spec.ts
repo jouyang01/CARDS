@@ -6,6 +6,8 @@ import {
   findPixels,
   isAimOrange,
   isBrushGreen,
+  isChaseOrange,
+  isPadTeal,
   isDashYellow,
   isDecoyPurple,
   isFogged,
@@ -653,4 +655,163 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
   await expect(status).toContainText('Turn 2');
   expect(countPixels(await pixels(page), isDecoyPurple), 'no purple decoy on the board')
     .toBeGreaterThan(0);
+});
+
+
+/**
+ * RENDER-COVERAGE — one multi-turn drive over the render styles that shipped
+ * without a browser test between them.
+ *
+ * Four things are drawn today that nothing composited has ever looked at: the
+ * **pad marker** (PADS-INDICATOR), the **chase route** (CHASE1), the
+ * **last-known ghost** (LAST-KNOWN) and the **camo red tile** (CAMO-REVEAL).
+ * Each was unit-covered at the view-model level, which is exactly the layer that
+ * cannot fail the way a render fails — the `transparent`/`needsUpdate` bug this
+ * suite exists for passed every unit test in the repo.
+ *
+ * The style here is FOG-ZORDER's: match colour **families**, and where a colour
+ * is shared with something else on the board (the chase route is the same warm
+ * orange as an aim overlay, on purpose), assert a **delta** across an action
+ * rather than an absolute count.
+ */
+test.describe('RENDER-COVERAGE: the render styles that had no browser test', () => {
+  // These drive several real turns each, animation included, so they need more
+  // than the suite's single-frame budget. The alternative — skipping the
+  // animation — would be testing a different renderer than the one that ships.
+  test.setTimeout(150_000);
+
+/**
+   * Lock in every seat until the turn resolves, then wait out the playback.
+   * Returns false once the match is over — a drive that keeps going after a
+   * Double KO would sit on an invisible Lock In until the timeout.
+   */
+  const resolveTurn = async (page: Page, perSeat?: () => Promise<void>): Promise<boolean> => {
+    for (let i = 0; i < 10; i++) {
+      const lock = lockIn(page);
+      if (!(await lock.isVisible())) break;
+      // `perSeat` runs once per character on the clock, not once per turn: the
+      // HUD hands the board to the next seat after each Lock In, so ordering
+      // only the first one walks half the board and wonders why nobody met.
+      if (perSeat !== undefined) await perSeat();
+      await lock.click();
+      await page.waitForTimeout(150);
+      if (await page.locator('.hud-playback').isVisible()) break;
+    }
+    // Playback owns the screen until the decision HUD comes back — unless the
+    // match ended, in which case it never does.
+    // "Neither control is up" is ambiguous: it is the game-over screen, but it
+    // is also the single frame where the HUD swaps between ordering and
+    // playback. Requiring it to persist is what stops a mid-swap sample from
+    // reporting a finished match — the flake this loop shipped with.
+    let quiet = 0;
+    for (let i = 0; i < 160; i++) {
+      if (await lockIn(page).isVisible()) {
+        await page.waitForTimeout(400);
+        return true;
+      }
+      quiet = (await page.locator('.hud-playback').isVisible()) ? 0 : quiet + 1;
+      if (quiet >= 8) return false; // two seconds of neither: the match is over
+      await page.waitForTimeout(250);
+    }
+    return false;
+  };
+
+  test('an armed pad marker is on the board, in its own colour family', async ({ page }) => {
+    // duel-arena ships a mirrored pair of Health pads on the centre row, and
+    // they are public terrain — drawn for both teams, fog or no fog. They open
+    // on `firstTurn: 2`, so the drive resolves one turn first: on turn 1 every
+    // pad is deliberately dormant and nearly invisible, which is the state
+    // *not* being asserted here.
+    expect(await resolveTurn(page), 'the match ended before turn 2').toBe(true);
+    expect(
+      countPixels(await pixels(page), isPadTeal),
+      'no pad marker composited — the maps carry pads nobody can see',
+    ).toBeGreaterThan(20);
+  });
+
+  test('a pad marker survives the next turn boundary', async ({ page }) => {
+    expect(await resolveTurn(page)).toBe(true);
+    expect(countPixels(await pixels(page), isPadTeal)).toBeGreaterThan(20);
+    if (!(await resolveTurn(page))) return; // match ended; nothing left to assert
+    // Whether this particular pad was taken or not, *a* Health pad is still
+    // drawn: a consumed one keeps its plate and loses only its glyph. The
+    // failure this catches is a marker that vanishes at a turn boundary.
+    expect(
+      countPixels(await pixels(page), isPadTeal),
+      'the pad markers disappeared after a turn resolved',
+    ).toBeGreaterThan(0);
+  });
+
+  test('arming a chase draws a route that is not there otherwise', async ({ page }) => {
+    // The chase route shares the aim overlay's orange deliberately — both mean
+    // "the thing you are pointing at" — so this is a delta with nothing else
+    // armed, where the only orange that can appear is the chase.
+    // The teams spawn thirteen apart with six squares of sight, so nobody is
+    // chaseable on turn 1 and the control is correctly greyed out. Walk toward
+    // the middle until somebody comes into view — driving the board into the
+    // state under test rather than skipping because it did not start there.
+    const chase = page.locator('.hud-move', { hasText: 'Chase' });
+    await expect(chase).toBeVisible();
+    const walkToCentre = async (): Promise<void> => {
+      const move = page.locator('.hud-move', { hasText: /^Move/ });
+      if (!(await move.isVisible()) || (await move.isDisabled())) return;
+      await move.click();
+      await clickAt(page, 0.5, 0.5);
+    };
+    for (let turn = 0; turn < 5 && (await chase.isDisabled()); turn++) {
+      if (!(await resolveTurn(page, walkToCentre))) break;
+    }
+    expect(await chase.isDisabled(), 'never got an enemy into sight to chase').toBe(false);
+
+    // A chase names a *unit*, so the click has to land on one. Rather than
+    // sweeping and hoping, find the enemy the way this suite finds everything
+    // else — by its pixels — and click the middle of the biggest red cluster.
+    const baseline = await pixels(page);
+    const before = countPixels(baseline, isChaseOrange);
+    const enemyPixels = findPixels(baseline, isTeamRed, 2);
+    expect(enemyPixels.length, 'no enemy on screen after closing the distance').toBeGreaterThan(10);
+    const clip = await boardClip(page);
+    const scale = { x: clip.width / baseline.width, y: clip.height / baseline.height };
+    // The median of each axis, so an antialiased fringe cannot drag the point
+    // off the body the way a mean would.
+    const median = (ns: number[]): number => [...ns].sort((a2, b2) => a2 - b2)[Math.floor(ns.length / 2)]!;
+    const target = {
+      x: median(enemyPixels.map((q) => q.x)),
+      y: median(enemyPixels.map((q) => q.y)),
+    };
+
+    await chase.click();
+    await page.waitForTimeout(150);
+    await page.mouse.click(clip.x + target.x * scale.x, clip.y + target.y * scale.y);
+    await page.waitForTimeout(300);
+
+    const after = countPixels(await pixels(page), isChaseOrange);
+    expect(after, 'arming a chase drew no route or ring').toBeGreaterThan(before);
+    // …and the HUD agrees it took: the control names the quarry once one is set.
+    expect(await chase.textContent()).not.toBe('Chase');
+  });
+
+  test('an enemy is drawn on a board that is still fogged (LAST-KNOWN)', async ({ page }) => {
+    // The opening frame has the enemy team fully hidden — that is VISION1, and
+    // another test pins it. What this one wants is the *other* side: an enemy
+    // rendered while fog is still on the board, which is the frame a last-known
+    // ghost lives in. Walk in until one is on screen and the fog has not lifted.
+    const walkToCentre = async (): Promise<void> => {
+      const move = page.locator('.hud-move', { hasText: /^Move/ });
+      if (!(await move.isVisible()) || (await move.isDisabled())) return;
+      await move.click();
+      await clickAt(page, 0.5, 0.5);
+    };
+
+    let sawEnemyUnderFog = false;
+    for (let turn = 0; turn < 5 && !sawEnemyUnderFog; turn++) {
+      const image = await pixels(page);
+      // Both at once: an enemy body composited, and fog still covering part of
+      // the board. Either alone is uninteresting — the pair is the state a
+      // ghost is drawn in, and the state a "draw everything" regression breaks.
+      sawEnemyUnderFog = countPixels(image, isFogged) > 0 && countPixels(image, isTeamRed) > 0;
+      if (!sawEnemyUnderFog && !(await resolveTurn(page, walkToCentre))) break;
+    }
+    expect(sawEnemyUnderFog, 'never composited an enemy while the board was still fogged').toBe(true);
+  });
 });

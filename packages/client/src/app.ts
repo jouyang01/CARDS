@@ -71,7 +71,7 @@ import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js'
 import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
-import { type ViewState } from './playback.js';
+import { padViews, type PadView, type ViewState } from './playback.js';
 import { statusPips } from './status-pips.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
@@ -489,6 +489,22 @@ export function startHotSeat(
    * so this is where a player actually watches the thicket catch fire — folded
    * from the same `statusApplied` stream everything else in playback reads.
    */
+  /**
+   * PADS-INDICATOR — every pad on the map, armed or spent.
+   *
+   * Public terrain: both teams see every pad, so this takes no viewer and asks
+   * no fog question. During playback the in-flight `powerupTaken` set is passed
+   * so a pad picked up in the Move phase goes dark **as it happens** — the one
+   * moment a player is actually watching that square.
+   */
+  // A `function` rather than a `const` arrow on purpose: VISION1-opening calls
+  // `paintFog` during construction, well above this line, and a const would be
+  // in its temporal dead zone — a blank page with "Cannot access before
+  // initialization" and no board at all.
+  function pads(view?: ViewState): PadView[] {
+    return padViews(map, state, view?.takenPowerups);
+  }
+
   const viewCamo = (view: ViewState): Vec2[] => camoTiles(map, [...view.units.values()].map((u) => ({
     pos: u.pos, alive: u.alive, revealed: u.statuses.has('reveal'),
   })));
@@ -556,7 +572,9 @@ export function startHotSeat(
     // LAST-KNOWN: ghosts ride the same reconcile path as live units — same
     // `unitId`, so one scene object is either the unit or its memory and the two
     // can never be on the board at once.
-    renderer.show([...toRenderUnits(view.units), ...toGhostUnits(view.ghosts)], view.decoys, view.traps);
+    // PADS-INDICATOR: pads are public terrain, so they are drawn from the map
+    // and the authoritative state, with no fog view in the way.
+    renderer.show([...toRenderUnits(view.units), ...toGhostUnits(view.ghosts)], view.decoys, view.traps, pads());
     renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
     // CAMO-REVEAL: the thicket a unit gave itself away in burns red. Same view
     // as everything else, so it can never out a unit the seat cannot see.
@@ -1148,7 +1166,7 @@ export function startHotSeat(
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     renderer.drawShape([], SHAPE);
-    renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view));
+    renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
 
     let skipped = false;
     const finish = (): void => {
@@ -1159,7 +1177,7 @@ export function startHotSeat(
       renderer.highlight('aim', [], AIM);
       renderer.highlight('select', [], IMPACT);
       clearReadouts();
-      renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view));
+      renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
       renderer.highlight('camo', viewCamo(player.view), CAMO_RED, CAMO_OPACITY);
     };
     hud.showPlayback(() => {
@@ -1174,6 +1192,7 @@ export function startHotSeat(
       await animatePhase(
         player.cues, step.phase,
         viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), viewCamo(player.view),
+        pads(player.view),
         () => skipped,
       );
     }
@@ -1204,10 +1223,11 @@ export function startHotSeat(
     decoys: RenderDecoy[],
     traps: RenderTrap[],
     camo: Vec2[],
+    padList: PadView[],
     cancelled: () => boolean,
   ): Promise<void> {
     const { start, end } = phaseWindow(cues, phase);
-    renderer.show(units, decoys, traps);
+    renderer.show(units, decoys, traps, padList);
     renderer.highlight('camo', camo, CAMO_RED, CAMO_OPACITY);
     phaseLabel.textContent = phase.toUpperCase();
     phaseLabel.style.display = 'block';
@@ -1347,7 +1367,7 @@ export function startHotSeat(
   function renderGameOver(): void {
     clearPreviewNumbers();
     const revealed = revealedView(state, currentSeat()?.team ?? 0);
-    renderer.show(toRenderUnits(revealed.units), revealed.decoys, revealed.traps);
+    renderer.show(toRenderUnits(revealed.units), revealed.decoys, revealed.traps, pads());
     for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');

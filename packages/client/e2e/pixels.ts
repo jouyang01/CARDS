@@ -130,7 +130,14 @@ export function countPixels(image: Image, matches: (px: Rgb) => boolean, step = 
  * literally `#4f8cff` on screen. Asserting the family is the honest test — it
  * catches "nothing drew" without breaking on a lighting tweak.
  */
-export const isTeamBlue = (px: Rgb): boolean => px.b > 130 && px.b - px.r > 50 && px.g < px.b;
+export const isTeamBlue = (px: Rgb): boolean =>
+  px.b > 130 && px.b - px.r > 50 && px.g < px.b
+  // …and blue-dominant, not cyan. Team blue is `#4f8cff`, whose green sits 61
+  // above its red; PADS-INDICATOR's Energy pad is `#3fe8ff`, where green runs
+  // 169 above red and the pixel reads as cyan to any eye. Without this clamp a
+  // pad would be counted as a unit, and "team 0's units are on screen" would
+  // pass on a board with no units at all.
+  && px.g - px.r < 110;
 /**
  * Team red is `#ff6b5e` — red-dominant with green and blue close together. The
  * `|g − b|` clamp is what separates it from the *orange* aim overlay and the
@@ -215,3 +222,38 @@ export const isDecoyPurple = (px: Rgb): boolean =>
  */
 export const isSceneBackground = (px: Rgb): boolean =>
   Math.abs(px.r - 0x12) <= 4 && Math.abs(px.g - 0x14) <= 4 && Math.abs(px.b - 0x1a) <= 4;
+
+
+/**
+ * PADS-INDICATOR's Health pad (`#2fe0a0`) — the plate at 0.5 over the dark floor
+ * and the plus glyph at 0.95, both inside one family.
+ *
+ * Teal is the point: green-dominant *and* blue-shifted. `b − r` is what
+ * separates it from the HP bar's `#5ad17f` (37 apart) and from lit brush, both
+ * of which are green with barely any blue; `g − b` keeps the Energy pad's cyan
+ * and every blue overlay out. Health is the flavour the coverage drive asserts
+ * on, so this is the one pad hue that needs a predicate.
+ */
+export const isPadTeal = (px: Rgb): boolean =>
+  px.g > 110 && px.g - px.r > 70 && px.b - px.r > 55 && px.g - px.b > 15;
+
+/**
+ * CAMO-REVEAL's red thicket (`#ff2020` at 0.55 over lit brush ≈ `158,44,32`).
+ *
+ * Hard red: red-dominant with green *and* blue both far below it, and unlike
+ * team red the two are not close to each other — the green sits above the blue
+ * because the brush underneath is green. Bounded under 200 so the pure team-red
+ * unit body cannot pass for a lit thicket.
+ */
+export const isCamoRed = (px: Rgb): boolean =>
+  px.r > 110 && px.r < 210 && px.r - px.g > 70 && px.r - px.b > 80 && px.g >= px.b;
+
+/**
+ * CHASE1's route + quarry ring (`#ff8a3d`).
+ *
+ * The same warm orange family as the aim overlay — deliberately, since both are
+ * "a thing you are pointing at" — so this predicate cannot tell them apart on
+ * its own. The coverage drive uses it as a **delta** with no ability armed,
+ * where the only orange that can appear is the chase.
+ */
+export const isChaseOrange = isAimOrange;
