@@ -497,7 +497,13 @@ export function startHotSeat(
    * so a pad picked up in the Move phase goes dark **as it happens** — the one
    * moment a player is actually watching that square.
    */
-  const pads = (view?: ViewState): PadView[] => padViews(map, state, view?.takenPowerups);
+  // A `function` rather than a `const` arrow on purpose: VISION1-opening calls
+  // `paintFog` during construction, well above this line, and a const would be
+  // in its temporal dead zone — a blank page with "Cannot access before
+  // initialization" and no board at all.
+  function pads(view?: ViewState): PadView[] {
+    return padViews(map, state, view?.takenPowerups);
+  }
 
   const viewCamo = (view: ViewState): Vec2[] => camoTiles(map, [...view.units.values()].map((u) => ({
     pos: u.pos, alive: u.alive, revealed: u.statuses.has('reveal'),

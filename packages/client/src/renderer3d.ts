@@ -208,11 +208,19 @@ export interface RenderPad {
   armed: boolean;
 }
 
-/** Pad colours by flavour — the marker's only identifier, per the AC. */
+/**
+ * Pad colours by flavour — the marker's only identifier.
+ *
+ * Chosen to sit **outside every family the render tests already match on**, so
+ * a pad on the board can never be counted as a unit, an aim overlay, a decoy or
+ * lit brush. The obvious picks all collided: a green pad reads as brush, an
+ * orange one as the aim overlay, a plain blue one as a team-0 unit. Teal,
+ * magenta and cyan are the three unclaimed hues.
+ */
 const PAD_COLOUR: Record<PowerupType, number> = {
-  health: 0x53d18a,
-  might: 0xff8a3d,
-  energy: 0x59c7ff,
+  health: 0x2fe0a0,
+  might: 0xff4f9d,
+  energy: 0x3fe8ff,
 };
 
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
