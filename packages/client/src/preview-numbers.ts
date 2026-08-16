@@ -21,14 +21,32 @@
  * a fogged enemy's exact square, readable by sweeping an aim past it. You may
  * still aim into the dark; you just are not told what is standing there.
  *
- * The amounts are **nominal**: the ability's authored effect value, before
- * Might/Weaken, cover, shields or Untargetable. A plan-time preview cannot know
- * what buffs will be standing at resolution — Adrenaline resolves at the start of
- * Blast, after the plan is locked — so a "precise" number would be confidently
- * wrong. Nominal is the honest promise: this is what the ability hits for.
+ * PREVIEW-MODIFIERS — the damage number is what the hit would **actually deal**.
+ *
+ * Owner Dev Note: *"Should account for Might + Cover + Weakness."* A nominal 20
+ * over a target in cover is wrong by half, and a player who plans around it
+ * learns the preview lies. The number now runs through the engine's own
+ * `computeDamage` and `isBehindCover` — the ruled composition, outgoing
+ * Might/Weaken then cover reduction — because a second implementation of the
+ * damage math is a second answer waiting to disagree with the resolution.
+ *
+ * What it still cannot know is a status that lands **this turn**: Adrenaline's
+ * Might resolves at the start of Blast, after the plan is locked. So the preview
+ * reflects **current** state and does not try to predict post-lock buffs. That
+ * is the same honest limit PREVIEW-FOG lives with, and the alternative — a
+ * confident guess about what the enemy is about to do — is worse than a number
+ * that is occasionally conservative.
+ *
+ * Shields are deliberately not folded in (edge-cases: flagged, not required):
+ * the number is the post-cover damage, and the nameplate shows the shield pool
+ * separately. Heals and shields keep their authored amounts — the owner named
+ * Might, Cover and Weaken, all of which are outgoing-damage rules.
  */
 
-import type { AbilityDef, GameState, TeamId, UnitState, Vec2 } from '@cards/engine';
+import {
+  computeDamage, isBehindCover,
+  type AbilityDef, type Board, type GameState, type TeamId, type UnitState, type Vec2,
+} from '@cards/engine';
 
 /** Red, green, blue — the three the owner asked for, and nothing else. */
 export type PreviewKind = 'damage' | 'heal' | 'shield';
@@ -85,6 +103,12 @@ const isPreviewKind = (kind: string): kind is PreviewKind =>
  */
 export function previewNumbers(
   state: GameState,
+  /**
+   * The board, for `isBehindCover` (PREVIEW-MODIFIERS). Cover is pure geometry
+   * and knowable at plan time, so there is no excuse for the preview not to
+   * know it.
+   */
+  board: Board,
   caster: UnitState,
   actions: readonly AimedAction[],
   /**
@@ -115,6 +139,15 @@ export function previewNumbers(
       if (!isPreviewKind(kind)) continue;
       const amount = effect.amount ?? 0;
       if (amount <= 0) continue;
+      /**
+       * PREVIEW-MODIFIERS: the engine's own composition, per target square.
+       * `damage` alone — Might, Weaken and cover are outgoing-damage rules, and
+       * applying them to a heal would be inventing a mechanic.
+       */
+      const dealt = (at: Vec2): number => kind !== 'damage'
+        ? amount
+        : computeDamage(amount, caster, isBehindCover(board, caster.pos, at, def.range));
+
       for (const target of state.units) {
         if (!target.alive || !area.has(`${target.pos.x},${target.pos.y}`)) continue;
         if (OWN_TEAM_ONLY.has(kind) && target.owner !== caster.owner) continue;
@@ -123,16 +156,18 @@ export function previewNumbers(
         // re-deriving sight, exactly like every other client consumer.
         if (target.owner !== caster.owner && !visible.has(target.unitId)) continue;
         const key = `${target.unitId}:${kind}`;
-        totals.set(key, (totals.get(key) ?? 0) + amount);
+        totals.set(key, (totals.get(key) ?? 0) + dealt(target.pos));
       }
       // Decoys take the same polarity rule off the same `owner` field, so a
       // decoy in your AoE reads exactly like the unit it is pretending to be.
-      // No vision check: the list is the fogged one.
+      // No vision check: the list is the fogged one. Cover applies to them too:
+      // a decoy that previewed full damage from behind a wall the real unit
+      // would be reduced by is a tell, and this fiction has to be seamless.
       for (const decoy of decoys) {
         if (!area.has(`${decoy.pos.x},${decoy.pos.y}`)) continue;
         if (OWN_TEAM_ONLY.has(kind) && decoy.owner !== caster.owner) continue;
         const key = `${decoy.id}:${kind}`;
-        totals.set(key, (totals.get(key) ?? 0) + amount);
+        totals.set(key, (totals.get(key) ?? 0) + dealt(decoy.pos));
       }
     }
   }

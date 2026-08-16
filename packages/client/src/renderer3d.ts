@@ -19,6 +19,7 @@
 
 import {
   AmbientLight,
+  CanvasTexture,
   BoxGeometry,
   BufferGeometry,
   Color,
@@ -42,9 +43,12 @@ import {
   WebGLRenderer,
   type Material,
 } from 'three';
-import type { MapDef, PowerupType, Vec2 } from '@cards/engine';
+import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
-import { PIP_GAP, PIP_SIZE, pipOffsets, type StatusPip } from './status-pips.js';
+import {
+  GLYPH_BOX, GLYPH_STROKE, PIP_GAP, PIP_SIZE, pipOffsets, statusGlyph, type StatusPip,
+} from './status-pips.js';
+import { nameplateKey, type Nameplate } from './nameplates.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -86,8 +90,17 @@ const DECOY_PURPLE = 0xa06bd6;
 const GHOST_ALPHA = 0.22;
 /** The owner's decoy plate sits just above the trap marker in the overlay band. */
 const DECOY_PLATE_LIFT = 0.05;
-/** The status row sits just above the shield bar; its size/gap are shared. */
-const PIP_ROW_Y = 0.38;
+/**
+ * UI-NAMEPLATES: the plate hangs above the unit and the status row hangs under
+ * it (ar-parity §4.1 — "status icons in a row under the bar"). Both live inside
+ * the billboarded `bars` group, so they face the camera and cancel zoom.
+ */
+const PIP_ROW_Y = -0.13;
+/** Plate size in world units, and the canvas it is rasterised at. */
+const PLATE_W = 1.7;
+const PLATE_H = 0.66;
+const PLATE_PX_W = 272;
+const PLATE_PX_H = 106;
 /**
  * Trap markers: a little smaller than a tile so the grid still reads, and lifted
  * into the overlay band so brush cannot eat them the way it ate the highlights
@@ -180,6 +193,15 @@ export interface RenderDecoy {
   /** The team that placed it — an impersonated enemy wears *their* colour. */
   owner: 0 | 1;
   asEnemy: boolean;
+  /**
+   * UI-NAMEPLATES: the **fake** plate an impersonated decoy wears, frozen at the
+   * cast (edge-cases: the decoy snapshot carries the nameplate fields). On a
+   * board where every visible unit has a plate, the one body without one is
+   * un-disguised by its absence — the same tell the missing preview number was
+   * before PREVIEW-DECOY. Only used when `asEnemy`; the owner's own purple
+   * ground plate is a marker, not a unit, and wants no nameplate.
+   */
+  nameplate?: Nameplate;
 }
 
 /**
@@ -241,12 +263,246 @@ export interface RenderUnit {
    */
   pips?: readonly StatusPip[];
   /**
+   * UI-NAMEPLATES: the name / HP / energy plate to float above this unit.
+   *
+   * Absent means *draw no plate* — which is how a fogged unit, a last-known
+   * ghost and a unit the caller simply has no name for are all handled by the
+   * same rule. The renderer never decides who gets one: `fogView` already chose
+   * which units exist in this frame, and a plate is drawn for exactly those.
+   */
+  nameplate?: Nameplate;
+  /**
+   * UI-INTENT: an allied unit's queued plan, as a short label. Absent means the
+   * unit has nothing queued — or, for an enemy, that plans are never drawn.
+   * The renderer does not decide which: it is handed the badge or it is not.
+   */
+  intent?: { label: string; locked: boolean };
+  /**
    * A last-known-position **ghost** (LAST-KNOWN) rather than a live sighting:
    * this is where the unit *was*, not where it is. Drawn faint and stripped of
    * its bars and pips — a ghost that carried a live HP bar would be reporting
    * information the viewer does not have.
    */
   ghost?: boolean;
+}
+
+/**
+ * STATUS-ICONS — a status glyph, rasterised once and reused.
+ *
+ * The vocabulary is path data in `status-pips.ts` so the HUD can draw the same
+ * marks as `<svg>`; here it has to become a texture, which means a canvas. The
+ * cache is keyed by everything that changes the pixels — kind, ink colour and
+ * the stamped numeral — because a status row is rebuilt on every `show()` and
+ * re-rasterising eleven glyphs per unit per frame would be a real cost for an
+ * image that almost never changes.
+ *
+ * Module-level rather than per-renderer: the marks are identical in every
+ * renderer instance, and the e2e opens several.
+ */
+const glyphTextures = new Map<string, CanvasTexture>();
+
+/** Texture resolution for one glyph. Drawn small, so this is generous. */
+const GLYPH_PX = 64;
+
+function glyphTexture(pip: StatusPip): CanvasTexture | null {
+  const ink = `#${pip.color.toString(16).padStart(6, '0')}`;
+  const key = `${pip.kind}|${ink}|${pip.numeral ?? ''}`;
+  const cached = glyphTextures.get(key);
+  if (cached !== undefined) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = GLYPH_PX;
+  canvas.height = GLYPH_PX;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) return null;
+
+  // A dark plate behind the ink: these float over a lit board, and a bare
+  // stroke on grass is unreadable at this size whatever colour it is.
+  ctx.fillStyle = 'rgba(9, 10, 14, 0.72)';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, GLYPH_PX, GLYPH_PX, GLYPH_PX * 0.18);
+  ctx.fill();
+
+  // The glyph box is drawn inset, leaving room for the numeral to sit in the
+  // corner without landing on top of the mark.
+  const inset = GLYPH_PX * 0.11;
+  const scale = (GLYPH_PX - inset * 2) / GLYPH_BOX;
+  ctx.save();
+  ctx.translate(inset, inset);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = ink;
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = GLYPH_STROKE;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const part of statusGlyph(pip.kind)) {
+    const path = new Path2D(part.d);
+    if (part.fill === true) ctx.fill(path);
+    else ctx.stroke(path);
+  }
+  ctx.restore();
+
+  if (pip.numeral !== undefined) {
+    // Bottom-right, white on the plate rather than in the status colour: the
+    // number is a magnitude, not a second copy of the identity, and colouring
+    // it too makes the whole tile read as one blob.
+    const text = String(pip.numeral);
+    ctx.font = `700 ${GLYPH_PX * 0.34}px system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.lineWidth = GLYPH_PX * 0.06;
+    ctx.strokeStyle = 'rgba(9, 10, 14, 0.9)';
+    ctx.strokeText(text, GLYPH_PX - 3, GLYPH_PX - 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, GLYPH_PX - 3, GLYPH_PX - 2);
+  }
+
+  const texture = new CanvasTexture(canvas);
+  glyphTextures.set(key, texture);
+  return texture;
+}
+
+/**
+ * UI-NAMEPLATES — the plate, rasterised once per distinct content.
+ *
+ * Keyed on the content rather than the unit, so two units at full health share
+ * one texture and a plate is redrawn only when a number in it actually changes.
+ * That matters because `show()` runs on every pointer move during mouse-follow
+ * aiming, and rasterising text at that rate would be the most expensive thing
+ * the client does.
+ *
+ * The cache is cleared wholesale past a ceiling rather than evicted one entry at
+ * a time. HP changes on every hit, so the key space is large but the *live* set
+ * is tiny — a handful of units. A periodic wipe costs one redraw per visible
+ * plate and needs no bookkeeping; an LRU would cost bookkeeping on every frame
+ * to avoid a cost nobody can perceive.
+ */
+const plateTextures = new Map<string, CanvasTexture>();
+const PLATE_CACHE_MAX = 240;
+
+/** Bar colours, kept as the pre-UI-NAMEPLATES quads had them. */
+const PLATE_INK = {
+  track: '#12141a',
+  hp: '#5ad17f',
+  shield: '#62d0e0',
+  energy: '#e0c04f',
+  ult: '#ffd76a',
+} as const;
+
+/**
+ * UI-INTENT — the small action tile above an allied unit.
+ *
+ * Its own cache, because the label space is tiny (a slot number and a couple of
+ * marks) and shared across every unit that queued the same thing.
+ */
+const intentTextures = new Map<string, CanvasTexture>();
+
+function intentTexture(label: string, locked: boolean): CanvasTexture | null {
+  const key = `${label}|${locked ? 'L' : ''}`;
+  const cached = intentTextures.get(key);
+  if (cached !== undefined) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 160;
+  canvas.height = 52;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) return null;
+  // Locked reads green, unlocked amber: "still deciding" and "committed" is the
+  // distinction a teammate is actually watching for, and it should survive
+  // being glanced at rather than read.
+  ctx.fillStyle = locked ? 'rgba(24, 58, 38, 0.95)' : 'rgba(48, 40, 14, 0.95)';
+  ctx.beginPath();
+  ctx.roundRect(6, 4, 148, 44, 10);
+  ctx.fill();
+  ctx.strokeStyle = locked ? '#6fbf73' : '#e0c04f';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.font = '700 26px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = locked ? '#b6f0c0' : '#f4e3a6';
+  ctx.fillText(label, 80, 27);
+
+  const texture = new CanvasTexture(canvas);
+  intentTextures.set(key, texture);
+  return texture;
+}
+
+function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | null {
+  const key = nameplateKey(plate, team);
+  const cached = plateTextures.get(key);
+  if (cached !== undefined) return cached;
+  if (plateTextures.size > PLATE_CACHE_MAX) {
+    for (const t of plateTextures.values()) t.dispose();
+    plateTextures.clear();
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = PLATE_PX_W;
+  canvas.height = PLATE_PX_H;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) return null;
+
+  const pad = 8;
+  const barW = PLATE_PX_W - pad * 2;
+
+  // Name, above the bar, in the team's colour so friend/foe reads before the
+  // name is even parsed.
+  ctx.font = '700 26px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = 'rgba(9, 10, 14, 0.92)';
+  ctx.strokeText(plate.name, PLATE_PX_W / 2, 2);
+  ctx.fillStyle = team === 0 ? '#9dc2ff' : '#ffb3aa';
+  ctx.fillText(plate.name, PLATE_PX_W / 2, 2);
+
+  // HP bar, with the number inside it (the screenshot's defining detail).
+  const barY = 38;
+  const barH = 26;
+  ctx.fillStyle = PLATE_INK.track;
+  ctx.fillRect(pad, barY, barW, barH);
+  const hpFrac = Math.max(0, Math.min(1, plate.hp / Math.max(1, plate.maxHp)));
+  ctx.fillStyle = PLATE_INK.hp;
+  ctx.fillRect(pad, barY, barW * hpFrac, barH);
+  // Shields are spent first, so the segment is appended to the fill rather than
+  // overlaid on it: the bar reads left-to-right as the order damage eats it.
+  if (plate.shield > 0) {
+    const shieldFrac = Math.min(1 - hpFrac, plate.shield / Math.max(1, plate.maxHp));
+    ctx.fillStyle = PLATE_INK.shield;
+    ctx.fillRect(pad + barW * hpFrac, barY, barW * shieldFrac, barH);
+  }
+  ctx.font = '700 19px system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(9, 10, 14, 0.85)';
+  const hpText = plate.shield > 0 ? `${plate.hp} +${plate.shield}` : String(plate.hp);
+  ctx.strokeText(hpText, PLATE_PX_W / 2, barY + barH / 2 + 1);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(hpText, PLATE_PX_W / 2, barY + barH / 2 + 1);
+
+  // Energy: a thin bar under HP, and the ULT tag once it is charged. The tag is
+  // the reason this bar is on screen at all — it turns an ultimate from a
+  // surprise into a threat you can play around.
+  const energyY = barY + barH + 4;
+  const energyH = 9;
+  const tagW = plate.ult ? 40 : 0;
+  ctx.fillStyle = PLATE_INK.track;
+  ctx.fillRect(pad, energyY, barW - tagW, energyH);
+  ctx.fillStyle = PLATE_INK.energy;
+  ctx.fillRect(pad, energyY, (barW - tagW) * Math.max(0, Math.min(1, plate.energy / ULT_COST)), energyH);
+  if (plate.ult) {
+    ctx.fillStyle = PLATE_INK.ult;
+    ctx.fillRect(PLATE_PX_W - pad - tagW + 3, energyY - 4, tagW - 3, energyH + 8);
+    ctx.font = '800 13px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#1a1408';
+    ctx.fillText('ULT', PLATE_PX_W - pad - tagW / 2 + 2, energyY + energyH / 2);
+  }
+
+  const texture = new CanvasTexture(canvas);
+  plateTextures.set(key, texture);
+  return texture;
 }
 
 export interface Renderer {
@@ -404,37 +660,78 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   // ── Keyed unit objects (A1's principle, in 3D) ────────────────────────────
   const unitObjects = new Map<string, Group>();
+  /** Loose meshes that must face the camera — decoy nameplates, so far. */
+  let billboards: Mesh[] = [];
 
-  /** Bars live in their own group so they can billboard and resist zoom. */
+  /**
+   * The overhead furniture: one nameplate quad and the status row under it.
+   *
+   * UI-NAMEPLATES replaced three coloured strips with a single **drawn plate**,
+   * because half of what the screenshot shows cannot be done with quads at all
+   * — the HP numeral lives *inside* its bar and the ULT tag is a word. One
+   * texture also means one draw and one cache entry per distinct plate, instead
+   * of three meshes whose widths are re-set every frame.
+   *
+   * Both live in their own group so they billboard and resist zoom: a nameplate
+   * is only useful if it is the same legible size at any framing.
+   */
   const buildBars = (): Group => {
     const bars = new Group();
     bars.name = 'bars';
-    bars.position.y = UNIT_HEIGHT + 0.28;
-    const bar = (name: string, y: number, color: number): void => {
-      const bg = new Mesh(new PlaneGeometry(0.8, 0.1), new MeshBasicMaterial({ color: 0x12141a }));
-      bg.position.set(0, y, 0);
-      const fill = new Mesh(new PlaneGeometry(0.8, 0.1), new MeshBasicMaterial({ color }));
-      fill.name = name;
-      fill.position.set(0, y, 0.001);
-      bars.add(bg, fill);
-    };
-    bar('hp', 0.12, 0x5ad17f);
-    bar('shield', 0.24, 0x62d0e0);
-    bar('energy', 0, 0xe0c04f);
-    // The status row rides inside `bars`, so it billboards and cancels zoom for
-    // free — a pip is only useful if it is the same legible size at any framing.
+    bars.position.y = UNIT_HEIGHT + 0.34;
+    const plate = new Mesh(
+      new PlaneGeometry(PLATE_W, PLATE_H),
+      new MeshBasicMaterial({ transparent: true, depthWrite: false }),
+    );
+    plate.name = 'plate';
+    bars.add(plate);
     const pips = new Group();
     pips.name = 'pips';
     pips.position.y = PIP_ROW_Y;
-    bars.add(pips);
+    // UI-INTENT's tile sits above the nameplate — the plan is the newest thing
+    // on screen and the one a teammate is scanning for, so it leads.
+    const intent = new Mesh(
+      new PlaneGeometry(0.62, 0.2),
+      new MeshBasicMaterial({ transparent: true, depthWrite: false }),
+    );
+    intent.name = 'intent';
+    intent.position.y = PLATE_H / 2 + 0.14;
+    intent.visible = false;
+    bars.add(pips, intent);
     return bars;
+  };
+
+  /** Point a unit's intent tile at the right texture, or hide it. */
+  const setIntent = (bars: Group, intent: { label: string; locked: boolean } | undefined): void => {
+    const mesh = bars.getObjectByName('intent');
+    if (!(mesh instanceof Mesh)) return;
+    mesh.visible = intent !== undefined;
+    if (intent === undefined) return;
+    (mesh.material as MeshBasicMaterial).map = intentTexture(intent.label, intent.locked);
+    (mesh.material as MeshBasicMaterial).needsUpdate = true;
+  };
+
+  /**
+   * Point a unit's plate at the right texture, or hide it.
+   *
+   * Hidden rather than blank for the absent case: a dark rectangle over a
+   * fogged square is still a marker saying "something is here", which is the
+   * whole thing the fog is for.
+   */
+  const setPlate = (bars: Group, plate: Nameplate | undefined, team: 0 | 1): void => {
+    const mesh = bars.getObjectByName('plate');
+    if (!(mesh instanceof Mesh)) return;
+    mesh.visible = plate !== undefined;
+    if (plate === undefined) return;
+    (mesh.material as MeshBasicMaterial).map = plateTexture(plate, team);
+    (mesh.material as MeshBasicMaterial).needsUpdate = true;
   };
 
   /**
    * Rebuild a unit's status row. Cheap enough to redo per `show()` (at most
-   * eleven 0.09-wide quads per unit) and rebuilding avoids a second reconcile
+   * eleven small quads per unit) and rebuilding avoids a second reconcile
    * path — the pips are the one part of a unit that legitimately changes shape
-   * turn to turn.
+   * turn to turn. The *textures* are cached, so the redo is quads, not raster.
    */
   const setPips = (bars: Group, pips: readonly StatusPip[]): void => {
     const row = bars.getObjectByName('pips');
@@ -444,7 +741,11 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     pips.forEach((pip, i) => {
       const quad = new Mesh(
         new PlaneGeometry(PIP_SIZE, PIP_SIZE),
-        new MeshBasicMaterial({ color: pip.color }),
+        // STATUS-ICONS: the pip is a drawn glyph now, not a colour. The colour
+        // survives *as the glyph's ink* rather than as the whole mark, so the
+        // learned position and the learned hue both still work and the shape
+        // does the identifying.
+        new MeshBasicMaterial({ map: glyphTexture(pip), transparent: true }),
       );
       quad.name = pip.kind;
       quad.position.set(offsets[i] ?? 0, 0, 0);
@@ -471,15 +772,6 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   };
 
   /** A bar's fill is scaled from its left edge, so width reads as a fraction. */
-  const setBar = (bars: Group, name: string, frac: number, visible: boolean): void => {
-    const fill = bars.getObjectByName(name);
-    if (!(fill instanceof Mesh)) return;
-    const f = Math.max(0, Math.min(1, frac));
-    fill.scale.x = Math.max(f, 0.0001);
-    fill.position.x = -0.4 + (0.8 * f) / 2; // keep the left edge pinned
-    fill.visible = visible && f > 0;
-  };
-
   // ── Highlight layers ──────────────────────────────────────────────────────
   const layers = new Map<string, Group>();
   const layerGroup = (name: string): Group => {
@@ -644,6 +936,14 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       bars.quaternion.copy(camera.quaternion);
       bars.scale.setScalar(scale);
     }
+    // A decoy's fake plate is not inside a keyed unit object — the decoy layer
+    // is rebuilt wholesale each `show()` — so it is registered here instead. It
+    // has to billboard by exactly the same rule, or the one plate that does not
+    // turn with the camera is the one that gives the decoy away.
+    for (const plate of billboards) {
+      plate.quaternion.copy(camera.quaternion);
+      plate.scale.setScalar(scale);
+    }
   };
 
   // ── Free-orbit input ──────────────────────────────────────────────────────
@@ -735,9 +1035,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           // A ghost reports nothing live: its HP, energy and statuses are all
           // things the viewer stopped being able to see when it went dark.
           const known = unit.ghost !== true;
-          setBar(bars, 'hp', unit.hp / Math.max(1, unit.maxHp), known);
-          setBar(bars, 'energy', unit.energy / 100, known);
-          setBar(bars, 'shield', (unit.shield ?? 0) / Math.max(1, unit.maxHp), known && (unit.shield ?? 0) > 0);
+          setPlate(bars, known && unit.alive ? unit.nameplate : undefined, unit.owner);
+          setIntent(bars, known && unit.alive ? unit.intent : undefined);
           setPips(bars, unit.alive && known ? (unit.pips ?? []) : []); // a corpse or a ghost carries nothing
         }
         refreshOpacity(unit.unitId);
@@ -810,6 +1109,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
       const decoyLayer = layerGroup('decoy');
       disposeChildren(decoyLayer);
+      billboards = [];
       for (const decoy of decoys) {
         const at = toWorld(map, decoy.pos);
         if (decoy.asEnemy) {
@@ -827,6 +1127,22 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           );
           body.position.copy(at).setY(UNIT_HEIGHT / 2);
           decoyLayer.add(body);
+          // …and its lie, in full: name, frozen HP, no statuses. A nameplate is
+          // most of what a player reads a unit by, so the impersonation is only
+          // as good as this.
+          if (decoy.nameplate !== undefined) {
+            const plate = new Mesh(
+              new PlaneGeometry(PLATE_W, PLATE_H),
+              new MeshBasicMaterial({
+                map: plateTexture(decoy.nameplate, decoy.owner),
+                transparent: true,
+                depthWrite: false,
+              }),
+            );
+            plate.position.copy(at).setY(UNIT_HEIGHT + 0.34);
+            billboards.push(plate);
+            decoyLayer.add(plate);
+          }
           continue;
         }
         // To its owner: a purple **ground plate**, not a body. Veil & Decoy

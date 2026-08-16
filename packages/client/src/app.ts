@@ -10,7 +10,9 @@
  */
 
 import {
+  ULT_COST,
   buildBoard,
+  type Board,
   createMatch,
   movementBudget,
   resolveTurn,
@@ -74,11 +76,17 @@ import { deriveSeats, mergeSeatOrders, type Seat } from '@cards/engine';
 import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
 import { padViews, type PadView, type ViewState } from './playback.js';
 import { applyScenario, type ScenarioId } from './scenarios.js';
-import { statusChips, statusPips } from './status-pips.js';
+import { statusChips, statusPips, viewableStatuses } from './status-pips.js';
+import {
+  decoyNameplate, snapshotDecoy, unitNameplate, type DecoySnapshot,
+} from './nameplates.js';
+import { inspectDecoy, inspectUnit } from './inspect.js';
+import { intentBadges } from './intent.js';
+import { freshTimer, spendBank, timerView } from './timer.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
-  clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
-  type MatchTotals,
+  clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally, topbar,
+  type MatchTotals, type TopbarModel, type TopbarPortrait,
 } from './scoreboard.js';
 
 export interface HotSeatUI {
@@ -254,14 +262,75 @@ export function startHotSeat(
     return fogMemo.view;
   };
 
-  const toRenderUnits = (units: readonly UnitState[]): RenderUnit[] => units.map((u) => ({
-    unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
-    energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
-    shield: shieldOf(u),
-    // STATUS-AUDIT: read straight off engine state during Decision. An active
-    // status is one with turns left — an expired instance is not a status.
-    pips: statusPips(u.statuses.filter((s) => s.remaining > 0)),
-  }));
+  /**
+   * `viewer` is the team doing the looking, and it is not decoration:
+   * STATUS-ICONS renders **Stealth to its owner only**, so the row a unit shows
+   * depends on who is reading it. Everything else about a visible unit is
+   * public — if you can see them, you can see that they are Rooted.
+   */
+  /**
+   * UI-INTENT — the queued plans this viewer's team may see, by unit id.
+   *
+   * Rebuilt per paint rather than cached: a draft changes on every click, and a
+   * stale plan tile above a teammate is worse than none. Cheap — it is at most
+   * four units and a string each.
+   */
+  const intentFor = (viewer: TeamId): Map<string, { label: string; locked: boolean }> =>
+    new Map(intentBadges(state.units, roster, drafts, locked, viewer)
+      .map((b) => [b.unitId, { label: b.label, locked: b.locked }]));
+
+  const toRenderUnits = (units: readonly UnitState[], viewer: TeamId): RenderUnit[] => {
+  const plans = intentFor(viewer);
+  return units.map((u) => {
+    // UI-NAMEPLATES: one model, and the icon row comes out of it too — the
+    // plate and the floating icons must never disagree about what is on a unit,
+    // and the surest way to guarantee that is to build them once.
+    const plate = unitNameplate(u, roster, viewer);
+    return {
+      unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
+      energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
+      shield: shieldOf(u),
+      // STATUS-AUDIT: read straight off engine state during Decision. An active
+      // status is one with turns left — an expired instance is not a status.
+      // STATUS-ICONS: durations and the shield pool ride along as the glyph's
+      // numeral, so the row says how long as well as what.
+      pips: plate.pips,
+      nameplate: plate,
+      // UI-INTENT: allied plans only — `intentBadges` filtered by owner, so an
+      // enemy simply has no entry here and the renderer draws nothing.
+      ...(plans.has(u.unitId) ? { intent: plans.get(u.unitId)! } : {}),
+    };
+  });
+  };
+
+  /**
+   * UI-NAMEPLATES — what each decoy's fake plate says, frozen at the cast.
+   *
+   * Client memory, like `sightings`, and for the same reason: the engine decoy
+   * is `{id, teamId, pos, expiresOnTurn}` and deliberately carries nothing about
+   * who cast it (edge-cases — the snapshot fields are the client's, derived from
+   * the cast). Written when a `decoySpawned` event plays; read every frame after.
+   */
+  let decoySnapshots = new Map<string, DecoySnapshot>();
+
+  /**
+   * The plate for a decoy the viewer believes is a real unit.
+   *
+   * Only when it is being *impersonated*: to its owner a decoy is a purple
+   * ground marker, not a body, and a nameplate over a marker would be the tell
+   * in reverse.
+   */
+  const decoyPlate = (d: { id: string; owner: TeamId; asEnemy: boolean }) => {
+    if (!d.asEnemy) return undefined;
+    const snapshot = decoySnapshots.get(d.id)
+      // A decoy already on the board when this client started drawing (the
+      // scenario seeds, a reload) has no recorded cast. Falling back to the
+      // caster as it stands is a small lie in the honest direction: it is what
+      // the plate would have said a moment ago, and no plate at all is the one
+      // answer that outs the decoy.
+      ?? snapshotDecoy(state.units, roster, d.owner);
+    return snapshot === undefined ? undefined : decoyNameplate(snapshot);
+  };
 
   /**
    * A remembered enemy, in the renderer's shape. Everything live is blanked:
@@ -272,6 +341,16 @@ export function startHotSeat(
     unitId: g.unitId, owner: g.owner, pos: g.pos, hp: 1, maxHp: 1, energy: 0,
     alive: true, label: (g.characterId[0] ?? '?').toUpperCase(), ghost: true,
   }));
+
+  /**
+   * The board, for PREVIEW-MODIFIERS' cover check.
+   *
+   * Memoised because `buildBoard` walks the whole map and mouse-follow aiming
+   * repaints on every pointer move — but the map is fixed for a match, so one
+   * slot is all it ever needs.
+   */
+  let boardMemo: Board | undefined;
+  const previewBoard = (): Board => (boardMemo ??= buildBoard(map));
 
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
 
@@ -347,6 +426,9 @@ export function startHotSeat(
   globalThis.addEventListener('resize', () => { sizeToViewport(); fitCamera(); });
   ui.board.addEventListener('click', onBoardClick);
   ui.board.addEventListener('mousemove', onBoardHover);
+  // Leaving the board closes the panel: it is anchored to the pointer, so a
+  // panel left behind would sit over the HUD pointing at nothing.
+  ui.board.addEventListener('mouseleave', () => hud.inspect(undefined));
 
   // UI6: the right-side combat log accumulates for the whole match. It is a
   // pure `TurnEvent[]` consumer — same contract as playback.
@@ -422,6 +504,18 @@ export function startHotSeat(
       if (!renderer.orbitEnabled()) fitCamera();
       render();
     },
+    extendTime: () => {
+      // UI-TIMER: the +10 s. Recorded as a moment rather than a boolean so the
+      // flash can fade on its own — a charge that vanished silently would read
+      // as a miscount, and "did my bank actually fire?" is the one question the
+      // control must never leave open.
+      const next = spendBank(remainingMs(), bankCharges);
+      if (!next.spent) return;
+      deadlineAt = performance.now() + next.remainingMs;
+      bankCharges = next.charges;
+      bankSpentAt = performance.now();
+      paintTimer();
+    },
   });
 
   // The HUD and log are what `sizeToContainer` measures, so re-fit now that both
@@ -463,12 +557,29 @@ export function startHotSeat(
     return fresh;
   };
 
-  const viewUnits = (view: ViewState): RenderUnit[] => [...view.units.values()].map((v) => ({
-    unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
-    energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
-    // …and during playback, off the folded event log — same pips, same order.
-    pips: statusPips([...v.statuses].map((kind) => ({ kind }))),
-  }));
+  const viewUnits = (view: ViewState): RenderUnit[] => {
+    const viewer = currentSeat()?.team ?? 0;
+    return [...view.units.values()].map((v) => ({
+      unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
+      energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
+      // …and during playback, off the folded event log — same icons, same
+      // order, and no numerals: the log carries neither durations nor shield
+      // pools, and inventing them is worse than leaving them off.
+      pips: statusPips(viewableStatuses([...v.statuses].map((kind) => ({ kind })), v.owner === viewer)),
+      // UI-NAMEPLATES during playback: the same plate, fed by the fold rather
+      // than by state, so an HP bar ticks down as the blow lands instead of
+      // jumping when the turn ends.
+      nameplate: {
+        name: roster[unitById(v.unitId)?.characterId ?? '']?.name ?? v.unitId,
+        hp: v.hp,
+        maxHp: v.maxHp,
+        shield: v.shield,
+        energy: v.energy,
+        ult: v.energy >= ULT_COST,
+        pips: [],
+      },
+    }));
+  };
 
   /**
    * Playback decoys, seen from the seat that just planned (DECOY-RENDER).
@@ -478,12 +589,10 @@ export function startHotSeat(
    */
   const viewDecoys = (view: ViewState): RenderDecoy[] => {
     const viewer = currentSeat()?.team ?? 0;
-    return [...view.decoys.values()].map((d) => ({
-      id: d.id,
-      pos: { ...d.pos },
-      owner: d.teamId,
-      asEnemy: d.teamId !== viewer,
-    }));
+    return [...view.decoys.values()].map((d) => {
+      const shown = { id: d.id, pos: { ...d.pos }, owner: d.teamId, asEnemy: d.teamId !== viewer };
+      return { ...shown, nameplate: decoyPlate(shown) };
+    });
   };
 
   /**
@@ -532,12 +641,61 @@ export function startHotSeat(
     openSeat();
   }
 
+  /**
+   * UI-TIMER — the decision countdown, per seat.
+   *
+   * Client-side and **presentation only**: nothing here ends a turn. Enforcing a
+   * deadline is server-authoritative and belongs to M3-TIMER, where it is the
+   * same deadline for everybody; a hot-seat clock that resolved the turn by
+   * itself would be a second, different rule, and the two would drift.
+   *
+   * Reset per seat rather than per turn because the Time Bank is a *player's*
+   * resource — in a hot-seat, each seat is a player taking its own decision, so
+   * each gets its own window and its own charge.
+   */
+  let deadlineAt = 0;
+  let bankCharges = freshTimer().charges;
+  let bankSpentAt: number | undefined;
+  let timerHandle: ReturnType<typeof setInterval> | undefined;
+
+  const remainingMs = (): number => Math.max(0, deadlineAt - performance.now());
+
+  const paintTimer = (): void => {
+    const since = bankSpentAt === undefined ? undefined : performance.now() - bankSpentAt;
+    hud.setTimer(timerView(remainingMs(), bankCharges, since));
+  };
+
+  /**
+   * Start a fresh window. Driven by an interval rather than the render loop:
+   * the decision phase has no animation frame of its own, and repainting the
+   * whole HUD ten times a second to move one number would tear the DOM out
+   * from under UI1's hover.
+   */
+  function startTimer(): void {
+    const fresh = freshTimer();
+    deadlineAt = performance.now() + fresh.remainingMs;
+    bankCharges = fresh.charges;
+    bankSpentAt = undefined;
+    if (timerHandle !== undefined) clearInterval(timerHandle);
+    // Ten hertz: enough that the tenths readout counts smoothly, cheap enough
+    // that it costs nothing next to a WebGL frame.
+    timerHandle = setInterval(paintTimer, 100);
+    paintTimer();
+  }
+
+  function stopTimer(): void {
+    if (timerHandle !== undefined) clearInterval(timerHandle);
+    timerHandle = undefined;
+    hud.setTimer(undefined);
+  }
+
   /** Put the next seat with living characters on the clock, or resolve. */
   function openSeat(): void {
     while (seatIdx < seats.length && seatRoster().length === 0) seatIdx += 1;
     const roster = seatRoster();
     if (roster.length === 0) return void resolveAndPlay(); // nobody left to order
     for (const unit of roster) draftFor(unit); // every character is orderable at once
+    startTimer();
     selectUnit(roster[0]!.unitId);
   }
 
@@ -583,7 +741,14 @@ export function startHotSeat(
     // can never be on the board at once.
     // PADS-INDICATOR: pads are public terrain, so they are drawn from the map
     // and the authoritative state, with no fog view in the way.
-    renderer.show([...toRenderUnits(view.units), ...toGhostUnits(view.ghosts)], view.decoys, view.traps, pads());
+    renderer.show(
+      [...toRenderUnits(view.units, team), ...toGhostUnits(view.ghosts)],
+      // UI-NAMEPLATES: a decoy being taken for a real unit wears a real unit's
+      // plate. `fogView` already decided which decoys this viewer sees and
+      // whether each is being impersonated; this only dresses them.
+      view.decoys.map((d) => ({ ...d, nameplate: decoyPlate(d) })),
+      view.traps, pads(),
+    );
     renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
     // CAMO-REVEAL: the thicket a unit gave itself away in burns red. Same view
     // as everything else, so it can never out a unit the seat cannot see.
@@ -718,7 +883,10 @@ export function startHotSeat(
     // PREVIEW-FOG: the same view the board is drawn from decides who may carry a
     // number, so the preview cannot contradict the fog beside it.
     const seen = new Set(currentFog(currentSeat()?.team ?? unit.owner).units.map((u) => u.unitId));
-    showPreviewNumbers(previewNumbers(state, unit, [
+    // PREVIEW-MODIFIERS: the board goes in so the preview can ask the engine
+    // about cover. Built here rather than cached because it is derived from
+    // `map`, which never changes for a match — see the memo below it.
+    showPreviewNumbers(previewNumbers(state, previewBoard(), unit, [
       ...(chosen !== undefined
         ? [{ def: chosen, squares: [...covered, ...impact.origin, ...impact.destination] }]
         : []),
@@ -808,37 +976,83 @@ export function startHotSeat(
    * it is a handful of nodes with no hover state to preserve.
    */
   function renderScoreboard(): void {
-    const readout = scoreReadout(state, unitName);
+    const bar = topbar(scoreReadout(state, unitName), currentSeat()?.team ?? 0);
     scoreEl.replaceChildren();
-    const head = document.createElement('div');
-    head.className = 'score-head';
-    for (const team of [0, 1] as const) {
-      const side = document.createElement('span');
-      side.className = 'score-team';
-      side.style.color = TEAM_CSS[team];
-      side.textContent = `${teamName(team)} ${tally(readout.kills[team], readout.killTarget)}`;
-      head.appendChild(side);
-    }
-    const turn = document.createElement('span');
-    turn.className = 'score-clock';
-    // Sudden death is the one thing here that changes how a turn should be
-    // played, so it replaces the clock rather than sitting beside it.
-    turn.textContent = readout.suddenDeath ? 'SUDDEN DEATH' : clock(readout.turn, readout.turnLimit);
-    head.appendChild(turn);
-    scoreEl.appendChild(head);
 
     const strip = document.createElement('div');
-    strip.className = 'score-strip';
-    for (const row of readout.rows) {
-      const cell = document.createElement('span');
-      cell.className = row.alive ? 'score-unit' : 'score-unit dead';
-      cell.style.borderColor = TEAM_CSS[row.owner];
-      cell.textContent = row.alive
-        ? `${row.name} ${row.hp}/${row.maxHp} · ult ${row.ultPct}%`
-        : `${row.name} — down (${row.respawnIn})`;
-      strip.appendChild(cell);
-    }
+    strip.className = 'topbar';
+    strip.append(
+      portraitRow(bar.friendly, bar.friendlyTeam, 'own'),
+      scoreBlock(bar),
+      portraitRow(bar.enemy, bar.enemyTeam, 'foe'),
+    );
     scoreEl.appendChild(strip);
+  }
+
+  /**
+   * One team's portraits. `side` only decides which way they pack, so the
+   * friendly strip grows away from the centre and the enemy strip toward it —
+   * AR's layout, and the reason your own team is always in the same place.
+   */
+  function portraitRow(
+    portraits: readonly TopbarPortrait[],
+    team: TeamId,
+    side: 'own' | 'foe',
+  ): HTMLElement {
+    const row = document.createElement('div');
+    row.className = `topbar-team ${side}`;
+    for (const p of portraits) {
+      const cell = document.createElement('div');
+      cell.className = p.alive ? 'topbar-portrait' : 'topbar-portrait dead';
+      cell.title = p.alive ? `${p.name} — ${p.hp}/${p.maxHp}` : `${p.name} — down, back in ${p.respawnIn}`;
+
+      const face = document.createElement('div');
+      face.className = 'topbar-face';
+      face.style.borderColor = TEAM_CSS[team];
+      // Down units show the respawn count in place of the initial: "how long
+      // until they are back" is the only thing about a corpse worth knowing,
+      // and it is the number the attrition read turns on.
+      face.textContent = p.alive ? p.initial : String(p.respawnIn);
+      if (p.alive) face.style.background = TEAM_CSS[team];
+      if (p.ultReady) cell.classList.add('ult');
+
+      const bar = document.createElement('div');
+      bar.className = 'topbar-hp';
+      const fill = document.createElement('div');
+      fill.className = 'topbar-hp-fill';
+      fill.style.width = `${p.hpPct}%`;
+      bar.appendChild(fill);
+
+      cell.append(face, bar);
+      row.appendChild(cell);
+    }
+    return row;
+  }
+
+  /** Kills vs target for both teams, with the clock between them. */
+  function scoreBlock(bar: TopbarModel): HTMLElement {
+    const block = document.createElement('div');
+    block.className = 'topbar-score';
+    const own = document.createElement('span');
+    own.className = 'topbar-kills';
+    own.style.color = TEAM_CSS[bar.friendlyTeam];
+    own.textContent = tally(bar.friendlyKills, bar.killTarget).replace(/ \/ .*/, '');
+    const foe = document.createElement('span');
+    foe.className = 'topbar-kills';
+    foe.style.color = TEAM_CSS[bar.enemyTeam];
+    foe.textContent = String(bar.enemyKills);
+    const clockEl = document.createElement('span');
+    clockEl.className = 'topbar-clock';
+    // Sudden death is the one thing here that changes how a turn should be
+    // played, so it replaces the clock rather than sitting beside it. Turn X of
+    // Y stays load-bearing otherwise — it is the clock the Support anti-stall
+    // balance depends on.
+    clockEl.textContent = bar.suddenDeath ? 'SUDDEN DEATH' : clock(bar.turn, bar.turnLimit);
+    const target = document.createElement('span');
+    target.className = 'topbar-target';
+    target.textContent = `first to ${bar.killTarget}`;
+    block.append(own, clockEl, foe, target);
+    return block;
   }
 
   /** A unit's character name, for the scoreboard and the end screen. */
@@ -1143,11 +1357,50 @@ export function startHotSeat(
    * committed order is left alone.
    */
   function onBoardHover(evt: MouseEvent): void {
+    const square = renderer.squareFromPoint(evt.clientX, evt.clientY);
+    // UI-INSPECT runs whether or not an action is armed, and before the
+    // early-returns below: inspecting is reading, not planning, and a player
+    // with nothing selected is exactly the player asking "what is that".
+    showInspect(square, evt.clientX, evt.clientY);
     if (selectedUnit() === undefined) return;
-    const next = hoverBoard(interaction, renderer.squareFromPoint(evt.clientX, evt.clientY));
+    const next = hoverBoard(interaction, square);
     if (next === undefined) return; // same tile, or nothing armed: no repaint
     interaction = next;
     renderPreviews();
+  }
+
+  /**
+   * UI-INSPECT — the panel for whatever is under the pointer, or nothing.
+   *
+   * The vision gate is **structural**: the candidates are the units and decoys
+   * `fogView` already handed the renderer, so a fogged or stealthed enemy is not
+   * in the list to be found. There is no visibility branch here that could be
+   * written the wrong way round, which is the only way to be sure the most
+   * detailed panel on screen never becomes the leak.
+   */
+  function showInspect(square: Vec2 | undefined, x: number, y: number): void {
+    if (square === undefined) return hud.inspect(undefined);
+    const viewer = currentSeat()?.team ?? 0;
+    const view = currentFog(viewer);
+
+    const unit = view.units.find((u) => u.alive && u.pos.x === square.x && u.pos.y === square.y);
+    if (unit !== undefined) {
+      return hud.inspect(inspectUnit(unit, roster, catalysts, viewer), { x, y });
+    }
+
+    // A decoy answers inspection **as the character it is pretending to be**,
+    // from the cast snapshot. Never live and never a refusal: "this one won't
+    // open" is a perfect tell, and the louder of the two ways to be outed.
+    const decoy = view.decoys.find((d) => d.pos.x === square.x && d.pos.y === square.y);
+    if (decoy !== undefined && decoy.asEnemy) {
+      const snapshot = decoySnapshots.get(decoy.id) ?? snapshotDecoy(state.units, roster, decoy.owner);
+      const panel = snapshot === undefined
+        ? undefined
+        : inspectDecoy(snapshot, roster, catalysts, decoy.owner);
+      return hud.inspect(panel, { x, y });
+    }
+
+    hud.inspect(undefined);
   }
 
   // ── Turn resolution + playback ───────────────────────────────────────────────
@@ -1169,6 +1422,22 @@ export function startHotSeat(
     // The log is written from the resolved event list up front, so it is
     // complete whether the player watches the animation or skips it.
     combatLog?.appendTurn(prev.turn, result.events, logNames);
+
+    // UI-NAMEPLATES: freeze each new decoy's fake plate at the cast, and forget
+    // the ones that expired. `prev` is the pre-turn state, which is the caster
+    // as it stood when the decoy was placed — Veil & Decoy is a Prep-phase free
+    // action, so nothing has happened to it yet. (A caster hurt by a Prep AoE
+    // in the same turn would freeze one tick early; the alternative is
+    // threading the playback fold back into here for a difference no player can
+    // see.) Expired ids are dropped so the map cannot grow for the whole match.
+    const stillThere = new Set(result.state.decoys.map((d) => d.id));
+    const nextSnapshots = new Map([...decoySnapshots].filter(([id]) => stillThere.has(id)));
+    for (const event of result.events) {
+      if (event.type !== 'decoySpawned') continue;
+      const snapshot = snapshotDecoy(prev.units, roster, event.teamId);
+      if (snapshot !== undefined) nextSnapshots.set(event.decoyId, snapshot);
+    }
+    decoySnapshots = nextSnapshots;
 
     // The player owns state — its fold IS the board, so skipping and watching
     // agree by construction. Everything below only *decorates* that fold:
@@ -1196,6 +1465,9 @@ export function startHotSeat(
       renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
       renderer.highlight('camo', viewCamo(player.view), CAMO_RED, CAMO_OPACITY);
     };
+    // The plan is committed, so its deadline is history. A clock still ticking
+    // over a resolving turn is a lie about what the player can still do.
+    stopTimer();
     hud.showPlayback(() => {
       skipped = true;
       player.skip();
@@ -1384,13 +1656,14 @@ export function startHotSeat(
   function renderGameOver(): void {
     clearPreviewNumbers();
     const revealed = revealedView(state, currentSeat()?.team ?? 0);
-    renderer.show(toRenderUnits(revealed.units), revealed.decoys, revealed.traps, pads());
+    renderer.show(toRenderUnits(revealed.units, currentSeat()?.team ?? 0), revealed.decoys, revealed.traps, pads());
     for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);
     renderer.fitBoard();
+    stopTimer();
     hud.clear();
     const result = matchBreakdown(state, unitName, totals);
     ui.status.textContent = endReasonText(result);
@@ -1424,4 +1697,18 @@ export function startHotSeat(
   const teamName = (t: number) => (t === 0 ? 'Team 1' : 'Team 2');
 
   beginTurn();
+
+  // …and re-fit once more, now that the top strip has actually been drawn.
+  //
+  // Both earlier calls run before `beginTurn` fills the scoreboard, so they
+  // measure an empty element and fall back to `TOP_CHROME_FALLBACK_PX`. That was
+  // harmless while the strip was two lines of text — the fallback was *larger*
+  // than the real thing, so the board was framed conservatively. UI-TOPBAR's
+  // portrait row is taller than the fallback, and a camera framing the board
+  // into a region that starts above the chrome puts the top rank underneath it.
+  //
+  // The fallback stays for the first pass (nothing has laid out yet); this is
+  // the measurement that replaces it.
+  sizeToViewport();
+  fitCamera();
 }

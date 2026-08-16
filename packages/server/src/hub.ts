@@ -213,15 +213,23 @@ export class RoomHub {
     const state = this.#room.state;
     for (const seat of this.#room.seats) {
       const view = teamView(this.#config.map, state, seat.team);
-      const mine = this.#room.seats.filter((s) => s.team === seat.team).map((s) => s.seatId);
+      const mine = this.#room.seats.filter((s) => s.team === seat.team);
+      const theirs = this.#room.seats.filter((s) => s.team !== seat.team);
       this.#send(seat.seatId, {
         type: 'decision',
         turn: state.turn,
         state: view.state,
         visibleSquares: view.visibleSquares,
-        orders: ordersForTeam(this.#submissions, mine),
-        locked: this.locked,
-        of: this.#room.seats.length,
+        orders: ordersForTeam(this.#submissions, mine.map((s) => s.seatId)),
+        // M3-LOCKLIST. Own team per-seat — UI-INTENT draws a tick over the
+        // teammate who is ready, and a count cannot say which one that is.
+        locked: mine.filter((s) => this.#submissions.has(s.seatId)).map((s) => s.seatId),
+        of: mine.length,
+        // The enemy's readiness is a number and nothing else. "2/2 enemies
+        // locked" is what a waiting UI needs; *which* of them it was is not,
+        // and a seat id is a durable handle on one specific opponent.
+        enemyLocked: theirs.filter((s) => this.#submissions.has(s.seatId)).length,
+        enemyOf: theirs.length,
       });
     }
   }
@@ -318,8 +326,17 @@ export class RoomHub {
     }
   }
 
+  /**
+   * The room as a broadcast payload.
+   *
+   * The lock list is **pre-match only** (M3-LOCKLIST): a `RoomView` rides
+   * `joined`, `roomUpdated` and `seatLeft`, all of which go to every seat as the
+   * same bytes. Once a match is running, handing both teams the full lock list
+   * there would undo the per-seat `decision` message one broadcast later.
+   */
   #view() {
-    return roomView(this.#room, canStart(this.#room), this.locked);
+    const started = this.#room.state !== undefined;
+    return roomView(this.#room, canStart(this.#room), started ? [] : this.locked);
   }
 
   #send(seatId: string, message: ServerMessage): void {

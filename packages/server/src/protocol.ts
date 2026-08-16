@@ -33,7 +33,16 @@ export interface RoomView {
   canStart: boolean;
   /** True once the match is running — a lobby and a match are different screens. */
   started: boolean;
-  /** Seat ids locked in this turn, so a client can show who it is waiting for. */
+  /**
+   * Seat ids locked in this turn, so a lobby can show who it is waiting for.
+   *
+   * **Pre-match only** (M3-LOCKLIST). A `RoomView` rides `joined`, `roomUpdated`
+   * and `seatLeft`, all of which are *broadcast* — the same bytes to both teams
+   * — so once a match is running this is empty and the per-seat `decision`
+   * message is the only thing that says who has locked in. A broadcast lock list
+   * mid-match would hand each team the other's seat ids for free, which is the
+   * exact leak this item closes.
+   */
   locked: string[];
 }
 
@@ -92,7 +101,29 @@ export type ServerMessage =
    * included, because hidden information is team-vs-team and a side that cannot
    * coordinate is a different game. The enemy's plans are simply not here.
    */
-  | { type: 'decision'; turn: number; state: GameState; visibleSquares: Vec2[]; orders: Record<string, UnitOrders[]>; locked: string[]; of: number }
+  | {
+      type: 'decision';
+      turn: number;
+      state: GameState;
+      visibleSquares: Vec2[];
+      orders: Record<string, UnitOrders[]>;
+      /**
+       * **Own-team** seat ids that have locked in (M3-LOCKLIST). Per-seat
+       * because a teammate's lock tick is exactly what UI-INTENT draws, and a
+       * bare count could not say *which* teammate is still deciding.
+       */
+      locked: string[];
+      /** How many seats this team has, so `locked.length / of` reads directly. */
+      of: number;
+      /**
+       * The enemy team's readiness as a **bare count** — never seat ids
+       * (M3-LOCKLIST, ruled in edge-cases). "2/2 enemies locked" is what a
+       * waiting UI needs; which of them it was is not, and a seat id is a
+       * durable handle on a specific opponent.
+       */
+      enemyLocked: number;
+      enemyOf: number;
+    }
   /** This seat's submission was accepted; `locked` is the count so far. */
   | { type: 'submitted'; locked: number; of: number }
   /**

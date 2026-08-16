@@ -38,6 +38,9 @@ const OPEN: MapDef = {
   spawns: [[{ x: 1, y: 7 }, { x: 1, y: 5 }], [{ x: 23, y: 7 }, { x: 23, y: 5 }]],
 };
 
+/** PREVIEW-MODIFIERS: the preview asks the board about cover. */
+const BOARD = buildBoard(OPEN);
+
 const ability = (c: CharacterDef, id: string): AbilityDef =>
   [...c.abilities, c.ultimate].find((a) => a.id === id)!;
 const at = (s: GameState, unitId: string, x: number, y: number): void => {
@@ -73,7 +76,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
   it('shows the number over an enemy the team can see', () => {
     const { s, caster, enemy, rail, squares } = firingLine(4);
     expect(seenBy(s, caster.owner).has(enemy.unitId)).toBe(true); // premise
-    const shown = previewNumbers(s, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
+    const shown = previewNumbers(s, BOARD, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
     expect(shown.some((n) => n.targetId === enemy.unitId)).toBe(true);
   });
 
@@ -81,7 +84,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     // Beyond VISION_RANGE but still inside the beam: the leak, exactly.
     const { s, caster, enemy, rail, squares } = firingLine(VISION_RANGE + 2);
     expect(seenBy(s, caster.owner).has(enemy.unitId)).toBe(false); // premise
-    const shown = previewNumbers(s, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
+    const shown = previewNumbers(s, BOARD, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
     expect(shown.some((n) => n.targetId === enemy.unitId)).toBe(false);
   });
 
@@ -90,7 +93,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     // is unchanged; only the readout over the unseen unit is gone.
     const { s, caster, rail, squares } = firingLine(VISION_RANGE + 2);
     expect(squares.length).toBeGreaterThan(0);
-    expect(previewNumbers(s, caster, [{ def: rail, squares }], seenBy(s, caster.owner))).toEqual([]);
+    expect(previewNumbers(s, BOARD, caster, [{ def: rail, squares }], seenBy(s, caster.owner))).toEqual([]);
   });
 
   it('own units are never hidden from their own team, wherever they stand', () => {
@@ -100,7 +103,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     at(s, caster.unitId, 2, 7);
     at(s, ally.unitId, 20, 7); // far outside sight range, but it is still yours
     const rail = ability(VEX, 'rail_shot');
-    const shown = previewNumbers(s, caster, [{ def: rail, squares: [ally.pos] }], seenBy(s, caster.owner));
+    const shown = previewNumbers(s, BOARD, caster, [{ def: rail, squares: [ally.pos] }], seenBy(s, caster.owner));
     expect(shown.some((n) => n.targetId === ally.unitId && n.kind === 'damage')).toBe(true);
   });
 
@@ -111,7 +114,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     s.units.find((u) => u.unitId === enemy.unitId)!.statuses = [{ kind: 'stealth', remaining: 2 }];
     const vision = buildVision(buildBoard(OPEN));
     expect(visibleEnemiesForTeam(vision, s, caster.owner).map((u) => u.unitId)).toEqual([]); // premise
-    const shown = previewNumbers(s, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
+    const shown = previewNumbers(s, BOARD, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
     expect(shown.some((n) => n.targetId === enemy.unitId)).toBe(false);
   });
 
@@ -119,7 +122,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     const { s, caster, rail, squares } = firingLine(VISION_RANGE + 2);
     const drawn = new Set(fogView(OPEN, s, caster.owner).units.map((u) => u.unitId));
     const numbered = new Set(
-      previewNumbers(s, caster, [{ def: rail, squares }], drawn).map((n) => n.targetId),
+      previewNumbers(s, BOARD, caster, [{ def: rail, squares }], drawn).map((n) => n.targetId),
     );
     for (const id of numbered) expect(drawn.has(id), id).toBe(true);
   });

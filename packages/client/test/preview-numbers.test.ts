@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createMatch, type AbilityDef, type CharacterDef, type GameState, type MapDef } from '@cards/engine';
+import { buildBoard, createMatch, type AbilityDef, type CharacterDef, type GameState, type MapDef } from '@cards/engine';
 import { abilityPreview, impactPreview } from '../src/targeting.js';
 import { previewNumbers } from '../src/preview-numbers.js';
 import vex from '../../../data/characters/vex.json';
@@ -24,6 +24,9 @@ const OPEN: MapDef = {
   spawns: [[{ x: 1, y: 7 }, { x: 1, y: 5 }], [{ x: 13, y: 7 }, { x: 13, y: 5 }]],
 };
 
+/** PREVIEW-MODIFIERS: cover lives on the board, so the preview needs one. */
+const BOARD = buildBoard(OPEN);
+
 const ability = (c: CharacterDef, id: string): AbilityDef =>
   [...c.abilities, c.ultimate].find((a) => a.id === id)!;
 const unitOf = (s: GameState, characterId: string, nth = 0) =>
@@ -43,7 +46,7 @@ const allSeen = (s: GameState): Set<string> => new Set(s.units.map((u) => u.unit
 
 const numbersFor = (s: GameState, casterId: string, def: AbilityDef, aim: { x: number; y: number }[]) => {
   const caster = s.units.find((u) => u.unitId === casterId)!;
-  return previewNumbers(s, caster, [{ def, squares: abilityPreview(OPEN, caster, def, aim) }], allSeen(s));
+  return previewNumbers(s, BOARD, caster, [{ def, squares: abilityPreview(OPEN, caster, def, aim) }], allSeen(s));
 };
 
 describe('a damaging aim puts a red number on everyone it covers', () => {
@@ -83,7 +86,7 @@ describe('a damaging aim puts a red number on everyone it covers', () => {
   it('nothing at all for an unaimed ability — an empty area previews nothing', () => {
     const s = board();
     const vexUnit = unitOf(s, 'vex');
-    expect(previewNumbers(s, vexUnit, [{ def: ability(VEX, 'rail_shot'), squares: [] }], allSeen(s))).toEqual([]);
+    expect(previewNumbers(s, BOARD, vexUnit, [{ def: ability(VEX, 'rail_shot'), squares: [] }], allSeen(s))).toEqual([]);
   });
 
   it('nothing for a dead unit lying in the area', () => {
@@ -132,7 +135,7 @@ describe('beneficial aims stay on your own team', () => {
       shape: 'circle', radius: 1, range: 3, phase: 'blast',
       effects: [{ kind: 'damage', amount: 30 }, { kind: 'slow', duration: 2 }, { kind: 'might', duration: 1 }],
     };
-    const shown = previewNumbers(s, caster, [{ def: withRider, squares: [caster.pos] }], allSeen(s));
+    const shown = previewNumbers(s, BOARD, caster, [{ def: withRider, squares: [caster.pos] }], allSeen(s));
     // Exactly one number: the damage. Slow and Might are real effects with no
     // amount to show, and inventing a "0" for them would be noise.
     expect(shown).toEqual([{ targetId: caster.unitId, kind: 'damage', amount: 30, pos: { ...caster.pos } }]);
@@ -148,7 +151,7 @@ describe('several armed actions read as one turn', () => {
     at(s, enemy.unitId, 7, 7);
     const a: AbilityDef = { ...ability(VEX, 'rail_shot'), effects: [{ kind: 'damage', amount: 10 }] };
     const b: AbilityDef = { ...ability(VEX, 'rail_shot'), id: 'other', effects: [{ kind: 'damage', amount: 25 }] };
-    const shown = previewNumbers(s, caster, [
+    const shown = previewNumbers(s, BOARD, caster, [
       { def: a, squares: [enemy.pos] },
       { def: b, squares: [enemy.pos] },
     ], allSeen(s));
@@ -164,7 +167,7 @@ describe('several armed actions read as one turn', () => {
     at(s, ally.unitId, 6, 7);
     const hurt: AbilityDef = { ...ability(AEGIS, AEGIS.abilities[0]!.id), effects: [{ kind: 'damage', amount: 12 }] };
     const help: AbilityDef = { ...ability(AEGIS, AEGIS.abilities[0]!.id), id: 'h', effects: [{ kind: 'shield', amount: 20 }] };
-    const shown = previewNumbers(s, caster, [
+    const shown = previewNumbers(s, BOARD, caster, [
       { def: hurt, squares: [ally.pos] },
       { def: help, squares: [ally.pos] },
     ], allSeen(s)).filter((n) => n.targetId === ally.unitId);
@@ -176,8 +179,8 @@ describe('several armed actions read as one turn', () => {
     const caster = unitOf(s, 'vex');
     const squares = s.units.map((u) => u.pos);
     const def: AbilityDef = { ...ability(VEX, 'rail_shot'), effects: [{ kind: 'damage', amount: 5 }] };
-    const once = previewNumbers(s, caster, [{ def, squares }], allSeen(s));
-    const twice = previewNumbers(s, caster, [{ def, squares }], allSeen(s));
+    const once = previewNumbers(s, BOARD, caster, [{ def, squares }], allSeen(s));
+    const twice = previewNumbers(s, BOARD, caster, [{ def, squares }], allSeen(s));
     expect(once).toEqual(twice);
     expect(once.map((n) => n.targetId)).toEqual(s.units.map((u) => u.unitId));
   });
@@ -194,7 +197,7 @@ describe("a dash previews where it DETONATES, not where it lands", () => {
 
     const strike = ability(WISP, 'shadowstep_strike');
     const impact = impactPreview(OPEN, caster, strike, [landing]);
-    const shown = previewNumbers(s, caster, [{
+    const shown = previewNumbers(s, BOARD, caster, [{
       def: strike,
       squares: [...abilityPreview(OPEN, caster, strike, [landing]), ...impact.origin, ...impact.destination],
     }], allSeen(s));
@@ -231,8 +234,7 @@ describe('PREVIEW-DECOY: a decoy previews exactly like the unit it impersonates'
 
     // An enemy decoy sitting on the fired row.
     const decoy = decoyAt('decoy-wisp-t1', 7, 7, 1);
-    const shown = previewNumbers(
-      s, caster,
+    const shown = previewNumbers(s, BOARD, caster,
       [{ def: rail, squares: abilityPreview(OPEN, caster, rail, [{ x: 14, y: 7 }]) }],
       allSeen(s), [decoy],
     );
@@ -250,8 +252,7 @@ describe('PREVIEW-DECOY: a decoy previews exactly like the unit it impersonates'
 
     const mine = decoyAt('decoy-mine', 6, 7, caster.owner);
     const theirs = decoyAt('decoy-theirs', 6, 7, caster.owner === 0 ? 1 : 0);
-    const shown = previewNumbers(
-      s, caster,
+    const shown = previewNumbers(s, BOARD, caster,
       [{ def: ward, squares: abilityPreview(OPEN, caster, ward, [{ x: 6, y: 7 }]) }],
       allSeen(s), [mine, theirs],
     );
@@ -270,8 +271,8 @@ describe('PREVIEW-DECOY: a decoy previews exactly like the unit it impersonates'
     const caster = s.units.find((u) => u.unitId === vexUnit.unitId)!;
     const squares = abilityPreview(OPEN, caster, rail, [{ x: 14, y: 7 }]);
 
-    const lit = previewNumbers(s, caster, [{ def: rail, squares }], allSeen(s), [decoyAt('d', 7, 7, 1)]);
-    const fogged = previewNumbers(s, caster, [{ def: rail, squares }], allSeen(s), []);
+    const lit = previewNumbers(s, BOARD, caster, [{ def: rail, squares }], allSeen(s), [decoyAt('d', 7, 7, 1)]);
+    const fogged = previewNumbers(s, BOARD, caster, [{ def: rail, squares }], allSeen(s), []);
     expect(lit.some((n) => n.targetId === 'd')).toBe(true);
     expect(fogged.some((n) => n.targetId === 'd'), 'no number for a decoy nobody can see').toBe(false);
   });
@@ -282,8 +283,7 @@ describe('PREVIEW-DECOY: a decoy previews exactly like the unit it impersonates'
     at(s, vexUnit.unitId, 2, 7);
     const rail = ability(VEX, 'rail_shot');
     const caster = s.units.find((u) => u.unitId === vexUnit.unitId)!;
-    const shown = previewNumbers(
-      s, caster,
+    const shown = previewNumbers(s, BOARD, caster,
       [{ def: rail, squares: abilityPreview(OPEN, caster, rail, [{ x: 14, y: 7 }]) }],
       allSeen(s), [decoyAt('d', 7, 8, 1)], // one row off the beam
     );
@@ -306,12 +306,12 @@ describe('PREVIEW-DECOY: a decoy previews exactly like the unit it impersonates'
     const wispId = realWisp.units.find((u) => u.characterId === 'wisp')!.unitId;
 
     const overDecoy = previewNumbers(
-      s, casterA,
+      s, BOARD, casterA,
       [{ def: rail, squares: abilityPreview(OPEN, casterA, rail, [{ x: 14, y: 7 }]) }],
       allSeen(s), [decoyAt('d', 7, 7, 1)],
     ).find((n) => n.targetId === 'd');
     const overWisp = previewNumbers(
-      realWisp, casterB,
+      realWisp, BOARD, casterB,
       [{ def: rail, squares: abilityPreview(OPEN, casterB, rail, [{ x: 14, y: 7 }]) }],
       allSeen(realWisp),
     ).find((n) => n.targetId === wispId);
@@ -328,8 +328,7 @@ describe('PREVIEW-DECOY: a decoy previews exactly like the unit it impersonates'
     const rail = ability(VEX, 'rail_shot');
     const caster = s.units.find((u) => u.unitId === vexUnit.unitId)!;
     const decoys = [decoyAt('d1', 6, 7, 1), decoyAt('d2', 8, 7, 1)];
-    const go = () => previewNumbers(
-      s, caster,
+    const go = () => previewNumbers(s, BOARD, caster,
       [{ def: rail, squares: abilityPreview(OPEN, caster, rail, [{ x: 14, y: 7 }]) }],
       allSeen(s), decoys,
     );

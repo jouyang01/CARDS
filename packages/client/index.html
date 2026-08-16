@@ -74,6 +74,32 @@
       .score-unit { border-left: 3px solid; padding: 1px 6px; opacity: 0.9;
         background: rgb(0 0 0 / 0.35); border-radius: 3px; }
       .score-unit.dead { opacity: 0.45; text-decoration: line-through; }
+
+      /* ── UI-TOPBAR: friendly portraits · score · turn · score · enemy ─────
+         The ordering is the content — your side is on your side, so "how is my
+         team doing" is a glance left rather than a read of names. */
+      .topbar { display: flex; align-items: center; justify-content: center;
+        gap: 22px; flex-wrap: nowrap; }
+      .topbar-team { display: flex; gap: 8px; flex: 1; }
+      .topbar-team.own { justify-content: flex-end; }
+      .topbar-team.foe { justify-content: flex-start; }
+      .topbar-portrait { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 40px; }
+      .topbar-face { width: 34px; height: 34px; border-radius: 7px; border: 2px solid;
+        display: grid; place-items: center; font-size: 16px; font-weight: 800;
+        color: #0d0f14; background: rgb(0 0 0 / 0.5); }
+      /* A charged ultimate rings the portrait, the same warning the nameplate's
+         ULT tag gives — the top strip is where you scan for it first. */
+      .topbar-portrait.ult .topbar-face { box-shadow: 0 0 0 2px #ffd76a, 0 0 10px rgb(255 215 106 / 0.6); }
+      .topbar-portrait.dead { opacity: 0.5; }
+      .topbar-portrait.dead .topbar-face { background: rgb(0 0 0 / 0.6); color: #cbd2e0; }
+      .topbar-hp { width: 36px; height: 4px; border-radius: 2px; background: var(--bar-bg); overflow: hidden; }
+      .topbar-hp-fill { height: 100%; background: var(--hp); transition: width 140ms ease-out; }
+      .topbar-score { display: grid; grid-template-columns: auto auto auto;
+        align-items: baseline; gap: 4px 12px; justify-items: center; }
+      .topbar-kills { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+      .topbar-clock { font-size: 13px; font-weight: 700; opacity: 0.85; white-space: nowrap; }
+      .topbar-target { grid-column: 1 / -1; font-size: 9px; opacity: 0.5;
+        text-transform: uppercase; letter-spacing: 1px; }
       /* The end-of-match breakdown replaces the strip in the same element. */
       .score-table { border-collapse: collapse; font-size: 13px; margin-top: 8px; }
       .score-table th, .score-table td { padding: 2px 12px 2px 0; text-align: right; }
@@ -116,10 +142,39 @@
         padding: 2px 6px 2px 4px; border-radius: 4px; font-size: 10px; line-height: 1.4;
         background: rgb(255 255 255 / 0.07); border-left: 3px solid #6fbf73; }
       .hud-status.harm { border-left-color: #d2624f; }
-      .hud-status-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+      .hud-status-dot { width: 13px; height: 13px; flex: none; display: block; }
+      .hud-status-dot svg { width: 100%; height: 100%; display: block; }
       .hud-status-name { font-weight: 600; letter-spacing: 0.2px; }
       .hud-status-amount { opacity: 0.85; font-variant-numeric: tabular-nums; }
       .hud-status-turns { opacity: 0.55; font-variant-numeric: tabular-nums; }
+
+      /* UI-INSPECT: the hover panel. Fixed to the viewport like the tooltip,
+         above the HUD but never capturing the pointer — it follows the mouse,
+         so a panel that could be hovered would chase itself off the unit. */
+      .inspect { position: fixed; z-index: 7; pointer-events: none;
+        min-width: 178px; max-width: 240px; padding: 8px 10px 9px;
+        border-radius: 8px; border: 1px solid #2b3140; border-left: 3px solid #4f8cff;
+        background: rgb(12 14 19 / 0.96); font-size: 11px; line-height: 1.45;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.5); }
+      .inspect.t1 { border-left-color: #ff6b5e; }
+      .inspect-name { font-size: 13px; font-weight: 700; }
+      .inspect-role { font-size: 9px; opacity: 0.55; text-transform: uppercase; letter-spacing: 1px; }
+      .inspect-vitals { display: flex; justify-content: space-between; gap: 10px;
+        margin: 5px 0 6px; font-variant-numeric: tabular-nums; }
+      .inspect-hp { color: #5ad17f; }
+      .inspect-energy { color: #e0c04f; opacity: 0.8; }
+      .inspect-energy.ult { opacity: 1; font-weight: 700; color: #ffd76a; }
+      .inspect-slot { display: flex; justify-content: space-between; gap: 10px; }
+      .inspect-slot.ult .inspect-slot-name { color: #c4aef0; }
+      .inspect-slot.down { opacity: 0.45; }
+      .inspect-slot-note { opacity: 0.6; font-variant-numeric: tabular-nums; }
+      .inspect-catalysts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+      .inspect-catalyst { font-size: 9px; padding: 1px 5px; border-radius: 3px;
+        background: rgb(255 255 255 / 0.08); }
+      /* Spent slots go grey rather than vanishing: "what have they already
+         burned" is half the read, and an empty row cannot answer it. */
+      .inspect-catalyst.spent { opacity: 0.38; text-decoration: line-through; }
+      .inspect-statuses { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 
       .hud-switcher { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 2px; }
       .hud-chip { font-size: 11px; padding: 3px 8px; }
@@ -156,6 +211,28 @@
 
       .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       .hud-view { display: flex; gap: 6px; }
+      /* ── UI-TIMER: the countdown, directly above Lock In ──────────────────
+         Beside the button it is the deadline for, so the two are read as one
+         thing. Tenths and the colour shift arrive together below ten seconds:
+         they are one signal, and a precise number in a calm colour is worse
+         than either alone. */
+      .hud-timer { display: flex; align-items: center; gap: 8px; }
+      .hud-timer-text { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums;
+        letter-spacing: 0.5px; min-width: 58px; text-align: right; }
+      .hud-timer-text.urgent { color: #ff8a5c; }
+      .hud-timer-text.expired { color: #d2624f; opacity: 0.75; }
+      /* The bank extension has to be SEEN. A +10 s that silently changed the
+         number reads as a miscount. */
+      @keyframes bank-flash { 0% { transform: scale(1); } 35% { transform: scale(1.22); } 100% { transform: scale(1); } }
+      .hud-timer.extending .hud-timer-text { animation: bank-flash 900ms ease-out; color: #6fbf73; }
+      /* UI-VIEWPORT's 44x44 minimum applies here too: the bank pip is a button,
+         and "it is only a pip" is exactly the reasoning that produced the
+         controls that ruling exists to fix. */
+      .hud-bank { min-width: 44px; min-height: 44px; padding: 0 8px; font-size: 15px;
+        line-height: 1; color: #ffd76a; border-color: #6a5a2a; }
+      /* Spent reads as an empty socket rather than as nothing, so the resource
+         stays legible after it is gone. */
+      .hud-bank.spent { color: #6b7180; border-color: #2b3140; }
       .hud-small { font-size: 11px; padding: 3px 8px; min-width: 44px; min-height: 44px; }
       .hud-lock { background: var(--reach); color: #fff; border-color: var(--reach);
         font-weight: 700; font-size: 14px; padding: 10px 20px;
