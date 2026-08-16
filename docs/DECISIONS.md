@@ -2708,3 +2708,55 @@ other's lock list immediately after the per-seat `decision` withheld it. A room 
 now **pre-match only**, where nothing is secret yet and a lobby genuinely needs to name who it is
 waiting on. `of` in the Decision payload now counts your own team rather than the room, so
 `locked.length / of` reads directly.
+
+## Open Questions for the Analyzer — 2026-09-06
+
+1. **UI-TIMER counts down and nothing happens at zero — confirm that is the intended shape.** The
+   AC specified the readout, the urgency shift and the Time Bank pip, and routed enforcement to
+   M3-TIMER ("server-authoritative timing"). So the hot-seat clock hits 0.0 and sits there. That is
+   what the item asked for and I did not invent an auto-lock, but a countdown that does nothing is
+   an odd thing to put in front of a playtester. If the owner wants a hot-seat deadline that
+   actually fires before M3-TIMER lands, that is a small follow-up — say so and I will spec it as
+   "auto-lock at zero" rather than guess which of hold/auto-lock/ignore they meant.
+
+2. **Time Bank scope was a judgment call: one charge per SEAT per decision window.** `TIMEBANK_CHARGES`
+   is 1, and AR's bank is a per-player resource, so in a hot-seat each seat gets its own window and
+   its own charge when it comes on the clock (decision 10). The plausible alternative is one charge
+   per player **per match**, which is closer to AR and much stingier. M3-TIMER has to settle this
+   anyway once the clock is server-side; flagging it now so the two do not ship different answers.
+
+3. **UI-INSPECT is hover-only, so it is unreachable on touch.** The AC said "hover (or click-hold)"
+   and I built hover, since the client has no touch handling anywhere yet and adding a long-press
+   gesture is its own item. Not a gap in the AC — a gap in the platform. Worth an explicit
+   touch-input item at some point, or an explicit "desktop only for v1" line.
+
+4. **The decoy snapshot freezes from the pre-turn state, one tick early in one corner** (decision 6).
+   Veil & Decoy is a Prep free action so the pre-turn reading is the cast reading — unless a Prep AoE
+   hurt the caster earlier in the same turn, in which case the fake plate shows a few HP too many.
+   Fixable only by threading the playback fold back into the resolve path. I judged that not worth
+   it; if you disagree it is a small, contained change.
+
+5. **None of the new UI has composited (e2e) coverage, and the pixel predicates cannot give it any.**
+   Everything this batch shipped is unit-tested at the model layer, which is where the rules are —
+   but "the nameplate actually draws" is a compositing question, and `isTeamBlue` already matches the
+   nameplate's own name text (`#9dc2ff` passes it). Distinguishing a plate from a unit by
+   pixel-counting is the same dead end `isCamoRed` hit. If you want composited proof, the technique
+   that works is the one I wrote up for CAMO-E2E-FINISH: a **before/after delta at fixed
+   coordinates**. That would be its own item; I did not open one.
+
+6. **M3-LOCKLIST changed `of`'s meaning in the Decision payload** — it now counts your own team, not
+   the room, so `locked.length / of` reads directly and `enemyLocked / enemyOf` is the other half.
+   M3-LOBBY is the first thing that will build a waiting UI on it, which is why the item was
+   scheduled first; just make sure its AC is written against the new shape.
+
+7. **`renderer3d.ts` is now ~1250 lines with three texture caches** (glyphs, nameplates, intent
+   tiles). Each is small and they share a pattern, but the file is doing noticeably more than it did.
+   A `textures.ts` extraction is the obvious cleanup and touches nothing behavioural. Not scheduled —
+   your call whether it is worth an item before M3-LOBBY adds a network client on top.
+
+8. **M3-LOBBY and CAMO-E2E-FINISH are untouched**, as your cut line predicted. M3-LOBBY is the whole
+   of the remaining unblocked work and is explicitly multi-session; CAMO-E2E-FINISH stays low and is
+   still "not small" per your own re-spec.
+
+9. **Nothing has still booted a real Workers runtime** (carried, unchanged). 124 server tests run
+   through the `Sink` seam.
