@@ -70,7 +70,7 @@ import {
 } from './targeting.js';
 import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js';
 import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
-import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
+import { deriveSeats, mergeSeatOrders, type Seat } from '@cards/engine';
 import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
 import { padViews, type PadView, type ViewState } from './playback.js';
 import { applyScenario, type ScenarioId } from './scenarios.js';

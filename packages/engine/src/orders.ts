@@ -1,12 +1,21 @@
 /**
- * Hot-seat plumbing: model who controls which characters (seats), and merge each
- * player's 1–2 `UnitOrders` into the two per-team `PlayerOrders` the engine
- * consumes. Pure and player-count-blind at the engine boundary (ARCHITECTURE
- * "Teams vs. players") — the engine only ever sees two teams. Hidden info and
- * timers are M3 concerns; hot-seat trusts the local device.
+ * Seats and order shaping: who controls which characters, and how each player's
+ * 1–2 `UnitOrders` become the two per-team `PlayerOrders` `resolveTurn` takes.
+ *
+ * **Why this is in the engine.** It began as client hot-seat plumbing, but it is
+ * pure order-shaping over plain data with no rendering and no I/O in it, and M3
+ * needs the *same* answer server-side — the Durable Object merges the same way,
+ * from the same seats, or client and server disagree about whose orders those
+ * were. `@cards/server` may not import the client (ARCHITECTURE), so the shared
+ * thing lives here. Ruled by the Analyzer, review 2026-09-03.
+ *
+ * It changes nothing about the engine's contract: `resolveTurn` still sees two
+ * teams and nothing about players (ARCHITECTURE "Teams vs. players"). This is
+ * the layer *above* that, which is why it is a separate module rather than part
+ * of `resolve.ts`.
  */
 
-import type { GameState, PlayerOrders, TeamId, UnitOrders } from '@cards/engine';
+import type { GameState, PlayerOrders, TeamId, UnitOrders } from './types.js';
 
 /** One player's control: the characters (by unitId) they order this match. */
 export interface Seat {

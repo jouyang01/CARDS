@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type UnitOrders } from '@cards/engine';
-import { deriveSeats, mergeSeatOrders, seatsForTeam, type Seat } from '../src/hotseat.js';
+import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type UnitOrders } from '../src/index.js';
+import { deriveSeats, mergeSeatOrders, seatsForTeam, type Seat } from '../src/orders.js';
 
 const OPEN: MapDef = { id: 't', name: 't', width: 11, height: 11, walls: [], cover: [], brush: [], spawns: [[{ x: 1, y: 5 }, { x: 1, y: 3 }], [{ x: 9, y: 5 }, { x: 9, y: 7 }]] };
 const lethal: AbilityDef = { id: 'nuke', name: 'Nuke', phase: 'blast', shape: 'square', range: 12, cooldown: 0, energyGain: 0, effects: [{ kind: 'damage', amount: 200 }], description: 'x' };
