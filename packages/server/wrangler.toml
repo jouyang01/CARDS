@@ -1,14 +1,23 @@
-# Cloudflare Worker config — activated at M3 (docs/BACKLOG.md item 17).
-# Deploy with: npx wrangler deploy   (requires free Cloudflare account login)
-name = "cards-rooms"
-main = "src/index.ts"
-compatibility_date = "2026-08-01"
-
-# Durable Object bindings will be added at M3:
-# [[durable_objects.bindings]]
-# name = "ROOM"
-# class_name = "GameRoom"
+# Cloudflare Worker + one Durable Object per room (M3-ROOM).
 #
-# [[migrations]]
-# tag = "v1"
-# new_sqlite_classes = ["GameRoom"]
+# `wrangler deploy` is DELIBERATELY not wired to CI here — that is M3-DEPLOY,
+# and it needs owner infrastructure decisions (account, route, custom domain)
+# that no build step should guess at. This file exists so the Worker builds and
+# runs locally under `wrangler dev` / miniflare, and so the deploy item has a
+# starting point rather than a blank page.
+
+name = "cards-rooms"
+main = "src/worker.ts"
+compatibility_date = "2026-08-16"
+# `nodejs_compat` is NOT enabled on purpose: the engine is dependency-free and
+# the server imports nothing else, so the Worker runs on the bare runtime. If a
+# future item needs a Node built-in, that is a design question first.
+
+[durable_objects]
+bindings = [{ name = "ROOMS", class_name = "RoomDurableObject" }]
+
+# A DO class needs a migration to exist. `new_sqlite_classes` is the current
+# storage backend for new classes; the older key-value backend is legacy.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomDurableObject"]
