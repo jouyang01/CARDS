@@ -8,9 +8,12 @@
  * state dump. So a player reasonably concludes the status does nothing.
  *
  * This module is deliberately free of Three.js and of the DOM: it is a pure
- * status-kind → colour/order table plus the row-building rule, so the part that
- * decides *what* you see is testable without a WebGL context, and `renderer3d`
- * only has to draw the quads it is handed.
+ * status-kind → colour/order/**glyph** table plus the row-building rule, so the
+ * part that decides *what* you see is testable without a WebGL context, and
+ * `renderer3d` only has to draw the marks it is handed. STATUS-ICONS keeps that
+ * boundary by shipping the icons as **path data** rather than as images: the
+ * renderer rasterises them to a texture, the HUD drops them into an `<svg>`, and
+ * neither owns the vocabulary.
  *
  * It derives nothing. The kinds come straight off engine state during Decision,
  * and off the `statusApplied` / `statusRemoved` event pair during playback.
@@ -53,9 +56,156 @@ export const PIP_COLORS: Readonly<Record<string, number>> = {
 /** Debuffs, for anything that wants to tint rather than enumerate. */
 export const HARMFUL_PIPS: ReadonlySet<EffectKind> = new Set<EffectKind>(['root', 'slow', 'weaken', 'reveal']);
 
+/**
+ * STATUS-ICONS — statuses that are **the owning team's business only**.
+ *
+ * Stealth is the whole set and the reason the set exists (ar-parity §4.2): a
+ * Stealth marker an enemy can see is a contradiction in terms. The engine
+ * already hides a stealthed unit from enemy vision, so this only matters in the
+ * window where a stealthed unit *is* visible — revealed, adjacent, or standing
+ * in your own team's sight — and there the icon would still announce "this one
+ * is trying to hide", which is exactly the information Stealth buys.
+ */
+export const OWNER_ONLY_PIPS: ReadonlySet<EffectKind> = new Set<EffectKind>(['stealth']);
+
+/**
+ * The statuses a viewer on `viewerOwns`-or-not may be shown for this unit.
+ *
+ * One gate, applied before both the floating icons and the HUD strip, so the
+ * two can never disagree about what an enemy is allowed to see. Everything else
+ * about a visible unit is public: if you can see them, you can see that they
+ * are Rooted.
+ */
+export function viewableStatuses<T extends { kind: EffectKind }>(
+  statuses: readonly T[],
+  viewerOwnsUnit: boolean,
+): T[] {
+  return viewerOwnsUnit ? [...statuses] : statuses.filter((s) => !OWNER_ONLY_PIPS.has(s.kind));
+}
+
+/**
+ * STATUS-ICONS — one drawn glyph per status (ar-parity §4.2).
+ *
+ * **Path data, not pictures.** The vocabulary lives here as SVG path strings in
+ * a fixed 24×24 box because two very different consumers need the same mark:
+ * `renderer3d` rasterises it onto a canvas texture to float over a unit, and the
+ * HUD strip drops it straight into an `<svg>`. Shipping an image would mean two
+ * assets to keep in step, or a texture the DOM cannot use; shipping geometry
+ * means one source and no files.
+ *
+ * The owner named two of them — **Might is a sword, Revealed is an eye** — and
+ * the rest extend that so the set is total. Weaken is a *broken* sword and Root
+ * is a *chained* boot against Haste's wing, deliberately: the counter-relation
+ * should be legible from the silhouette before the colour is read at all.
+ *
+ * Kept schematic on purpose. These are drawn at roughly fourteen pixels over a
+ * unit's head; detail there is noise, and silhouette is the only thing that
+ * survives.
+ */
+export const GLYPH_BOX = 24;
+
+/** One stroked or filled path in the 24×24 glyph box. */
+export interface GlyphPart {
+  d: string;
+  /** Filled rather than stroked. Strokes are `GLYPH_STROKE` wide, round-capped. */
+  fill?: boolean;
+}
+
+/** Stroke width for un-filled parts, in glyph-box units. */
+export const GLYPH_STROKE = 2;
+
+export const STATUS_GLYPHS: Readonly<Record<string, readonly GlyphPart[]>> = {
+  // Chained boot — the sole and upper as one silhouette, with a shackle ring.
+  root: [
+    { d: 'M8 3 h4.5 v10 H19 v5 H8 z', fill: true },
+    { d: 'M14.5 3.5 a3 3 0 1 1 0 6 a3 3 0 1 1 0 -6' },
+  ],
+  // Hourglass — the two rails cross at the waist, so it reads at any size.
+  slow: [
+    { d: 'M6 3 h12 M6 21 h12' },
+    { d: 'M7.5 3 L12 12 L7.5 21 M16.5 3 L12 12 L16.5 21' },
+  ],
+  // Broken sword — Might's blade with the top third snapped off and floating.
+  weaken: [
+    { d: 'M12 2 l3 4 v3 h-6 V6 z', fill: true },
+    { d: 'M9 13 h6 v3 h-6 z', fill: true },
+    { d: 'M6 16 h12 M12 16 v6' },
+  ],
+  // Eye — the owner's word for Revealed.
+  reveal: [
+    { d: 'M2 12 c4 -6 16 -6 20 0 c-4 6 -16 6 -20 0 z' },
+    { d: 'M15 12 a3 3 0 1 1 -6 0 a3 3 0 1 1 6 0', fill: true },
+  ],
+  // Bubble — the remaining absorption is drawn inside it as a numeral.
+  shield: [
+    { d: 'M12 2 l8 3.5 v6 c0 5.5 -3.6 8.6 -8 10.5 c-4.4 -1.9 -8 -5 -8 -10.5 v-6 z' },
+  ],
+  // Sword, whole — the owner's word for Might.
+  might: [
+    { d: 'M12 2 l3 4 v8 h-6 V6 z', fill: true },
+    { d: 'M6 15 h12 M12 15 v7' },
+  ],
+  // Wing — Root's opposite, and the only glyph that leans.
+  haste: [
+    { d: 'M2 16 c7 -9 14 -11 20 -11 c-3 8 -10 12 -20 11 z', fill: true },
+    { d: 'M6 16 c4 -4 8 -6 12 -8' },
+  ],
+  energized: [
+    { d: 'M13 2 L5 13 h5 l-1 9 L19 10 h-6 z', fill: true },
+  ],
+  // Battering ram — a log with a head, pointing where it will not be stopped.
+  unstoppable: [
+    { d: 'M2 9 h13 v6 H2 z', fill: true },
+    { d: 'M15 7 l6 5 -6 5 z', fill: true },
+  ],
+  untargetable: [
+    { d: 'M5 21 V11 a7 7 0 0 1 14 0 v10 l-3.5 -2.5 -3.5 2.5 -3.5 -2.5 z' },
+    { d: 'M10.7 11 a1.3 1.3 0 1 1 -2.6 0 a1.3 1.3 0 1 1 2.6 0', fill: true },
+    { d: 'M15.9 11 a1.3 1.3 0 1 1 -2.6 0 a1.3 1.3 0 1 1 2.6 0', fill: true },
+  ],
+  // Domino mask — drawn to the owning team only (`OWNER_ONLY_PIPS`).
+  stealth: [
+    { d: 'M2.5 8.5 h19 v3 c0 4 -4.5 5 -7.5 2.5 L12 12.5 l-2 1.5 C7 16.5 2.5 15.5 2.5 11.5 z' },
+    { d: 'M9 11 a1.6 1.6 0 1 1 -3.2 0 a1.6 1.6 0 1 1 3.2 0', fill: true },
+    { d: 'M18.2 11 a1.6 1.6 0 1 1 -3.2 0 a1.6 1.6 0 1 1 3.2 0', fill: true },
+  ],
+};
+
+/**
+ * The glyph for a status, or an empty list for a kind with none.
+ *
+ * Empty rather than a fallback shape: a missing glyph should look missing, and
+ * a generic square would be a colour pip again with extra steps.
+ */
+export const statusGlyph = (kind: EffectKind): readonly GlyphPart[] => STATUS_GLYPHS[kind] ?? [];
+
+/**
+ * The glyph as SVG markup, for the DOM consumers (the HUD strip, the inspect
+ * panel). `colour` is applied to both fill and stroke, so one status is one
+ * colour whichever way its parts are drawn.
+ *
+ * A string rather than nodes because this module stays DOM-free — the caller
+ * decides whether that becomes `innerHTML` or a parsed fragment. Nothing here
+ * is user-authored, so there is no interpolation to escape: `kind` indexes a
+ * fixed table and `colour` is written by the caller from `PIP_COLORS`.
+ */
+export function glyphSvg(kind: EffectKind, colour: string): string {
+  const parts = statusGlyph(kind).map((p) => p.fill === true
+    ? `<path d="${p.d}" fill="${colour}"/>`
+    : `<path d="${p.d}" fill="none" stroke="${colour}" stroke-width="${GLYPH_STROKE}"`
+      + ' stroke-linecap="round" stroke-linejoin="round"/>').join('');
+  return `<svg viewBox="0 0 ${GLYPH_BOX} ${GLYPH_BOX}" aria-hidden="true">${parts}</svg>`;
+}
+
 export interface StatusPip {
   kind: EffectKind;
   color: number;
+  /**
+   * The numeral drawn on the glyph: turns left, or — for `shield` — the
+   * absorption remaining, which is the number a player actually plans against.
+   * Absent when there is nothing worth stamping.
+   */
+  numeral?: number;
 }
 
 /**
@@ -67,9 +217,26 @@ export interface StatusPip {
  * matters because refresh-not-stack means a kind can legitimately appear once —
  * but a client folding the event log has no such guarantee.
  */
-export function statusPips(statuses: readonly { kind: EffectKind }[]): StatusPip[] {
+export function statusPips(
+  statuses: readonly { kind: EffectKind; remaining?: number; amount?: number }[],
+): StatusPip[] {
   const present = new Set(statuses.map((s) => s.kind));
-  return PIP_ORDER.filter((kind) => present.has(kind)).map((kind) => ({ kind, color: PIP_COLORS[kind] ?? 0xffffff }));
+  return PIP_ORDER.filter((kind) => present.has(kind)).map((kind) => {
+    const mine = statuses.filter((s) => s.kind === kind);
+    // Shield stamps what is left to absorb, everything else stamps turns left —
+    // "two more turns of Slow" and "twenty more damage of shield" are the two
+    // different questions a player is actually asking. Playback folds the event
+    // log, which carries neither, so the numeral is simply absent there rather
+    // than invented.
+    const numeral = kind === 'shield'
+      ? mine.reduce((sum, s) => sum + (s.amount ?? 0), 0)
+      : Math.max(0, ...mine.map((s) => s.remaining ?? 0));
+    return {
+      kind,
+      color: PIP_COLORS[kind] ?? 0xffffff,
+      ...(numeral > 0 ? { numeral } : {}),
+    };
+  });
 }
 
 /**
@@ -131,6 +298,12 @@ export interface StatusChip {
   label: string;
   /** The pip colour, as a CSS hex string, so the HUD needs no palette. */
   colour: string;
+  /**
+   * The STATUS-ICONS glyph as SVG markup, so the strip shows the *same mark*
+   * that floats over the unit. A coloured dot beside a named row was already
+   * legible; carrying the icon is what makes the two readings teach each other.
+   */
+  glyph: string;
   /** Turns left, including this one. */
   remaining: number;
   /** Shield only: how much is left to absorb. */
@@ -163,6 +336,7 @@ export function statusChips(
       kind,
       label: STATUS_LABELS[kind] ?? kind,
       colour: cssHex(PIP_COLORS[kind] ?? 0xffffff),
+      glyph: glyphSvg(kind, cssHex(PIP_COLORS[kind] ?? 0xffffff)),
       remaining: Math.max(...mine.map((s) => s.remaining)),
       ...(amount > 0 ? { amount } : {}),
       harmful: HARMFUL_PIPS.has(kind),

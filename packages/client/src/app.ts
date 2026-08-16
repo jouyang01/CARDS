@@ -74,7 +74,7 @@ import { deriveSeats, mergeSeatOrders, type Seat } from '@cards/engine';
 import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
 import { padViews, type PadView, type ViewState } from './playback.js';
 import { applyScenario, type ScenarioId } from './scenarios.js';
-import { statusChips, statusPips } from './status-pips.js';
+import { statusChips, statusPips, viewableStatuses } from './status-pips.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
   clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
@@ -254,13 +254,21 @@ export function startHotSeat(
     return fogMemo.view;
   };
 
-  const toRenderUnits = (units: readonly UnitState[]): RenderUnit[] => units.map((u) => ({
+  /**
+   * `viewer` is the team doing the looking, and it is not decoration:
+   * STATUS-ICONS renders **Stealth to its owner only**, so the row a unit shows
+   * depends on who is reading it. Everything else about a visible unit is
+   * public — if you can see them, you can see that they are Rooted.
+   */
+  const toRenderUnits = (units: readonly UnitState[], viewer: TeamId): RenderUnit[] => units.map((u) => ({
     unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
     energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
     shield: shieldOf(u),
     // STATUS-AUDIT: read straight off engine state during Decision. An active
     // status is one with turns left — an expired instance is not a status.
-    pips: statusPips(u.statuses.filter((s) => s.remaining > 0)),
+    // STATUS-ICONS: durations and the shield pool ride along as the glyph's
+    // numeral, so the row says how long as well as what.
+    pips: statusPips(viewableStatuses(u.statuses.filter((s) => s.remaining > 0), u.owner === viewer)),
   }));
 
   /**
@@ -463,12 +471,17 @@ export function startHotSeat(
     return fresh;
   };
 
-  const viewUnits = (view: ViewState): RenderUnit[] => [...view.units.values()].map((v) => ({
-    unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
-    energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
-    // …and during playback, off the folded event log — same pips, same order.
-    pips: statusPips([...v.statuses].map((kind) => ({ kind }))),
-  }));
+  const viewUnits = (view: ViewState): RenderUnit[] => {
+    const viewer = currentSeat()?.team ?? 0;
+    return [...view.units.values()].map((v) => ({
+      unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
+      energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
+      // …and during playback, off the folded event log — same icons, same
+      // order, and no numerals: the log carries neither durations nor shield
+      // pools, and inventing them is worse than leaving them off.
+      pips: statusPips(viewableStatuses([...v.statuses].map((kind) => ({ kind })), v.owner === viewer)),
+    }));
+  };
 
   /**
    * Playback decoys, seen from the seat that just planned (DECOY-RENDER).
@@ -583,7 +596,7 @@ export function startHotSeat(
     // can never be on the board at once.
     // PADS-INDICATOR: pads are public terrain, so they are drawn from the map
     // and the authoritative state, with no fog view in the way.
-    renderer.show([...toRenderUnits(view.units), ...toGhostUnits(view.ghosts)], view.decoys, view.traps, pads());
+    renderer.show([...toRenderUnits(view.units, team), ...toGhostUnits(view.ghosts)], view.decoys, view.traps, pads());
     renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
     // CAMO-REVEAL: the thicket a unit gave itself away in burns red. Same view
     // as everything else, so it can never out a unit the seat cannot see.
@@ -1384,7 +1397,7 @@ export function startHotSeat(
   function renderGameOver(): void {
     clearPreviewNumbers();
     const revealed = revealedView(state, currentSeat()?.team ?? 0);
-    renderer.show(toRenderUnits(revealed.units), revealed.decoys, revealed.traps, pads());
+    renderer.show(toRenderUnits(revealed.units, currentSeat()?.team ?? 0), revealed.decoys, revealed.traps, pads());
     for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');

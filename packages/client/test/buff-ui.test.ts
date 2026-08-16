@@ -157,10 +157,14 @@ describe('BUFF-UI: the HUD strip', () => {
     expect(chipsOnScreen()[0]!.textContent).toBe('Shielded202t');
   });
 
-  it('tints the dot with the pip colour, so the strip and the model agree', () => {
+  it('draws the STATUS-ICONS glyph, inked in the pip colour', () => {
+    // Post-STATUS-ICONS the mark is the same glyph that floats over the unit,
+    // so the colour arrives as the glyph's ink rather than as a filled dot —
+    // and the strip and the board still agree, which was always the point.
     hud().update(model(character({ statuses: statusChips([{ kind: 'might', remaining: 1 }]) })));
     const dot = root.querySelector<HTMLElement>('.hud-status-dot')!;
-    expect(dot.style.background).toBe('#ff6b4a');
+    expect(dot.querySelector('svg'), 'the chip carries a drawn glyph').not.toBeNull();
+    expect(dot.innerHTML).toContain('#ff6b4a');
   });
 
   it('gives debuffs a class of their own — colour is not the only cue', () => {

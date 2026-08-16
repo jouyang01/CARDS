@@ -266,8 +266,12 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
           statusStrip.appendChild(node);
         }
         node.replaceChildren();
+        // STATUS-ICONS: the same glyph that floats over the unit, so the board
+        // and the strip teach each other rather than being two vocabularies.
+        // `innerHTML` is safe here — the markup is built from a fixed path table
+        // and a colour this module never sees a user write.
         const dot = el('span', 'hud-status-dot');
-        dot.style.background = status.colour;
+        dot.innerHTML = status.glyph;
         const name = el('span', 'hud-status-name');
         name.textContent = status.label;
         node.append(dot, name);

@@ -19,6 +19,7 @@
 
 import {
   AmbientLight,
+  CanvasTexture,
   BoxGeometry,
   BufferGeometry,
   Color,
@@ -44,7 +45,9 @@ import {
 } from 'three';
 import type { MapDef, PowerupType, Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
-import { PIP_GAP, PIP_SIZE, pipOffsets, type StatusPip } from './status-pips.js';
+import {
+  GLYPH_BOX, GLYPH_STROKE, PIP_GAP, PIP_SIZE, pipOffsets, statusGlyph, type StatusPip,
+} from './status-pips.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -249,6 +252,82 @@ export interface RenderUnit {
   ghost?: boolean;
 }
 
+/**
+ * STATUS-ICONS — a status glyph, rasterised once and reused.
+ *
+ * The vocabulary is path data in `status-pips.ts` so the HUD can draw the same
+ * marks as `<svg>`; here it has to become a texture, which means a canvas. The
+ * cache is keyed by everything that changes the pixels — kind, ink colour and
+ * the stamped numeral — because a status row is rebuilt on every `show()` and
+ * re-rasterising eleven glyphs per unit per frame would be a real cost for an
+ * image that almost never changes.
+ *
+ * Module-level rather than per-renderer: the marks are identical in every
+ * renderer instance, and the e2e opens several.
+ */
+const glyphTextures = new Map<string, CanvasTexture>();
+
+/** Texture resolution for one glyph. Drawn small, so this is generous. */
+const GLYPH_PX = 64;
+
+function glyphTexture(pip: StatusPip): CanvasTexture | null {
+  const ink = `#${pip.color.toString(16).padStart(6, '0')}`;
+  const key = `${pip.kind}|${ink}|${pip.numeral ?? ''}`;
+  const cached = glyphTextures.get(key);
+  if (cached !== undefined) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = GLYPH_PX;
+  canvas.height = GLYPH_PX;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) return null;
+
+  // A dark plate behind the ink: these float over a lit board, and a bare
+  // stroke on grass is unreadable at this size whatever colour it is.
+  ctx.fillStyle = 'rgba(9, 10, 14, 0.72)';
+  ctx.beginPath();
+  ctx.roundRect(0, 0, GLYPH_PX, GLYPH_PX, GLYPH_PX * 0.18);
+  ctx.fill();
+
+  // The glyph box is drawn inset, leaving room for the numeral to sit in the
+  // corner without landing on top of the mark.
+  const inset = GLYPH_PX * 0.11;
+  const scale = (GLYPH_PX - inset * 2) / GLYPH_BOX;
+  ctx.save();
+  ctx.translate(inset, inset);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = ink;
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = GLYPH_STROKE;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const part of statusGlyph(pip.kind)) {
+    const path = new Path2D(part.d);
+    if (part.fill === true) ctx.fill(path);
+    else ctx.stroke(path);
+  }
+  ctx.restore();
+
+  if (pip.numeral !== undefined) {
+    // Bottom-right, white on the plate rather than in the status colour: the
+    // number is a magnitude, not a second copy of the identity, and colouring
+    // it too makes the whole tile read as one blob.
+    const text = String(pip.numeral);
+    ctx.font = `700 ${GLYPH_PX * 0.34}px system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.lineWidth = GLYPH_PX * 0.06;
+    ctx.strokeStyle = 'rgba(9, 10, 14, 0.9)';
+    ctx.strokeText(text, GLYPH_PX - 3, GLYPH_PX - 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, GLYPH_PX - 3, GLYPH_PX - 2);
+  }
+
+  const texture = new CanvasTexture(canvas);
+  glyphTextures.set(key, texture);
+  return texture;
+}
+
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
   show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[], traps?: readonly RenderTrap[], pads?: readonly RenderPad[]): void;
@@ -432,9 +511,9 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   /**
    * Rebuild a unit's status row. Cheap enough to redo per `show()` (at most
-   * eleven 0.09-wide quads per unit) and rebuilding avoids a second reconcile
+   * eleven small quads per unit) and rebuilding avoids a second reconcile
    * path — the pips are the one part of a unit that legitimately changes shape
-   * turn to turn.
+   * turn to turn. The *textures* are cached, so the redo is quads, not raster.
    */
   const setPips = (bars: Group, pips: readonly StatusPip[]): void => {
     const row = bars.getObjectByName('pips');
@@ -444,7 +523,11 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     pips.forEach((pip, i) => {
       const quad = new Mesh(
         new PlaneGeometry(PIP_SIZE, PIP_SIZE),
-        new MeshBasicMaterial({ color: pip.color }),
+        // STATUS-ICONS: the pip is a drawn glyph now, not a colour. The colour
+        // survives *as the glyph's ink* rather than as the whole mark, so the
+        // learned position and the learned hue both still work and the shape
+        // does the identifying.
+        new MeshBasicMaterial({ map: glyphTexture(pip), transparent: true }),
       );
       quad.name = pip.kind;
       quad.position.set(offsets[i] ?? 0, 0, 0);
