@@ -2614,3 +2614,97 @@ recorded: the screenshot's damage-preview numbers already shipped fog-gated (not
 and AR's "ULT" nameplate tag is adopted because an ultimate you can see coming is a threat
 you play around rather than a surprise — the same information-over-surprise principle the
 whole simultaneous-turn design rests on.
+
+## Builder session — 2026-09-06 (the screenshot UI batch + PREVIEW-MODIFIERS + M3-LOCKLIST)
+
+**(1) STATUS-ICONS ships the glyphs as path data, not as images.** The vocabulary lives in
+`status-pips.ts` as SVG path strings in a fixed 24×24 box because two very different consumers need
+the same mark: `renderer3d` rasterises it onto a canvas texture to float over a unit, and the HUD
+strip drops it straight into an `<svg>`. An asset would mean two files to keep in step, or a texture
+the DOM cannot use. It also keeps `status-pips.ts`'s standing promise — free of Three.js and of the
+DOM — intact, since a path string is neither. The owner named two glyphs (Might = sword, Revealed =
+eye) and the rest extend them so the set is total; Weaken is Might's sword snapped and Root is a
+chained boot against Haste's wing, so the counter-relations read from silhouette before colour.
+
+**(2) A glyph's numeral is turns left, except shield's, which is the pool.** "Two more turns of
+Slow" and "twenty more damage of shield" are the two different questions a player asks, and the
+shield's answer is never its duration. Playback stamps **no** numeral at all: the event log carries
+neither durations nor pools, and a "1t" on a status with three turns left is a lie a player would
+plan on.
+
+**(3) Stealth's icon is gated by a shared `viewableStatuses`, applied before both the floating row
+and the HUD strip.** An enemy-visible Stealth marker announces "this one is trying to hide", which
+is exactly what Stealth buys — and it is reachable, since a revealed stealthed unit is visible and
+still stealthed. One gate rather than two so the two readings cannot disagree. Everything else about
+a visible unit stays public: if you can see them, you can see that they are Rooted.
+
+**(4) UI-NAMEPLATES replaced the three bar quads with one rasterised plate.** Half of what the
+screenshot shows cannot be done with quads — the HP numeral lives *inside* its bar and the ULT tag
+is a word. Textures are cached on plate **content**, so `show()` running on every pointer move
+during mouse-follow aiming redraws nothing. The vision gate is structural rather than a flag: a
+plate is built for exactly the units `fogView` already returned, so there is no visibility branch
+that could be written the wrong way round.
+
+**(5) The decoy snapshot is client memory, and it is one snapshot for both lies.** The engine decoy
+is `{id, teamId, pos, expiresOnTurn}` and deliberately carries nothing about its caster, so the
+client records the cast (alongside `sightings`, the existing precedent) when `decoySpawned` plays
+and drops it when the decoy expires. The impersonated character is found **from the kit** — the unit
+whose abilities carry a `decoy` effect — not hardcoded to Wisp, so a second decoy character would
+not silently wear the first one's name. The snapshot carries the whole cast-time reading (HP,
+energy, cooldowns, catalysts) because the nameplate's lie and the inspect panel's lie have to agree:
+a plate saying 60 HP over a panel saying 80 outs the decoy more thoroughly than having neither
+would. Its status row is empty in both — real buffs would leak, invented ones would be the client
+making up game state.
+
+**(6) The cast snapshot is taken from the pre-turn state, one tick early in one corner.** Veil &
+Decoy is a Prep-phase free action, so the caster's pre-turn reading *is* its cast-time reading — 
+unless a Prep AoE hurt it earlier in the same turn, in which case the plate freezes a few HP high.
+The alternative is threading the playback fold back into the resolve path for a difference no player
+can observe.
+
+**(7) UI-INSPECT's "ready" means usable this turn, not merely off cooldown.** The owner's question
+is "can that character do the thing to me", so a charged ult reads ready and an uncharged one reads
+its energy gap rather than a bare 0. Spent catalysts stay listed and grey rather than disappearing,
+because what an opponent has already burned is half of what the panel is for. A decoy answers
+inspection with the cast-time kit — never live and **never a refusal**: "this one won't open" is a
+perfect tell and the louder of the two, since the player went looking.
+
+**(8) UI-INTENT shows enemies nothing at all, not a redacted marker.** The *existence* of a tile is
+itself information: it says they have decided. `intentBadges` filters on owner alone, so an enemy
+has no entry and the renderer is never asked to make the call. A hold is silent while a player is
+deciding and shows once locked — "done, and standing still" is what a teammate needs; an empty draft
+is not. Where an ability and a walk are both queued the number leads, since that is the half a
+teammate coordinates around, though `move` is still recorded.
+
+**(9) UI-TOPBAR takes the viewing team as an argument.** "Friendly" is a fact about who is looking
+rather than about the match, so `topbar()` is a rearrangement of `ScoreReadout` from a seat's point
+of view, and the same state from the other seat is the exact mirror. A downed portrait shows its
+respawn countdown in place of its initial and reads 0% HP: the bar means "how much fight is left in
+them", and while they are down the answer is none.
+
+**(10) UI-TIMER is presentation only, and does not end a turn.** Enforcing a deadline is
+server-authoritative and belongs to M3-TIMER, where it is the same deadline for everybody; a
+hot-seat clock that resolved the turn by itself would be a second, different rule and the two would
+drift. The view reports `expired` and stops. The bank **extends** rather than resets — a player who
+banks at 8 seconds ends up at 18, not 40 — and its consumption animates, because a +10 s that
+silently changed a number reads as a miscount. The window resets **per seat** rather than per turn,
+since Time Bank is a player's resource and in a hot-seat each seat is a player taking its own
+decision. Driven by a 10 Hz interval rather than the render loop: the Decision phase has no
+animation frame of its own, and repainting the whole HUD ten times a second would tear the DOM out
+from under UI1's hover.
+
+**(11) PREVIEW-MODIFIERS needed no engine change — `computeDamage` and `isBehindCover` were already
+exported.** The client had simply been ignoring them. Cover is applied to **decoy** previews too: a
+decoy showing full damage from behind a wall where the real unit would show half is a tell, and the
+fiction only works if it is seamless. Heals and shields keep their authored amounts, since Might,
+Weaken and cover are outgoing-*damage* rules and applying them to a heal would be inventing a
+mechanic. Shields stay out of the number (flagged in edge-cases, not required) and the nameplate now
+shows the shield pool separately, which is the natural division.
+
+**(12) M3-LOCKLIST also closed the same leak one message over.** The item is about the `decision`
+payload, but `RoomView` carries a lock list and rides `joined` / `roomUpdated` / `seatLeft` — all
+broadcast, the same bytes to both teams. A `seatLeft` mid-match would have handed each team the
+other's lock list immediately after the per-seat `decision` withheld it. A room view's lock list is
+now **pre-match only**, where nothing is secret yet and a lobby genuinely needs to name who it is
+waiting on. `of` in the Decision payload now counts your own team rather than the room, so
+`locked.length / of` reads directly.
