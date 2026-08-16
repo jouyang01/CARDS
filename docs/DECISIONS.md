@@ -2430,3 +2430,167 @@ forfeit) is M3-TIMER's.
    50→75 server tests run through the `Sink` seam. M3-DEPLOY's spec already includes a
    `wrangler dev`/miniflare smoke check; this is just a reminder that the first real execution is
    still ahead of us, and it now covers a lot more code than it did.
+
+## Builder session — 2026-08-16 (third: M3-HIDDEN + the three dev notes)
+
+**(1) Hidden information is filtered, not blanked.** `teamView` removes what a team may not see
+from the `GameState` it ships — the enemy unit is *absent from the array*, not present with its
+fields nulled. A blanked unit still announces that somebody is out there, and the array length
+alone counts the hidden enemies, which is most of what a player wanted to know. The same choice
+runs through traps, decoys, pending delayed abilities and the other team's `lastKnown`. Power-up
+pads are the deliberate exception: they are public terrain (PADS-INDICATOR) and stay whole.
+
+**(2) The server filters views and never re-simulates.** Every visibility question `view.ts` asks
+goes to the engine's own `visibleEnemiesForTeam` / `visibleSquaresForTeam` — the same queries the
+hot-seat client asks. A second simulation server-side would be a second answer waiting to disagree
+with the first, and determinism belongs to the engine.
+
+**(3) The post-turn state stays fogged while the orders are revealed.** Locking in buys you the
+enemy's *plan*, which is what the reveal is for; it does not buy you the whole board. Shipping an
+unfiltered post-turn state would open the next Decision phase from perfect knowledge, and the
+combat log would undo the fog by animation even if the state did not — so `filterEvents` runs over
+the log with the same rule. "Acting reveals" needs no special case: the engine already applies
+`reveal` to an attacker (CAMO-REVEAL), so an attacker is visible by the time the log is filtered
+and its whole exchange survives, while a unit that merely walked in the dark does not.
+
+**(4) The lock list is shared across teams; the plans are not.** A seat's `decision` payload names
+every seat that has locked in, enemies included. Who is *ready* is not who is *doing what*, and a
+client with no idea what it is waiting for cannot show a waiting state at all. This is the one
+place an enemy seat id legitimately appears in a Decision payload, and the M3-HIDDEN test suite
+excludes exactly that field when asserting the enemy is nowhere in the message.
+
+**(5) The join guard lives in `join`, not in the hub.** "Can this room be joined" is a fact about
+the record, and the reconnect path (M3-RECONNECT) and the lobby will both ask it. `inProgress` is
+checked before the duplicate and full checks so the reason a client sees is the one it can act on:
+"come back for the next match", not "that seat id is taken".
+
+**(6) M3-START's client affordance is an HTTP route, not a client control.** The AC allows "a
+minimal client control (or dev affordance)". The client has no socket layer at all until M3-LOBBY,
+so a client control would mean building the network client first — which is M3-LOBBY. Instead
+`POST /rooms/:code/start` forwards to the room's object and calls the same `start()`. POST rather
+than GET so a link-preview fetcher cannot start somebody's match. It goes away with M3-LOBBY's
+button.
+
+**(7) PADS-SPREAD: a map may not place two pads adjacent, diagonals included (dev note).** Owner
+note: "Powerups should not be next to each other." Two touching pads are not two pick-ups — they
+are one prize worth double, taken by a unit standing between them and (since PADS-PASS) collected
+by walking the line. The detour a pad is meant to cost disappears. `validateMap` now rejects any
+pair within Chebyshev 1. It is a **floor, not a placement policy**: how far beyond touching, and
+which squares, stays the Designer's. Both shipped maps carried my own placeholder pairs, so I
+re-laid them as mirrored singles four squares apart at the closest; timings are untouched and the
+existing PADS1 mirror guard still passes. **Flagged:** "Pad placement + timings" is routed to the
+Designer in the backlog, and a dev note is required scope — I changed only the squares I put
+there, and only as far as the new rule forced.
+
+**(8) PADS-PASS: a pad is taken by being on its square at any point in the turn (dev note).** Owner
+note: "When passing through a powerup through any movement, it should be taken, you do not need to
+land on the square to grab it." This **supersedes decision (3) of the 2026-08-16 session**, "a
+power-up pad resolves on occupancy, not on travel" — which was my own call, not an owner one. What
+does *not* change is the settlement point: pads still settle once, at the end of Move, after the
+chasers and the decoy sweep. Only eligibility widened, so everything PADS1 pins about *when* a pad
+resolves and when it comes back still holds. A charger that crossed a Health pad in Dash and died
+in Blast takes nothing, because the settlement point is after the dying.
+
+**(9) The travel claim is read off the turn's own events, and ties break on event order.** Rather
+than thread a travelled-squares accumulator through five movement paths, `claimsBySquare` walks the
+`TurnEvent[]` the turn already produced: one `moveStep` per square entered means `to` is the whole
+story, and a future movement kind gets pass-through for free the moment it emits one. A `displaced`
+event is emitted once for a whole slide along a straight `direction8` line, so those squares are
+walked back out. Contested pads were previously impossible (Collisions forbid co-occupancy) and are
+now ordinary, so they needed a tie-break: **the earliest claim wins**, timed by event index, with a
+unit already standing on the square when the turn began claiming at −1. Event order is phase order
+and, inside Move, one shared step clock — so "earliest" reads as *first to set foot on it*, a Dash
+beats a Move for the same reason Dash resolves before Move, and a unit that never moved keeps the
+pad exactly as PADS1 gave it. **A teleport over a pad takes nothing**: it occupies no square in
+between, and "passing through" has to mean passing through.
+
+**(10) Knockback counts as movement for pads, though it does not for traps.** The dev note says
+"any movement", and a unit dragged across a pad was on the pad. Traps stay as they are (edge-cases
+lists dash and move only — entry under a unit's own power); the two rules differ because a trap is
+something you *walk into* and a pad is something you *are on*, and because the existing pad ruling
+already handed a pad to a unit knocked onto one. **Flagged for the Designer**: this belongs in
+`docs/design/edge-cases.md` beside the PADS1 line, which is not mine to edit.
+
+**(11) BUFF-UI: the pip row gained a named, counted-down strip rather than a redesign (dev note).**
+Owner note: "UI for buffs needs to be more clear." The pips *were* the buff UI — eleven 0.09-unit
+coloured squares floating over a model. That is enough to notice a status and not nearly enough to
+play around one: "am I slowed, and does it wear off before I commit to this move?" had no answer on
+screen, and a colour-blind player got nothing from any of it. The minimal fix is to spell the
+existing vocabulary out rather than invent a second one: `status-pips.ts` gained `STATUS_LABELS`,
+`STATUS_BLURBS` and `statusChips`, which reuse `PIP_ORDER` and `PIP_COLORS` so the HUD strip and the
+floating pips can never disagree about what is on a character or in what order. The strip names each
+status, counts it down in turns, tints a dot with the pip colour, and carries a `title` explaining
+what the status does. Debuffs additionally get a class and a red left edge, because colour alone is
+the thing that was not working. Two judgment calls inside it: the blurbs describe the *effect* and
+never the magnitude (the numbers are the engine's constants, and a UI restating them is a second
+place to get a balance pass wrong), and duplicate `shield` instances collapse to one chip carrying
+the longest remaining and the summed amount — two shields absorb as one pool, which is what the HP
+bar already shows. The strip hides entirely when nothing is on the character; a reserved blank row
+reads as broken rather than as quiet.
+
+## Open Questions for the Analyzer — 2026-08-16 (third)
+
+1. **CAMO-E2E-FINISH is closed as unit-covered-only, and I think the AC's technique is the wrong
+   one.** Reporting the seeded squares is trivial; *using* them is not. The e2e has no board-square
+   → screen-pixel mapping — `pointAt`/`clickAt` address fractions of the clipped board region — so
+   knowing the seed put a unit on (7,2) does not tell the test which pixel to sample. Making it
+   work needs a second dev hook exposing the renderer's projection, which the AC does not authorise
+   and I did not invent. **There is a better route that needs no hook at all**: take
+   `findPixels(before, isBrushGreen)`, drive the seeded unit to attack, and assert that a
+   meaningful number of *those same coordinates* now match `isCamoRed`. A before/after delta at
+   fixed coordinates dodges both the projection problem and the counting problem the predicate
+   documents. If you want the item reopened, that is the spec I would write — but it is a browser
+   drive that has to get a unit to attack from inside brush, so it is not the "small" the current
+   entry says it is. The *rule* stays covered by `camo-reveal.test.ts`; only the compositing is
+   unproven.
+
+2. **I moved pad squares that the backlog routes to you and then to the Designer.** Dev note 1
+   ("powerups should not be next to each other") made the shipped placements illegal under the new
+   `validateMap` rule, and they were my own placeholders, so I re-laid them as mirrored singles
+   (decision 7). Timings untouched. **This wants Designer eyes**: the new squares satisfy the rule
+   and the mirror guard and nothing else — I did not think about lanes, sightlines or which pad is
+   worth contesting. `duel-arena` now puts all six pads in the two central columns x=6/x=11, which
+   is defensible but is *a* choice.
+
+3. **Two rulings belong in `docs/design/edge-cases.md` and I cannot write them.** PADS-SPREAD (no
+   two pads adjacent) and PADS-PASS (a pad is taken by being on its square at any point in the
+   turn, earliest claim wins, teleport over it takes nothing) are both live engine rules with
+   tests, recorded in DECISIONS 7–10. The PADS1 line in edge-cases §5 now understates the rule, and
+   the trap ruling sits one paragraph away saying knockback is *not* entry — the two are
+   deliberately different (decision 10) and the doc should say so rather than leave a reader to
+   notice the inconsistency.
+
+4. **The Decision payload shares the enemy lock list — confirm that is what you want.** A seat is
+   told which seats have locked in, enemies included (decision 4). It leaks nothing about the
+   *plans*, and without it a client cannot show what it is waiting for. But it is the one place an
+   enemy seat id appears in a pre-reveal payload, and if you would rather it were a bare count I
+   would sooner change it now than after M3-LOBBY builds a waiting UI on it.
+
+5. **`POST /rooms/:code/start` is a temporary public route with no auth.** M3-START's AC allows a
+   "dev affordance" and the client has no socket layer, so this is how a short room starts today
+   (decision 6). Anyone who knows a room code can start that room. That is fine for a dev build and
+   is **not** fine at M3-DEPLOY — either M3-LOBBY should delete the route when its button lands, or
+   M3-DEPLOY needs it gated. Worth an explicit line in one of those two items.
+
+6. **Nothing has still booted a real Workers runtime** (carried, unchanged). 121 server tests now
+   run through the `Sink` seam, including all of M3-HIDDEN. The first real execution is still
+   M3-DEPLOY's smoke check, and M3-HIDDEN is the code I would least like to discover a runtime
+   difference in.
+
+7. **M3-HIDDEN has no client on the other end of it.** The filtering is unit-tested thoroughly, but
+   the client is still hot-seat only and has never consumed a `decision` or a filtered
+   `turnResolved`. The payload shape was chosen so it would not have to (`state` is still a
+   `GameState`, just with things missing) — but "the client can read it" is currently an argument,
+   not a test. M3-LOBBY is where that gets proven; it may be worth saying so in that item's AC.
+
+8. **Pad contest: a Dash beats a Move, by construction (decision 9).** Two units crossing the same
+   pad in one turn was impossible before this session and is ordinary now. Earliest-claim is the
+   rule I picked because it falls out of phase order, but it does mean a charge reliably steals a
+   pad from a walker who was closer to it. That is a **feel** question, not a correctness one —
+   worth a playtest note.
+
+9. **BUFF-UI only spells out the *active* character's statuses.** The strip is in the HUD's
+   character panel, so an ally's or an enemy's statuses are still pips-only — you can see that
+   something is on them and not what. Extending it means either a hover card on a unit or a second
+   strip, both of which are real UI design rather than a clarity fix, so I stopped at the note's
+   scope. If the owner meant "clearer for every unit on the board", that is a follow-up item.

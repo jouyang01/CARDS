@@ -124,7 +124,7 @@ export function isRoomCode(code: string): boolean {
   return [...code].every((ch) => CODE_ALPHABET.includes(ch));
 }
 
-export type JoinRejection = 'roomFull' | 'duplicateSeat';
+export type JoinRejection = 'roomFull' | 'duplicateSeat' | 'inProgress';
 
 export type JoinResult =
   | { ok: true; room: Room; seat: Seat }
@@ -153,8 +153,21 @@ export function nextTeam(room: Room): TeamId {
  * Rejections are values, not throws: a full room is an ordinary thing that
  * happens to a popular room, and the socket handler has to turn it into a
  * message either way.
+ *
+ * **M3-JOIN-GUARD: a started room takes no new seats.** The deal happens once,
+ * at `startMatch`, so a seat created after it controls nothing — and yet it
+ * counted toward the lock total, which meant one late connection could hang a
+ * match forever with a turn that could never complete. Refused loudly rather
+ * than dropped: a joiner that is told nothing sits at a blank board wondering.
+ *
+ * A seat freed by a disconnect is **held**, not reopened. `leave` removes it
+ * from the record and this guard keeps anyone else out, so the only way back
+ * into a running match is M3-RECONNECT's identity-matched reclaim. Handing a
+ * free slot to whoever connects next would give a stranger somebody's
+ * characters mid-fight.
  */
 export function join(room: Room, seatId: string, name?: string): JoinResult {
+  if (room.state !== undefined) return { ok: false, reason: 'inProgress' };
   if (room.seats.some((s) => s.seatId === seatId)) return { ok: false, reason: 'duplicateSeat' };
   if (room.seats.length >= seatBounds(room.format).max) return { ok: false, reason: 'roomFull' };
   const seat: Seat = { seatId, team: nextTeam(room), name: name ?? seatId, unitIds: [] };

@@ -74,7 +74,7 @@ import { deriveSeats, mergeSeatOrders, type Seat } from '@cards/engine';
 import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
 import { padViews, type PadView, type ViewState } from './playback.js';
 import { applyScenario, type ScenarioId } from './scenarios.js';
-import { statusPips } from './status-pips.js';
+import { statusChips, statusPips } from './status-pips.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
   clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
@@ -861,6 +861,10 @@ export function startHotSeat(
       shield: shieldOf(unit),
       locked: locked.has(unit.unitId),
       hasOrder: draftHasOrder(draftFor(unit)),
+      // BUFF-UI. Same source as the floating pips (`statusPips`) and the same
+      // order, so the strip and the pips cannot disagree about what is on a
+      // character — this one just spells it out.
+      statuses: statusChips(unit.statuses),
     };
   }
 

@@ -35,6 +35,7 @@ const CHAR: CharacterDef = {
     ability({ id: 'shove', effects: [{ kind: 'knockback', amount: 2 }] }),
     ability({ id: 'shot', effects: [{ kind: 'damage', amount: 20 }] }),
     ability({ id: 'hop', phase: 'dash', shape: 'square', range: 4, effects: [{ kind: 'teleport' }] }),
+    ability({ id: 'barge', phase: 'dash', shape: 'path', range: 4, effects: [] }),
     ability({ id: 'wait', shape: 'self', range: 0, effects: [{ kind: 'might', duration: 1 }] }),
   ],
   ultimate: ability({ id: 'ult', shape: 'self', range: 0, effects: [{ kind: 'might', duration: 1 }] }),
@@ -115,6 +116,148 @@ describe('PADS1: a pad grants its effects to whoever ends Move on it', () => {
     unit(s, 'a').alive = false;
     const { events } = run(s, idle);
     expect(events.some((e) => e.type === 'powerupTaken')).toBe(false);
+  });
+});
+
+/**
+ * PADS-PASS — you take a pad by being on its square, not by stopping on it.
+ *
+ * Owner note: "When passing through a powerup through any movement, it should
+ * be taken, you do not need to land on the square to grab it." This **widens
+ * the 2026-08-16 ruling** that a pad resolves on occupancy and not on travel;
+ * the *settlement point* is unchanged (one fixed point at the end of Move), so
+ * everything PADS1 pins about when a pad resolves and when it comes back still
+ * holds. Only who is eligible moved.
+ */
+describe('PADS-PASS: a pad is taken on the way past', () => {
+  it('a walk straight over a pad takes it without stopping', () => {
+    const s = board();
+    unit(s, 'a').hp = 50;
+    const { state, events } = run(s, [{ unitId: 'a', movePath: [{ x: 5, y: 5 }, { x: 6, y: 5 }] }]);
+    expect(unit(state, 'a').pos, 'and the unit really did not stop').toEqual({ x: 6, y: 5 });
+    expect(events).toContainEqual({ type: 'powerupTaken', unitId: 'a', pos: { x: 5, y: 5 }, powerup: 'health' });
+  });
+
+  it('a charge that passes over a pad takes it too', () => {
+    // Dash-phase movement, a different code path from Move, and the reason the
+    // claim is read off the turn's events rather than off any one walker.
+    const s = board();
+    const { state, events } = run(s, [
+      { unitId: 'a', ability: { abilityId: 'barge', target: [{ x: 5, y: 5 }, { x: 6, y: 5 }] } },
+    ]);
+    expect(unit(state, 'a').pos).toEqual({ x: 6, y: 5 });
+    expect(events.some((e) => e.type === 'powerupTaken' && e.powerup === 'health')).toBe(true);
+  });
+
+  it('a chase route over a pad takes it', () => {
+    // Chases run after ordinary movers and are planned by the engine, so their
+    // squares are never in anybody's submitted path.
+    const s = board();
+    unit(s, 'a').pos = { x: 3, y: 5 };
+    unit(s, 'e').pos = { x: 7, y: 5 };
+    const { events } = run(s, [{ unitId: 'a', chase: 'e' }]);
+    expect(events.some((e) => e.type === 'powerupTaken' && e.unitId === 'a' && e.powerup === 'health')).toBe(true);
+  });
+
+  it('being shoved across a pad takes it — any movement means any', () => {
+    // The victim is knocked from (5,3) through the pad at (5,5) and out to
+    // (5,5)+ — dragged over it rather than parked on it.
+    const s = board();
+    unit(s, 'a').pos = { x: 5, y: 1 };
+    unit(s, 'e').pos = { x: 5, y: 3 };
+    const { state, events } = run(s, [{ unitId: 'a', ability: { abilityId: 'shove', target: [{ x: 5, y: 10 }] } }]);
+    expect(unit(state, 'e').pos, 'shoved past the pad, not onto it').toEqual({ x: 5, y: 5 });
+    expect(events.some((e) => e.type === 'powerupTaken' && e.unitId === 'e')).toBe(true);
+  });
+
+  it('a teleport OVER a pad does not take it — it crossed nothing', () => {
+    // The one movement that is not travel. A blink from one side of a pad to
+    // the other never occupies the square in between, and "passing through"
+    // has to mean passing *through*.
+    const s = board();
+    unit(s, 'a').pos = { x: 4, y: 5 };
+    const { state, events } = run(s, [{ unitId: 'a', ability: { abilityId: 'hop', target: [{ x: 6, y: 5 }] } }]);
+    expect(unit(state, 'a').pos).toEqual({ x: 6, y: 5 });
+    expect(events.some((e) => e.type === 'powerupTaken')).toBe(false);
+  });
+
+  it('still only once — a pad crossed is a pad spent', () => {
+    const s = board();
+    const { state, events } = run(s, [{ unitId: 'a', movePath: [{ x: 5, y: 5 }, { x: 6, y: 5 }] }]);
+    expect(events.filter((e) => e.type === 'powerupTaken')).toHaveLength(1);
+    // everyTurns 3, taken on turn 1 → back on turn 4, exactly as if stood on.
+    expect(state.powerups).toEqual([{ pos: { x: 5, y: 5 }, availableOnTurn: 4 }]);
+  });
+
+  it('a unit that crossed a pad and then died takes nothing', () => {
+    // Pads settle at one fixed point at the end of Move, and that point is
+    // after the dying. Being there earlier is not enough to still be there.
+    const s = board();
+    unit(s, 'e').pos = { x: 7, y: 5 };
+    unit(s, 'a').hp = 10;
+    const { state, events } = run(
+      s,
+      [{ unitId: 'a', movePath: [{ x: 5, y: 5 }, { x: 6, y: 5 }] }],
+      [{ unitId: 'e', ability: { abilityId: 'shot', target: [{ x: 4, y: 5 }] } }],
+    );
+    expect(unit(state, 'a').alive, 'the crosser died in Blast').toBe(false);
+    expect(events.some((e) => e.type === 'powerupTaken')).toBe(false);
+    expect(state.powerups, 'and the pad is untouched, still there next turn').toEqual([]);
+  });
+});
+
+describe('PADS-PASS: contested pads have a tie-break now', () => {
+  it('the first unit onto the square takes it — a Dash beats a Move', () => {
+    // Before PADS-PASS this could not happen: the only claim was occupancy and
+    // Collisions forbid two units on one square. Now two can cross the same pad
+    // in one turn, and phase order decides — for the same reason Dash resolves
+    // before Move at all.
+    const s = board();
+    unit(s, 'a').pos = { x: 3, y: 5 };            // walks east over the pad
+    unit(s, 'e').pos = { x: 5, y: 2 };            // charges south through it
+    const { events } = run(
+      s,
+      [{ unitId: 'a', movePath: [{ x: 4, y: 5 }, { x: 5, y: 5 }, { x: 6, y: 5 }] }],
+      [{ unitId: 'e', ability: { abilityId: 'barge', target: [{ x: 5, y: 3 }, { x: 5, y: 4 }, { x: 5, y: 5 }, { x: 5, y: 6 }] } }],
+    );
+    const taken = events.filter((e) => e.type === 'powerupTaken');
+    expect(taken).toHaveLength(1);
+    expect(taken[0], 'the charger was there first').toMatchObject({ unitId: 'e' });
+  });
+
+  it('a unit already standing there beats anyone who arrives', () => {
+    // Standing on the square when the turn began is the earliest claim of all,
+    // so PADS1's answer is unchanged wherever PADS1 had one.
+    const s = board();
+    unit(s, 'a').pos = { x: 5, y: 5 };
+    unit(s, 'e').pos = { x: 5, y: 2 };
+    const { events } = run(
+      s, idle,
+      [{ unitId: 'e', ability: { abilityId: 'barge', target: [{ x: 5, y: 3 }, { x: 5, y: 4 }] } }],
+    );
+    expect(events.filter((e) => e.type === 'powerupTaken')).toMatchObject([{ unitId: 'a' }]);
+  });
+
+  it('the answer does not depend on which team is listed first', () => {
+    // The tie-break is the turn's own event order, not the order the units
+    // happen to sit in the state array — otherwise team 0 would win every
+    // contested pad forever.
+    const orders = (): [UnitOrders[], UnitOrders[]] => [
+      [{ unitId: 'a', movePath: [{ x: 4, y: 5 }, { x: 5, y: 5 }, { x: 6, y: 5 }] }],
+      [{ unitId: 'e', ability: { abilityId: 'barge', target: [{ x: 5, y: 3 }, { x: 5, y: 4 }, { x: 5, y: 5 }, { x: 5, y: 6 }] } }],
+    ];
+    const forward = makeState([
+      makeUnit('a', 0, { x: 3, y: 5 }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: 5, y: 2 }, { characterId: 'test-char' }),
+    ]);
+    const reversed = makeState([
+      makeUnit('e', 1, { x: 5, y: 2 }, { characterId: 'test-char' }),
+      makeUnit('a', 0, { x: 3, y: 5 }, { characterId: 'test-char' }),
+    ]);
+    const [u0, u1] = orders();
+    const one = run(forward, u0, u1).events.filter((e) => e.type === 'powerupTaken');
+    const two = run(reversed, u0, u1).events.filter((e) => e.type === 'powerupTaken');
+    expect(two).toEqual(one);
   });
 });
 
@@ -236,6 +379,32 @@ describe('PADS1: determinism and the map schema', () => {
 
     it('rejects two pads on one square', () => {
       expect(check([ok, { ...ok, type: 'might' }])).toMatch(/a second pad on \(3,3\)/);
+    });
+
+    it('rejects two pads that touch, orthogonally or diagonally (PADS-SPREAD)', () => {
+      // A pair of pads is not two pick-ups; it is one prize worth double, and
+      // since PADS-PASS it is collected by walking past rather than stopping.
+      for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [-1, 1]]) {
+        const neighbour = { ...ok, x: ok.x + dx!, y: ok.y + dy!, type: 'might' as const };
+        expect(check([ok, neighbour]), `offset ${dx},${dy}`).toMatch(/may not be adjacent/);
+      }
+    });
+
+    it('accepts pads one square further apart', () => {
+      expect(check([ok, { ...ok, x: 5, type: 'might' }])).toBe('');
+      expect(check([ok, { ...ok, x: 5, y: 5, type: 'might' }])).toBe('');
+    });
+
+    it('reports a touching pair once, not twice', () => {
+      // Three in a row is three facts, not six restatements of them.
+      const errs = check([ok, { ...ok, x: 4 }, { ...ok, x: 5 }]).match(/may not be adjacent/g) ?? [];
+      expect(errs).toHaveLength(2);
+    });
+
+    it('a duplicate square is reported as a duplicate, not as adjacency', () => {
+      const errs = check([ok, { ...ok, type: 'might' }]);
+      expect(errs).toMatch(/a second pad on \(3,3\)/);
+      expect(errs).not.toMatch(/may not be adjacent/);
     });
 
     it('rejects an unknown type and an unknown key', () => {

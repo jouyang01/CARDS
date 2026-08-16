@@ -17,6 +17,7 @@
 
 import type { AbilityDef } from '@cards/engine';
 import type { CatalystCost } from './targeting.js';
+import type { StatusChip } from './status-pips.js';
 
 export interface HudAbility {
   id: string;
@@ -73,6 +74,12 @@ export interface HudCharacter {
   shield: number;
   locked: boolean;
   hasOrder: boolean;
+  /**
+   * Everything currently on this character (BUFF-UI), in pip order. The
+   * floating pips say *something* is on you; this strip is the only place that
+   * says what it is and how long it lasts.
+   */
+  statuses: StatusChip[];
 }
 
 export interface HudModel {
@@ -162,13 +169,14 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const charName = el('div', 'hud-name');
   const charRole = el('div', 'hud-role');
   identity.append(charName, charRole);
+  const statusStrip = el('div', 'hud-statuses');
   const bars = el('div', 'hud-bars');
   const hp = makeBar('HP', 'hp');
   const shield = makeBar('SH', 'shield', { hideWhenEmpty: true, showTotal: false });
   const energy = makeBar('EN', 'energy');
   bars.append(hp.root, shield.root, energy.root);
   const switcher = el('div', 'hud-switcher');
-  left.append(portrait, identity, bars, switcher);
+  left.append(portrait, identity, bars, statusStrip, switcher);
 
   // ── bottom-centre: the hotbar ─────────────────────────────────────────────
   const centre = el('div', 'hud-centre');
@@ -223,6 +231,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const abilityNodes = new Map<string, HTMLButtonElement>();
   const catalystNodes = new Map<string, HTMLButtonElement>();
   const chipNodes = new Map<string, HTMLButtonElement>();
+  const statusNodes = new Map<string, HTMLElement>();
 
   const setOrdering = (visible: boolean): void => {
     for (const node of [left, centre, right]) node.style.display = visible ? '' : 'none';
@@ -243,6 +252,45 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
         shield.set(active.shield, active.maxHp);
         energy.set(active.energy, 100);
       }
+
+      // BUFF-UI. The strip is absent, not empty, when nothing is on the
+      // character: a permanently reserved blank row reads as a thing that is
+      // broken rather than as a thing that is quiet.
+      const statuses = active?.statuses ?? [];
+      statusStrip.style.display = statuses.length > 0 ? '' : 'none';
+      for (const status of statuses) {
+        let node = statusNodes.get(status.kind);
+        if (node === undefined) {
+          node = el('span', 'hud-status');
+          statusNodes.set(status.kind, node);
+          statusStrip.appendChild(node);
+        }
+        node.replaceChildren();
+        const dot = el('span', 'hud-status-dot');
+        dot.style.background = status.colour;
+        const name = el('span', 'hud-status-name');
+        name.textContent = status.label;
+        node.append(dot, name);
+        // Shields carry what is left to absorb as well as how long: "1t" on a
+        // shield that has already eaten everything it was going to is a promise
+        // the bar has already broken.
+        if (status.amount !== undefined) {
+          const amount = el('span', 'hud-status-amount');
+          amount.textContent = String(status.amount);
+          node.appendChild(amount);
+        }
+        const turns = el('span', 'hud-status-turns');
+        // "1t" is the last turn it is on you, so it reads as a countdown rather
+        // than as an age.
+        turns.textContent = `${status.remaining}t`;
+        node.appendChild(turns);
+        node.classList.toggle('harm', status.harmful);
+        node.title = `${status.label} — ${status.blurb} ${status.remaining} turn${status.remaining === 1 ? '' : 's'} left.`;
+      }
+      for (const [kind, node] of statusNodes) {
+        if (!statuses.some((s) => s.kind === kind)) { node.remove(); statusNodes.delete(kind); }
+      }
+      for (const status of statuses) statusStrip.appendChild(statusNodes.get(status.kind)!);
 
       // Character switcher — only earns its space when the seat runs more than one.
       switcher.style.display = model.roster.length > 1 ? '' : 'none';

@@ -72,6 +72,105 @@ export function statusPips(statuses: readonly { kind: EffectKind }[]): StatusPip
   return PIP_ORDER.filter((kind) => present.has(kind)).map((kind) => ({ kind, color: PIP_COLORS[kind] ?? 0xffffff }));
 }
 
+/**
+ * BUFF-UI — the pip row says *something is on you*; this says **what, and for
+ * how long**.
+ *
+ * The Dev Note was "UI for buffs needs to be more clear". The pips were the
+ * whole of the buff UI: eleven 0.09-unit squares floating over a model, told
+ * apart only by colour. That is enough to notice a status and not nearly enough
+ * to play around one — "am I slowed, and does it wear off before I commit to
+ * this move?" was unanswerable without a state dump. Colour alone also asks the
+ * player to memorise eleven of them, and gives a colour-blind player nothing.
+ *
+ * So the same table gains a **name**, a **plain-language line about what it
+ * does**, and the row below carries the **remaining turns**. Same source, same
+ * order, same colours — this is the pip vocabulary spelled out, not a second
+ * one to keep in step.
+ */
+export const STATUS_LABELS: Readonly<Record<string, string>> = {
+  root: 'Rooted',
+  slow: 'Slowed',
+  weaken: 'Weakened',
+  reveal: 'Revealed',
+  shield: 'Shielded',
+  might: 'Might',
+  haste: 'Hasted',
+  energized: 'Energized',
+  unstoppable: 'Unstoppable',
+  untargetable: 'Untargetable',
+  stealth: 'Stealthed',
+};
+
+/**
+ * What each status *does*, in one line, as the tooltip.
+ *
+ * Deliberately about the effect and not about the numbers: the magnitudes are
+ * the engine's constants and a UI that restated them would be a second place to
+ * get them wrong. "Moves fewer squares" survives a balance pass; "−2 movement"
+ * does not.
+ */
+export const STATUS_BLURBS: Readonly<Record<string, string>> = {
+  root: 'Cannot move or dash this turn.',
+  slow: 'Moves fewer squares.',
+  weaken: 'Deals less damage.',
+  reveal: 'Visible to the enemy team even in cover or brush.',
+  shield: 'Absorbs damage before health does.',
+  might: 'Deals more damage.',
+  haste: 'Moves further.',
+  energized: 'Gains extra ultimate energy.',
+  unstoppable: 'Immune to knockback and pulls.',
+  untargetable: 'Cannot be picked as a target.',
+  stealth: 'Hidden from the enemy team until it acts or is revealed.',
+};
+
+/** One row in the HUD's status strip: what it is, how long, and which family. */
+export interface StatusChip {
+  kind: EffectKind;
+  /** Display name — `STATUS_LABELS`, falling back to the raw kind. */
+  label: string;
+  /** The pip colour, as a CSS hex string, so the HUD needs no palette. */
+  colour: string;
+  /** Turns left, including this one. */
+  remaining: number;
+  /** Shield only: how much is left to absorb. */
+  amount?: number;
+  harmful: boolean;
+  blurb: string;
+}
+
+const cssHex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
+
+/**
+ * The HUD's status strip for one unit: `PIP_ORDER`, deduped, unknown kinds
+ * dropped — the same rule as {@link statusPips}, so the strip and the pips can
+ * never disagree about what is on a unit or in what order.
+ *
+ * Where a kind appears more than once (shield does: two casters, two
+ * instances), the chip carries the **longest remaining** and the **summed
+ * amount**. Longest because that is when the player stops having it, and summed
+ * because two shields absorb as one pool — which is what the HP bar already
+ * shows.
+ */
+export function statusChips(
+  statuses: readonly { kind: EffectKind; remaining: number; amount?: number }[],
+): StatusChip[] {
+  const live = statuses.filter((s) => s.remaining > 0);
+  return PIP_ORDER.filter((kind) => live.some((s) => s.kind === kind)).map((kind) => {
+    const mine = live.filter((s) => s.kind === kind);
+    const amount = mine.reduce((sum, s) => sum + (s.amount ?? 0), 0);
+    return {
+      kind,
+      label: STATUS_LABELS[kind] ?? kind,
+      colour: cssHex(PIP_COLORS[kind] ?? 0xffffff),
+      remaining: Math.max(...mine.map((s) => s.remaining)),
+      ...(amount > 0 ? { amount } : {}),
+      harmful: HARMFUL_PIPS.has(kind),
+      blurb: STATUS_BLURBS[kind] ?? '',
+    };
+  });
+}
+
 /** Pip geometry, in world units — square, tight, above the shield bar. */
 export const PIP_SIZE = 0.09;
 export const PIP_GAP = 0.025;
