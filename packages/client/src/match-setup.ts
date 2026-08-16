@@ -24,6 +24,7 @@ import {
   type FormatId,
   type MapDef,
 } from '@cards/engine';
+import { SCENARIOS, isScenarioId, type ScenarioId } from './scenarios.js';
 
 export interface MatchSetup {
   map: MapDef;
@@ -31,6 +32,12 @@ export interface MatchSetup {
   teams: [CharacterDef[], CharacterDef[]];
   /** Humans per team — how the format's characters are grouped into seats. */
   playersPerTeam: [number, number];
+  /**
+   * A dev-only starting arrangement (CAMO-SEED), or absent for a normal match.
+   * Never defaulted: a seed that applied unless you opted out would be a
+   * different game than the one the player thinks they loaded.
+   */
+  scenario?: ScenarioId;
 }
 
 export type SetupResult = { setup: MatchSetup } | { errors: string[] };
@@ -108,6 +115,15 @@ export function parseSetup(
   const players = parsePlayers(params.get('players'), format);
   if (typeof players === 'string') errors.push(players);
 
+  // CAMO-SEED. Named seeds only — an unknown one is an error rather than a
+  // silent normal match, because "my scenario did nothing" is indistinguishable
+  // from "my scenario is not doing what I think" if it is ignored.
+  const scenarioId = params.get('scenario');
+  if (scenarioId !== null && !isScenarioId(scenarioId)) {
+    errors.push(`unknown scenario "${scenarioId}" — try one of: ${SCENARIOS.join(', ')}`);
+  }
+  const scenario = scenarioId !== null && isScenarioId(scenarioId) ? scenarioId : undefined;
+
   const perTeam = getFormat(format).charactersPerTeam;
   if (catalog.length < perTeam * 2) {
     errors.push(`${format} needs ${perTeam * 2} characters, the roster has ${catalog.length}`);
@@ -118,10 +134,14 @@ export function parseSetup(
   }
 
   if (errors.length > 0 || map === undefined || typeof players === 'string') return { errors };
-  return { setup: { map, format, teams: dealTeams(catalog, perTeam), playersPerTeam: players } };
+  const setup: MatchSetup = { map, format, teams: dealTeams(catalog, perTeam), playersPerTeam: players };
+  return { setup: scenario === undefined ? setup : { ...setup, scenario } };
 }
 
 /** One line naming what is loaded — a dev toggle you cannot see is a trap. */
 export function describeSetup(setup: MatchSetup): string {
-  return `${setup.map.name} · ${setup.format} · ${setup.playersPerTeam.join(' v ')} players`;
+  const base = `${setup.map.name} · ${setup.format} · ${setup.playersPerTeam.join(' v ')} players`;
+  // A seeded match must announce itself loudest of all: it is the one setup
+  // where the board is not where the rules would have put it.
+  return setup.scenario === undefined ? base : `${base} · scenario: ${setup.scenario}`;
 }

@@ -10,6 +10,7 @@
  */
 
 import {
+  buildBoard,
   createMatch,
   movementBudget,
   resolveTurn,
@@ -72,6 +73,7 @@ import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js'
 import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
 import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
 import { padViews, type PadView, type ViewState } from './playback.js';
+import { applyScenario, type ScenarioId } from './scenarios.js';
 import { statusPips } from './status-pips.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
@@ -191,8 +193,15 @@ export function startHotSeat(
   format: FormatId,
   playersPerTeam: [number, number],
   catalysts: CatalystPool = {},
+  /** CAMO-SEED: a dev-only starting arrangement. Absent for a normal match. */
+  scenario?: ScenarioId,
 ): void {
-  let state = createMatch(map, format, teams);
+  // CAMO-SEED: a dev-only nudge to the starting positions, applied once and
+  // never again — everything after this is the ordinary engine on an ordinary
+  // state. Absent for a normal match.
+  let state = scenario === undefined
+    ? createMatch(map, format, teams)
+    : applyScenario(scenario, buildBoard(map), createMatch(map, format, teams));
   /** SCORE1's running ledger, folded from each turn's event log as it plays. */
   let totals: MatchTotals = initTotals(state);
   const seats = deriveSeats(state, playersPerTeam);

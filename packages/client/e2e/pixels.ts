@@ -240,10 +240,16 @@ export const isPadTeal = (px: Rgb): boolean =>
 /**
  * CAMO-REVEAL's red thicket (`#ff2020` at 0.55 over lit brush ≈ `158,44,32`).
  *
- * Hard red: red-dominant with green *and* blue both far below it, and unlike
- * team red the two are not close to each other — the green sits above the blue
- * because the brush underneath is green. Bounded under 200 so the pure team-red
- * unit body cannot pass for a lit thicket.
+ * **Not usable on its own, and measured to be so.** The composite is the same
+ * *hue* as a Lambert-shaded team-red unit — a lit thicket lands near
+ * `158,45,37` and a shaded red body near `179,78,70`, with the same green-above-
+ * blue ordering — so no channel test separates them. A frame with no thicket at
+ * all scores 22 against this predicate, entirely from unit edges.
+ *
+ * Kept because the colour is right and a *positional* assertion can use it:
+ * seed a unit onto a known brush square (`?scenario=in-brush`), then sample
+ * that square with `pixelAt` instead of counting the whole frame. Counting is
+ * what fails here, not the colour.
  */
 export const isCamoRed = (px: Rgb): boolean =>
   px.r > 110 && px.r < 210 && px.r - px.g > 70 && px.r - px.b > 80 && px.g >= px.b;
