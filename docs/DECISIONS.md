@@ -2224,3 +2224,105 @@ event log with no engine change, per the item's own spec note.
    turn-limit vs sudden-death from the finished state, because the engine does not say. It is
    right for every case I could construct, but a `gameEnd` event carrying the reason would remove
    the inference entirely and is a one-field engine change if the Analyzer thinks it is worth it.
+
+---
+
+## Builder session — 2026-08-16
+
+**(1) A pad marker is board state, so it draws under every planning overlay.** `PAD_LIFT` sits just
+above CAMO-REVEAL's red thicket and below `range`/`reach`/`aim`/`impact`/`free`/`catalyst`/`chase`/
+`select`. Same argument the camo tile already makes: a pad is terrain with a colour, not something
+you are aiming at, so an AoE drawn over a pad has to read on top or the overlay is lying about what
+it covers. A trap earns its near-the-top lift by being a warning; a pad is an invitation.
+
+**(2) A consumed pad keeps its plate and loses its glyph.** Drawing a spent pad as *absent* would
+make a square that is about to matter vanish from the plan — the respawn is the interesting part.
+Dormant pads (before `firstTurn`) are deliberately faint: they are real but not yet worth walking to.
+
+**(3) `padViews` takes no viewer.** Pads are public terrain and both teams see every one, so unlike
+`fogView`'s traps and decoys there is no per-viewer variant. Adding a fog argument later would be
+the moment a pad became hidden information the rules do not give it, so the absence of that
+parameter is asserted by a test that puts a pad deep in one team's fog and expects it drawn.
+
+**(4) `ViewState` gained `takenPowerups`, folded from `powerupTaken`.** Reading `state.powerups`
+alone would keep a marker lit through the whole Move animation and darken it once the turn was over
+— a beat after the only moment anybody was watching that square. The engine's record is the source
+of truth for *respawn*; the event is the source of truth for *right now*.
+
+**(5) Pad colours were chosen to sit outside every family the render tests match on.** Green reads
+as lit brush, orange as the aim overlay, plain blue as a team-0 unit. Teal / magenta / cyan are the
+unclaimed hues. `isTeamBlue` also gained a `g - r < 110` clamp so the cyan Energy pad cannot be
+counted as a unit — a tightening, not a loosening: without it "team 0's units are on screen" would
+pass on a board with no units.
+
+**(6) The CAMO-REVEAL red tile is still not composited-tested, on purpose.** Reaching it needs a
+unit to end a turn inside brush *and* attack; a blind browser drive that hunts for it costs two
+minutes and then asserts a tautology, which is worse than no test. The `isCamoRed` predicate is
+shipped and ready; what is missing is a way to seed a scenario. Flagged below.
+
+**(7) The server's rules live outside the Durable Object.** `room.ts` (seat bounds, joins, leaves,
+codes) and `hub.ts` (message handling, against an abstract two-method `Sink`) hold everything;
+`durable-object.ts` is a fetch handler that makes a socket pair and forwards events. The test
+harness is therefore plain Vitest with fake sockets rather than
+`@cloudflare/vitest-pool-workers` — booting a Workers runtime would test Cloudflare's WebSocket
+implementation, which is not ours, and needs an account the sandbox does not have. The spec allows
+a DO unit harness; if the DO ever grows logic, that is the signal to move the logic out rather than
+to add a runtime.
+
+**(8) A socket is not a seat.** A connection that has not sent `join` occupies nothing and counts
+against no bound. Otherwise opening connections would be enough to fill a room, and one
+half-loaded client would lock everybody else out.
+
+**(9) Seat bounds are derived from the format, and teams auto-balance on join.** 2v2's 2–4 and
+4v4's 2–8 both fall out of `charactersPerTeam * 2`, so a format change cannot strand a stale table.
+Balance is automatic because picking a side is M3-LOBBY's job and a room that fills 4–0 before the
+lobby opens is a room nobody can start; the tie-break is fixed (team 0) so the same join order
+always seats the same way.
+
+**(10) Room-code randomness is injected, and the alphabet drops I/O/Q/U.** `mintCode` takes a byte
+source — `crypto.getRandomValues` in the Worker, a counter in tests — so a minted code is a fact a
+test can name rather than a shape it has to squint at. I/O/Q are misread as 1/0/O aloud and in a
+sans-serif font; U is gone so no four-letter code can spell something the owner has to apologise
+for. A code is **not** access control: that is M3-HIDDEN's per-team filtering.
+
+## Open Questions for the Analyzer — 2026-08-16
+
+1. **CAMO-REVEAL's red tile has no composited test (decision 6, RENDER-COVERAGE).** Everything else
+   the item named now has one. Reaching camo needs a seeded scenario — a query-param or dev hook
+   that starts a match with a unit already in brush, in the MAPTOGGLE family. Worth a small item, or
+   worth accepting as unit-covered-only; either is defensible, but it should be a decision rather
+   than a gap.
+
+2. **`revealedView`'s rename (carried OQ 2026-09-01 #5) — I did not do it.** The Spec Note said
+   "fold in if a client touch makes it convenient". The declaration already carries a doc block
+   explaining exactly what it is and why playback gets it for free, so the confusion the OQ named is
+   already addressed in prose; renaming would ripple through `app.ts` and `fog.ts` for no behaviour
+   change. Recommend closing the OQ as documented-instead-of-renamed unless you disagree.
+
+3. **Pad flavour colours are now load-bearing for the e2e suite (decision 5).** If the Designer
+   retunes pad *colours* (not squares or timings — those are safe), `isPadTeal` and the
+   `isTeamBlue` clamp need to move with them. Worth a line in the Designer's routing note so the
+   coupling is not discovered by a red suite.
+
+4. **M3-PROTOCOL is next and I did not start it** — the session cut line was PADS-INDICATOR +
+   RENDER-COVERAGE + M3-ROOM, and starting a half-item was the worse option. `hub.ts` is where it
+   lands: it already owns the joined-seat set and the broadcast, so submission, lock-tracking and
+   the merge to two `PlayerOrders` attach there. Two things want ruling first:
+   - **Where does the control map live?** `Seat` currently has no `unitIds`. ARCHITECTURE §45 says
+     the DO stores it, and M3-LOBBY assigns it — so M3-PROTOCOL needs an interim (assign on join?
+     assign on start?) or it cannot address orders to characters at all.
+   - **Does `mergeSeatOrders` move out of the client?** The Spec Note says "reuse ... if it factors
+     cleanly into the engine or a shared util". It is currently `packages/client/src/hotseat.ts`,
+     and the server may not import the client. My read: it belongs in the **engine** as a pure order
+     utility, but that widens the engine's surface, so it is your call.
+
+5. **`GameState` is not yet persisted by the DO** — `durable-object.ts` stores only the room record.
+   M3-PROTOCOL adds the authoritative state, and M3-RECONNECT wants the order history alongside it
+   (ARCHITECTURE §77). Worth deciding at M3-PROTOCOL whether the DO stores state-per-turn or
+   initial-state-plus-orders, because reconnect's cost depends on it and retrofitting is a migration.
+
+6. **No end-to-end proof the Worker runs under a real Workers runtime.** Everything is unit-tested
+   through the `Sink` seam and typechecked against `@cloudflare/workers-types`, but nothing has
+   booted miniflare or `wrangler dev` — the sandbox has no account and the spec said local-only. The
+   first time this runs for real will be M3-DEPLOY. If you would rather find integration problems
+   earlier, a `wrangler dev` smoke check is a small item to schedule before then.
