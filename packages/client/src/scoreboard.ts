@@ -157,6 +157,81 @@ export function scoreReadout(state: GameState, names: UnitNames): ScoreReadout {
   };
 }
 
+/**
+ * UI-TOPBAR (ar-parity §4.4) — the match strip, laid out the way AR lays it out.
+ *
+ * AR's top edge reads **friendly portraits · team score · turn · enemy score ·
+ * enemy portraits**, and the ordering is the content: your side is on your
+ * side. SCORE1 already computed every number in it; what was missing was that
+ * the strip listed all eight units in one undifferentiated row, so answering
+ * "how is my team doing" meant reading names rather than glancing left.
+ *
+ * So this is a *rearrangement* of `ScoreReadout`, not a second source of truth,
+ * and it takes the viewing team as an argument because "friendly" is a fact
+ * about who is looking rather than about the match.
+ */
+export interface TopbarPortrait {
+  unitId: string;
+  name: string;
+  /** One letter for the portrait plate, until real art exists. */
+  initial: string;
+  owner: 0 | 1;
+  alive: boolean;
+  hp: number;
+  maxHp: number;
+  /** HP as a percentage, for the mini bar. 0 when down. */
+  hpPct: number;
+  /** Turns until it is back, 0 when alive — the attrition read. */
+  respawnIn: number;
+  /** Charged, so a portrait can warn about an ult the same way a plate does. */
+  ultReady: boolean;
+}
+
+export interface TopbarModel {
+  friendly: TopbarPortrait[];
+  enemy: TopbarPortrait[];
+  friendlyTeam: 0 | 1;
+  enemyTeam: 0 | 1;
+  friendlyKills: number;
+  enemyKills: number;
+  killTarget: number;
+  turn: number;
+  turnLimit: number;
+  suddenDeath: boolean;
+}
+
+const portrait = (row: ScoreRow): TopbarPortrait => ({
+  unitId: row.unitId,
+  name: row.name,
+  initial: (row.name[0] ?? '?').toUpperCase(),
+  owner: row.owner,
+  alive: row.alive,
+  hp: row.hp,
+  maxHp: row.maxHp,
+  // A dead unit reads 0 rather than its last fraction: the bar is "how much
+  // fight is left in them", and the answer while they are down is none.
+  hpPct: row.alive ? Math.max(0, Math.min(100, Math.round((row.hp / Math.max(1, row.maxHp)) * 100))) : 0,
+  respawnIn: row.respawnIn,
+  ultReady: row.ultPct >= 100,
+});
+
+/** The strip, from the viewing team's point of view. */
+export function topbar(readout: ScoreReadout, viewer: 0 | 1): TopbarModel {
+  const enemyTeam: 0 | 1 = viewer === 0 ? 1 : 0;
+  return {
+    friendly: readout.rows.filter((r) => r.owner === viewer).map(portrait),
+    enemy: readout.rows.filter((r) => r.owner === enemyTeam).map(portrait),
+    friendlyTeam: viewer,
+    enemyTeam,
+    friendlyKills: readout.kills[viewer],
+    enemyKills: readout.kills[enemyTeam],
+    killTarget: readout.killTarget,
+    turn: readout.turn,
+    turnLimit: readout.turnLimit,
+    suddenDeath: readout.suddenDeath,
+  };
+}
+
 /** How a finished match ended (GAME_SPEC §1). */
 export type EndReason = 'killTarget' | 'turnLimit' | 'suddenDeath';
 

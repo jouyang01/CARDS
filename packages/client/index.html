@@ -74,6 +74,32 @@
       .score-unit { border-left: 3px solid; padding: 1px 6px; opacity: 0.9;
         background: rgb(0 0 0 / 0.35); border-radius: 3px; }
       .score-unit.dead { opacity: 0.45; text-decoration: line-through; }
+
+      /* ── UI-TOPBAR: friendly portraits · score · turn · score · enemy ─────
+         The ordering is the content — your side is on your side, so "how is my
+         team doing" is a glance left rather than a read of names. */
+      .topbar { display: flex; align-items: center; justify-content: center;
+        gap: 22px; flex-wrap: nowrap; }
+      .topbar-team { display: flex; gap: 8px; flex: 1; }
+      .topbar-team.own { justify-content: flex-end; }
+      .topbar-team.foe { justify-content: flex-start; }
+      .topbar-portrait { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 40px; }
+      .topbar-face { width: 34px; height: 34px; border-radius: 7px; border: 2px solid;
+        display: grid; place-items: center; font-size: 16px; font-weight: 800;
+        color: #0d0f14; background: rgb(0 0 0 / 0.5); }
+      /* A charged ultimate rings the portrait, the same warning the nameplate's
+         ULT tag gives — the top strip is where you scan for it first. */
+      .topbar-portrait.ult .topbar-face { box-shadow: 0 0 0 2px #ffd76a, 0 0 10px rgb(255 215 106 / 0.6); }
+      .topbar-portrait.dead { opacity: 0.5; }
+      .topbar-portrait.dead .topbar-face { background: rgb(0 0 0 / 0.6); color: #cbd2e0; }
+      .topbar-hp { width: 36px; height: 4px; border-radius: 2px; background: var(--bar-bg); overflow: hidden; }
+      .topbar-hp-fill { height: 100%; background: var(--hp); transition: width 140ms ease-out; }
+      .topbar-score { display: grid; grid-template-columns: auto auto auto;
+        align-items: baseline; gap: 4px 12px; justify-items: center; }
+      .topbar-kills { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+      .topbar-clock { font-size: 13px; font-weight: 700; opacity: 0.85; white-space: nowrap; }
+      .topbar-target { grid-column: 1 / -1; font-size: 9px; opacity: 0.5;
+        text-transform: uppercase; letter-spacing: 1px; }
       /* The end-of-match breakdown replaces the strip in the same element. */
       .score-table { border-collapse: collapse; font-size: 13px; margin-top: 8px; }
       .score-table th, .score-table td { padding: 2px 12px 2px 0; text-align: right; }

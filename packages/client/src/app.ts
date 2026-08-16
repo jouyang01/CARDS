@@ -83,8 +83,8 @@ import { inspectDecoy, inspectUnit } from './inspect.js';
 import { intentBadges } from './intent.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
-  clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
-  type MatchTotals,
+  clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally, topbar,
+  type MatchTotals, type TopbarModel, type TopbarPortrait,
 } from './scoreboard.js';
 
 export interface HotSeatUI {
@@ -900,37 +900,83 @@ export function startHotSeat(
    * it is a handful of nodes with no hover state to preserve.
    */
   function renderScoreboard(): void {
-    const readout = scoreReadout(state, unitName);
+    const bar = topbar(scoreReadout(state, unitName), currentSeat()?.team ?? 0);
     scoreEl.replaceChildren();
-    const head = document.createElement('div');
-    head.className = 'score-head';
-    for (const team of [0, 1] as const) {
-      const side = document.createElement('span');
-      side.className = 'score-team';
-      side.style.color = TEAM_CSS[team];
-      side.textContent = `${teamName(team)} ${tally(readout.kills[team], readout.killTarget)}`;
-      head.appendChild(side);
-    }
-    const turn = document.createElement('span');
-    turn.className = 'score-clock';
-    // Sudden death is the one thing here that changes how a turn should be
-    // played, so it replaces the clock rather than sitting beside it.
-    turn.textContent = readout.suddenDeath ? 'SUDDEN DEATH' : clock(readout.turn, readout.turnLimit);
-    head.appendChild(turn);
-    scoreEl.appendChild(head);
 
     const strip = document.createElement('div');
-    strip.className = 'score-strip';
-    for (const row of readout.rows) {
-      const cell = document.createElement('span');
-      cell.className = row.alive ? 'score-unit' : 'score-unit dead';
-      cell.style.borderColor = TEAM_CSS[row.owner];
-      cell.textContent = row.alive
-        ? `${row.name} ${row.hp}/${row.maxHp} · ult ${row.ultPct}%`
-        : `${row.name} — down (${row.respawnIn})`;
-      strip.appendChild(cell);
-    }
+    strip.className = 'topbar';
+    strip.append(
+      portraitRow(bar.friendly, bar.friendlyTeam, 'own'),
+      scoreBlock(bar),
+      portraitRow(bar.enemy, bar.enemyTeam, 'foe'),
+    );
     scoreEl.appendChild(strip);
+  }
+
+  /**
+   * One team's portraits. `side` only decides which way they pack, so the
+   * friendly strip grows away from the centre and the enemy strip toward it —
+   * AR's layout, and the reason your own team is always in the same place.
+   */
+  function portraitRow(
+    portraits: readonly TopbarPortrait[],
+    team: TeamId,
+    side: 'own' | 'foe',
+  ): HTMLElement {
+    const row = document.createElement('div');
+    row.className = `topbar-team ${side}`;
+    for (const p of portraits) {
+      const cell = document.createElement('div');
+      cell.className = p.alive ? 'topbar-portrait' : 'topbar-portrait dead';
+      cell.title = p.alive ? `${p.name} — ${p.hp}/${p.maxHp}` : `${p.name} — down, back in ${p.respawnIn}`;
+
+      const face = document.createElement('div');
+      face.className = 'topbar-face';
+      face.style.borderColor = TEAM_CSS[team];
+      // Down units show the respawn count in place of the initial: "how long
+      // until they are back" is the only thing about a corpse worth knowing,
+      // and it is the number the attrition read turns on.
+      face.textContent = p.alive ? p.initial : String(p.respawnIn);
+      if (p.alive) face.style.background = TEAM_CSS[team];
+      if (p.ultReady) cell.classList.add('ult');
+
+      const bar = document.createElement('div');
+      bar.className = 'topbar-hp';
+      const fill = document.createElement('div');
+      fill.className = 'topbar-hp-fill';
+      fill.style.width = `${p.hpPct}%`;
+      bar.appendChild(fill);
+
+      cell.append(face, bar);
+      row.appendChild(cell);
+    }
+    return row;
+  }
+
+  /** Kills vs target for both teams, with the clock between them. */
+  function scoreBlock(bar: TopbarModel): HTMLElement {
+    const block = document.createElement('div');
+    block.className = 'topbar-score';
+    const own = document.createElement('span');
+    own.className = 'topbar-kills';
+    own.style.color = TEAM_CSS[bar.friendlyTeam];
+    own.textContent = tally(bar.friendlyKills, bar.killTarget).replace(/ \/ .*/, '');
+    const foe = document.createElement('span');
+    foe.className = 'topbar-kills';
+    foe.style.color = TEAM_CSS[bar.enemyTeam];
+    foe.textContent = String(bar.enemyKills);
+    const clockEl = document.createElement('span');
+    clockEl.className = 'topbar-clock';
+    // Sudden death is the one thing here that changes how a turn should be
+    // played, so it replaces the clock rather than sitting beside it. Turn X of
+    // Y stays load-bearing otherwise — it is the clock the Support anti-stall
+    // balance depends on.
+    clockEl.textContent = bar.suddenDeath ? 'SUDDEN DEATH' : clock(bar.turn, bar.turnLimit);
+    const target = document.createElement('span');
+    target.className = 'topbar-target';
+    target.textContent = `first to ${bar.killTarget}`;
+    block.append(own, clockEl, foe, target);
+    return block;
   }
 
   /** A unit's character name, for the scoreboard and the end screen. */
