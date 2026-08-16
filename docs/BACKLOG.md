@@ -15,148 +15,194 @@ them. **`@cards/server` imports `@cards/engine` only, never the client.** **Move
 ## ✅ COMPLETE
 
 - The full local hot-seat game (engine core through SCORE1; AR parity; vision/stealth/camo;
-  DASH-OCCUPIED; PADS-INDICATOR/RENDER-COVERAGE).
-- **M3-ROOM** (PR #47): `packages/server` — a Worker + one Durable Object per room, join-by-code,
-  seat bounds, rules behind a `Sink` seam.
-- **PR #49 (this review):** **TRAP-LIFETIME-TUNE** (Overwatch 3, cap 4), **PREVIEW-DECOY** (a decoy
-  previews like the character it impersonates — client fiction), **AIM-SMOOTH** (`AIM_STEPS 256 →
-  512`, tests parameterised on the constant, reach rule made exact), **CAMO-SEED** (a `?scenario=`
-  dev hook; the e2e was cut as untestable-by-pixel-count — see CAMO-E2E-FINISH), **M3-PROTOCOL**
-  (`mergeSeatOrders`/`deriveSeats` → `packages/engine/src/orders.ts`; the DO merges per-seat →
-  two `PlayerOrders` → `resolveTurn` → broadcast; persistence = state per turn + order history).
+  DASH-OCCUPIED; PADS-INDICATOR/RENDER-COVERAGE; TRAP-LIFETIME-TUNE; PREVIEW-DECOY; AIM-SMOOTH).
+- **M3 so far:** **M3-ROOM** (Worker + DO room), **M3-PROTOCOL** (submit → merge → resolve →
+  broadcast), **M3-HIDDEN** (per-team filtered views — the security boundary), **M3-JOIN-GUARD**
+  (started room refuses joins), **M3-START** (`POST /rooms/:code/start` for short rooms — *interim,
+  unauthenticated; removed at M3-LOBBY / gated at M3-DEPLOY*).
+- **PR #51/#52 dev-note items:** **PADS-SPREAD** (no two pads within Chebyshev 1), **PADS-PASS** (a
+  pad is taken by being on its square at any point in the turn), **BUFF-UI** (a named, counted-down
+  status strip for the active character), and the Designer's **screenshot UI batch spec**
+  (ar-parity §4.1–4.6 — scheduled below).
 
-Current suite: **1136 tests** (engine 612 + client 449 + server 75), typecheck + build clean
+Current suite: **1217 tests** (engine 628 + client 468 + server 121), typecheck + build clean
 (run `npm install` after pulling), purity green.
 
-> **M3 continues, SECURITY FIRST.** The networked build currently broadcasts full state to every
-> seat (the M3-PROTOCOL interim), so it leaks strictly more than the hot-seat until **M3-HIDDEN**
-> lands — that is the top item and **nothing deploys (M3-DEPLOY) before it.** Two small M3 enablers
-> and one render-coverage gap round out the batch. **Do not touch vision** (per-format `visionRange`
-> is superseded by ar-parity §3).
+> **This batch = the owner's screenshot UI batch (priority) + the preview-modifier Dev Note**, then
+> M3 resumes with **M3-LOBBY**. The owner supplied an AR screenshot and two Dev Notes, so the local
+> client's AR-fidelity UI comes first. **Do not touch vision** (per-format `visionRange` superseded
+> by ar-parity §3). Pad rulings (PADS-PASS/SPREAD/knockback) are now folded into edge-cases.
 
 ### Build order and dependencies
 
-**M3-HIDDEN** (the priority) → **M3-JOIN-GUARD** (small, independent) → **M3-START** (small,
-independent) → **CAMO-E2E-FINISH** (small, low). All four are unblocked; M3-HIDDEN is the substance.
-Then the roadmap: **M3-LOBBY → M3-TIMER → M3-RECONNECT → M3-DEPLOY.**
+**STATUS-ICONS** (foundation for the nameplate/inspect icon row) → **UI-NAMEPLATES** → **UI-INSPECT**
+→ **UI-INTENT** → **UI-TOPBAR** → **UI-TIMER** → **PREVIEW-MODIFIERS** → **M3-LOCKLIST** (small
+server). Then **M3-LOBBY** (large) and **CAMO-E2E-FINISH** (low). All the UI items are client and
+anchor to UI-VIEWPORT's overlay (shipped); STATUS-ICONS must precede the two items that draw its
+icons. Realistic one-session cut: the UI batch + PREVIEW-MODIFIERS + M3-LOCKLIST; M3-LOBBY carries.
 
 ---
 
-## M3 — the hidden-information boundary (top priority)
+## Owner UI batch (client — priority; specced by the Designer in ar-parity §4.1–4.6)
 
-### M3-HIDDEN. The DO sends each seat only what its team may see (SERVER) — UNBLOCKED (first)
-**The real golden-rule-#5 security boundary.** Today `turnResolved` broadcasts full state to all
-seats. *AC: during the **Decision phase** the DO sends each seat **only its own team's** orders and
-a **fog-filtered view** (per-team `visibleEnemiesForTeam`/`visibleSquaresForTeam` — hidden enemies
-absent, fogged squares dark); the opposing team's orders/plans are revealed **only after all seats
-lock in or the timer fires**; **teammates see each other's plans** (hidden info is team-vs-team,
-never within a team); the **resolution/playback** broadcast then reveals what happened (acting
-reveals, per the existing rules); a server test asserts a pre-lock-in payload to a team-0 seat
-contains **no team-1 orders and no fogged team-1 positions**, and that post-lock-in reveals them.*
-**Spec Notes.** Files: `packages/server/src/hub.ts` (the broadcast — replace the full-state send
-with a **per-seat, per-team filtered** payload), reusing the engine's vision queries **server-side**
-(never trust a client to filter). Fold in the per-team treatment the hot-seat approximates:
-**traps, previews, last-known ghosts, decoys, and the combat log** all filtered per team. The
-Decision-phase payload must carry teammates' submitted orders but withhold the enemy team's until
-the reveal. **Determinism is the engine's, not the server's** — the DO filters *views*, it does not
-re-simulate. **Required tests beyond AC:** a stealthed/brush-hidden enemy is absent from the
-Decision payload; a teammate's order IS present; the reveal payload after lock-in contains the enemy
-orders. **Out of scope:** the lobby (M3-LOBBY), per-player timing (M3-TIMER — a stub trigger is
-fine), reconnect (M3-RECONNECT). Ruled: hidden info is team-vs-team (edge-cases, Teams & control).
+### STATUS-ICONS. Replace the colour pips with AR's icon vocabulary (CLIENT) — UNBLOCKED (first)
+**Addresses Dev Note: "Look for the Atlas Reactor UI design spec that was just made and be sure to
+account for it."** (ar-parity §4.2; owner: Might = sword, Revealed = eye.) *AC: each drawable status
+renders as a **drawn glyph** (canvas/SVG, no external assets) in its fixed `PIP_ORDER` slot —
+Root=chained boot, Slow=hourglass, Weaken=broken sword, Reveal=eye, Shield=bubble **with the
+remaining amount as a numeral**, Might=sword, Haste=wing, Energized=bolt, Unstoppable=ram,
+Untargetable=ghost, **Stealth=mask rendered to the OWNING team only**; durations render as a small
+numeral on the icon; the floating pips and any HUD strip read the same vocabulary (no divergence).*
+**Spec Notes.** Files: `packages/client/src/status-pips.ts` (extend the pip vocabulary to glyphs;
+keep `PIP_ORDER`/`PIP_COLORS` and BUFF-UI's `statusChips` reading the same source), `renderer3d.ts`
+(draw the glyph textures). Weaken/Might and Root/Haste read as broken/whole pairs on purpose.
+**Stealth's icon is owner-team-only** (an enemy-visible stealth marker is a contradiction). This is
+the foundation for the icon row in UI-NAMEPLATES and UI-INSPECT — build it first. Out of scope:
+per-unit placement (that's UI-NAMEPLATES).
 
-## M3 — small enablers (independent, quick)
+### UI-NAMEPLATES. Overhead name / HP+shield / energy+ULT / status row, vision-gated (CLIENT) — BLOCKED on STATUS-ICONS
+(ar-parity §4.1.) *AC: above every **visible** unit — **name** (character name until M3 gives player
+names); **HP bar with the numeral inside**, shield as a distinct appended segment; **energy as a
+thin bar under HP** with an **"ULT" tag when energy ≥ 100**; the **STATUS-ICONS row** under the bar;
+**vision-gated** — a nameplate renders only while `canSee` holds (own team always; fogged/stealthed
+units show nothing), same rule as PREVIEW-FOG; a **decoy carries a full fake nameplate** (name,
+frozen cast-time HP, empty status row — see the decoy snapshot ruling). A client test asserts a
+fogged enemy shows no nameplate and a decoy shows a Wisp nameplate with an empty status row.*
+**Spec Notes.** Files: `app.ts`/`renderer3d.ts` (billboarded nameplates anchored to units),
+`fog.ts` (the visible-unit set + the decoy snapshot fields). **Never a better scout than vision** —
+consume `canSee`/`FogView`; derive nothing. Ruled in edge-cases (decoy snapshot carries nameplate
+fields). Out of scope: player names (M3); last-known ghost nameplates (a ghost is DECOY-RENDER/
+LAST-KNOWN's own render).
 
-### M3-JOIN-GUARD. A started room refuses fresh joins (SERVER) — UNBLOCKED
-**Addresses Builder OQ 2026-08-16 #4.** A post-start joiner gets an empty control map and still
-counts toward the lock total, so the turn can never complete. *AC: a `join` to a **started** room is
-**refused** (a clear error, not a silent drop); the lock total counts only seated-and-controlling
-players; a freed seat (from a disconnect) is **held for its original occupant to reclaim via
-M3-RECONNECT**, never handed to a new socket; a server test drives join-after-start → refused, and
-that the lock total is unaffected by a refused socket.*
-**Spec Notes.** Files: `packages/server/src/room.ts` (the `join` path — a `started` guard). This is
-the guard half; the **reclaim** half is M3-RECONNECT (identity-matched re-attach). Spectators are
-out of scope v1 (recorded in edge-cases as the future option). Ruled in edge-cases (started room
-refuses joins). Out of scope: reconnect itself.
+### UI-INSPECT. Hover any visible unit for its cooldowns / catalysts / statuses (CLIENT) — BLOCKED on STATUS-ICONS
+**Addresses owner directive (ar-parity §4.3): "Player can see cooldowns of other characters and the
+buffs/debuffs/energy/hp status when they have vision of the character."** *AC: hover (or click-hold)
+a **visible** unit → a panel with its five ability slots + **current cooldown numbers**, ult charge,
+**catalysts remaining vs spent** (spent greyed), and active statuses with durations; **own team
+always inspectable, enemies only while `canSee`** (fog/Stealth hide the panel); a **decoy shows
+Wisp's kit at the cast snapshot** (cooldowns frozen), never live data and never a refusal; **zero
+engine change** (reads state the client already holds). A client test asserts a fogged enemy is not
+inspectable and a decoy shows cast-time cooldowns.*
+**Spec Notes.** Files: `app.ts`/`hud.ts` (the inspect panel), reusing STATUS-ICONS. Same vision gate
+as nameplates. Ruled in edge-cases (decoy snapshot). Out of scope: last-known inspect data (no ghost
+kit in v1).
 
-### M3-START. A "start now" message for short rooms (SERVER + minimal CLIENT) — UNBLOCKED
-**Addresses Builder OQ 2026-08-16 #3.** The auto-start trigger is a **full** room (correct), so a
-deliberately short 2-player 2v2 can't start over the network. `RoomHub.start()` is already public.
-*AC: a **"start" protocol message** invokes `RoomHub.start()` for a room that has at least the
-format's minimum players; a match started this way seats present players and deals characters
-deterministically (the M3-PROTOCOL interim deal); a server test drives a 2-player 2v2 → start
-message → match begins; a minimal client control (or dev affordance) sends it.*
-**Spec Notes.** Files: `packages/server/src/hub.ts` (handle the `start` message), a minimal client
-send. This exists so **M3-HIDDEN is exercisable on a 2-player room** before M3-LOBBY. M3-LOBBY's
-start button will call the same path. Ruled in edge-cases (start escape hatch). Out of scope: the
-full lobby / character selection (M3-LOBBY).
+### UI-INTENT. Teammates' queued plans on the board (CLIENT) — UNBLOCKED
+(ar-parity §4.6; closes the ruled-but-invisible "Teammate information".) *AC: during Decision, above
+each **allied** unit: the queued ability's **slot number** (plus a free-action/catalyst marker when
+declared) and a **lock-state tick** once that seat locks in; enemies show nothing (hidden info is
+team-vs-team); a client test asserts an ally's queued slot shows and an enemy's does not.*
+**Spec Notes.** Files: `app.ts`/`renderer3d.ts`. In the hot-seat this reads the other seat's draft;
+over the network it reads the Decision payload's own-team lock/plan info (which M3-LOCKLIST keeps
+per-seat for own team). Out of scope: showing the enemy's plan (never).
 
-## Render coverage (small, low)
+### UI-TOPBAR. The match strip: portraits · score · turn (CLIENT) — UNBLOCKED (extends SCORE1)
+(ar-parity §4.4.) *AC: a top overlay strip — **friendly portraits · team score · turn number ·
+enemy score · enemy portraits**; each portrait carries a mini HP bar and a dead/respawn-count state;
+centre shows **kills vs target for both teams with the turn counter between them** (Turn X of Y);
+verified on-screen at both map sizes (UI-VIEWPORT overlay).*
+**Spec Notes.** Files: `app.ts`/`hud.ts` (or a `scoreboard.ts` extension from SCORE1). Reads engine
+state + SCORE1's folds; no engine change. Out of scope: the end-of-match breakdown (SCORE1 already).
 
-### CAMO-E2E-FINISH. Make the camo red tile composited-testable (CLIENT e2e) — UNBLOCKED (low)
-**Addresses Builder OQ 2026-08-16 #1.** The CAMO-SEED e2e was cut because `isCamoRed` can't separate
-a lit thicket (~`158,45,37`) from a shaded red unit (~`179,78,70`) by pixel-counting. *AC: the
-`?scenario=in-brush` seed **reports the squares it placed** (echo into the setup title attribute or
-a dev-only `window` global); the e2e drives the seeded unit to act and asserts the **camo red tile**
-via `pixelAt` on the known camo square (not a frame-wide count); the hook stays dev-only.*
-**Spec Notes.** Files: `main.ts`/`app.ts` (the seed reports positions), `e2e/render.spec.ts` +
-`pixels.ts` (`pixelAt` the reported square). Small. The *rule* is already unit-covered
-(`camo-reveal.test.ts`); this proves the *compositing*. **Alternative accepted:** if reporting the
-squares is more than trivial, close this as unit-covered-only — the Builder's call, stated in the
-commit. Out of scope: general scenario scripting.
+### UI-TIMER. Countdown with urgency + Time Bank pip (CLIENT) — UNBLOCKED (extends TIMER-40)
+(ar-parity §4.5.) *AC: a countdown beside LOCK IN — **whole seconds above 10 s, tenths + a colour
+shift below 10 s**; the **Time Bank rendered as one pip** (we have 1 charge); the +10 s extension
+**animates visibly** when it fires (never silent); counts from `DECISION_SECONDS` (40).*
+**Spec Notes.** Files: `hud.ts`/`app.ts`. Presentation only (the timer value is `TIMER-40`'s
+constant; server-authoritative timing is M3-TIMER). Out of scope: per-player networked timing.
+
+### PREVIEW-MODIFIERS. The damage preview accounts for Might/Weaken/cover (CLIENT + engine export) — UNBLOCKED
+**Addresses Dev Note: "Should account for Might + Cover + Weakness."** *AC: a damage preview number
+(PREVIEW-NUMBERS + the decoy/nameplate previews) shows the **post-modifier** damage — the attacker's
+**current Might/Weaken** applied, then **cover** reduction if the target is behind cover from the
+attacker — computed by **reusing the engine's `computeDamage`/`isBehindCover`** (not reinvented); a
+Might'd attacker's preview is higher, a Weakened one lower, a target-in-cover shows the reduced
+number, each matching a direct `computeDamage` call; a status **applied this turn** (Adrenaline at
+Blast start) is NOT predicted — the preview reflects current state.*
+**Spec Notes.** Files: `packages/client/src/preview-numbers.ts`; export `computeDamage`/
+`isBehindCover` from `@cards/engine` if not already (pure — correct surface-widening, like
+`orders.ts`). **Shields flagged, not required** — the owner named Might/Cover/Weaken; keep the number
+the post-cover damage for v1 (the nameplate shows the shield pool separately). Ruled in edge-cases
+(preview accounts for Might/Weaken/cover). Out of scope: engine damage rules (unchanged); predicting
+post-lock statuses.
+
+## M3 — small fix + the lobby
+
+### M3-LOCKLIST. Enemy lock state → a count, not seat ids (SERVER) — UNBLOCKED (small)
+**Addresses Builder OQ 2026-08-16 third #4.** *AC: a Decision payload keeps **own-team** lock state
+per-seat (UI-INTENT needs it) but reports the **enemy team's readiness as a bare locked-count**, not
+seat ids; the M3-HIDDEN test that excludes enemy fields still passes and a new test asserts no enemy
+seat id appears in a pre-reveal payload.*
+**Spec Notes.** Files: `packages/server/src/hub.ts` (the `decision` payload shape). Do it **before**
+M3-LOBBY builds a waiting UI on the richer shape. Ruled in edge-cases (Decision payload lock list).
+
+### M3-LOBBY. Map/format/catalyst/character selection + team-seat + R3 + the network client (SERVER + CLIENT) — UNBLOCKED (large)
+*AC: a lobby picks map + format + each player's catalyst triad + character, seats players, enforces
+**R3 duplicate-pick** (unique within a team, mirrors legal); its start button calls `RoomHub.start()`
+and **deletes the temporary `POST /rooms/:code/start` route**; supersedes MAPTOGGLE and M3-START's
+interim; replaces M3-PROTOCOL's deterministic deal with player picks; **the client consumes a
+`decision` and a filtered `turnResolved` over the socket** — proving M3-HIDDEN end-to-end (Builder
+OQ #7).* Folds in per-character catalyst selection + the Shift-landing preview.
+**Spec Notes.** The first item to build the **network client** (socket layer) — until now the client
+is hot-seat only and has never consumed M3-HIDDEN's payloads (chosen to be a `GameState` with things
+missing, so it reads with the existing renderer). Large; may span sessions. Out of scope: reconnect
+(M3-RECONNECT), server-authoritative timing (M3-TIMER).
+
+### CAMO-E2E-FINISH. Composited proof of the camo red tile (CLIENT e2e) — UNBLOCKED (low)
+**Re-specced per Builder OQ 2026-08-16 third #1** (the `pixelAt` technique can't work — no
+board→pixel map in the e2e). *AC: `findPixels(before, isBrushGreen)` captures the brush coords;
+drive the `?scenario=in-brush` unit to **attack from inside brush**; assert a meaningful number of
+**those same coordinates** now match `isCamoRed` (a before/after delta at fixed coords — dodges both
+the projection and the counting problem).*
+**Spec Notes.** Files: `e2e/render.spec.ts` + `pixels.ts`. **Not "small"** — a multi-turn browser
+drive that gets a unit attacking from brush. Low priority; the *rule* is unit-covered
+(`camo-reveal.test.ts`), only the compositing is unproven.
 
 ## M3 — the rest of the roadmap (blocked in sequence)
 
-### M3-LOBBY. Map/format/catalyst/character selection + team-seat + R3 (SERVER + CLIENT) — BLOCKED on M3-HIDDEN
-*AC: a lobby picks map + format + each player's catalyst triad + character, seats players, enforces
-**R3 duplicate-pick** (unique within a team, mirrors legal), and its start button calls
-`RoomHub.start()`; supersedes MAPTOGGLE and M3-START's interim; replaces M3-PROTOCOL's deterministic
-deal with player picks.* Folds in per-character catalyst selection + the Shift-landing preview.
-
-### M3-TIMER. Server-authoritative per-player timer + Time Bank (SERVER + CLIENT) — BLOCKED on M3-HIDDEN
+### M3-TIMER. Server-authoritative per-player timer + Time Bank (SERVER + CLIENT) — BLOCKED on M3-LOBBY
 *AC: the DO enforces each player's `DECISION_SECONDS` (40) deadline; a missed submission resolves as
-**hold-position** (settle the OPEN partial-disconnect ruling at build — current lean: hold, then a
-teammate gains the abandoned characters after one fully missed turn); Time Bank (1× +10 s) extends
-only that player's deadline; the client shows the countdown.*
+**hold-position** (settle the OPEN partial-disconnect ruling at build — lean: hold, then a teammate
+gains the abandoned characters after one fully missed turn); Time Bank (1× +10 s) extends only that
+player's deadline; the client shows UI-TIMER's countdown driven by the server clock.*
 
-### M3-RECONNECT. Rejoin by code + reclaim a held seat + replay to current (SERVER + CLIENT) — BLOCKED on M3-JOIN-GUARD
+### M3-RECONNECT. Rejoin by code + reclaim a held seat + replay to current (SERVER + CLIENT) — BLOCKED on M3-LOBBY
 *AC: a dropped browser rejoins by room code, **reclaims its original seat** (identity-matched — the
-seat M3-JOIN-GUARD reserved) with its control map intact, and the DO re-syncs it to the current turn
+seat M3-JOIN-GUARD reserves) with its control map intact, and the DO re-syncs it to the current turn
 from stored state (not a re-simulation).*
 
-### M3-DEPLOY. Wrangler deploy workflow + Pages integration + first real-runtime smoke (CI) — BLOCKED on M3-HIDDEN
-*AC: a `wrangler deploy` path (workflow per ARCHITECTURE §110); the client points at the deployed
-Worker; core-CI/Pages gates still hold; a `wrangler dev`/miniflare **smoke check** proves the Worker
-boots for real (the first real-runtime proof — Builder OQ #6).* **BLOCKED on M3-HIDDEN — do not
-deploy a build that broadcasts full state.** **Needs owner infra decisions (account, route) —
-coordinate before building.**
+### M3-DEPLOY. Wrangler deploy + Pages integration + first real-runtime smoke (CI) — BLOCKED on M3-LOBBY
+*AC: a `wrangler deploy` path (ARCHITECTURE §110); the client points at the deployed Worker;
+core-CI/Pages gates hold; a `wrangler dev`/miniflare **smoke check** proves the Worker boots for real
+(Builder OQ #6); **the `POST /rooms/:code/start` route is gone or gated** (M3-START #5).* **Needs
+owner infra decisions (account, route) — coordinate before building.**
 
 ## Routed to Designer (data / balance — not Builder build items)
 
-- **Pad placement + timings** — Builder placeholders (`firstTurn: 2, everyTurns: 4`, mirrored
-  pairs); Designer owns squares/timings (mirror guard keeps retuning safe). **Pad COLOURS are
-  coupled to the render e2e** (`isPadTeal`/`isTeamBlue` clamp) — squares/timings free to retune,
-  colours are not without moving those predicates.
+- **Pad placement + timings** — Builder re-laid both maps' pads as mirrored singles only to satisfy
+  PADS-SPREAD (`duel-arena` now stacks all six in the two central columns) — satisfies the rule and
+  the mirror guard "and nothing else." **Designer owns real placement** (lanes, sightlines, which
+  pad is worth contesting). **Pad COLOURS are coupled to the render e2e** (`isPadTeal`/`isTeamBlue`
+  clamp) — squares/timings free, colours are not without moving those predicates.
 
 ## Flags (optional / playtest-gated — not scheduled)
 
-- **AIM-SMOOTH angle-uniform direction table** (Builder OQ #2) — `AIM_STEPS = 512` shipped; the
-  diamond≠angle unevenness is subtle. Precomputed integer direction table is the fix **only if the
-  owner still feels it in playtest** — a playtest question, not scheduled.
-- `killerUnitId` on `death`, `gameEnd` event, Might/Weaken vs over-time tick (ruled off),
-  CAT-DASH-FULL vs one-free-action — unchanged, not scheduled.
+- **PREVIEW-MODIFIERS shields** — showing HP-loss-after-shield is a natural extension; the owner
+  named Might/Cover/Weaken, so v1 shows post-cover damage only. Fold in if playtest wants it.
+- **Pad contest feel** (a charge steals a pad from a closer walker — Builder OQ #8), **AIM-SMOOTH
+  angle-uniform table** (only if 512 falls short), `killerUnitId`/`gameEnd` events, Might/Weaken vs
+  over-time (ruled off), CAT-DASH-FULL vs one-free-action — unchanged, not scheduled.
 
 ## Deferred — do NOT schedule
 
 - **A4** per-ability FX — blocked on M3 + roster lock (revisit after M3-LOBBY).
-- **Spectators** (watchers on a started room) — future option, out of scope v1 (edge-cases).
-- **CL1/CL2/E2**, **flat `energy` effect kind**, **vision metric change**, **tunable cone angle**,
-  **optimistic move validation**, **`vulnerable`**, **Echo Boost / Chronosurge / Critical Shot /
-  Regroup catalysts** — not scheduled.
+- **Spectators**, **CL1/CL2/E2**, **flat `energy` effect kind**, **vision metric change**, **tunable
+  cone angle**, **optimistic move validation**, **`vulnerable`**, **Echo Boost / Chronosurge /
+  Critical Shot / Regroup catalysts** — not scheduled.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **Aim-rotation angular evenness** (AIM-SMOOTH follow-up if 512 falls short — get owner feel first).
-- **Pad centre-line contest**, **DoT/HoT vs Might/Weaken** (ruled off; watch), **chase prediction
-  tell**, **8-tile melee cones**, **Fade now full-action**, **catalyst hoarding**, **Kestrel**
-  untested via MAPTOGGLE, **turn-1 spawn margin one tile**, **vision Manhattan diamond**
-  (owner-approved).
+- **Pad centre-line contest & Dash-beats-Move**, **DoT/HoT vs Might/Weaken** (ruled off),
+  **chase prediction tell**, **8-tile melee cones**, **Fade full-action**, **catalyst hoarding**,
+  **Kestrel** untested via MAPTOGGLE, **turn-1 spawn margin one tile**, **vision Manhattan diamond**
+  (owner-approved), **aim-rotation angular evenness**.

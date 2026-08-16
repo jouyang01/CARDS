@@ -256,6 +256,37 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     (Builder OQ 2026-09-02 #6/decision 6, ratified).** A well-formed client sends one or the other;
     the chase is the more specific statement of intent, exactly as a dash supersedes a walk. The
     client enforces the same in `nextDraft`, so the two never disagree.
+- **RULED — Power-up pads: settlement, PADS-PASS pickup, PADS-SPREAD placement, and the
+  trap-vs-pad difference (PADS1 + owner Dev Notes 2026-08-16; folding in Builder decisions 7–10).**
+  A pad grants its effect once, **settled at a single fixed point at the end of Move** — after the
+  chasers and the decoy sweep — so the last mover can contest it. The rules the PADS1 line
+  understated:
+  - **PADS-PASS — a pad is taken by being on its square at ANY point in the turn (owner Dev Note:
+    "When passing through a powerup through any movement, it should be taken, you do not need to
+    land on the square to grab it").** This **supersedes** the earlier "resolves on occupancy, not
+    on travel" (a Builder call, not the owner's). Eligibility is *travel*, but the **settlement
+    point is unchanged** (end of Move, after the dying) — a charger who crossed a Health pad in Dash
+    and died in Blast takes nothing. Eligibility is read off the turn's own `TurnEvent[]` (each
+    `moveStep`'s `to`; a `displaced` slide walks its whole line).
+  - **Contest tie-break — earliest claim wins, by event order.** Two units crossing one pad in a
+    turn (now possible under PADS-PASS) resolve to the **first to set foot on it** (event index;
+    phase order, then the shared Move step-clock), so a **Dash beats a Move** for the same reason
+    Dash resolves before Move; a unit already standing on it when the turn began claims at index −1.
+    Deterministic. *(Playtest feel flag: a charge reliably steals a pad from a closer walker —
+    Builder OQ 2026-08-16 third #8.)*
+  - **A teleport over a pad takes nothing** — it occupies no square in between; "passing through"
+    means passing through.
+  - **Knockback COUNTS as movement for a pad, though it does NOT for a trap (owner "any
+    movement").** A unit dragged across a pad was on the pad → it takes it. This deliberately
+    **differs from the trap rule** one paragraph up (a trap triggers on *entry under a unit's own
+    power*; a shove onto a trap does not trigger it): a trap is something you **walk into**, a pad
+    is something you **are on**. The difference is intentional, not an oversight.
+  - **PADS-SPREAD — no two pads within Chebyshev 1 (owner Dev Note: "Powerups should not be next to
+    each other").** `validateMap` rejects any pad pair with `max(|dx|,|dy|) ≤ 1` (diagonals
+    included). Two touching pads are one double prize taken by standing between them (and, under
+    PADS-PASS, swept by walking the line) — the detour a pad is meant to cost vanishes. This is a
+    **floor, not a placement policy**: how far beyond touching, and which squares, is the Designer's
+    (routed). Both maps' placeholder pads were re-laid as mirrored singles to satisfy it.
 - **RULED — Walked dash vs teleport; `shape` is the authority (R4, updated 2026-08-19).**
   Two dash models, distinguished by `shape` — and `shape` alone decides *how* a reposition
   happens; a `teleport` **effect** only says *that* the caster repositions (which makes it a
@@ -368,6 +399,31 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   gate fog uses). You may still *aim into* fog (free-aim stands); you just do not get told what is
   standing there. Hot-seat is not the security boundary (M3 is), but the leak is avoidable now and
   the rule is the right one to carry into M3.
+- **RULED — A damage preview accounts for Might, Weaken and Cover — not the nominal amount (owner
+  Dev Note 2026-08-16, "Should account for Might + Cover + Weakness"; backlog PREVIEW-MODIFIERS —
+  client + a small engine export).** PREVIEW-NUMBERS (and the decoy preview, and any per-unit
+  damage hint) currently shows the ability's **nominal** effect amount; the owner wants it to show
+  what the hit would **actually deal** given the modifiers knowable at plan time. Compute the
+  previewed damage through the **ruled composition** (edge-cases: outgoing **Might/Weaken** →
+  **cover** reduction → shields → HP) by **reusing the engine's own `computeDamage` /
+  `isBehindCover`** — the client must not reinvent the math, or the preview and the resolution can
+  disagree. Scope and limits:
+  - **Attacker's Might/Weaken:** apply the attacker's *currently-active* statuses (always known —
+    the attacker is an own unit). **Cover:** apply `isBehindCover` for the attacker→target line
+    (pure geometry, knowable at plan time).
+  - **Plan-time honesty:** a status **applied this turn cannot be known** — Adrenaline (Might)
+    resolves at the *start* of Blast, after lock-in — so the preview reflects **current** state,
+    not this-turn buffs. That is correct and the same limitation PREVIEW-FOG lives with; do not try
+    to predict post-lock statuses.
+  - **Shields:** the owner named Might/Cover/Weaken, not shields — showing HP-loss-after-shield is a
+    natural extension (the nameplate already shows the shield pool), **flagged** not required this
+    item. Keep the number the post-cover damage for v1.
+  - **Engine export:** if `computeDamage`/`isBehindCover` are not already exported from
+    `@cards/engine`, export them (pure functions — a correct surface-widening, like `orders.ts`),
+    so client and server share one damage truth. Ships with a client test: a Might'd attacker's
+    preview is higher, a Weakened one lower, and a target in cover shows the reduced number, each
+    matching a direct `computeDamage` call. **Out of scope:** engine damage rules (unchanged); this
+    is the *preview* catching up to them.
 - **RULED — A placed trap is drawn on the ground for whoever may see it (TRAP-INDICATOR; owner
   directive 2026-08-29, "Traps need an indicator on the ground for the team or teams who can see
   it"; backlog TRAP-INDICATOR — CLIENT).** Traps are placed in Prep and currently have **no board
@@ -758,6 +814,16 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     does not make the decoy mechanically real. Ships with a client test: an enemy damage/heal/shield
     ability aimed over a decoy shows the coloured number; a decoy in the viewer's fog shows none
     (same vision gate as PREVIEW-FOG). Out of scope: any engine change to decoy mechanics.
+  - **RULED — the decoy snapshot carries the NAMEPLATE + INSPECT fields (Designer screenshot UI
+    batch 2026-08-16; backlog UI-NAMEPLATES/UI-INSPECT).** Once nameplates and inspect panels are
+    gated on `canSee` (see "Rendering contract"/UI batch), a decoy rendered as Wisp with **no**
+    nameplate — or one that refuses inspection, or shows live data — un-disguises itself instantly.
+    So the decoy's snapshot includes the fake nameplate fields (name = Wisp, **frozen cast-time
+    HP**, an **empty status row** — real statuses would leak Wisp's buffs) and answers inspection
+    with Wisp's kit at **cast-time cooldowns**, never live. Same principle as PREVIEW-DECOY and
+    PREVIEW-FOG: the UI must never be a better scout than the vision rules allow. Client-only; the
+    engine decoy shape (`{id, teamId, pos, expiresOnTurn}`) is unchanged — the snapshot fields are
+    derived by the client from the cast, not stored on the engine decoy.
   - **Playtest lever:** if Wisp is oppressive, shorten the lifetime (cast turn only), not the
     destruction rule.
 
@@ -875,6 +941,22 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   a minimal **"start now" protocol message** (backlog M3-START) lets such a room begin over the
   network before M3-LOBBY exists. Until M3-START/M3-LOBBY, the networked game is effectively
   full-room-only; M3-LOBBY's start button calls the same `start()`.
+- **RULED — the Decision payload shares WHO has locked in, but as a COUNT for the enemy team, not
+  seat ids (M3-HIDDEN; Builder OQ 2026-08-16 third #4, refined).** A client must know what it is
+  waiting for, so a Decision payload names the lock state — but the resolution splits by team:
+  **own-team lock state is per-seat** (a teammate's lock tick is exactly what UI-INTENT needs);
+  **the enemy team's readiness is a bare locked-count** ("2/2 enemies locked"), **never enemy seat
+  ids**. Who is *ready* is not who is *doing what* (no plan leaks either way), but a seat id is the
+  one identity that need not appear in a pre-reveal payload, and dropping it to a count costs the
+  client nothing (it can still show a waiting state). The Builder shipped per-seat ids for both
+  teams and asked; **ruled to count-only for enemies** — change it now, before M3-LOBBY builds a
+  waiting UI on the richer shape. Own-team stays per-seat.
+- **RULED — the temporary `POST /rooms/:code/start` route is removed at M3-LOBBY or gated at
+  M3-DEPLOY (M3-START; Builder OQ 2026-08-16 third #5).** M3-START's start-a-short-room affordance
+  is an **unauthenticated** HTTP route — fine for a local dev build, **not** fine deployed (anyone
+  with a room code can start that room). It is not access control. **M3-LOBBY deletes the route**
+  when its start button lands; if it somehow outlives the lobby, **M3-DEPLOY must gate or remove
+  it** before any deploy. Recorded in both items' ACs.
 
 ## Economy & timing
 
