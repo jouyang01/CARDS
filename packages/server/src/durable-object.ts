@@ -83,6 +83,19 @@ export class RoomDurableObject {
       return Response.json(this.#hub.room);
     }
 
+    // M3-START's dev affordance. The in-match `start` message is the real path
+    // and M3-LOBBY's button will send it, but the client has no socket layer
+    // yet — so until it does, a short room is startable with one HTTP call
+    // (`POST /rooms/WXYZ/start`) and M3-HIDDEN becomes exercisable on two
+    // players instead of four. `start()` is a no-op on a room that cannot
+    // start, hence the room record as the answer: the caller reads back
+    // whether it took.
+    if (url.pathname === '/start') {
+      this.#hub.start();
+      await this.#persist();
+      return Response.json(this.#hub.room);
+    }
+
     if (url.pathname !== '/ws') return new Response('not found', { status: 404 });
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('expected a websocket upgrade', { status: 426 });

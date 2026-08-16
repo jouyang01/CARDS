@@ -46,6 +46,12 @@ export type ClientMessage =
    * received, and the only thing anybody can do after submitting is wait.
    */
   | { type: 'submit'; orders: UnitOrders[] }
+  /**
+   * Start a short room now (M3-START). The auto-trigger is a **full** room,
+   * which a deliberately two-player 2v2 never becomes; this is the escape hatch,
+   * and the message M3-LOBBY's start button will send.
+   */
+  | { type: 'start' }
   /** A liveness probe the client can send; the server answers `pong`. */
   | { type: 'ping' };
 
@@ -63,7 +69,9 @@ export type ErrorCode =
   /** Ordered a character this seat does not control. */
   | 'notYours'
   /** Joined a room whose match has already begun (M3-JOIN-GUARD). */
-  | 'inProgress';
+  | 'inProgress'
+  /** Asked to start a room that cannot start yet, or has already started. */
+  | 'cannotStart';
 
 /** Server → client. */
 export type ServerMessage =
@@ -129,6 +137,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   if (typeof parsed !== 'object' || parsed === null) return undefined;
   const msg = parsed as Record<string, unknown>;
   if (msg['type'] === 'ping') return { type: 'ping' };
+  if (msg['type'] === 'start') return { type: 'start' };
   // Orders go straight to the engine's own validation, which drops any illegal
   // component deterministically (`planUnit`). What this checks is only that the
   // frame *is* a submission — re-implementing order legality here would be a
@@ -163,6 +172,7 @@ export const ERROR_TEXT: Record<ErrorCode, string> = {
   alreadyLocked: 'this seat has already locked in this turn',
   notYours: 'that character belongs to another seat',
   inProgress: 'this match has already started',
+  cannotStart: 'this room cannot start yet',
 };
 
 export const errorMessage = (code: ErrorCode): ServerMessage =>

@@ -17,10 +17,11 @@
  * resolves; it never decides *what* a turn does.
  *
  * M3-HIDDEN makes every outgoing match payload **per-seat**. There is no
- * `broadcast(state)` left: `#sendMatch` builds a separate, team-filtered message
- * for each seat, and the filtering lives in `view.ts` where it can be read as
- * one rule rather than found in five call sites. That is deliberate — the moment
- * one shared payload exists again, somebody will put a position in it.
+ * `broadcast(state)` left: `start`, `#sendDecision` and `resolveNow` each build
+ * a separate, team-filtered message per seat, and the filtering itself lives in
+ * `view.ts` where it can be read as one rule rather than found in three call
+ * sites. That is deliberate — the moment one shared payload exists again,
+ * somebody will put a position in it.
  */
 
 import type { CatalystPool, CharacterDef, MapDef, Roster, UnitOrders } from '@cards/engine';
@@ -114,6 +115,18 @@ export class RoomHub {
     }
 
     if (msg.type === 'submit') return this.#receiveSubmit(seatId, msg.orders);
+
+    if (msg.type === 'start') {
+      // M3-START. Refused rather than ignored when it cannot take: a start
+      // button that silently does nothing is the worst of the two failures.
+      // Only a seated player may press it — a socket that never joined is not
+      // in the room and has no standing to decide the room is ready.
+      if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
+      if (this.#room.state !== undefined || !canStart(this.#room)) {
+        return this.#send(seatId, errorMessage('cannotStart'));
+      }
+      return this.start();
+    }
 
     if (msg.version !== PROTOCOL_VERSION) {
       // A stale tab after a deploy is the normal case for this, so it closes
