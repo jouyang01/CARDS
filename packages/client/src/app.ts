@@ -79,6 +79,7 @@ import { statusChips, statusPips, viewableStatuses } from './status-pips.js';
 import {
   decoyNameplate, snapshotDecoy, unitNameplate, type DecoySnapshot,
 } from './nameplates.js';
+import { inspectDecoy, inspectUnit } from './inspect.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
   clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
@@ -395,6 +396,9 @@ export function startHotSeat(
   globalThis.addEventListener('resize', () => { sizeToViewport(); fitCamera(); });
   ui.board.addEventListener('click', onBoardClick);
   ui.board.addEventListener('mousemove', onBoardHover);
+  // Leaving the board closes the panel: it is anchored to the pointer, so a
+  // panel left behind would sit over the HUD pointing at nothing.
+  ui.board.addEventListener('mouseleave', () => hud.inspect(undefined));
 
   // UI6: the right-side combat log accumulates for the whole match. It is a
   // pure `TurnEvent[]` consumer — same contract as playback.
@@ -1213,11 +1217,50 @@ export function startHotSeat(
    * committed order is left alone.
    */
   function onBoardHover(evt: MouseEvent): void {
+    const square = renderer.squareFromPoint(evt.clientX, evt.clientY);
+    // UI-INSPECT runs whether or not an action is armed, and before the
+    // early-returns below: inspecting is reading, not planning, and a player
+    // with nothing selected is exactly the player asking "what is that".
+    showInspect(square, evt.clientX, evt.clientY);
     if (selectedUnit() === undefined) return;
-    const next = hoverBoard(interaction, renderer.squareFromPoint(evt.clientX, evt.clientY));
+    const next = hoverBoard(interaction, square);
     if (next === undefined) return; // same tile, or nothing armed: no repaint
     interaction = next;
     renderPreviews();
+  }
+
+  /**
+   * UI-INSPECT — the panel for whatever is under the pointer, or nothing.
+   *
+   * The vision gate is **structural**: the candidates are the units and decoys
+   * `fogView` already handed the renderer, so a fogged or stealthed enemy is not
+   * in the list to be found. There is no visibility branch here that could be
+   * written the wrong way round, which is the only way to be sure the most
+   * detailed panel on screen never becomes the leak.
+   */
+  function showInspect(square: Vec2 | undefined, x: number, y: number): void {
+    if (square === undefined) return hud.inspect(undefined);
+    const viewer = currentSeat()?.team ?? 0;
+    const view = currentFog(viewer);
+
+    const unit = view.units.find((u) => u.alive && u.pos.x === square.x && u.pos.y === square.y);
+    if (unit !== undefined) {
+      return hud.inspect(inspectUnit(unit, roster, catalysts, viewer), { x, y });
+    }
+
+    // A decoy answers inspection **as the character it is pretending to be**,
+    // from the cast snapshot. Never live and never a refusal: "this one won't
+    // open" is a perfect tell, and the louder of the two ways to be outed.
+    const decoy = view.decoys.find((d) => d.pos.x === square.x && d.pos.y === square.y);
+    if (decoy !== undefined && decoy.asEnemy) {
+      const snapshot = decoySnapshots.get(decoy.id) ?? snapshotDecoy(state.units, roster, decoy.owner);
+      const panel = snapshot === undefined
+        ? undefined
+        : inspectDecoy(snapshot, roster, catalysts, decoy.owner);
+      return hud.inspect(panel, { x, y });
+    }
+
+    hud.inspect(undefined);
   }
 
   // ── Turn resolution + playback ───────────────────────────────────────────────

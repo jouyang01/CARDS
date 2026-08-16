@@ -122,6 +122,34 @@
       .hud-status-amount { opacity: 0.85; font-variant-numeric: tabular-nums; }
       .hud-status-turns { opacity: 0.55; font-variant-numeric: tabular-nums; }
 
+      /* UI-INSPECT: the hover panel. Fixed to the viewport like the tooltip,
+         above the HUD but never capturing the pointer — it follows the mouse,
+         so a panel that could be hovered would chase itself off the unit. */
+      .inspect { position: fixed; z-index: 7; pointer-events: none;
+        min-width: 178px; max-width: 240px; padding: 8px 10px 9px;
+        border-radius: 8px; border: 1px solid #2b3140; border-left: 3px solid #4f8cff;
+        background: rgb(12 14 19 / 0.96); font-size: 11px; line-height: 1.45;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.5); }
+      .inspect.t1 { border-left-color: #ff6b5e; }
+      .inspect-name { font-size: 13px; font-weight: 700; }
+      .inspect-role { font-size: 9px; opacity: 0.55; text-transform: uppercase; letter-spacing: 1px; }
+      .inspect-vitals { display: flex; justify-content: space-between; gap: 10px;
+        margin: 5px 0 6px; font-variant-numeric: tabular-nums; }
+      .inspect-hp { color: #5ad17f; }
+      .inspect-energy { color: #e0c04f; opacity: 0.8; }
+      .inspect-energy.ult { opacity: 1; font-weight: 700; color: #ffd76a; }
+      .inspect-slot { display: flex; justify-content: space-between; gap: 10px; }
+      .inspect-slot.ult .inspect-slot-name { color: #c4aef0; }
+      .inspect-slot.down { opacity: 0.45; }
+      .inspect-slot-note { opacity: 0.6; font-variant-numeric: tabular-nums; }
+      .inspect-catalysts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+      .inspect-catalyst { font-size: 9px; padding: 1px 5px; border-radius: 3px;
+        background: rgb(255 255 255 / 0.08); }
+      /* Spent slots go grey rather than vanishing: "what have they already
+         burned" is half the read, and an empty row cannot answer it. */
+      .inspect-catalyst.spent { opacity: 0.38; text-decoration: line-through; }
+      .inspect-statuses { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
       .hud-switcher { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 2px; }
       .hud-chip { font-size: 11px; padding: 3px 8px; }
 

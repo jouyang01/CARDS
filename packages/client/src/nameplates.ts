@@ -91,12 +91,25 @@ export function decoyNameplate(snapshot: DecoySnapshot): Nameplate {
   };
 }
 
-/** What the client remembers about a decoy from the moment it was cast. */
+/**
+ * What the client remembers about a decoy from the moment it was cast.
+ *
+ * Enough for the nameplate **and** the inspect panel (UI-INSPECT), because the
+ * two lies have to agree: a plate saying 60 HP over a panel saying 80 outs the
+ * decoy more thoroughly than having neither would. So the snapshot is the whole
+ * cast-time reading, taken once.
+ */
 export interface DecoySnapshot {
   name: string;
+  /** The impersonated character, so the panel can show its kit. */
+  characterId: string;
   hp: number;
   maxHp: number;
   energy: number;
+  /** Cooldowns frozen at the cast — never the real caster's live numbers. */
+  cooldowns: Record<string, number>;
+  catalysts: string[];
+  catalystsUsed: string[];
 }
 
 /**
@@ -138,9 +151,13 @@ export function snapshotDecoy(
   if (caster === undefined) return undefined;
   return {
     name: roster[caster.characterId]?.name ?? caster.characterId,
+    characterId: caster.characterId,
     hp: caster.hp,
     maxHp: caster.maxHp,
     energy: caster.energy,
+    cooldowns: { ...caster.cooldowns },
+    catalysts: [...caster.catalysts],
+    catalystsUsed: [...caster.catalystsUsed],
   };
 }
 

@@ -18,6 +18,7 @@
 import type { AbilityDef } from '@cards/engine';
 import type { CatalystCost } from './targeting.js';
 import type { StatusChip } from './status-pips.js';
+import type { InspectPanel } from './inspect.js';
 
 export interface HudAbility {
   id: string;
@@ -118,6 +119,11 @@ export interface HudHandlers {
 export interface Hud {
   /** Show the decision HUD for this model, reusing every node it can. */
   update(model: HudModel): void;
+  /**
+   * UI-INSPECT: show (or hide, with `undefined`) the inspect panel for a unit
+   * under the pointer, anchored near `at` in viewport coordinates.
+   */
+  inspect(panel: InspectPanel | undefined, at?: { x: number; y: number }): void;
   /** Swap to the resolution HUD: one Skip control, no ordering. */
   showPlayback(onSkip: () => void): void;
   /** Hide everything (game over). */
@@ -238,7 +244,104 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
     playback.style.display = visible ? 'none' : '';
   };
 
+  // ── UI-INSPECT: one floating panel, built once and re-filled ─────────────
+  // Built once for the same reason the hotbar is: it is rebuilt on every
+  // pointer move over the board, and replacing the node under the pointer is
+  // how you lose a hover to its own repaint.
+  const inspectPanel = el('div', 'inspect');
+  inspectPanel.style.display = 'none';
+  document.body.appendChild(inspectPanel);
+
   return {
+    inspect(panel, at) {
+      if (panel === undefined) {
+        inspectPanel.style.display = 'none';
+        return;
+      }
+      inspectPanel.replaceChildren();
+      inspectPanel.classList.toggle('t1', panel.team === 1);
+
+      const head = el('div', 'inspect-head');
+      const title = el('div', 'inspect-name');
+      title.textContent = panel.name;
+      const role = el('div', 'inspect-role');
+      // A frozen panel is a decoy's. The player is never told that — the label
+      // is the archetype either way — but the flag rides along so nothing
+      // downstream mistakes a snapshot for live data.
+      role.textContent = panel.archetype;
+      head.append(title, role);
+
+      const vitals = el('div', 'inspect-vitals');
+      const hp = el('span', 'inspect-hp');
+      hp.textContent = panel.shield > 0
+        ? `${panel.hp}/${panel.maxHp} +${panel.shield}`
+        : `${panel.hp}/${panel.maxHp}`;
+      const energy = el('span', 'inspect-energy');
+      energy.textContent = panel.ult ? `${panel.energy} ULT` : String(panel.energy);
+      energy.classList.toggle('ult', panel.ult);
+      vitals.append(hp, energy);
+
+      const slots = el('div', 'inspect-slots');
+      for (const ability of panel.abilities) {
+        const row = el('div', 'inspect-slot');
+        row.classList.toggle('ult', ability.isUlt);
+        row.classList.toggle('down', !ability.ready);
+        const name = el('span', 'inspect-slot-name');
+        name.textContent = ability.name + (ability.isUlt ? ` ${ULT_MARK}` : '');
+        const note = el('span', 'inspect-slot-note');
+        // The owner's actual question is "can that character do the thing to me
+        // this turn", so a charged ult reads "ready" and an uncharged one reads
+        // its energy gap rather than a bare 0.
+        note.textContent = ability.cooldown > 0
+          ? `${ability.cooldown}t`
+          : ability.ready ? 'ready' : 'energy';
+        row.append(name, note);
+        slots.appendChild(row);
+      }
+
+      inspectPanel.append(head, vitals, slots);
+
+      if (panel.catalysts.length > 0) {
+        const cats = el('div', 'inspect-catalysts');
+        for (const catalyst of panel.catalysts) {
+          const chip = el('span', 'inspect-catalyst');
+          chip.classList.toggle('spent', catalyst.spent);
+          chip.textContent = catalyst.name;
+          chip.title = catalyst.spent ? `${catalyst.name} — spent` : `${catalyst.name} — ${catalyst.phase}`;
+          cats.appendChild(chip);
+        }
+        inspectPanel.appendChild(cats);
+      }
+
+      if (panel.statuses.length > 0) {
+        const row = el('div', 'inspect-statuses');
+        for (const status of panel.statuses) {
+          const chip = el('span', 'hud-status');
+          chip.classList.toggle('harm', status.harmful);
+          const dot = el('span', 'hud-status-dot');
+          dot.innerHTML = status.glyph;
+          const name = el('span', 'hud-status-name');
+          name.textContent = status.label;
+          const turns = el('span', 'hud-status-turns');
+          turns.textContent = `${status.remaining}t`;
+          chip.append(dot, name, turns);
+          row.appendChild(chip);
+        }
+        inspectPanel.appendChild(row);
+      }
+
+      inspectPanel.style.display = 'block';
+      if (at !== undefined) {
+        // Kept inside the viewport, and flipped to the pointer's left when it
+        // would otherwise run off the right edge.
+        const box = inspectPanel.getBoundingClientRect();
+        const left = at.x + 18 + box.width > globalThis.innerWidth ? at.x - 18 - box.width : at.x + 18;
+        const top = Math.min(at.y + 12, Math.max(8, globalThis.innerHeight - box.height - 8));
+        inspectPanel.style.left = `${Math.round(Math.max(8, left))}px`;
+        inspectPanel.style.top = `${Math.round(Math.max(8, top))}px`;
+      }
+    },
+
     update(model) {
       setOrdering(true);
 
@@ -424,6 +527,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
 
     clear() {
       for (const node of [left, centre, right, playback]) node.style.display = 'none';
+      inspectPanel.style.display = 'none';
     },
   };
 }

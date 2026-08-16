@@ -166,7 +166,10 @@ describe('UI-NAMEPLATES: vision gates the plate, because vision gates the unit',
 });
 
 describe('UI-NAMEPLATES: the decoy wears a real plate', () => {
-  const snapshot = { name: WISP.name, hp: 60, maxHp: 80, energy: 40 };
+  const snapshot = {
+    name: WISP.name, characterId: WISP.id, hp: 60, maxHp: 80, energy: 40,
+    cooldowns: {}, catalysts: [], catalystsUsed: [],
+  };
 
   it('name and frozen HP, so the absence of a plate is not the tell', () => {
     // A Wisp-shaped body with no nameplate, on a board where every other unit
@@ -200,7 +203,8 @@ describe('UI-NAMEPLATES: the decoy wears a real plate', () => {
   it('snapshots the caster as it stands at the cast', () => {
     const s = makeState([{ ...unit('wisp-t1-0', 1, 10, 9, WISP.id), hp: 44, energy: 30 }]);
     expect(snapshotDecoy(s.units, roster, 1)).toEqual({
-      name: WISP.name, hp: 44, maxHp: 95, energy: 30,
+      name: WISP.name, characterId: WISP.id, hp: 44, maxHp: 95, energy: 30,
+      cooldowns: {}, catalysts: [], catalystsUsed: [],
     });
   });
 
