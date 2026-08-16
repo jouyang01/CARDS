@@ -11,9 +11,13 @@
  * need; and the parts most worth testing (seat bounds, rejection paths,
  * broadcast fan-out) have nothing to do with sockets.
  *
- * **No game logic** — M3-ROOM is lifecycle only.
+ * M3-PROTOCOL adds the turn loop: seats submit, the hub counts locks, and when
+ * the last one lands it calls `resolveRoomTurn` — which is `mergeSeatOrders`
+ * plus one `resolveTurn`, both the engine's. The hub decides *when* a turn
+ * resolves; it never decides *what* a turn does.
  */
 
+import type { CatalystPool, CharacterDef, MapDef, Roster, UnitOrders } from '@cards/engine';
 import {
   ERROR_TEXT,
   PROTOCOL_VERSION,
@@ -22,7 +26,20 @@ import {
   roomView,
   type ServerMessage,
 } from './protocol.js';
-import { canStart, join, leave, type Room } from './room.js';
+import { canStart, join, leave, resolveRoomTurn, seatBounds, startMatch, type Room } from './room.js';
+
+/**
+ * What the hub needs to run a match: the board, the characters and the
+ * catalyst pool. Handed in rather than imported, because `data/` belongs to the
+ * caller (the Worker bundles it) and a test wants to hand in two units on an
+ * empty field instead.
+ */
+export interface MatchConfig {
+  map: MapDef;
+  roster: Roster;
+  teams: [CharacterDef[], CharacterDef[]];
+  catalysts?: CatalystPool;
+}
 
 /** The two things the hub does to a connection. Real sockets satisfy it. */
 export interface Sink {
@@ -39,9 +56,21 @@ export class RoomHub {
   readonly #sinks = new Map<string, Sink>();
   /** Seat ids that have completed a `join`. A socket is not a seat. */
   readonly #joined = new Set<string>();
+  /**
+   * This turn's submissions, by seat. Cleared the instant a turn resolves, so
+   * "has this seat locked in" and "for which turn" can never disagree.
+   */
+  readonly #submissions = new Map<string, UnitOrders[]>();
+  readonly #config: MatchConfig | undefined;
 
-  constructor(room: Room) {
+  constructor(room: Room, config?: MatchConfig) {
     this.#room = room;
+    this.#config = config;
+  }
+
+  /** Seat ids that have locked in this turn, in join order. */
+  get locked(): string[] {
+    return this.#room.seats.filter((s) => this.#submissions.has(s.seatId)).map((s) => s.seatId);
   }
 
   /** The room as it stands. A copy, so a caller cannot edit history. */
@@ -77,6 +106,8 @@ export class RoomHub {
       return this.#send(seatId, { type: 'pong' });
     }
 
+    if (msg.type === 'submit') return this.#receiveSubmit(seatId, msg.orders);
+
     if (msg.version !== PROTOCOL_VERSION) {
       // A stale tab after a deploy is the normal case for this, so it closes
       // the socket rather than leaving a client that cannot be understood
@@ -102,6 +133,102 @@ export class RoomHub {
     // just got the same room inside `joined` — sending both would have the
     // client apply one state twice and, worse, make "did I join?" ambiguous.
     this.#broadcast({ type: 'roomUpdated', room: this.#view() }, seatId);
+    this.#startIfReady();
+  }
+
+  /**
+   * Start the match when the room is **full** (M3-PROTOCOL interim).
+   *
+   * Full, not merely "both teams have somebody". Starting the moment two
+   * players are in strands everyone who arrives after: the deal has already
+   * happened, so a third joiner is seated into a running match controlling
+   * nothing. Waiting for the format's seat bound means every character has an
+   * owner and nobody is left holding an empty control map.
+   *
+   * The cost is that a **short room never starts on its own** — a 2v2 that two
+   * players intend to run with two characters each is a legal configuration
+   * with no trigger here. That is what `start()` is for, and what M3-LOBBY's
+   * explicit start button replaces this whole method with.
+   */
+  #startIfReady(): void {
+    if (this.#room.seats.length < seatBounds(this.#room.format).max) return;
+    this.start();
+  }
+
+  /**
+   * Start now, whoever is in. The lobby's button (M3-LOBBY) and the escape
+   * hatch for a short room that will never fill.
+   */
+  start(): void {
+    if (this.#config === undefined || this.#room.state !== undefined) return;
+    const started = startMatch(this.#room, this.#config.map, this.#config.teams);
+    if (!started.ok) return;
+    this.#room = started.room;
+    // Each seat is told the board **and its own characters** — the control map,
+    // delivered per-seat because "which of these am I ordering" is the one
+    // question a client cannot answer from the state alone.
+    for (const seat of this.#room.seats) {
+      this.#send(seat.seatId, {
+        type: 'matchStarted',
+        room: this.#view(),
+        state: this.#room.state!,
+        unitIds: [...seat.unitIds],
+      });
+    }
+  }
+
+  /**
+   * Accept a seat's orders and lock it in; resolve when the last seat lands.
+   *
+   * Orders naming a character this seat does not control are **refused outright
+   * rather than filtered**. Silently dropping them would let a client believe it
+   * had ordered a teammate's unit and watch the turn resolve as though it had
+   * simply chosen not to — a bug that looks exactly like the engine ignoring a
+   * legal order.
+   */
+  #receiveSubmit(seatId: string, orders: UnitOrders[]): void {
+    if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
+    if (this.#room.state === undefined) return this.#send(seatId, errorMessage('noMatch'));
+    if (this.#submissions.has(seatId)) return this.#send(seatId, errorMessage('alreadyLocked'));
+
+    const seat = this.#room.seats.find((s) => s.seatId === seatId)!;
+    if (orders.some((o) => !seat.unitIds.includes(o.unitId))) {
+      return this.#send(seatId, errorMessage('notYours'));
+    }
+
+    this.#submissions.set(seatId, orders);
+    const of = this.#room.seats.length;
+    this.#broadcast({ type: 'submitted', locked: this.#submissions.size, of });
+    if (this.#submissions.size >= of) this.resolveNow();
+  }
+
+  /**
+   * Resolve the turn from whatever has been submitted.
+   *
+   * Public because **the timer fires it too** (M3-TIMER): a seat that never
+   * submits contributes nothing and its characters hold, which is what
+   * `mergeSeatOrders` already does with a missing seat. Here it is only ever
+   * called with every seat in, so the two paths share one implementation
+   * instead of the timer growing its own.
+   */
+  resolveNow(): void {
+    if (this.#config === undefined || this.#room.state === undefined) return;
+    const resolved = resolveRoomTurn(
+      this.#room, this.#config.map, this.#config.roster, this.#submissions, this.#config.catalysts,
+    );
+    if (resolved === undefined) return;
+    this.#room = resolved.room;
+    // Cleared before the broadcast, so a client that submits the moment it sees
+    // the result is submitting into an empty turn rather than a stale one.
+    this.#submissions.clear();
+    this.#broadcast({
+      type: 'turnResolved',
+      turn: resolved.room.turn,
+      state: resolved.room.state!,
+      // INTERIM: every seat gets the same payload. M3-HIDDEN is where this
+      // becomes a per-team projection.
+      events: resolved.events,
+    });
   }
 
   /**
@@ -112,11 +239,20 @@ export class RoomHub {
     this.#sinks.delete(seatId);
     if (!this.#joined.delete(seatId)) return; // never joined — no seat to free
     this.#room = leave(this.#room, seatId);
+    // A seat that leaves takes its submission with it, and may have been the one
+    // everybody was waiting for — so the turn can now be complete. Handling the
+    // disconnect-mid-turn *rule* (hold, or forfeit) is M3-TIMER's; all this does
+    // is stop the room waiting forever on a socket that is gone.
+    this.#submissions.delete(seatId);
     this.#broadcast({ type: 'seatLeft', seatId, room: this.#view() });
+    if (this.#room.state !== undefined && this.#room.seats.length > 0
+      && this.#submissions.size >= this.#room.seats.length) {
+      this.resolveNow();
+    }
   }
 
   #view() {
-    return roomView(this.#room, canStart(this.#room));
+    return roomView(this.#room, canStart(this.#room), this.locked);
   }
 
   #send(seatId: string, message: ServerMessage): void {

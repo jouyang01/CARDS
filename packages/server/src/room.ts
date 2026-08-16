@@ -8,12 +8,17 @@
  * thing: the interesting logic is testable without a runtime, and the runtime
  * shell has nothing in it worth testing.
  *
- * **No game logic here** (M3-ROOM is a lifecycle shell). Resolution, orders and
- * per-team filtering arrive in M3-PROTOCOL and M3-HIDDEN; the DO will call the
- * engine's own `resolveTurn` for them rather than reimplementing anything.
+ * M3-PROTOCOL adds the match: starting it, and folding a turn's merged orders
+ * through the engine's own `resolveTurn`. Nothing here reimplements a rule —
+ * the resolution is one call, and the deal reuses the engine's `createMatch`
+ * and `deriveSeats`. Per-team filtering is still M3-HIDDEN.
  */
 
-import { getFormat, type FormatId, type TeamId } from '@cards/engine';
+import type {
+  CatalystPool, CharacterDef, FormatId, GameState, MapDef, PlayerOrders, Roster,
+  TeamId, TurnEvent, UnitOrders,
+} from '@cards/engine';
+import { createMatch, deriveSeats, getFormat, mergeSeatOrders, resolveTurn } from '@cards/engine';
 
 /** Room codes are four letters — sayable down a phone, and 456 976 of them. */
 export const ROOM_CODE_LENGTH = 4;
@@ -33,6 +38,13 @@ export interface Seat {
   team: TeamId;
   /** Display name, or the seat id when the player has not given one. */
   name: string;
+  /**
+   * The characters this seat orders (M3-PROTOCOL). Empty until the match
+   * starts: **the DO owns the control map** (ARCHITECTURE §45), and until
+   * M3-LOBBY lets players pick, `startMatch` fills it with a deterministic deal
+   * so client and server seat the same characters the same way.
+   */
+  unitIds: string[];
 }
 
 export interface Room {
@@ -40,8 +52,29 @@ export interface Room {
   format: FormatId;
   /** Seats in join order — the order is the tie-break for team assignment. */
   seats: Seat[];
-  /** The turn the match is on; 0 until it starts (M3-LOBBY starts it). */
+  /** The turn the match is on; 0 until it starts. */
   turn: number;
+  /**
+   * The authoritative match, once started (M3-PROTOCOL). `undefined` in the
+   * lobby. This is the **only** copy that decides anything: a client's state is
+   * a projection of it, never an input to it.
+   */
+  state?: GameState;
+  /**
+   * Every resolved turn's merged orders, oldest first.
+   *
+   * Kept alongside the current state rather than instead of it, which is the
+   * ruling (Builder OQ 2026-08-16 #5): a reconnect re-syncs from `state` and is
+   * cheap, while the history serves replay (ARCHITECTURE §77) without anyone
+   * having to re-simulate to reach the present.
+   */
+  history: TurnRecord[];
+}
+
+/** One resolved turn, as it was ordered. */
+export interface TurnRecord {
+  turn: number;
+  orders: [PlayerOrders, PlayerOrders];
 }
 
 /**
@@ -60,7 +93,7 @@ export function seatBounds(format: FormatId): { min: number; max: number } {
 
 /** A fresh, empty room. */
 export function createRoom(code: string, format: FormatId): Room {
-  return { code, format, seats: [], turn: 0 };
+  return { code, format, seats: [], turn: 0, history: [] };
 }
 
 /**
@@ -124,7 +157,7 @@ export function nextTeam(room: Room): TeamId {
 export function join(room: Room, seatId: string, name?: string): JoinResult {
   if (room.seats.some((s) => s.seatId === seatId)) return { ok: false, reason: 'duplicateSeat' };
   if (room.seats.length >= seatBounds(room.format).max) return { ok: false, reason: 'roomFull' };
-  const seat: Seat = { seatId, team: nextTeam(room), name: name ?? seatId };
+  const seat: Seat = { seatId, team: nextTeam(room), name: name ?? seatId, unitIds: [] };
   return { ok: true, room: { ...room, seats: [...room.seats, seat] }, seat };
 }
 
@@ -146,4 +179,84 @@ export function canStart(room: Room): boolean {
   const { min } = seatBounds(room.format);
   if (room.seats.length < min) return false;
   return [0, 1].every((team) => room.seats.some((s) => s.team === team));
+}
+
+
+/**
+ * Start the match: create the authoritative `GameState` and deal characters to
+ * seats.
+ *
+ * **The deal is an interim** (Analyzer ruling, review 2026-09-03). M3-LOBBY
+ * replaces it with player picks; until then the seats have to hold *something*
+ * or no order can name a character. It reuses the engine's own `createMatch`
+ * and `deriveSeats`, so the server seats characters exactly the way the hot-seat
+ * client does — two implementations of "who controls whom" is how a client ends
+ * up ordering a unit the server thinks belongs to somebody else.
+ *
+ * Returns a rejection rather than throwing for a room that cannot start yet,
+ * for the same reason `join` does: it is an ordinary thing to ask too early.
+ */
+export function startMatch(
+  room: Room,
+  map: MapDef,
+  teams: [CharacterDef[], CharacterDef[]],
+): { ok: true; room: Room } | { ok: false; reason: 'cannotStart' } {
+  if (room.state !== undefined || !canStart(room)) return { ok: false, reason: 'cannotStart' };
+  const state = createMatch(map, room.format, teams);
+
+  // `deriveSeats` splits each team's characters across that team's players; the
+  // seats it returns are in the same team-then-join order as ours, so zipping
+  // them is a positional match rather than a lookup by a name neither side has.
+  const perTeam: [number, number] = [
+    room.seats.filter((s) => s.team === 0).length,
+    room.seats.filter((s) => s.team === 1).length,
+  ];
+  const dealt = deriveSeats(state, perTeam);
+  const byTeam: [string[][], string[][]] = [[], []];
+  for (const d of dealt) byTeam[d.team].push(d.unitIds);
+
+  const taken: [number, number] = [0, 0];
+  const seats = room.seats.map((seat) => ({
+    ...seat,
+    unitIds: byTeam[seat.team][taken[seat.team]++] ?? [],
+  }));
+  return { ok: true, room: { ...room, seats, state, turn: state.turn } };
+}
+
+/** Which seat controls `unitId`, if any — the control map, read backwards. */
+export function seatFor(room: Room, unitId: string): Seat | undefined {
+  return room.seats.find((s) => s.unitIds.includes(unitId));
+}
+
+/**
+ * Resolve one turn from the submitted per-seat orders and advance the room.
+ *
+ * The merge is `mergeSeatOrders` — the engine's, the same one the hot-seat
+ * client calls — and the resolution is one `resolveTurn`. That is the whole
+ * function, deliberately: a server that shaped orders its own way would produce
+ * a match the client could not reproduce, and the point of a pure engine is
+ * that both sides get the same answer from the same inputs.
+ */
+export function resolveRoomTurn(
+  room: Room,
+  map: MapDef,
+  roster: Roster,
+  ordersBySeat: ReadonlyMap<string, UnitOrders[]>,
+  catalysts: CatalystPool = {},
+): { room: Room; events: TurnEvent[]; orders: [PlayerOrders, PlayerOrders] } | undefined {
+  if (room.state === undefined) return undefined;
+  const orders = mergeSeatOrders(room.seats, ordersBySeat);
+  const { state, events } = resolveTurn(room.state, map, orders, roster, catalysts);
+  return {
+    room: {
+      ...room,
+      state,
+      turn: state.turn,
+      // Appended, never replaced: the current state answers "where are we" and
+      // the log answers "how did we get here", and a replay needs both.
+      history: [...room.history, { turn: room.state.turn, orders }],
+    },
+    events,
+    orders,
+  };
 }

@@ -12,9 +12,32 @@
  * is no lock to take and no replica to reconcile.
  */
 
-import { DEFAULT_FORMAT, type FormatId } from '@cards/engine';
-import { RoomHub, type Sink } from './hub.js';
+import { DEFAULT_FORMAT, buildCatalystPool, buildRoster, type CatalystData, type CharacterDef, type FormatId, type MapDef } from '@cards/engine';
+import { RoomHub, type MatchConfig, type Sink } from './hub.js';
 import { createRoom, type Room } from './room.js';
+import catalystData from '../../../data/catalysts.json';
+import duelArena from '../../../data/maps/duel-arena.json';
+import vex from '../../../data/characters/vex.json';
+import bastion from '../../../data/characters/bastion.json';
+import wisp from '../../../data/characters/wisp.json';
+import aegis from '../../../data/characters/aegis.json';
+
+/**
+ * The match every room runs, until M3-LOBBY lets players choose.
+ *
+ * Bundled rather than fetched: `data/` is static content and a Worker that had
+ * to fetch its own rules before it could start a turn would have a cold-start
+ * failure mode for no benefit. The deal mirrors the client's dev default (Vex +
+ * Wisp against Bastion + Aegis) so a hot-seat player and a networked one are
+ * looking at the same match.
+ */
+const CATALOG = [vex, bastion, wisp, aegis] as unknown as CharacterDef[];
+const MATCH: MatchConfig = {
+  map: duelArena as unknown as MapDef,
+  roster: buildRoster(CATALOG),
+  teams: [[CATALOG[0]!, CATALOG[2]!], [CATALOG[1]!, CATALOG[3]!]],
+  catalysts: buildCatalystPool(catalystData as unknown as CatalystData),
+};
 
 /** Where the room record is kept between hibernations. */
 const STORAGE_KEY = 'room';
@@ -33,7 +56,7 @@ export class RoomDurableObject {
     // because a DO woken by an alarm before any fetch is a real path.
     state.blockConcurrencyWhile(async () => {
       const stored = await state.storage.get<Room>(STORAGE_KEY);
-      if (stored !== undefined) this.#hub = new RoomHub(stored);
+      if (stored !== undefined) this.#hub = new RoomHub(stored, MATCH);
     });
   }
 
@@ -46,7 +69,7 @@ export class RoomDurableObject {
       const code = url.searchParams.get('code') ?? '';
       const format = (url.searchParams.get('format') ?? DEFAULT_FORMAT) as FormatId;
       if (this.#hub === undefined) {
-        this.#hub = new RoomHub(createRoom(code, format));
+        this.#hub = new RoomHub(createRoom(code, format), MATCH);
         await this.#persist();
       }
       return Response.json(this.#hub.room);

@@ -57,7 +57,7 @@ describe('M3-ROOM: create → join', () => {
   it('a joiner is told who it is and what the room looks like', () => {
     const { hub, sockets } = seated('2v2', 1);
     const joined = sockets[0]!.of('joined')[0];
-    expect(joined?.seat).toEqual({ seatId: 's0', team: 0, name: 'P0' });
+    expect(joined?.seat).toEqual({ seatId: 's0', team: 0, name: 'P0', unitIds: [] });
     expect(joined?.room).toMatchObject({ code: 'WXYZ', format: '2v2', turn: 0, canStart: false });
     expect(hub.room.seats).toHaveLength(1);
   });

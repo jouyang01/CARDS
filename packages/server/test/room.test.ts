@@ -63,7 +63,9 @@ describe('M3-ROOM: joining', () => {
     const result = join(room, 's0', 'Ada');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.seat).toEqual({ seatId: 's0', team: 0, name: 'Ada' });
+    // `unitIds` is empty in the lobby: the DO deals characters at match start
+    // (M3-PROTOCOL), not at join.
+    expect(result.seat).toEqual({ seatId: 's0', team: 0, name: 'Ada', unitIds: [] });
     expect(result.room.seats).toHaveLength(1);
     expect(room.seats, 'the room it was given is untouched').toHaveLength(0);
   });
