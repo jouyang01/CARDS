@@ -96,6 +96,20 @@ describe('map content', () => {
       }
     });
 
+    it(`${m.id} spreads its power-up pads — none touch (PADS-SPREAD)`, () => {
+      // Two pads side by side are one prize worth double, taken by a unit that
+      // stands between them or — since PADS-PASS — merely walks past. The
+      // detour a pad is supposed to cost disappears. Atlas Reactor places its
+      // power-ups singly and far apart; this is the floor of that shape.
+      const pads = m.powerups ?? [];
+      for (const [i, a] of pads.entries()) {
+        for (const b of pads.slice(i + 1)) {
+          const gap = Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+          expect(gap, `${m.id}: pads (${a.x},${a.y}) and (${b.x},${b.y}) touch`).toBeGreaterThan(1);
+        }
+      }
+    });
+
     it(`${m.id} keeps its terrain runs under the caps (MAP-CAPS)`, () => {
       for (const [kind, cap] of Object.entries(TERRAIN_RUN_CAPS) as [TerrainKey, number][]) {
         for (const [axis, run] of Object.entries(longestRuns(m, kind))) {

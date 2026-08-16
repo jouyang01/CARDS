@@ -237,6 +237,19 @@ export function validateMap(m: MapDef): string[] {
  *
  * The pad's square is its identity (the live respawn record keys off it), so two
  * pads sharing one is rejected outright rather than resolved by some rule.
+ *
+ * **PADS-SPREAD: no two pads may touch, diagonals included.** Two pads side by
+ * side are not two pick-ups — they are one prize worth double, taken by one
+ * unit standing between them, and (since PADS-PASS) swept up by anybody who
+ * merely walks past. That collapses the decision a pad is supposed to create:
+ * a contested square you commit to, weighed against the squares you give up to
+ * reach it. Atlas Reactor's maps place their power-ups one square each, spread
+ * across the board so that taking one is a real detour; this rule is that
+ * shape, expressed as the minimum a map must satisfy. Chebyshev ≥ 2, so a pad
+ * has an empty ring around it however you approach.
+ *
+ * A *minimum*, not a placement policy: how far apart beyond touching, and which
+ * squares, stays the Designer's.
  */
 function validatePowerups(m: MapDef, solid: ReadonlySet<string>, path: string): string[] {
   const errs: string[] = [];
@@ -264,6 +277,18 @@ function validatePowerups(m: MapDef, solid: ReadonlySet<string>, path: string): 
     for (const field of ['firstTurn', 'everyTurns'] as const) {
       const v: PowerupPad[typeof field] = pad[field];
       if (!isInt(v) || v < 1) errs.push(`${at}: ${field} must be an integer >= 1`);
+    }
+
+    // PADS-SPREAD. Reported against the later pad of a pair and only once per
+    // pair, so a map with a cluster of four gets three actionable lines rather
+    // than twelve restatements of the same fact.
+    for (const other of m.powerups.slice(0, i)) {
+      const dx = Math.abs(pad.x - other.x);
+      const dy = Math.abs(pad.y - other.y);
+      if (dx === 0 && dy === 0) continue; // already reported as a duplicate square
+      if (Math.max(dx, dy) <= 1) {
+        errs.push(`${at}: touches the pad at (${other.x},${other.y}) — pads may not be adjacent`);
+      }
     }
   }
   return errs;

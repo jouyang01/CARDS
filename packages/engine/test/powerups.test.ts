@@ -238,6 +238,32 @@ describe('PADS1: determinism and the map schema', () => {
       expect(check([ok, { ...ok, type: 'might' }])).toMatch(/a second pad on \(3,3\)/);
     });
 
+    it('rejects two pads that touch, orthogonally or diagonally (PADS-SPREAD)', () => {
+      // A pair of pads is not two pick-ups; it is one prize worth double, and
+      // since PADS-PASS it is collected by walking past rather than stopping.
+      for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [-1, 1]]) {
+        const neighbour = { ...ok, x: ok.x + dx!, y: ok.y + dy!, type: 'might' as const };
+        expect(check([ok, neighbour]), `offset ${dx},${dy}`).toMatch(/may not be adjacent/);
+      }
+    });
+
+    it('accepts pads one square further apart', () => {
+      expect(check([ok, { ...ok, x: 5, type: 'might' }])).toBe('');
+      expect(check([ok, { ...ok, x: 5, y: 5, type: 'might' }])).toBe('');
+    });
+
+    it('reports a touching pair once, not twice', () => {
+      // Three in a row is three facts, not six restatements of them.
+      const errs = check([ok, { ...ok, x: 4 }, { ...ok, x: 5 }]).match(/may not be adjacent/g) ?? [];
+      expect(errs).toHaveLength(2);
+    });
+
+    it('a duplicate square is reported as a duplicate, not as adjacency', () => {
+      const errs = check([ok, { ...ok, type: 'might' }]);
+      expect(errs).toMatch(/a second pad on \(3,3\)/);
+      expect(errs).not.toMatch(/may not be adjacent/);
+    });
+
     it('rejects an unknown type and an unknown key', () => {
       expect(check([{ ...ok, type: 'ammo' as never }])).toMatch(/unknown powerup type "ammo"/);
       expect(check([{ ...ok, colour: 'red' } as never])).toMatch(/unknown key "colour"/);
