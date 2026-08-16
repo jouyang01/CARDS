@@ -393,7 +393,10 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
   ];
   const SIZES = [{ width: 1280, height: 720 }, { width: 1920, height: 1080 }];
   /** Everything a player has to be able to hit. */
-  const CONTROLS = '.hud-ability, .hud-catalyst, .hud-move, .hud-lock, .hud-small';
+  // Every button the HUD ships. `.hud-bank` (UI-TIMER's Time Bank pip) is in
+  // the list deliberately: it is small and looks decorative, which is exactly
+  // the reasoning that produced the undersized controls this rule exists to fix.
+  const CONTROLS = '.hud-ability, .hud-catalyst, .hud-move, .hud-lock, .hud-small, .hud-bank';
 
   for (const { map, query } of MAPS) {
     for (const viewport of SIZES) {

@@ -225,7 +225,10 @@
          number reads as a miscount. */
       @keyframes bank-flash { 0% { transform: scale(1); } 35% { transform: scale(1.22); } 100% { transform: scale(1); } }
       .hud-timer.extending .hud-timer-text { animation: bank-flash 900ms ease-out; color: #6fbf73; }
-      .hud-bank { min-width: 30px; min-height: 30px; padding: 0 8px; font-size: 13px;
+      /* UI-VIEWPORT's 44x44 minimum applies here too: the bank pip is a button,
+         and "it is only a pip" is exactly the reasoning that produced the
+         controls that ruling exists to fix. */
+      .hud-bank { min-width: 44px; min-height: 44px; padding: 0 8px; font-size: 15px;
         line-height: 1; color: #ffd76a; border-color: #6a5a2a; }
       /* Spent reads as an empty socket rather than as nothing, so the resource
          stays legible after it is gone. */
