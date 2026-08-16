@@ -2527,3 +2527,70 @@ place to get a balance pass wrong), and duplicate `shield` instances collapse to
 the longest remaining and the summed amount — two shields absorb as one pool, which is what the HP
 bar already shows. The strip hides entirely when nothing is on the character; a reserved blank row
 reads as broken rather than as quiet.
+
+## Open Questions for the Analyzer — 2026-08-16 (third)
+
+1. **CAMO-E2E-FINISH is closed as unit-covered-only, and I think the AC's technique is the wrong
+   one.** Reporting the seeded squares is trivial; *using* them is not. The e2e has no board-square
+   → screen-pixel mapping — `pointAt`/`clickAt` address fractions of the clipped board region — so
+   knowing the seed put a unit on (7,2) does not tell the test which pixel to sample. Making it
+   work needs a second dev hook exposing the renderer's projection, which the AC does not authorise
+   and I did not invent. **There is a better route that needs no hook at all**: take
+   `findPixels(before, isBrushGreen)`, drive the seeded unit to attack, and assert that a
+   meaningful number of *those same coordinates* now match `isCamoRed`. A before/after delta at
+   fixed coordinates dodges both the projection problem and the counting problem the predicate
+   documents. If you want the item reopened, that is the spec I would write — but it is a browser
+   drive that has to get a unit to attack from inside brush, so it is not the "small" the current
+   entry says it is. The *rule* stays covered by `camo-reveal.test.ts`; only the compositing is
+   unproven.
+
+2. **I moved pad squares that the backlog routes to you and then to the Designer.** Dev note 1
+   ("powerups should not be next to each other") made the shipped placements illegal under the new
+   `validateMap` rule, and they were my own placeholders, so I re-laid them as mirrored singles
+   (decision 7). Timings untouched. **This wants Designer eyes**: the new squares satisfy the rule
+   and the mirror guard and nothing else — I did not think about lanes, sightlines or which pad is
+   worth contesting. `duel-arena` now puts all six pads in the two central columns x=6/x=11, which
+   is defensible but is *a* choice.
+
+3. **Two rulings belong in `docs/design/edge-cases.md` and I cannot write them.** PADS-SPREAD (no
+   two pads adjacent) and PADS-PASS (a pad is taken by being on its square at any point in the
+   turn, earliest claim wins, teleport over it takes nothing) are both live engine rules with
+   tests, recorded in DECISIONS 7–10. The PADS1 line in edge-cases §5 now understates the rule, and
+   the trap ruling sits one paragraph away saying knockback is *not* entry — the two are
+   deliberately different (decision 10) and the doc should say so rather than leave a reader to
+   notice the inconsistency.
+
+4. **The Decision payload shares the enemy lock list — confirm that is what you want.** A seat is
+   told which seats have locked in, enemies included (decision 4). It leaks nothing about the
+   *plans*, and without it a client cannot show what it is waiting for. But it is the one place an
+   enemy seat id appears in a pre-reveal payload, and if you would rather it were a bare count I
+   would sooner change it now than after M3-LOBBY builds a waiting UI on it.
+
+5. **`POST /rooms/:code/start` is a temporary public route with no auth.** M3-START's AC allows a
+   "dev affordance" and the client has no socket layer, so this is how a short room starts today
+   (decision 6). Anyone who knows a room code can start that room. That is fine for a dev build and
+   is **not** fine at M3-DEPLOY — either M3-LOBBY should delete the route when its button lands, or
+   M3-DEPLOY needs it gated. Worth an explicit line in one of those two items.
+
+6. **Nothing has still booted a real Workers runtime** (carried, unchanged). 121 server tests now
+   run through the `Sink` seam, including all of M3-HIDDEN. The first real execution is still
+   M3-DEPLOY's smoke check, and M3-HIDDEN is the code I would least like to discover a runtime
+   difference in.
+
+7. **M3-HIDDEN has no client on the other end of it.** The filtering is unit-tested thoroughly, but
+   the client is still hot-seat only and has never consumed a `decision` or a filtered
+   `turnResolved`. The payload shape was chosen so it would not have to (`state` is still a
+   `GameState`, just with things missing) — but "the client can read it" is currently an argument,
+   not a test. M3-LOBBY is where that gets proven; it may be worth saying so in that item's AC.
+
+8. **Pad contest: a Dash beats a Move, by construction (decision 9).** Two units crossing the same
+   pad in one turn was impossible before this session and is ordinary now. Earliest-claim is the
+   rule I picked because it falls out of phase order, but it does mean a charge reliably steals a
+   pad from a walker who was closer to it. That is a **feel** question, not a correctness one —
+   worth a playtest note.
+
+9. **BUFF-UI only spells out the *active* character's statuses.** The strip is in the HUD's
+   character panel, so an ally's or an enemy's statuses are still pips-only — you can see that
+   something is on them and not what. Extending it means either a hover card on a unit or a second
+   strip, both of which are real UI design rather than a clarity fix, so I stopped at the note's
+   scope. If the owner meant "clearer for every unit on the board", that is a follow-up item.
