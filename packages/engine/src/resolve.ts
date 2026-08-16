@@ -1431,10 +1431,12 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
   const arrived = [...movers, ...chasers].map((m) => m.unit);
   if (arrived.length > 0) destroyDecoysUnderEnemies(draft, arrived, events);
 
-  // Power-up pads settle last, once every square has its final occupant
-  // (PADS1) — and unconditionally, not only when somebody moved: a unit
-  // knocked onto a pad, or one standing on a pad the moment it respawns, has
-  // just as much claim to it as one that walked there.
+  // Power-up pads settle last, at one fixed point after everything has moved
+  // (PADS1) — and unconditionally, not only when somebody moved: a unit knocked
+  // onto a pad, or one standing on a pad the moment it respawns, has just as
+  // much claim to it as one that walked there. Since PADS-PASS the claim is
+  // "was on the square at any point this turn", read off the turn's own events,
+  // so the settlement point is unchanged and only the eligibility widened.
   resolvePowerups(draft, board, events);
 }
 
@@ -1528,17 +1530,91 @@ function pathToward(board: Board, draft: GameState, unit: UnitState, goal: Vec2,
 }
 
 /**
- * Award every live power-up pad to whoever is standing on it (PADS1), at the
- * single fixed point at the end of Move.
+ * Who has a claim on each square this turn, and how early (PADS-PASS).
  *
- * "First occupier" needs no tie-break in practice — Collisions forbid two units
- * on one square — but the scan runs in `draft.units` order anyway so that if a
- * future mechanic ever does allow co-occupancy the pad still goes to a fixed
- * unit rather than to whichever the iteration happened to reach first.
+ * A pad is taken by **being on its square at any point in the turn**, not by
+ * finishing there: a unit that runs, dashes, charges, chases or is knocked
+ * across a pad picks it up on the way past. Landing on it is no longer the
+ * price of taking it.
+ *
+ * The claim times are event indices, which is what makes the tie-break both
+ * deterministic and meaningful. Events are emitted in phase order and, inside
+ * Move, on one shared step clock — so "earliest claim" reads as *the first unit
+ * to set foot on it*, and a Dash beats a Move for the same reason Dash resolves
+ * before Move. A unit already standing there when the turn began claims at −1:
+ * it was there before anybody set out.
+ *
+ * Only units alive at settlement claim. A charger that crossed a Health pad in
+ * Dash and died in Blast takes nothing — pads still settle at one fixed point
+ * at the end of Move, and that point is after the dying.
+ */
+function claimsBySquare(
+  draft: GameState,
+  events: readonly TurnEvent[],
+): Map<string, { unitId: string; seq: number }> {
+  const alive = new Set(draft.units.filter((u) => u.alive).map((u) => u.unitId));
+  const best = new Map<string, { unitId: string; seq: number }>();
+  const claim = (p: Vec2, unitId: string, seq: number): void => {
+    if (!alive.has(unitId)) return;
+    const k = `${p.x},${p.y}`;
+    const cur = best.get(k);
+    if (cur === undefined || seq < cur.seq) best.set(k, { unitId, seq });
+  };
+
+  // Where everybody stood before anything moved: the `from` of a unit's first
+  // movement event, or — for a unit that never moved — where it stands now.
+  const moved = new Set<string>();
+  for (const e of events) {
+    if (e.type !== 'moveStep' && e.type !== 'displaced') continue;
+    if (moved.has(e.unitId)) continue;
+    moved.add(e.unitId);
+    claim(e.from, e.unitId, -1);
+  }
+  for (const u of draft.units) if (!moved.has(u.unitId)) claim(u.pos, u.unitId, -1);
+
+  for (const [i, e] of events.entries()) {
+    if (e.type === 'moveStep') {
+      // One event per square entered, so `to` is the whole story — and a
+      // teleport's `to` is its landing square, which is right: it crossed
+      // nothing on the way.
+      claim(e.to, e.unitId, i);
+    } else if (e.type === 'displaced') {
+      // A push is emitted once for the whole slide, along a straight
+      // `direction8` line, so the squares between the ends have to be walked
+      // back out. Being shoved across a pad is still being on it.
+      const dx = Math.sign(e.to.x - e.from.x);
+      const dy = Math.sign(e.to.y - e.from.y);
+      let p: Vec2 = { x: e.from.x + dx, y: e.from.y + dy };
+      for (let guard = 0; guard < MAX_DISPLACEMENT_STEPS; guard++) {
+        claim(p, e.unitId, i);
+        if (vecEq(p, e.to)) break;
+        p = { x: p.x + dx, y: p.y + dy };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * The longest slide `claimsBySquare` will walk before giving up. A displacement
+ * is a straight line of at most a few squares, so this only exists so that a
+ * malformed `displaced` event can never spin forever.
+ */
+const MAX_DISPLACEMENT_STEPS = 64;
+
+/**
+ * Award every live power-up pad to its earliest claimant (PADS1 / PADS-PASS),
+ * at the single fixed point at the end of Move.
+ *
+ * Contested pads are now ordinary rather than impossible: before PADS-PASS the
+ * only claim was occupancy and Collisions forbid two units on one square, so
+ * there was nothing to break. Now two units can cross the same pad in one turn,
+ * and the earlier one takes it — see {@link claimsBySquare}.
  */
 function resolvePowerups(draft: GameState, board: Board, events: TurnEvent[]): void {
   const pads = board.map.powerups ?? [];
   if (pads.length === 0) return;
+  const claims = claimsBySquare(draft, events);
   for (const pad of pads) {
     const pos = { x: pad.x, y: pad.y };
     const record = draft.powerups.find((p) => vecEq(p.pos, pos));
@@ -1546,7 +1622,10 @@ function resolvePowerups(draft: GameState, board: Board, events: TurnEvent[]): v
     if (draft.turn < pad.firstTurn) continue;
     if (record !== undefined && draft.turn < record.availableOnTurn) continue;
 
-    const taker = draft.units.find((u) => u.alive && vecEq(u.pos, pos));
+    const claimant = claims.get(`${pos.x},${pos.y}`);
+    const taker = claimant === undefined
+      ? undefined
+      : draft.units.find((u) => u.alive && u.unitId === claimant.unitId);
     if (taker === undefined) continue;
 
     applySelfEffects(draft, taker, POWERUP_EFFECTS[pad.type], { unitId: taker.unitId, abilityId: powerupSourceId(pad.type) }, events);
