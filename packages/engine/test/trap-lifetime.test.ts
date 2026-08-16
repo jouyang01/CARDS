@@ -145,8 +145,12 @@ describe('TRAP-LIFETIME: validation enforces the cap', () => {
     }
   });
 
-  it('rejects 4 — the owner\'s general cap', () => {
-    expect(check([{ kind: 'trap', amount: 10, lifetime: 4 }])).toMatch(/lifetime must be an integer 1\.\.3/);
+  it('accepts 4 — the owner\'s re-tuned cap', () => {
+    expect(check([{ kind: 'trap', amount: 10, lifetime: 4 }])).toBe('');
+  });
+
+  it('rejects 5 — one past it', () => {
+    expect(check([{ kind: 'trap', amount: 10, lifetime: 5 }])).toMatch(/lifetime must be an integer 1\.\.4/);
   });
 
   it('rejects 0, a negative and a fraction', () => {
@@ -171,9 +175,30 @@ describe('TRAP-LIFETIME: the shipped roster obeys it', () => {
   const load = (n: string): CharacterDef =>
     JSON.parse(readFileSync(join(import.meta.dirname, `../../../data/characters/${n}.json`), 'utf8')) as CharacterDef;
 
-  it("Vex's Overwatch Trap is the owner's 2", () => {
+  it("Vex's Overwatch Trap is the owner's 3", () => {
+    // Re-tuned 2026-09-03 from 2. The number is data, so this is the one place
+    // that has to move with it — everything else reads the constant.
     const trap = load('vex').abilities.find((a) => a.id === 'overwatch_trap')!;
-    expect(trap.effects.find((e) => e.kind === 'trap')!.lifetime).toBe(2);
+    expect(trap.effects.find((e) => e.kind === 'trap')!.lifetime).toBe(3);
+  });
+
+  it('an untriggered Overwatch Trap is gone by placedTurn + 3', () => {
+    // The owner's ask stated as an outcome rather than as a field: the trap is
+    // live through the turn it was placed and the two after it, and swept at
+    // the end of the third.
+    const vexTrap = load('vex').abilities.find((a) => a.id === 'overwatch_trap')!;
+    const lifetime = vexTrap.effects.find((e) => e.kind === 'trap')!.lifetime!;
+    const overwatch = ability({ id: 'overwatch', effects: [{ kind: 'trap', amount: 20, lifetime }] });
+    const withOverwatch: Roster = { 'test-char': { ...CHAR, abilities: [...CHAR.abilities, overwatch] } };
+
+    let s = board();
+    const placedOn = s.turn;
+    ({ state: s } = resolveTurn(s, OPEN, [{ team: 0, units: place('overwatch') }, { team: 1, units: [] }], withOverwatch));
+    expect(s.traps[0]!.expiresOnTurn).toBe(placedOn + 2);
+    ({ state: s } = run(s, idle));
+    expect(s.traps, 'still live on the turn after it was placed').toHaveLength(1);
+    ({ state: s } = run(s, idle));
+    expect(s.traps, 'swept at the end of the third turn').toHaveLength(0);
   });
 
   it('no shipped trap ability exceeds the cap', () => {
