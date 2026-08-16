@@ -2760,3 +2760,36 @@ waiting on. `of` in the Decision payload now counts your own team rather than th
 
 9. **Nothing has still booted a real Workers runtime** (carried, unchanged). 124 server tests run
    through the `Sink` seam.
+
+10. **Two RENDER-COVERAGE e2e tests fail, and they fail on `main` too — they are NOT this batch's.**
+    `arming a chase draws a route that is not there otherwise` and `an enemy is drawn on a board
+    that is still fogged (LAST-KNOWN)` both fail with "never got an enemy into sight". I verified
+    this against a worktree at `c6a64ba` (pre-session `main`): **identical failures, identical
+    messages**. The other 22 pass on my branch. Both are the long multi-turn drives, and both walk
+    the teams together with `walkToCentre` before asserting anything.
+
+    What I measured while chasing it: a unit with `Move (4)` advances **one square** per turn under
+    that drive, so five turns closes five of the thirteen squares between the spawns and nobody ever
+    comes into vision. The click itself is landing correctly — I pinned the screen-to-board mapping
+    off the power-up pads and the board centre is where `clickAt(0.5, 0.5)` puts it — so the fault
+    is between "click the centre" and "walk four squares", not in the harness's coordinates. The
+    likeliest cause is `duel-arena`'s wall at (5,6)–(5,8) sitting directly between the team-0 spawn
+    and the centre: routing around it eats the budget, and the drive was always marginal. **This may
+    be the pad re-placement from PR #51 interacting with the drive** (the last green run predates
+    the merge), which would make it mine from the *previous* session rather than this one — worth
+    checking before anyone rewrites the tests.
+
+    **Not fixed here.** Rewriting a drive helper in two RENDER-COVERAGE tests is a backlog item, not
+    something to slip into a UI batch's last commit, and the tests are yours to re-spec. Suggested
+    shapes, cheapest first: give `walkToCentre` a target that is not behind a wall (aim at a row the
+    spawn can reach in a straight line); raise the 5-turn cap; or drive with `Sprint` instead of
+    `Move` so each turn covers more ground.
+
+11. **One real bug did fall out of the investigation and is fixed** (commit `f79ef9a`): both
+    `sizeToViewport()` calls run before `beginTurn()` fills the scoreboard, so both measured an empty
+    element and fell back to `TOP_CHROME_FALLBACK_PX`. That was harmless while the strip was two
+    lines of text — the fallback was *larger* than the real chrome, so the board was framed
+    conservatively — but UI-TOPBAR's portrait row is taller than the fallback, which inverts it and
+    frames the top rank of the board underneath the strip. A third measurement now runs after
+    `beginTurn`. It did **not** fix the two e2e failures, which is part of how I established they
+    were not mine.
