@@ -12,6 +12,7 @@
 import {
   ULT_COST,
   buildBoard,
+  type Board,
   createMatch,
   movementBudget,
   resolveTurn,
@@ -340,6 +341,16 @@ export function startHotSeat(
     unitId: g.unitId, owner: g.owner, pos: g.pos, hp: 1, maxHp: 1, energy: 0,
     alive: true, label: (g.characterId[0] ?? '?').toUpperCase(), ghost: true,
   }));
+
+  /**
+   * The board, for PREVIEW-MODIFIERS' cover check.
+   *
+   * Memoised because `buildBoard` walks the whole map and mouse-follow aiming
+   * repaints on every pointer move — but the map is fixed for a match, so one
+   * slot is all it ever needs.
+   */
+  let boardMemo: Board | undefined;
+  const previewBoard = (): Board => (boardMemo ??= buildBoard(map));
 
   const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
 
@@ -872,7 +883,10 @@ export function startHotSeat(
     // PREVIEW-FOG: the same view the board is drawn from decides who may carry a
     // number, so the preview cannot contradict the fog beside it.
     const seen = new Set(currentFog(currentSeat()?.team ?? unit.owner).units.map((u) => u.unitId));
-    showPreviewNumbers(previewNumbers(state, unit, [
+    // PREVIEW-MODIFIERS: the board goes in so the preview can ask the engine
+    // about cover. Built here rather than cached because it is derived from
+    // `map`, which never changes for a match — see the memo below it.
+    showPreviewNumbers(previewNumbers(state, previewBoard(), unit, [
       ...(chosen !== undefined
         ? [{ def: chosen, squares: [...covered, ...impact.origin, ...impact.destination] }]
         : []),
