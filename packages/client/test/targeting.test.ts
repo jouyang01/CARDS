@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aimInRange, buildBoard, createMatch, distance, expandShape, reachableSquares, reconstructPath, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
+import { AIM_STEPS, aimInRange, buildBoard, createMatch, distance, expandShape, reachableSquares, reconstructPath, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
 import {
   abilityOptions,
   abilityPreview,
@@ -243,7 +243,9 @@ describe('AIM2: free-rotation aiming reaches the engine as an integer step', () 
   });
 
   it('an illegal step is never sent to the engine', () => {
-    for (const bad of [-1, 256, 1.5]) {
+    // `AIM_STEPS` itself is the first illegal value — steps are 0-based — so this
+    // is written against the constant and survives AIM-SMOOTH raising it.
+    for (const bad of [-1, AIM_STEPS, 1.5]) {
       const draft = { ...emptyDraft('vex-t0-0'), abilityId: 'rail_shot', aim: [], aimStep: bad };
       expect(toUnitOrders(VEX, draft).ability?.aimStep, `step ${bad}`).toBeUndefined();
     }

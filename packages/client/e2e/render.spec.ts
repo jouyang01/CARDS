@@ -815,3 +815,5 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     expect(sawEnemyUnderFog, 'never composited an enemy while the board was still fogged').toBe(true);
   });
 });
+
+

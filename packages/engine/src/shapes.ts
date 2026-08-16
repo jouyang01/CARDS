@@ -65,8 +65,21 @@ export function sign(n: number): -1 | 0 | 1 {
 // hoping the rounding matches. A diamond is also the natural shape for a
 // Manhattan world (MET1).
 
-/** Quantization of a full turn. A power of two keeps the arithmetic exact. */
-export const AIM_STEPS = 256;
+/**
+ * Quantization of a full turn.
+ *
+ * Raised 256 → **512** by AIM-SMOOTH (owner: "make the rotations for attacks
+ * even more smooth"), halving the step to ≈0.7° of arc. A power of two keeps
+ * the arithmetic exact and keeps `AIM_R = AIM_STEPS / 4` a whole number, which
+ * is what makes the diamond projection below integer-only in both directions.
+ *
+ * **Known and deliberately not fixed here:** equal steps around a *diamond* are
+ * not equal angles — a step near an axis subtends more arc than one near a
+ * diagonal — so rotation stays subtly uneven no matter how high this goes.
+ * Evening it out needs a precomputed integer direction table (built offline, no
+ * runtime trig), which is the follow-up if the bump alone does not satisfy.
+ */
+export const AIM_STEPS = 512;
 /** Manhattan radius of the quantization diamond; AIM_STEPS / 4 per quadrant. */
 const AIM_R = AIM_STEPS / 4;
 

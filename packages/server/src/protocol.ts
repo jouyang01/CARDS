@@ -17,7 +17,7 @@
  * about one message type rather than about the whole protocol.
  */
 
-import type { FormatId } from '@cards/engine';
+import type { FormatId, GameState, TurnEvent, UnitOrders } from '@cards/engine';
 import type { JoinRejection, Room, Seat } from './room.js';
 
 /** Bumped whenever a message's meaning changes. Clients send it on connect. */
@@ -31,11 +31,21 @@ export interface RoomView {
   turn: number;
   /** Whether the room could start a match right now (M3-LOBBY acts on it). */
   canStart: boolean;
+  /** True once the match is running — a lobby and a match are different screens. */
+  started: boolean;
+  /** Seat ids locked in this turn, so a client can show who it is waiting for. */
+  locked: string[];
 }
 
 /** Client → server. */
 export type ClientMessage =
   | { type: 'join'; version: number; name?: string }
+  /**
+   * Submit this seat's orders and lock in (M3-PROTOCOL). One message, not two:
+   * a separate "lock" would let a seat lock with orders the server had not
+   * received, and the only thing anybody can do after submitting is wait.
+   */
+  | { type: 'submit'; orders: UnitOrders[] }
   /** A liveness probe the client can send; the server answers `pong`. */
   | { type: 'ping' };
 
@@ -45,7 +55,13 @@ export type ErrorCode =
   | 'badVersion'
   | 'badMessage'
   | 'notJoined'
-  | 'unknownRoom';
+  | 'unknownRoom'
+  /** Submitted before the match began, or after it finished. */
+  | 'noMatch'
+  /** Submitted twice in one turn. */
+  | 'alreadyLocked'
+  /** Ordered a character this seat does not control. */
+  | 'notYours';
 
 /** Server → client. */
 export type ServerMessage =
@@ -54,17 +70,32 @@ export type ServerMessage =
   /** Sent to everybody else: the room changed. */
   | { type: 'roomUpdated'; room: RoomView }
   | { type: 'seatLeft'; seatId: string; room: RoomView }
+  /** The match began: here is the board and who you are ordering. */
+  | { type: 'matchStarted'; room: RoomView; state: GameState; unitIds: string[] }
+  /** This seat's submission was accepted; `locked` is the count so far. */
+  | { type: 'submitted'; locked: number; of: number }
+  /**
+   * A turn resolved. `state` is the authoritative post-turn state and `events`
+   * is the log to animate.
+   *
+   * **INTERIM — the same payload goes to every seat.** Withholding the opposing
+   * team's plans is M3-HIDDEN, kept as its own item so that boundary is one
+   * focused change rather than a detail buried in this one.
+   */
+  | { type: 'turnResolved'; turn: number; state: GameState; events: TurnEvent[] }
   | { type: 'pong' }
   | { type: 'error'; code: ErrorCode; message: string };
 
 /** The public projection of a room. One place, so no handler improvises one. */
-export function roomView(room: Room, canStart: boolean): RoomView {
+export function roomView(room: Room, canStart: boolean, locked: readonly string[] = []): RoomView {
   return {
     code: room.code,
     format: room.format,
-    seats: room.seats.map((s) => ({ ...s })),
+    seats: room.seats.map((s) => ({ ...s, unitIds: [...s.unitIds] })),
     turn: room.turn,
     canStart,
+    started: room.state !== undefined,
+    locked: [...locked],
   };
 }
 
@@ -88,6 +119,19 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   if (typeof parsed !== 'object' || parsed === null) return undefined;
   const msg = parsed as Record<string, unknown>;
   if (msg['type'] === 'ping') return { type: 'ping' };
+  // Orders go straight to the engine's own validation, which drops any illegal
+  // component deterministically (`planUnit`). What this checks is only that the
+  // frame *is* a submission — re-implementing order legality here would be a
+  // second rulebook to keep in step with the first.
+  if (msg['type'] === 'submit' && Array.isArray(msg['orders'])) {
+    const raw: unknown[] = msg['orders'];
+    const orders = raw.filter(
+      (o): o is UnitOrders =>
+        typeof o === 'object' && o !== null && typeof (o as UnitOrders).unitId === 'string',
+    );
+    if (orders.length !== raw.length) return undefined;
+    return { type: 'submit', orders };
+  }
   if (msg['type'] === 'join' && typeof msg['version'] === 'number') {
     const name = typeof msg['name'] === 'string' ? msg['name'] : undefined;
     return name === undefined
@@ -105,6 +149,9 @@ export const ERROR_TEXT: Record<ErrorCode, string> = {
   badMessage: 'unrecognised message',
   notJoined: 'send a join message first',
   unknownRoom: 'no room with that code',
+  noMatch: 'the match has not started',
+  alreadyLocked: 'this seat has already locked in this turn',
+  notYours: 'that character belongs to another seat',
 };
 
 export const errorMessage = (code: ErrorCode): ServerMessage =>

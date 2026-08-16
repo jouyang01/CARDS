@@ -10,6 +10,7 @@
  */
 
 import {
+  buildBoard,
   createMatch,
   movementBudget,
   resolveTurn,
@@ -69,9 +70,10 @@ import {
 } from './targeting.js';
 import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js';
 import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
-import { deriveSeats, mergeSeatOrders, type Seat } from './hotseat.js';
+import { deriveSeats, mergeSeatOrders, type Seat } from '@cards/engine';
 import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
 import { padViews, type PadView, type ViewState } from './playback.js';
+import { applyScenario, type ScenarioId } from './scenarios.js';
 import { statusPips } from './status-pips.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
@@ -191,8 +193,15 @@ export function startHotSeat(
   format: FormatId,
   playersPerTeam: [number, number],
   catalysts: CatalystPool = {},
+  /** CAMO-SEED: a dev-only starting arrangement. Absent for a normal match. */
+  scenario?: ScenarioId,
 ): void {
-  let state = createMatch(map, format, teams);
+  // CAMO-SEED: a dev-only nudge to the starting positions, applied once and
+  // never again — everything after this is the ordinary engine on an ordinary
+  // state. Absent for a normal match.
+  let state = scenario === undefined
+    ? createMatch(map, format, teams)
+    : applyScenario(scenario, buildBoard(map), createMatch(map, format, teams));
   /** SCORE1's running ledger, folded from each turn's event log as it plays. */
   let totals: MatchTotals = initTotals(state);
   const seats = deriveSeats(state, playersPerTeam);
@@ -719,7 +728,10 @@ export function startHotSeat(
       ...(catalystDef !== undefined && catalystAim.length > 0
         ? [{ def: catalystDef, squares: abilityPreview(map, unit, catalystDef, catalystAim) }]
         : []),
-    ], seen));
+      // PREVIEW-DECOY: the fogged, per-viewer decoy list the board is already
+      // drawn from. A decoy renders to the enemy as a real Wisp, so it has to
+      // preview like one — the *absence* of a number is a tell that outs it.
+    ], seen, currentFog(currentSeat()?.team ?? unit.owner).decoys));
 
     // ── AIM1 (+UI4): the drawn route as a LINE ───────────────────────────────
     // Shaded reachability says where you *could* go; only a line says which way
@@ -1317,7 +1329,7 @@ export function startHotSeat(
     const live = new Set<string>();
     let index = 0;
     for (const n of numbers) {
-      const key = `${n.unitId}:${n.kind}`;
+      const key = `${n.targetId}:${n.kind}`;
       live.add(key);
       let node = previewNodes.get(key);
       if (node === undefined) {
@@ -1345,13 +1357,14 @@ export function startHotSeat(
     // Several colours on one unit stack upward rather than overprinting.
     const stack = new Map<string, number>();
     for (const n of livePreviews) {
-      const node = previewNodes.get(`${n.unitId}:${n.kind}`);
+      const node = previewNodes.get(`${n.targetId}:${n.kind}`);
       if (node === undefined) continue;
-      const square = unitById(n.unitId)?.pos;
-      const at = square === undefined ? undefined : renderer.screenPosition(square.x, square.y, READOUT_LIFT);
+      // The anchor rides on the number itself: half the targets are decoys, and
+      // a decoy is deliberately not in `state.units` to look up (edge-cases R2).
+      const at = renderer.screenPosition(n.pos.x, n.pos.y, READOUT_LIFT);
       if (at === undefined) { node.style.display = 'none'; continue; }
-      const tier = stack.get(n.unitId) ?? 0;
-      stack.set(n.unitId, tier + 1);
+      const tier = stack.get(n.targetId) ?? 0;
+      stack.set(n.targetId, tier + 1);
       node.style.display = '';
       node.style.left = `${at.x.toFixed(1)}px`;
       node.style.top = `${(at.y - tier * PREVIEW_STACK_PX).toFixed(1)}px`;

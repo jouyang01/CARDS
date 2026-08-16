@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type UnitOrders } from '@cards/engine';
-import { deriveSeats, mergeSeatOrders } from '../src/hotseat.js';
+import { deriveSeats, mergeSeatOrders, resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type UnitOrders } from '@cards/engine';
 import { emptyDraft, toUnitOrders, type OrderDraft } from '../src/targeting.js';
 import { playEvents } from '../src/playback.js';
 

@@ -23,6 +23,13 @@ import type { AbilityDef, CharacterDef, GameState, UnitOrders, Vec2 } from '../s
 const OPEN = (n = 21) => makeMap(Array.from({ length: n }, () => '.'.repeat(n)));
 const board = () => buildBoard(OPEN());
 const CENTRE: Vec2 = { x: 10, y: 10 };
+/**
+ * A quarter turn, and the diamond's Manhattan radius — both defined by
+ * `AIM_STEPS` rather than by its current value, so AIM-SMOOTH raising the
+ * resolution moves these tests with the constant instead of against it.
+ */
+const QUARTER = AIM_STEPS / 4;
+const AIM_R = AIM_STEPS / 4;
 
 const ability = (over: Partial<AbilityDef> & Pick<AbilityDef, 'id'>): AbilityDef => ({
   name: over.id, phase: 'blast', shape: 'line', range: 8, cooldown: 0, energyGain: 8,
@@ -53,10 +60,13 @@ describe('AIM2: the quantized direction is pure integer, both ways', () => {
   });
 
   it('the four cardinals land on the steps you would expect', () => {
-    expect(stepToVector(0)).toEqual({ x: 64, y: 0 }); // east
-    expect(stepToVector(64)).toEqual({ x: 0, y: 64 }); // south (screen y grows down)
-    expect(stepToVector(128)).toEqual({ x: -64, y: 0 }); // west
-    expect(stepToVector(192)).toEqual({ x: 0, y: -64 }); // north
+    // Written against AIM_STEPS rather than its current value: the cardinals are
+    // quarter turns and the diamond radius is AIM_STEPS/4 *by construction*, so
+    // AIM-SMOOTH raising the resolution must not need this test edited.
+    expect(stepToVector(0)).toEqual({ x: AIM_R, y: 0 }); // east
+    expect(stepToVector(QUARTER)).toEqual({ x: 0, y: AIM_R }); // south (screen y grows down)
+    expect(stepToVector(2 * QUARTER)).toEqual({ x: -AIM_R, y: 0 }); // west
+    expect(stepToVector(3 * QUARTER)).toEqual({ x: 0, y: -AIM_R }); // north
   });
 
   it('vectorToStep inverts stepToVector for every step', () => {
@@ -69,10 +79,10 @@ describe('AIM2: the quantized direction is pure integer, both ways', () => {
   it('vectorToStep maps raw deltas (a mouse drag) onto the same directions', () => {
     expect(vectorToStep(5, 0)).toBe(0); // due east, any magnitude
     expect(vectorToStep(100, 0)).toBe(0);
-    expect(vectorToStep(0, 3)).toBe(64);
-    expect(vectorToStep(-7, 0)).toBe(128);
-    expect(vectorToStep(0, -9)).toBe(192);
-    expect(vectorToStep(4, 4)).toBe(32); // the SE diagonal, halfway round the quadrant
+    expect(vectorToStep(0, 3)).toBe(QUARTER);
+    expect(vectorToStep(-7, 0)).toBe(2 * QUARTER);
+    expect(vectorToStep(0, -9)).toBe(3 * QUARTER);
+    expect(vectorToStep(4, 4)).toBe(QUARTER / 2); // the SE diagonal, halfway round the quadrant
     expect(vectorToStep(0, 0)).toBe(0); // no direction at all
   });
 
@@ -106,12 +116,12 @@ describe('AIM2: rotated shapes keep their reach (line = tiles along the axis; co
 
   it('the cardinal directions reproduce the pre-AIM2 straight rays exactly', () => {
     expect(posKeys(lineSquares(board(), CENTRE, stepToVector(0), 3))).toEqual(['11,10', '12,10', '13,10']);
-    expect(posKeys(lineSquares(board(), CENTRE, stepToVector(192), 3))).toEqual(['10,7', '10,8', '10,9']);
+    expect(posKeys(lineSquares(board(), CENTRE, stepToVector(3 * QUARTER), 3))).toEqual(['10,7', '10,8', '10,9']);
   });
 
   it('a diagonal step gives the diagonal ray, metered as a distance', () => {
     // 3 tile-widths on the diagonal is 2.12 steps — two tiles, not three.
-    expect(posKeys(lineSquares(board(), CENTRE, stepToVector(32), 3))).toEqual(['11,11', '12,12']);
+    expect(posKeys(lineSquares(board(), CENTRE, stepToVector(QUARTER / 2), 3))).toEqual(['11,11', '12,12']);
   });
 
   it('an in-between step gives a genuinely rotated ray — not snapped to a compass point', () => {
@@ -119,7 +129,7 @@ describe('AIM2: rotated shapes keep their reach (line = tiles along the axis; co
     expect(ray).toHaveLength(5);
     const keys = posKeys(ray);
     expect(keys).not.toEqual(posKeys(lineSquares(board(), CENTRE, stepToVector(0), 6)));
-    expect(keys).not.toEqual(posKeys(lineSquares(board(), CENTRE, stepToVector(32), 6)));
+    expect(keys).not.toEqual(posKeys(lineSquares(board(), CENTRE, stepToVector(QUARTER / 2), 6)));
     // It drifts off the row gradually, which is what "rotated" should look like.
     expect(ray.every((p) => p.x > CENTRE.x)).toBe(true);
     expect(ray.at(-1)!.y).toBeGreaterThan(CENTRE.y);
@@ -183,7 +193,7 @@ describe('AIM2: orders carry the step, and illegal steps are rejected', () => {
 
   it('an aimStep aims the ability with no target square at all', () => {
     const { state } = run(makeState([caster(), victim()]), [
-      { unitId: 'a', ability: { abilityId: 'rail', target: [], aimStep: 64 } }, // due south
+      { unitId: 'a', ability: { abilityId: 'rail', target: [], aimStep: QUARTER } }, // due south
     ]);
     expect(unit(state, 'e').hp).toBe(80);
   });
@@ -230,11 +240,15 @@ describe('AIM2: cross-engine determinism', () => {
 
   it('expandShape is stable for a rotated line through the public entry point', () => {
     const def = char.abilities[0]!;
-    const once = expandShape(board(), def, CENTRE, [], 40);
-    const twice = expandShape(board(), def, CENTRE, [], 40);
+    // Five-eighths of a quadrant round from east — south-south-east, a genuinely
+    // rotated aim rather than a compass point. Expressed against AIM_STEPS so
+    // AIM-SMOOTH's higher resolution keeps pointing it the same way.
+    const sse = Math.round((AIM_STEPS / 4) * 0.625);
+    const once = expandShape(board(), def, CENTRE, [], sse);
+    const twice = expandShape(board(), def, CENTRE, [], sse);
     expect(posKeys(once)).toEqual(posKeys(twice));
-    // Step 40 points south-south-east; 8 tile-widths that way covers 6 tiles
-    // (AIM-METRIC — reach is the distance, not the tile count).
+    // Eight tile-widths that way covers 6 tiles — reach is the distance, not
+    // the tile count (AIM-METRIC), so a diagonal-ish beam covers fewer of them.
     expect(once.length).toBe(6);
   });
 

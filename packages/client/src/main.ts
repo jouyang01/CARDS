@@ -7,6 +7,10 @@
  * MAPTOGGLE: the setup is no longer hard-coded. `?map=…&format=…&players=…`
  * chooses it, `parseSetup` validates it, and the default is the 2v2 demo this
  * file used to spell out inline. The real lobby is M3.
+ *
+ * CAMO-SEED adds `?scenario=…` to the same family: a dev-only named starting
+ * arrangement for board states that are ordinary in a match and expensive to
+ * drive to from the opening frame.
  */
 import {
   buildCatalystPool,
@@ -81,4 +85,5 @@ startHotSeat(
   setup.format,
   setup.playersPerTeam,
   buildCatalystPool(CATALYSTS),
+  setup.scenario,
 );

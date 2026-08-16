@@ -11,4 +11,5 @@ export * from './shapes.js';
 export * from './combat.js';
 export * from './resolve.js';
 export * from './setup.js';
+export * from './orders.js';
 export * from './powerups.js';

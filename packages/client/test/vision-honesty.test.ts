@@ -74,7 +74,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     const { s, caster, enemy, rail, squares } = firingLine(4);
     expect(seenBy(s, caster.owner).has(enemy.unitId)).toBe(true); // premise
     const shown = previewNumbers(s, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
-    expect(shown.some((n) => n.unitId === enemy.unitId)).toBe(true);
+    expect(shown.some((n) => n.targetId === enemy.unitId)).toBe(true);
   });
 
   it('shows nothing over the same enemy once it is out of sight', () => {
@@ -82,7 +82,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     const { s, caster, enemy, rail, squares } = firingLine(VISION_RANGE + 2);
     expect(seenBy(s, caster.owner).has(enemy.unitId)).toBe(false); // premise
     const shown = previewNumbers(s, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
-    expect(shown.some((n) => n.unitId === enemy.unitId)).toBe(false);
+    expect(shown.some((n) => n.targetId === enemy.unitId)).toBe(false);
   });
 
   it('and the aim itself is still allowed — you may fire into the dark', () => {
@@ -101,7 +101,7 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     at(s, ally.unitId, 20, 7); // far outside sight range, but it is still yours
     const rail = ability(VEX, 'rail_shot');
     const shown = previewNumbers(s, caster, [{ def: rail, squares: [ally.pos] }], seenBy(s, caster.owner));
-    expect(shown.some((n) => n.unitId === ally.unitId && n.kind === 'damage')).toBe(true);
+    expect(shown.some((n) => n.targetId === ally.unitId && n.kind === 'damage')).toBe(true);
   });
 
   it('a stealthed enemy in the area shows nothing — the gate is the engine\'s', () => {
@@ -112,14 +112,14 @@ describe('PREVIEW-FOG: a preview number never outs a unit you cannot see', () =>
     const vision = buildVision(buildBoard(OPEN));
     expect(visibleEnemiesForTeam(vision, s, caster.owner).map((u) => u.unitId)).toEqual([]); // premise
     const shown = previewNumbers(s, caster, [{ def: rail, squares }], seenBy(s, caster.owner));
-    expect(shown.some((n) => n.unitId === enemy.unitId)).toBe(false);
+    expect(shown.some((n) => n.targetId === enemy.unitId)).toBe(false);
   });
 
   it('the gate is exactly the set the board is drawn from, not a second answer', () => {
     const { s, caster, rail, squares } = firingLine(VISION_RANGE + 2);
     const drawn = new Set(fogView(OPEN, s, caster.owner).units.map((u) => u.unitId));
     const numbered = new Set(
-      previewNumbers(s, caster, [{ def: rail, squares }], drawn).map((n) => n.unitId),
+      previewNumbers(s, caster, [{ def: rail, squares }], drawn).map((n) => n.targetId),
     );
     for (const id of numbered) expect(drawn.has(id), id).toBe(true);
   });
