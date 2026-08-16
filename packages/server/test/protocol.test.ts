@@ -313,13 +313,32 @@ describe('M3-PROTOCOL: a seat that leaves does not hang the turn', () => {
 });
 
 describe('M3-PROTOCOL: the room view says what a client needs to draw', () => {
-  it('reports started, the turn, and who is locked in', () => {
+  it('reports started and the turn', () => {
     const { hub, sockets } = running(4);
     const started = sockets[0]!.of('matchStarted')[0]!.room;
     expect(started).toMatchObject({ started: true, turn: 1, locked: [] });
     hub.receive('s1', submitFrame([]));
     hub.close('s2'); // any room-shaped message will do to re-read the view
-    expect(sockets[0]!.of('seatLeft')[0]!.room.locked).toEqual(['s1']);
+    expect(sockets[0]!.of('seatLeft')[0]!.room).toMatchObject({ started: true });
+  });
+
+  it('but a room view carries NO lock list once the match is running (M3-LOCKLIST)', () => {
+    // `RoomView` rides `joined`, `roomUpdated` and `seatLeft` — all broadcast,
+    // the same bytes to both teams. A lock list there would hand each team the
+    // other's seat ids one message after the per-seat `decision` withheld them.
+    const { hub, sockets } = running(4);
+    hub.receive('s1', submitFrame([]));
+    hub.close('s2');
+    expect(sockets[0]!.of('seatLeft')[0]!.room.locked).toEqual([]);
+  });
+
+  it('…while a lobby view still names who is ready, because nothing is secret yet', () => {
+    const hub = new RoomHub(createRoom('WXYZ', '2v2'), config);
+    const watcher = new FakeSocket();
+    hub.open('a', watcher);
+    hub.receive('a', joinFrame('A'));
+    expect(watcher.of('joined')[0]!.room.locked).toEqual([]);
+    expect(watcher.of('joined')[0]!.room.started).toBe(false);
   });
 
   it('a lobby that has not started says so', () => {

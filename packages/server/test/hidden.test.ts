@@ -152,20 +152,33 @@ describe('M3-HIDDEN: plans are team-vs-team, never within a team', () => {
     const decision = sockets[mine.seatId]!.latest('decision')!;
     expect(decision.orders[enemy.seatId], 'the enemy plan is not there').toBeUndefined();
     // Not merely absent from the map: the enemy seat is nowhere in the orders
-    // or the state at all. (`locked` is the one place its id legitimately
-    // appears — see the lock-count test below — so it is excluded here.)
-    const { locked: _locked, ...rest } = decision;
-    expect(JSON.stringify(rest)).not.toContain(enemy.seatId);
+    // or the state at all — and since M3-LOCKLIST, nowhere in the message at
+    // all, `locked` included. The whole payload is scanned.
+    expect(JSON.stringify(decision)).not.toContain(enemy.seatId);
   });
 
-  it('but the LOCK COUNT is shared — you may know that they are ready', () => {
-    // Knowing somebody has locked in is not knowing what they locked in, and a
-    // client with no idea who it is waiting for cannot show a lobby at all.
+  it('but the enemy lock COUNT is shared — you may know they are ready', () => {
+    // M3-LOCKLIST: knowing somebody has locked in is not knowing what they
+    // locked in, and a client with no idea what it is waiting for cannot show a
+    // waiting state at all. A count says that; a seat id says more.
     const { hub, sockets } = running();
     const mine = hub.room.seats.find((s) => s.team === 0)!;
     const enemy = hub.room.seats.find((s) => s.team === 1)!;
     hub.receive(enemy.seatId, submitFrame([]));
-    expect(sockets[mine.seatId]!.latest('decision')!.locked).toContain(enemy.seatId);
+    const decision = sockets[mine.seatId]!.latest('decision')!;
+    expect(decision).toMatchObject({ enemyLocked: 1, enemyOf: 2 });
+    expect(decision.locked, 'and my own team has not').toEqual([]);
+  });
+
+  it('while my own team\'s lock state stays per-seat — UI-INTENT needs it', () => {
+    // A tick over the teammate who is ready is the whole point, and a count
+    // cannot say which one that is.
+    const { hub, sockets } = running();
+    const [mine, mate] = hub.room.seats.filter((s) => s.team === 0);
+    hub.receive(mate!.seatId, submitFrame(holdFor(hub, mate!.seatId)));
+    const decision = sockets[mine!.seatId]!.latest('decision')!;
+    expect(decision.locked).toEqual([mate!.seatId]);
+    expect(decision.of, 'out of my own team, not the room').toBe(2);
   });
 });
 
