@@ -203,20 +203,22 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   move). Damage applies immediately; if it kills, remaining path/actions are discarded.
   A unit that *starts* on a freshly placed trap square does not trigger it until it
   re-enters.
-- **RULED — Traps expire: Overwatch Trap 2 turns, every trap ≤3 turns (owner directive
-  2026-09-01, "Overwatch Traps should only last for 2 turns total. Traps in general should only
-  last for up to 3 turns max"; backlog TRAP-LIFETIME — engine + data + validation).** A placed
-  trap currently **never expires** — it sits until triggered, which lets a Vex minefield accrete
-  across a match. Ruling: a trap **expires unfired at the end of `placedTurn + lifetime − 1`** (a
-  `lifetime: 2` trap covers the turn it is placed and the next, then is gone), mirroring how a
-  `duration: N` status is measured. **`TrapState` gains a lifetime/expiry**, populated from the
-  ability's trap effect; **Vex's Overwatch Trap is `2`**; **validation rejects any trap `lifetime`
-  > 3** (the general cap), the same shape as the other content caps. The client's TRAP-INDICATOR
-  marker clears when the trap expires (an expiry event or the trap simply leaving `state.traps`).
-  Ships with tests: an Overwatch Trap placed on turn *t* is gone by turn *t+2* if never triggered;
-  a trap authored with `lifetime: 4` fails validation; a trap still triggers normally within its
-  life. **Deterministic** (integer turn arithmetic, N-trap-safe list). Out of scope: re-arming or
-  moving traps; per-trap balance beyond the owner's two numbers.
+- **RULED — Traps expire; the mechanism (owner directive 2026-09-01, refined 2026-08-16; backlog
+  TRAP-LIFETIME shipped PR #45, re-tuned by TRAP-LIFETIME-TUNE).** A placed trap **expires unfired
+  at the end of `placedTurn + lifetime − 1`** (a `lifetime: 3` trap covers the turn it is placed
+  and the two after, then is gone), mirroring how a `duration: N` status is measured. `TrapState`
+  carries the lifetime/expiry from the ability's trap effect; the client's TRAP-INDICATOR marker
+  clears on expiry.
+  - **RE-TUNED 2026-08-16 (owner Dev Note: "Trap should last 3 turns, max of 4 turns"; backlog
+    TRAP-LIFETIME-TUNE — data + constant).** The shipped values (Overwatch Trap `2`, cap `3`) are
+    raised: **Vex Overwatch Trap `lifetime: 2 → 3`**, and **`TRAP_MAX_LIFETIME` `3 → 4`** (the
+    general cap validation now rejects `lifetime > 4`, accepts ≤4). This **supersedes** the
+    2026-09-01 "Overwatch 2 / cap 3" numbers — the mechanism is unchanged, only the two numbers
+    move. Owner-ruled, overrides "never rebalance". Ships with the tests updated: an untriggered
+    Overwatch Trap is gone by `placedTurn + 3`, a `lifetime: 5` trap fails validation, `lifetime: 4`
+    now passes.
+  - **Deterministic** (integer turn arithmetic, N-trap-safe list). Out of scope: re-arming or
+    moving traps; per-trap balance beyond the owner's numbers.
 - **RULED — Chase orders resolve at the end of Move, and the four edge cases (CHASE1; Designer
   ar-parity §7.2 + owner ruling 2026-09-01; backlog CHASE1 — engine + client).** A `UnitOrders`
   may carry a **chase target** (an enemy unit id) instead of a `movePath`: normal movement resolves
@@ -422,6 +424,21 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   **standing test guard** asserts `packages/engine` contains no `Math.cos/sin/atan2/tan`
   (add it regardless of when AIM2 lands). `circle` (target-square Euclidean disk) and `path`
   (dashes) are unaffected.
+  - **RULED — Finer rotation is a `AIM_STEPS` bump, and it stays deterministic (owner Dev Note
+    2026-08-16, "make the rotations for attacks even more smooth, like 360 degrees of freedom";
+    backlog AIM-SMOOTH — engine + client).** Aiming is **already** 360°-free — `AIM_STEPS = 256`
+    (`shapes.ts:69`), ≈1.4° per step — so the ask is finer *granularity*, not a new capability.
+    **Raise `AIM_STEPS`** (e.g. 256 → **512** or 1024); the quantization is a Manhattan diamond with
+    `AIM_R = AIM_STEPS / 4` per quadrant, so any multiple of 4 keeps the integer diamond exact —
+    **no trig, no floats, determinism preserved** (the no-trig guard still holds; the HITBOX1
+    cross-engine signature will shift, regenerate it). The client's mouse→step map (`dragToAimStep`)
+    already scales with the constant. **Known deeper cause, flagged not required:** equal *steps*
+    around a diamond are not equal *angles* (steps bunch near the axes vs the diagonals), so
+    rotation can feel subtly uneven even at high step counts; making it truly angle-uniform needs a
+    **precomputed integer direction table** (built offline, no runtime trig — still deterministic),
+    which is the follow-up if a bump alone does not satisfy. Start with the bump — it is one
+    constant + regenerated golden values. Ships with the rotation-invariance/determinism tests
+    re-run at the new resolution.
 - **RULED — Tile coverage = Atlas Reactor central-circular-hitbox (owner directive
   2026-08-25; SUPERSEDES the AIM2 "centre-in" rule below; backlog HITBOX1).** Every tile has a
   hidden **circular hitbox of radius half a tile, centred on the tile**. A tile is hit **iff
@@ -731,6 +748,21 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     (`{id, teamId, pos, expiresOnTurn}`), **not** in `state.units` (so every phase loop /
     vision union / spawn picker / win check stays correct without an "is this real?" guard).
     Damage resolution checks the decoy list after units. Deterministic, N-unit-safe.
+  - **RULED — Plan-time PREVIEWS treat a decoy as a real character (owner Dev Note 2026-08-16,
+    "Decoy should be a real character for all intents and purposes. Meaning damage, healing, and
+    shielding previews should show on it"; backlog PREVIEW-DECOY — client).** A decoy renders to the
+    enemy **as Wisp**, so an aimed ability whose area covers the decoy must float the **same
+    damage / heal / shield preview number it would over a real unit** — otherwise the *absence* of a
+    preview number is a tell that outs the decoy, defeating the whole ability. So PREVIEW-NUMBERS
+    (and any per-unit plan-time hint) includes decoys as preview targets, per-viewer and fogged
+    exactly like the render: to the enemy the decoy previews as Wisp (a **nominal** amount — red for
+    damage, green for heal, blue for shield); to Wisp's own team it previews on the purple decoy.
+    **This is a client-side preview FICTION only — the engine mechanics are unchanged:** the decoy
+    still takes no heals/shields/buffs, still dies to *any* damage, still grants no energy (above).
+    The preview shows what the action *would* do to the character the viewer believes is there; it
+    does not make the decoy mechanically real. Ships with a client test: an enemy damage/heal/shield
+    ability aimed over a decoy shows the coloured number; a decoy in the viewer's fog shows none
+    (same vision gate as PREVIEW-FOG). Out of scope: any engine change to decoy mechanics.
   - **Playtest lever:** if Wisp is oppressive, shorten the lifetime (cast turn only), not the
     destruction rule.
 
