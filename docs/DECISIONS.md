@@ -2594,3 +2594,23 @@ reads as broken rather than as quiet.
    something is on them and not what. Extending it means either a hover card on a unit or a second
    strip, both of which are real UI design rather than a clarity fix, so I stopped at the note's
    scope. If the owner meant "clearer for every unit on the board", that is a follow-up item.
+## 2026-08-14 — The screenshot UI batch (Designer, owner reference)
+
+The owner supplied an AR in-match screenshot as the UI reference and four directives; specced
+as six client items in `ar-parity-v1.md` §4.1–4.6 (UI-NAMEPLATES, STATUS-ICONS, UI-INSPECT,
+UI-TOPBAR, UI-TIMER, UI-INTENT), extending UI-VIEWPORT/SCORE1 rather than replacing them.
+Three calls worth recording. **(1) Everything on a nameplate is gated on `canSee`, and the
+decoy therefore needs a snapshot.** Nameplates, inspect panels and status icons all read off
+vision — which means a decoy rendered as Wisp with *no* nameplate would un-disguise itself
+instantly. The decoy snapshot must carry the nameplate fields (frozen HP, name) and answer
+kit inspection with cast-time cooldowns; a refusal or live data would leak either way. Same
+principle that gated the damage-preview numbers (PREVIEW-FOG): the UI must never be a better
+scout than the vision rules allow. **(2) Stealth's icon renders to the owning team only** —
+an enemy-visible stealth marker is a contradiction in terms; the icon exists so *you* know
+your own concealment state. **(3) UI-INTENT closes a ruled-but-invisible gap:** teammates
+have been entitled to see each other's plans since the Teams rulings, but no UI ever showed
+them — at 2v2 default, a duo that cannot see each other's plan is two solo players. Also
+recorded: the screenshot's damage-preview numbers already shipped fog-gated (nothing to do),
+and AR's "ULT" nameplate tag is adopted because an ultimate you can see coming is a threat
+you play around rather than a surprise — the same information-over-surprise principle the
+whole simultaneous-turn design rests on.

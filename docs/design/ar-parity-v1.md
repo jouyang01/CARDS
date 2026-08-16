@@ -167,6 +167,104 @@ seconds of opening the game.
 
 ---
 
+### 4.1 `UI-NAMEPLATES` — the overhead nameplate, specified from the AR screenshot
+
+The owner supplied an in-game AR screenshot (Decision phase, mid-match) as the reference.
+What AR renders above every visible character, and what we adopt:
+
+- **Name above the model** (player name in AR; character name in CARDS until M3 gives us
+  player names), sitting above the HP bar. RULED.
+- **HP as a number inside the HP bar** — the bar shows the numeral (57, 114, 40 in the
+  shot), not just a fill fraction. Shield, when present, renders as a distinct segment
+  appended to the fill with its own colour, since shields are consumed first. RULED.
+- **Energy as a thin bar under the HP bar**, and an **"ULT" tag at the bar's end when
+  energy ≥ 100** — in the shot both enemy nameplates carry the ULT tag, which is exactly
+  the information that makes an ult a *threat you can play around* rather than a surprise.
+  RULED.
+- **Status icons in a row under the bar** (the shot shows a dash glyph and an eye) — see
+  §4.2 for the vocabulary.
+- **Vision gates all of it.** A nameplate renders only while your team can see the unit
+  (`canSee`); fogged and stealthed units show nothing. Your own team's nameplates always
+  render. The damage-preview numbers already ship fog-gated (PREVIEW-FOG) — same rule,
+  same reason: a nameplate over an unseen unit would leak the position fog exists to hide.
+- **Decoys carry a full fake nameplate** — name, frozen cast-time HP, empty status row
+  (statuses would leak: the enemy client would have to know Wisp's real buffs). The decoy
+  already renders as Wisp to the enemy team; a Wisp-shaped model with no nameplate would
+  un-disguise it instantly. Needs one edge-cases line: **the decoy snapshot includes the
+  nameplate fields.**
+
+### 4.2 `STATUS-ICONS` — replace the colour pips with AR's icon vocabulary
+
+The owner's directives: **Might is a sword; Revealed is an eye.** Extending to the whole
+drawable set so the vocabulary is total (the client's `PIP_ORDER` already fixes display
+order — debuffs first — and stays):
+
+| Status | Icon | | Status | Icon |
+|---|---|---|---|---|
+| Root | chained boot | | Might | **sword** (owner) |
+| Slow | hourglass | | Haste | wing |
+| Weaken | broken sword | | Energized | lightning bolt |
+| Reveal | **eye** (owner) | | Unstoppable | battering ram |
+| Shield | bubble **with the remaining amount as a numeral** | | Untargetable | ghost outline |
+| | | | Stealth | mask — **rendered to the owning team only** (the enemy sees nothing; that is the point) |
+
+Weaken/Might and Root/Haste read as broken/whole pairs on purpose — the counter-relation
+is legible at a glance. Icons are drawn glyphs (canvas/SVG textures), no external assets;
+each keeps the pip system's fixed slot so position stays learnable. Durations render as a
+small numeral on the icon.
+
+### 4.3 `UI-INSPECT` — cooldowns and state of any visible character (owner directive)
+
+*"Player can see cooldowns of other characters and the buffs/debuffs/energy/hp status when
+they have vision of the character."*
+
+- **Hover (or click-hold) any visible unit** → an inspect panel: their five ability slots
+  with **current cooldown numbers**, ultimate charge state, **catalysts remaining vs
+  spent** (spent slots greyed — the same read AR gives via the nameplate row), and active
+  statuses with durations.
+- **Own team: always inspectable.** Enemies: only while `canSee` holds — the same gate as
+  nameplates, so fog and Stealth hide the panel too. No "last known" ghost data in v1.
+- All of it reads straight off engine state the client already holds; **zero engine
+  change.** The one wrinkle: **inspecting a decoy** must show Wisp's kit as of the cast
+  snapshot (cooldowns frozen), not live data and not a refusal — either would un-disguise
+  it. Rides on the same snapshot as §4.1.
+
+### 4.4 `UI-TOPBAR` — the match strip, straight from the screenshot
+
+AR's top edge is: **friendly portraits · team score · turn number · enemy score · enemy
+portraits**. This is SCORE1's in-match half given a concrete layout:
+
+- Portrait strips per team, each portrait carrying a mini HP bar and a dead/respawn-count
+  state — the at-a-glance "who is winning the attrition war" read.
+- Centre: **kills vs target for both teams, with the turn counter between them** (the
+  screenshot's `1 · 10 · 1`). Turn X of Y stays the load-bearing element — it is the
+  clock the Support anti-stall balance depends on.
+
+### 4.5 `UI-TIMER` — the countdown with urgency, and Time Bank pips
+
+From the shot: a large countdown adjacent to LOCK IN showing **tenths under 20 s**
+(`16:95`), with the **Time Bank charge rendered as pips** beside it. Adopt: whole seconds
+above 10 s, tenths + a colour shift below 10 s, Time Bank pips (we have 1 charge; AR shows
+2 — ours renders one pip). The +10 s bank extension animates visibly when it fires, so its
+consumption is never silent. `TIMER-40` (§7.4) sets the base value this counts from.
+
+### 4.6 `UI-INTENT` — teammates' plans, visible on the board
+
+In the screenshot, small numbered action tiles float above an allied character — AR shows
+you **what your teammates have queued**. CARDS already rules that teammates see each
+other's planned orders (edge-cases, "Teammate information"); today that ruling has no UI.
+Render above each allied unit during Decision: the queued ability's slot number (plus a
+free-action/catalyst marker when one is declared), and a lock-state tick once they lock in.
+2v2 is the default format — a duo that cannot see each other's plan is planning blind,
+so this is the difference between a team turn and two solo turns.
+
+### 4.7 Already shipped, for the record
+
+The screenshot's **damage-preview numbers** (the 20 / 12 / 10 beside targets) already
+exist (`preview-numbers.ts`), fog-gated and polarity-aware. The **power-up pads** on AR's
+floor land with `PADS1`, which should include their board rendering (pad glyph plus a
+respawn countdown on the tile).
+
 ## 5. Map design — my own maps break the rule you named
 
 **Your principle:** AR maps never have too much cover, too many pillars, or **too many stealth
@@ -268,7 +366,7 @@ All seven questions are answered. Nothing in this document is blocked.
 | 4 | Power-up pads | **Add** | `PADS1` (engine + data) |
 | 5 | Decision timer | **40 seconds** | `TIMER-40` (one constant) |
 | 6 | Maps | **Fix** | Done in this PR (data) |
-| 7 | UI + scoreboard | **Fix** | `UI-VIEWPORT`, `SCORE1` (client) |
+| 7 | UI + scoreboard | **Fix** | `UI-VIEWPORT`, `SCORE1`, and the screenshot batch: `UI-NAMEPLATES`, `STATUS-ICONS`, `UI-INSPECT`, `UI-TOPBAR`, `UI-TIMER`, `UI-INTENT` (§4.1–4.6, all client) |
 | — | Catalysts | **Add the AR ones we lack** | Two shipped here; Regenergy rides `DOT-HOT` (§8) |
 
 ### 7.1 `DOT-HOT` — damage- and heal-over-time (engine)
@@ -346,10 +444,10 @@ in this PR**, both built from effect kinds the engine already has:
 - **Probe** (blast) — Reveal every enemy in the aimed area for 2 turns, brush included. Answers
   the ambush you know is coming, and covers the area-reveal gap noted in §3.
 
-**Regenergy** (prep) — heal 12 at end of turn for 3 turns — is specced but **deliberately not in
-`data/`**: it needs `healOverTime`, which does not exist yet, so shipping it would put content in
-`data/` that fails validation. It lands with `DOT-HOT`, completing a flat 4/4/4 pool. Until then
-the pool is 3/4/4 and the tests say so.
+**Regenergy** (prep) — heal 12 at end of turn for 3 turns — was specced here and **withheld
+until `DOT-HOT` landed** (shipping it earlier would have put content in `data/` that fails
+validation). *Update: DOT-HOT has since shipped and Regenergy with it — the pool is now the
+full flat 4/4/4.*
 
 Not adopted: **Echo Boost** and **Chronosurge** need buff-extension and turn-manipulation
 mechanics we do not have; **Critical Shot** needs a "next attack" hook; **Regroup** overlaps
