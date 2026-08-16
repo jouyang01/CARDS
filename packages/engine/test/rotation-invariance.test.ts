@@ -108,16 +108,44 @@ describe('rotation invariance: tile counts', () => {
       .toEqual([3, 8, 15, 24]);
   });
 
-  it('a LINE covers between `range/√2` and `range` tiles — the spacing, stated', () => {
-    // A count bound for beams has to come from the geometry: a diagonal beam's
-    // tiles are √2 apart, so the same distance covers 1/√2 as many of them.
-    // Asserting ±1 here would be asserting something false.
+  it('no LINE tile is ever further than `range` — the reach rule, exactly', () => {
+    // The assertion with teeth, and the one AIM-SMOOTH made necessary. A beam's
+    // *reach* is a distance, not a tile count, and this holds to the square at
+    // every one of the AIM_STEPS rotations: raising the resolution must not let
+    // a rotated beam creep one tile past what its range promises.
+    for (const range of [1, 2, 4, 8]) {
+      for (const dir of [...ALL_STEPS, ...COMPASS]) {
+        for (const p of lineSquares(BOARD, CENTRE, dir, range)) {
+          const d = Math.hypot(p.x - CENTRE.x, p.y - CENTRE.y);
+          expect(d, `line range ${range} dir ${dir.x},${dir.y} tile ${p.x},${p.y}`)
+            .toBeLessThanOrEqual(range);
+        }
+      }
+    }
+  });
+
+  it('a LINE never goes short: at least `range/√2` tiles', () => {
+    // A diagonal beam's tiles are √2 apart, so the same distance covers 1/√2 as
+    // many of them. Asserting ±1 here would be asserting something false.
     for (const range of [2, 4, 8]) {
       for (const dir of [...ALL_STEPS, ...COMPASS]) {
-        const n = lineSquares(BOARD, CENTRE, dir, range).length;
-        expect(n, `line range ${range} dir ${dir.x},${dir.y}`)
+        expect(lineSquares(BOARD, CENTRE, dir, range).length, `line range ${range} dir ${dir.x},${dir.y}`)
           .toBeGreaterThanOrEqual(Math.floor(range / Math.SQRT2));
-        expect(n, `line range ${range} dir ${dir.x},${dir.y}`).toBeLessThanOrEqual(range + 1);
+      }
+    }
+  });
+
+  it('…and never runs away: at most 1.25x `range` tiles', () => {
+    // The upper bound used to be `range + 1`, which held at AIM_STEPS = 256 by
+    // luck rather than by geometry. At 512 a slope just off 1/2 walks a shallow
+    // staircase whose shoulder tiles push a range-8 beam to ten squares — all
+    // of them inside range 8 (the test above proves it), just more of them.
+    // 1.25 is the measured worst case across every step and range; it is a
+    // guard against a beam running away, not a claim about the exact count.
+    for (const range of [2, 4, 8]) {
+      for (const dir of [...ALL_STEPS, ...COMPASS]) {
+        expect(lineSquares(BOARD, CENTRE, dir, range).length, `line range ${range} dir ${dir.x},${dir.y}`)
+          .toBeLessThanOrEqual(Math.ceil(range * 1.25));
       }
     }
   });
