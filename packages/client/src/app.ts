@@ -10,6 +10,7 @@
  */
 
 import {
+  ULT_COST,
   buildBoard,
   createMatch,
   movementBudget,
@@ -75,6 +76,9 @@ import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, typ
 import { padViews, type PadView, type ViewState } from './playback.js';
 import { applyScenario, type ScenarioId } from './scenarios.js';
 import { statusChips, statusPips, viewableStatuses } from './status-pips.js';
+import {
+  decoyNameplate, snapshotDecoy, unitNameplate, type DecoySnapshot,
+} from './nameplates.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
   clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally,
@@ -260,16 +264,52 @@ export function startHotSeat(
    * depends on who is reading it. Everything else about a visible unit is
    * public — if you can see them, you can see that they are Rooted.
    */
-  const toRenderUnits = (units: readonly UnitState[], viewer: TeamId): RenderUnit[] => units.map((u) => ({
-    unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
-    energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
-    shield: shieldOf(u),
-    // STATUS-AUDIT: read straight off engine state during Decision. An active
-    // status is one with turns left — an expired instance is not a status.
-    // STATUS-ICONS: durations and the shield pool ride along as the glyph's
-    // numeral, so the row says how long as well as what.
-    pips: statusPips(viewableStatuses(u.statuses.filter((s) => s.remaining > 0), u.owner === viewer)),
-  }));
+  const toRenderUnits = (units: readonly UnitState[], viewer: TeamId): RenderUnit[] => units.map((u) => {
+    // UI-NAMEPLATES: one model, and the icon row comes out of it too — the
+    // plate and the floating icons must never disagree about what is on a unit,
+    // and the surest way to guarantee that is to build them once.
+    const plate = unitNameplate(u, roster, viewer);
+    return {
+      unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
+      energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
+      shield: shieldOf(u),
+      // STATUS-AUDIT: read straight off engine state during Decision. An active
+      // status is one with turns left — an expired instance is not a status.
+      // STATUS-ICONS: durations and the shield pool ride along as the glyph's
+      // numeral, so the row says how long as well as what.
+      pips: plate.pips,
+      nameplate: plate,
+    };
+  });
+
+  /**
+   * UI-NAMEPLATES — what each decoy's fake plate says, frozen at the cast.
+   *
+   * Client memory, like `sightings`, and for the same reason: the engine decoy
+   * is `{id, teamId, pos, expiresOnTurn}` and deliberately carries nothing about
+   * who cast it (edge-cases — the snapshot fields are the client's, derived from
+   * the cast). Written when a `decoySpawned` event plays; read every frame after.
+   */
+  let decoySnapshots = new Map<string, DecoySnapshot>();
+
+  /**
+   * The plate for a decoy the viewer believes is a real unit.
+   *
+   * Only when it is being *impersonated*: to its owner a decoy is a purple
+   * ground marker, not a body, and a nameplate over a marker would be the tell
+   * in reverse.
+   */
+  const decoyPlate = (d: { id: string; owner: TeamId; asEnemy: boolean }) => {
+    if (!d.asEnemy) return undefined;
+    const snapshot = decoySnapshots.get(d.id)
+      // A decoy already on the board when this client started drawing (the
+      // scenario seeds, a reload) has no recorded cast. Falling back to the
+      // caster as it stands is a small lie in the honest direction: it is what
+      // the plate would have said a moment ago, and no plate at all is the one
+      // answer that outs the decoy.
+      ?? snapshotDecoy(state.units, roster, d.owner);
+    return snapshot === undefined ? undefined : decoyNameplate(snapshot);
+  };
 
   /**
    * A remembered enemy, in the renderer's shape. Everything live is blanked:
@@ -480,6 +520,18 @@ export function startHotSeat(
       // order, and no numerals: the log carries neither durations nor shield
       // pools, and inventing them is worse than leaving them off.
       pips: statusPips(viewableStatuses([...v.statuses].map((kind) => ({ kind })), v.owner === viewer)),
+      // UI-NAMEPLATES during playback: the same plate, fed by the fold rather
+      // than by state, so an HP bar ticks down as the blow lands instead of
+      // jumping when the turn ends.
+      nameplate: {
+        name: roster[unitById(v.unitId)?.characterId ?? '']?.name ?? v.unitId,
+        hp: v.hp,
+        maxHp: v.maxHp,
+        shield: v.shield,
+        energy: v.energy,
+        ult: v.energy >= ULT_COST,
+        pips: [],
+      },
     }));
   };
 
@@ -491,12 +543,10 @@ export function startHotSeat(
    */
   const viewDecoys = (view: ViewState): RenderDecoy[] => {
     const viewer = currentSeat()?.team ?? 0;
-    return [...view.decoys.values()].map((d) => ({
-      id: d.id,
-      pos: { ...d.pos },
-      owner: d.teamId,
-      asEnemy: d.teamId !== viewer,
-    }));
+    return [...view.decoys.values()].map((d) => {
+      const shown = { id: d.id, pos: { ...d.pos }, owner: d.teamId, asEnemy: d.teamId !== viewer };
+      return { ...shown, nameplate: decoyPlate(shown) };
+    });
   };
 
   /**
@@ -596,7 +646,14 @@ export function startHotSeat(
     // can never be on the board at once.
     // PADS-INDICATOR: pads are public terrain, so they are drawn from the map
     // and the authoritative state, with no fog view in the way.
-    renderer.show([...toRenderUnits(view.units, team), ...toGhostUnits(view.ghosts)], view.decoys, view.traps, pads());
+    renderer.show(
+      [...toRenderUnits(view.units, team), ...toGhostUnits(view.ghosts)],
+      // UI-NAMEPLATES: a decoy being taken for a real unit wears a real unit's
+      // plate. `fogView` already decided which decoys this viewer sees and
+      // whether each is being impersonated; this only dresses them.
+      view.decoys.map((d) => ({ ...d, nameplate: decoyPlate(d) })),
+      view.traps, pads(),
+    );
     renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
     // CAMO-REVEAL: the thicket a unit gave itself away in burns red. Same view
     // as everything else, so it can never out a unit the seat cannot see.
@@ -1182,6 +1239,22 @@ export function startHotSeat(
     // The log is written from the resolved event list up front, so it is
     // complete whether the player watches the animation or skips it.
     combatLog?.appendTurn(prev.turn, result.events, logNames);
+
+    // UI-NAMEPLATES: freeze each new decoy's fake plate at the cast, and forget
+    // the ones that expired. `prev` is the pre-turn state, which is the caster
+    // as it stood when the decoy was placed — Veil & Decoy is a Prep-phase free
+    // action, so nothing has happened to it yet. (A caster hurt by a Prep AoE
+    // in the same turn would freeze one tick early; the alternative is
+    // threading the playback fold back into here for a difference no player can
+    // see.) Expired ids are dropped so the map cannot grow for the whole match.
+    const stillThere = new Set(result.state.decoys.map((d) => d.id));
+    const nextSnapshots = new Map([...decoySnapshots].filter(([id]) => stillThere.has(id)));
+    for (const event of result.events) {
+      if (event.type !== 'decoySpawned') continue;
+      const snapshot = snapshotDecoy(prev.units, roster, event.teamId);
+      if (snapshot !== undefined) nextSnapshots.set(event.decoyId, snapshot);
+    }
+    decoySnapshots = nextSnapshots;
 
     // The player owns state — its fold IS the board, so skipping and watching
     // agree by construction. Everything below only *decorates* that fold:
