@@ -211,6 +211,25 @@
 
       .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       .hud-view { display: flex; gap: 6px; }
+      /* ── UI-TIMER: the countdown, directly above Lock In ──────────────────
+         Beside the button it is the deadline for, so the two are read as one
+         thing. Tenths and the colour shift arrive together below ten seconds:
+         they are one signal, and a precise number in a calm colour is worse
+         than either alone. */
+      .hud-timer { display: flex; align-items: center; gap: 8px; }
+      .hud-timer-text { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums;
+        letter-spacing: 0.5px; min-width: 58px; text-align: right; }
+      .hud-timer-text.urgent { color: #ff8a5c; }
+      .hud-timer-text.expired { color: #d2624f; opacity: 0.75; }
+      /* The bank extension has to be SEEN. A +10 s that silently changed the
+         number reads as a miscount. */
+      @keyframes bank-flash { 0% { transform: scale(1); } 35% { transform: scale(1.22); } 100% { transform: scale(1); } }
+      .hud-timer.extending .hud-timer-text { animation: bank-flash 900ms ease-out; color: #6fbf73; }
+      .hud-bank { min-width: 30px; min-height: 30px; padding: 0 8px; font-size: 13px;
+        line-height: 1; color: #ffd76a; border-color: #6a5a2a; }
+      /* Spent reads as an empty socket rather than as nothing, so the resource
+         stays legible after it is gone. */
+      .hud-bank.spent { color: #6b7180; border-color: #2b3140; }
       .hud-small { font-size: 11px; padding: 3px 8px; min-width: 44px; min-height: 44px; }
       .hud-lock { background: var(--reach); color: #fff; border-color: var(--reach);
         font-weight: 700; font-size: 14px; padding: 10px 20px;

@@ -15,10 +15,11 @@
  * nothing here re-derives it.
  */
 
-import type { AbilityDef } from '@cards/engine';
+import { TIMEBANK_SECONDS, type AbilityDef } from '@cards/engine';
 import type { CatalystCost } from './targeting.js';
 import type { StatusChip } from './status-pips.js';
 import type { InspectPanel } from './inspect.js';
+import type { TimerView } from './timer.js';
 
 export interface HudAbility {
   id: string;
@@ -110,6 +111,8 @@ export interface HudHandlers {
   selectMove(sprint: boolean): void;
   selectChase(): void;
   hoverMove(kind: 'move' | 'sprint' | undefined): void;
+  /** UI-TIMER: the player spent their Time Bank charge. */
+  extendTime(): void;
   hold(): void;
   lock(): void;
   toggleProjection(): void;
@@ -124,6 +127,11 @@ export interface Hud {
    * under the pointer, anchored near `at` in viewport coordinates.
    */
   inspect(panel: InspectPanel | undefined, at?: { x: number; y: number }): void;
+  /**
+   * UI-TIMER: the countdown beside LOCK IN. `undefined` hides it (playback,
+   * game over) — a clock still ticking over a resolved turn is a lie.
+   */
+  setTimer(view: TimerView | undefined): void;
   /** Swap to the resolution HUD: one Skip control, no ordering. */
   showPlayback(onSkip: () => void): void;
   /** Hide everything (game over). */
@@ -213,6 +221,13 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
 
   // ── bottom-right: Lock In, immediately right of the hotbar ────────────────
   const right = el('div', 'hud-right');
+  // ── UI-TIMER: the countdown, immediately above Lock In ───────────────────
+  // Beside the button it is a deadline for, so the two are read together.
+  const timerRow = el('div', 'hud-timer');
+  const timerText = el('span', 'hud-timer-text');
+  const bankBtn = el('button', 'hud-bank');
+  bankBtn.onclick = () => handlers.extendTime();
+  timerRow.append(timerText, bankBtn);
   const lockBtn = el('button', 'hud-lock');
   lockBtn.onclick = () => handlers.lock();
   const viewRow = el('div', 'hud-view');
@@ -221,7 +236,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const orbitBtn = el('button', 'hud-small');
   orbitBtn.onclick = () => handlers.toggleOrbit();
   viewRow.append(projBtn, orbitBtn);
-  right.append(viewRow, lockBtn);
+  right.append(viewRow, timerRow, lockBtn);
 
   // ── playback: one Skip, replacing the ordering controls ───────────────────
   const playback = el('div', 'hud-playback');
@@ -253,6 +268,27 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   document.body.appendChild(inspectPanel);
 
   return {
+    setTimer(view) {
+      timerRow.style.display = view === undefined ? 'none' : '';
+      if (view === undefined) return;
+      timerText.textContent = view.text;
+      timerText.classList.toggle('urgent', view.urgent);
+      timerText.classList.toggle('expired', view.expired);
+      // The extension has to be *seen*. A +10 s that silently changed the number
+      // would read as a miscount, and the one thing a player must never wonder
+      // about is whether their own charge was consumed.
+      timerRow.classList.toggle('extending', view.extending);
+      // One pip per charge (we have one; AR shows two). Spent reads as an empty
+      // socket rather than as nothing, so the resource is still legible after
+      // it is gone.
+      bankBtn.textContent = view.charges > 0 ? '●' : '○';
+      bankBtn.title = view.charges > 0
+        ? `Time Bank — add ${TIMEBANK_SECONDS} seconds (${view.charges} left)`
+        : 'Time Bank — spent';
+      bankBtn.disabled = !view.canExtend;
+      bankBtn.classList.toggle('spent', view.charges <= 0);
+    },
+
     inspect(panel, at) {
       if (panel === undefined) {
         inspectPanel.style.display = 'none';

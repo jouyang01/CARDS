@@ -81,6 +81,7 @@ import {
 } from './nameplates.js';
 import { inspectDecoy, inspectUnit } from './inspect.js';
 import { intentBadges } from './intent.js';
+import { freshTimer, spendBank, timerView } from './timer.js';
 import { previewNumbers, type PreviewNumber } from './preview-numbers.js';
 import {
   clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally, topbar,
@@ -492,6 +493,18 @@ export function startHotSeat(
       if (!renderer.orbitEnabled()) fitCamera();
       render();
     },
+    extendTime: () => {
+      // UI-TIMER: the +10 s. Recorded as a moment rather than a boolean so the
+      // flash can fade on its own — a charge that vanished silently would read
+      // as a miscount, and "did my bank actually fire?" is the one question the
+      // control must never leave open.
+      const next = spendBank(remainingMs(), bankCharges);
+      if (!next.spent) return;
+      deadlineAt = performance.now() + next.remainingMs;
+      bankCharges = next.charges;
+      bankSpentAt = performance.now();
+      paintTimer();
+    },
   });
 
   // The HUD and log are what `sizeToContainer` measures, so re-fit now that both
@@ -617,12 +630,61 @@ export function startHotSeat(
     openSeat();
   }
 
+  /**
+   * UI-TIMER — the decision countdown, per seat.
+   *
+   * Client-side and **presentation only**: nothing here ends a turn. Enforcing a
+   * deadline is server-authoritative and belongs to M3-TIMER, where it is the
+   * same deadline for everybody; a hot-seat clock that resolved the turn by
+   * itself would be a second, different rule, and the two would drift.
+   *
+   * Reset per seat rather than per turn because the Time Bank is a *player's*
+   * resource — in a hot-seat, each seat is a player taking its own decision, so
+   * each gets its own window and its own charge.
+   */
+  let deadlineAt = 0;
+  let bankCharges = freshTimer().charges;
+  let bankSpentAt: number | undefined;
+  let timerHandle: ReturnType<typeof setInterval> | undefined;
+
+  const remainingMs = (): number => Math.max(0, deadlineAt - performance.now());
+
+  const paintTimer = (): void => {
+    const since = bankSpentAt === undefined ? undefined : performance.now() - bankSpentAt;
+    hud.setTimer(timerView(remainingMs(), bankCharges, since));
+  };
+
+  /**
+   * Start a fresh window. Driven by an interval rather than the render loop:
+   * the decision phase has no animation frame of its own, and repainting the
+   * whole HUD ten times a second to move one number would tear the DOM out
+   * from under UI1's hover.
+   */
+  function startTimer(): void {
+    const fresh = freshTimer();
+    deadlineAt = performance.now() + fresh.remainingMs;
+    bankCharges = fresh.charges;
+    bankSpentAt = undefined;
+    if (timerHandle !== undefined) clearInterval(timerHandle);
+    // Ten hertz: enough that the tenths readout counts smoothly, cheap enough
+    // that it costs nothing next to a WebGL frame.
+    timerHandle = setInterval(paintTimer, 100);
+    paintTimer();
+  }
+
+  function stopTimer(): void {
+    if (timerHandle !== undefined) clearInterval(timerHandle);
+    timerHandle = undefined;
+    hud.setTimer(undefined);
+  }
+
   /** Put the next seat with living characters on the clock, or resolve. */
   function openSeat(): void {
     while (seatIdx < seats.length && seatRoster().length === 0) seatIdx += 1;
     const roster = seatRoster();
     if (roster.length === 0) return void resolveAndPlay(); // nobody left to order
     for (const unit of roster) draftFor(unit); // every character is orderable at once
+    startTimer();
     selectUnit(roster[0]!.unitId);
   }
 
@@ -1389,6 +1451,9 @@ export function startHotSeat(
       renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
       renderer.highlight('camo', viewCamo(player.view), CAMO_RED, CAMO_OPACITY);
     };
+    // The plan is committed, so its deadline is history. A clock still ticking
+    // over a resolving turn is a lie about what the player can still do.
+    stopTimer();
     hud.showPlayback(() => {
       skipped = true;
       player.skip();
@@ -1584,6 +1649,7 @@ export function startHotSeat(
     renderer.drawShape([], SHAPE);
     renderer.setSpotlight(null);
     renderer.fitBoard();
+    stopTimer();
     hud.clear();
     const result = matchBreakdown(state, unitName, totals);
     ui.status.textContent = endReasonText(result);
