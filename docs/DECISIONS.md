@@ -2326,3 +2326,107 @@ for. A code is **not** access control: that is M3-HIDDEN's per-team filtering.
    booted miniflare or `wrangler dev` — the sandbox has no account and the spec said local-only. The
    first time this runs for real will be M3-DEPLOY. If you would rather find integration problems
    earlier, a `wrangler dev` smoke check is a small item to schedule before then.
+
+---
+
+## Builder session — 2026-08-16 (second)
+
+**(1) A LINE's reach is a distance, not a tile count.** `rotation-invariance` asserted a beam covers
+at most `range + 1` tiles. That held at `AIM_STEPS = 256` by luck, not by geometry: at 512 a slope
+just off 1/2 walks a shallow staircase whose shoulder tiles take a range-8 beam to ten squares. I
+measured before touching it — exhaustively across all 512 steps and every range, **no tile ever
+exceeds `range`** — so the count bound was standing in for the reach rule and doing it
+approximately. It is now three assertions: the exact one (no tile further than `range`, at every
+rotation), the unchanged `range/√2` floor, and a 1.25× ceiling that is a runaway guard rather than
+a claim about the count.
+
+**(2) Tests should name `AIM_STEPS`, not its value.** Most of AIM-SMOOTH's diff is test files,
+because cardinals were written as `64` and probe aims as `40`. They now read `AIM_STEPS / 4` and
+`(AIM_STEPS / 4) * 0.625` — the same *direction* at any resolution — so the next bump needs none of
+this work again. The HITBOX1 golden signature **had** to change (twice as many aims are folded in);
+its readable companion, the tile-by-tile cone at a fixed angle, did not, which is the useful signal.
+
+**(3) A decoy previews like the character it impersonates, and that is a client-side fiction.** The
+engine is untouched: a decoy still takes no heals, no shields, and dies to any damage (edge-cases
+R2). The number shows what the action would do to *the character the viewer believes is there*,
+because the **absence** of a number outs a decoy for free to anyone sweeping an aim past it.
+Polarity reads the decoy's `owner` exactly as it reads a unit's, so the fiction cannot disagree with
+FF1; the fog gate needs no code, since a hidden decoy is simply absent from `FogView.decoys`.
+
+**(4) `PreviewNumber.unitId` became `targetId` and gained `pos`.** Half the targets are not units,
+and a decoy is deliberately kept out of `state.units`, so `placePreviewNumbers`' `unitById` lookup
+had nothing to find. Carrying the anchor on the number deletes that lookup rather than adding a
+second one beside it.
+
+**(5) `isCamoRed` cannot separate a lit thicket from a shaded team-red unit, and the measurement is
+recorded.** A thicket composites near `158,45,37`; a Lambert-shaded red body near `179,78,70` — same
+hue, same green-above-blue ordering. A frame with no thicket anywhere scores 22 against the
+predicate purely from unit edges, and a seeded frame scored the same 22, so a counting assertion
+would have passed or failed for reasons unrelated to the feature. Both CAMO-SEED e2e tests were cut
+rather than shipped as a second tautology. The predicate stays with its limit documented: with a
+seed the unit's square is knowable, so the assertion wants `pixelAt` on that square.
+
+**(6) A scenario seed is a named seed, not a DSL.** `?scenario=in-brush` nudges starting positions
+and nothing else — no scripted orders, no injected state — so everything from turn 1 is the ordinary
+engine on an ordinary board. It is opt-in, an unknown name is an error rather than a silent normal
+match, and a seeded match announces itself in the setup line.
+
+**(7) `mergeSeatOrders`/`deriveSeats` moved to `packages/engine/src/orders.ts`.** Pure order-shaping
+that the server needs and may not import from the client. `resolveTurn` still sees two teams and
+knows nothing about players — seats are the layer above, which is why this is its own module rather
+than part of `resolve.ts`.
+
+**(8) The match starts when the room is FULL, not when both teams are present.** Starting on "both
+teams have somebody" deals the characters before the third and fourth players arrive and seats them
+controlling nothing — found by a test, not by reasoning. The cost is explicit: a short room (a 2v2
+two players intend to run with two characters each) never fills, so `RoomHub.start()` is public as
+the escape hatch and as the method M3-LOBBY's start button will call.
+
+**(9) An order naming another seat's character is refused, not filtered.** Silently dropping it
+would let a client believe it had ordered a unit and watch the turn resolve as though it had chosen
+not to — indistinguishable from the engine ignoring a legal order.
+
+**(10) DO persistence is state AND order history** (ruling from Builder OQ 2026-08-16 #5,
+implemented): the authoritative `GameState` per turn so a reconnect is a cheap re-sync, plus each
+turn's merged orders appended so replay need not re-simulate. A seat that disconnects mid-turn takes
+its submission with it so the room does not wait on a gone socket; the disconnect *rule* (hold vs
+forfeit) is M3-TIMER's.
+
+## Open Questions for the Analyzer — 2026-08-16
+
+1. **CAMO-SEED's e2e is still not shipped, and the reason is now measured (decision 5).** The hook
+   works; the assertion technique does not. To finish it the seed needs to **report where it put
+   things** — e.g. expose the seeded squares on `window` in dev, or have `?scenario=` echo them into
+   the title attribute — so the e2e can `pixelAt` that square instead of counting the frame. Small,
+   but it is a scope call on a dev hook, not something to invent. Alternatively close the gap as
+   unit-covered-only (camo-reveal.test.ts covers the rule; only the *compositing* is unproven).
+
+2. **AIM-SMOOTH: is 512 enough?** Shipped as specced. The deeper cause is untouched and still true —
+   equal steps around a diamond are not equal angles, so rotation stays subtly uneven at any
+   resolution. The precomputed integer direction table is the fix if the owner still feels it;
+   worth a playtest question before scheduling it.
+
+3. **M3-PROTOCOL's start trigger needs M3-LOBBY sooner than the roadmap implies (decision 8).** A
+   full room is the only automatic trigger that does not strand a joiner, so a 2- or 3-player 2v2
+   currently cannot start over the network without someone calling `start()`. That is fine as an
+   interim but it means **the networked game is 4-players-only until M3-LOBBY**. If you want a
+   playable 2-player networked match before then, a tiny "start now" message is the smallest
+   addition — say so and I will add it rather than guess.
+
+4. **A joiner arriving after the match starts is currently seated with no characters.** The fill
+   trigger makes this hard to hit (the room is full), but it is reachable: somebody leaves mid-match,
+   freeing a seat, and a new socket joins. They get a seat, an empty control map, and count toward
+   the lock total — so the turn can never complete. **This wants a ruling**: refuse joins to a
+   started room (and let M3-RECONNECT handle the legitimate case), or seat them as a spectator. I did
+   not pick one because it is the same question M3-RECONNECT has to answer, and guessing here would
+   pre-empt it.
+
+5. **`turnResolved` broadcasts full state to every seat — the M3-HIDDEN interim, as specced.** Worth
+   confirming M3-HIDDEN is genuinely next: the events log contains every enemy action, so until it
+   lands the networked build leaks strictly more than the hot-seat does (the hot-seat at least fogs
+   its render).
+
+6. **Nothing has still booted a real Workers runtime** (carried from last session, unchanged). All
+   50→75 server tests run through the `Sink` seam. M3-DEPLOY's spec already includes a
+   `wrangler dev`/miniflare smoke check; this is just a reminder that the first real execution is
+   still ahead of us, and it now covers a lot more code than it did.
