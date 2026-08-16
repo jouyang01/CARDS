@@ -57,7 +57,7 @@ describe('a damaging aim puts a red number on everyone it covers', () => {
     const damage = rail.effects.find((e) => e.kind === 'damage')!.amount!;
 
     const shown = numbersFor(s, vexUnit.unitId, rail, [{ x: 14, y: 7 }]);
-    expect(shown).toContainEqual({ unitId: enemy.unitId, kind: 'damage', amount: damage });
+    expect(shown).toContainEqual({ targetId: enemy.unitId, kind: 'damage', amount: damage, pos: { ...enemy.pos } });
   });
 
   it('and on an ALLY standing in it — friendly fire is on, and this is the warning', () => {
@@ -67,7 +67,7 @@ describe('a damaging aim puts a red number on everyone it covers', () => {
     at(s, vexUnit.unitId, 2, 7);
     at(s, ally.unitId, 6, 7);
     const shown = numbersFor(s, vexUnit.unitId, ability(VEX, 'rail_shot'), [{ x: 14, y: 7 }]);
-    expect(shown.some((n) => n.unitId === ally.unitId && n.kind === 'damage')).toBe(true);
+    expect(shown.some((n) => n.targetId === ally.unitId && n.kind === 'damage')).toBe(true);
   });
 
   it('nothing for a unit outside the area, however close', () => {
@@ -77,7 +77,7 @@ describe('a damaging aim puts a red number on everyone it covers', () => {
     at(s, vexUnit.unitId, 2, 7);
     at(s, enemy.unitId, 7, 9); // off the fired row
     expect(numbersFor(s, vexUnit.unitId, ability(VEX, 'rail_shot'), [{ x: 14, y: 7 }])
-      .some((n) => n.unitId === enemy.unitId)).toBe(false);
+      .some((n) => n.targetId === enemy.unitId)).toBe(false);
   });
 
   it('nothing at all for an unaimed ability — an empty area previews nothing', () => {
@@ -94,7 +94,7 @@ describe('a damaging aim puts a red number on everyone it covers', () => {
     at(s, enemy.unitId, 7, 7);
     enemy.alive = false;
     expect(numbersFor(s, vexUnit.unitId, ability(VEX, 'rail_shot'), [{ x: 14, y: 7 }])
-      .some((n) => n.unitId === enemy.unitId)).toBe(false);
+      .some((n) => n.targetId === enemy.unitId)).toBe(false);
   });
 });
 
@@ -109,7 +109,7 @@ describe('beneficial aims stay on your own team', () => {
     const amount = pulse.effects.find((e) => e.kind === 'shield')!.amount!;
 
     const shown = numbersFor(s, caster.unitId, pulse, [{ x: 6, y: 7 }]);
-    expect(shown).toContainEqual({ unitId: ally.unitId, kind: 'shield', amount });
+    expect(shown).toContainEqual({ targetId: ally.unitId, kind: 'shield', amount, pos: { ...ally.pos } });
   });
 
   it('and shows an enemy standing in the same area nothing', () => {
@@ -120,7 +120,7 @@ describe('beneficial aims stay on your own team', () => {
     at(s, enemy.unitId, 6, 7);
     const pulse = [...AEGIS.abilities].find((a) => a.effects.some((e) => e.kind === 'shield'))!;
     expect(numbersFor(s, caster.unitId, pulse, [{ x: 6, y: 7 }])
-      .some((n) => n.unitId === enemy.unitId)).toBe(false);
+      .some((n) => n.targetId === enemy.unitId)).toBe(false);
   });
 
   it('only the three colours — a status rider is not a number', () => {
@@ -135,7 +135,7 @@ describe('beneficial aims stay on your own team', () => {
     const shown = previewNumbers(s, caster, [{ def: withRider, squares: [caster.pos] }], allSeen(s));
     // Exactly one number: the damage. Slow and Might are real effects with no
     // amount to show, and inventing a "0" for them would be noise.
-    expect(shown).toEqual([{ unitId: caster.unitId, kind: 'damage', amount: 30 }]);
+    expect(shown).toEqual([{ targetId: caster.unitId, kind: 'damage', amount: 30, pos: { ...caster.pos } }]);
   });
 });
 
@@ -152,8 +152,8 @@ describe('several armed actions read as one turn', () => {
       { def: a, squares: [enemy.pos] },
       { def: b, squares: [enemy.pos] },
     ], allSeen(s));
-    expect(shown.filter((n) => n.unitId === enemy.unitId && n.kind === 'damage'))
-      .toEqual([{ unitId: enemy.unitId, kind: 'damage', amount: 35 }]);
+    expect(shown.filter((n) => n.targetId === enemy.unitId && n.kind === 'damage'))
+      .toEqual([{ targetId: enemy.unitId, kind: 'damage', amount: 35, pos: { ...enemy.pos } }]);
   });
 
   it('keeps damage and shield on one unit as two separate numbers', () => {
@@ -167,7 +167,7 @@ describe('several armed actions read as one turn', () => {
     const shown = previewNumbers(s, caster, [
       { def: hurt, squares: [ally.pos] },
       { def: help, squares: [ally.pos] },
-    ], allSeen(s)).filter((n) => n.unitId === ally.unitId);
+    ], allSeen(s)).filter((n) => n.targetId === ally.unitId);
     expect(shown.map((n) => n.kind)).toEqual(['damage', 'shield']);
   });
 
@@ -179,7 +179,7 @@ describe('several armed actions read as one turn', () => {
     const once = previewNumbers(s, caster, [{ def, squares }], allSeen(s));
     const twice = previewNumbers(s, caster, [{ def, squares }], allSeen(s));
     expect(once).toEqual(twice);
-    expect(once.map((n) => n.unitId)).toEqual(s.units.map((u) => u.unitId));
+    expect(once.map((n) => n.targetId)).toEqual(s.units.map((u) => u.unitId));
   });
 });
 
@@ -199,6 +199,145 @@ describe("a dash previews where it DETONATES, not where it lands", () => {
       squares: [...abilityPreview(OPEN, caster, strike, [landing]), ...impact.origin, ...impact.destination],
     }], allSeen(s));
     const damage = strike.effects.find((e) => e.kind === 'damage')!.amount!;
-    expect(shown).toContainEqual({ unitId: enemy.unitId, kind: 'damage', amount: damage });
+    expect(shown).toContainEqual({ targetId: enemy.unitId, kind: 'damage', amount: damage, pos: { ...enemy.pos } });
+  });
+});
+
+/**
+ * PREVIEW-DECOY — "Decoy should be a real character for all intents and
+ * purposes. Meaning damage, healing, and shielding previews should show on it."
+ *
+ * A decoy renders to the enemy as a real Wisp (DECOY-RENDER). If an aim covering
+ * it shows nothing while the same aim over a real Wisp shows a number, the
+ * *absence* is the tell — the decoy outs itself to anyone who sweeps an aim past
+ * it, for free, every turn. So the preview lies in the decoy's favour.
+ *
+ * It is a **client-side fiction and nothing more**: the engine still gives a
+ * decoy no heals and no shields and kills it with any damage (edge-cases R2).
+ * What the number promises is what the action would do to the character the
+ * viewer believes is standing there.
+ */
+describe('PREVIEW-DECOY: a decoy previews exactly like the unit it impersonates', () => {
+  const decoyAt = (id: string, x: number, y: number, owner: 0 | 1) =>
+    ({ id, pos: { x, y }, owner });
+
+  it('a damaging aim covering a decoy floats the same red number a unit would', () => {
+    const s = board();
+    const vexUnit = unitOf(s, 'vex');
+    at(s, vexUnit.unitId, 2, 7);
+    const rail = ability(VEX, 'rail_shot');
+    const damage = rail.effects.find((e) => e.kind === 'damage')!.amount!;
+    const caster = s.units.find((u) => u.unitId === vexUnit.unitId)!;
+
+    // An enemy decoy sitting on the fired row.
+    const decoy = decoyAt('decoy-wisp-t1', 7, 7, 1);
+    const shown = previewNumbers(
+      s, caster,
+      [{ def: rail, squares: abilityPreview(OPEN, caster, rail, [{ x: 14, y: 7 }]) }],
+      allSeen(s), [decoy],
+    );
+    expect(shown).toContainEqual({ targetId: decoy.id, kind: 'damage', amount: damage, pos: { x: 7, y: 7 } });
+  });
+
+  it('a heal or shield reaches a decoy of your OWN team, and not an enemy one', () => {
+    // Polarity comes off the decoy's `owner` exactly as it comes off a unit's,
+    // so the fiction cannot disagree with FF1 about who a beneficial aim reaches.
+    const s = board();
+    const caster = unitOf(s, 'aegis');
+    at(s, caster.unitId, 5, 7);
+    const ward = [...AEGIS.abilities, AEGIS.ultimate].find((a) => a.effects.some((e) => e.kind === 'shield'))!;
+    const amount = ward.effects.find((e) => e.kind === 'shield')!.amount!;
+
+    const mine = decoyAt('decoy-mine', 6, 7, caster.owner);
+    const theirs = decoyAt('decoy-theirs', 6, 7, caster.owner === 0 ? 1 : 0);
+    const shown = previewNumbers(
+      s, caster,
+      [{ def: ward, squares: abilityPreview(OPEN, caster, ward, [{ x: 6, y: 7 }]) }],
+      allSeen(s), [mine, theirs],
+    );
+    expect(shown).toContainEqual({ targetId: mine.id, kind: 'shield', amount, pos: { x: 6, y: 7 } });
+    expect(shown.some((n) => n.targetId === theirs.id), 'a shield does nothing to an enemy').toBe(false);
+  });
+
+  it('a decoy the viewer cannot see shows nothing — the list IS the fog gate', () => {
+    // PREVIEW-FOG's rule, arrived at differently: a hidden enemy is still in
+    // `state.units` and has to be filtered, but a hidden decoy is simply absent
+    // from `FogView.decoys`. Passing an empty list is what a fogged decoy is.
+    const s = board();
+    const vexUnit = unitOf(s, 'vex');
+    at(s, vexUnit.unitId, 2, 7);
+    const rail = ability(VEX, 'rail_shot');
+    const caster = s.units.find((u) => u.unitId === vexUnit.unitId)!;
+    const squares = abilityPreview(OPEN, caster, rail, [{ x: 14, y: 7 }]);
+
+    const lit = previewNumbers(s, caster, [{ def: rail, squares }], allSeen(s), [decoyAt('d', 7, 7, 1)]);
+    const fogged = previewNumbers(s, caster, [{ def: rail, squares }], allSeen(s), []);
+    expect(lit.some((n) => n.targetId === 'd')).toBe(true);
+    expect(fogged.some((n) => n.targetId === 'd'), 'no number for a decoy nobody can see').toBe(false);
+  });
+
+  it('a decoy outside the area gets nothing, however close', () => {
+    const s = board();
+    const vexUnit = unitOf(s, 'vex');
+    at(s, vexUnit.unitId, 2, 7);
+    const rail = ability(VEX, 'rail_shot');
+    const caster = s.units.find((u) => u.unitId === vexUnit.unitId)!;
+    const shown = previewNumbers(
+      s, caster,
+      [{ def: rail, squares: abilityPreview(OPEN, caster, rail, [{ x: 14, y: 7 }]) }],
+      allSeen(s), [decoyAt('d', 7, 8, 1)], // one row off the beam
+    );
+    expect(shown.some((n) => n.targetId === 'd')).toBe(false);
+  });
+
+  it('a decoy standing where a real Wisp stands reads identically', () => {
+    // The whole point, stated as an equality: the number a viewer sees over a
+    // decoy is the number it would see over the character it is impersonating.
+    const s = board();
+    const vexUnit = unitOf(s, 'vex');
+    const realWisp = createMatch(OPEN, '2v2', [[VEX, AEGIS], [WISP, AEGIS]]);
+    at(s, vexUnit.unitId, 2, 7);
+    at(realWisp, realWisp.units.find((u) => u.characterId === 'vex')!.unitId, 2, 7);
+    at(realWisp, realWisp.units.find((u) => u.characterId === 'wisp')!.unitId, 7, 7);
+
+    const rail = ability(VEX, 'rail_shot');
+    const casterA = s.units.find((u) => u.unitId === vexUnit.unitId)!;
+    const casterB = realWisp.units.find((u) => u.characterId === 'vex')!;
+    const wispId = realWisp.units.find((u) => u.characterId === 'wisp')!.unitId;
+
+    const overDecoy = previewNumbers(
+      s, casterA,
+      [{ def: rail, squares: abilityPreview(OPEN, casterA, rail, [{ x: 14, y: 7 }]) }],
+      allSeen(s), [decoyAt('d', 7, 7, 1)],
+    ).find((n) => n.targetId === 'd');
+    const overWisp = previewNumbers(
+      realWisp, casterB,
+      [{ def: rail, squares: abilityPreview(OPEN, casterB, rail, [{ x: 14, y: 7 }]) }],
+      allSeen(realWisp),
+    ).find((n) => n.targetId === wispId);
+
+    expect(overDecoy?.kind).toBe(overWisp?.kind);
+    expect(overDecoy?.amount).toBe(overWisp?.amount);
+    expect(overDecoy?.pos).toEqual(overWisp?.pos);
+  });
+
+  it('numbers stay deterministic with decoys in the mix — units first, then decoys', () => {
+    const s = board();
+    const vexUnit = unitOf(s, 'vex');
+    at(s, vexUnit.unitId, 2, 7);
+    const rail = ability(VEX, 'rail_shot');
+    const caster = s.units.find((u) => u.unitId === vexUnit.unitId)!;
+    const decoys = [decoyAt('d1', 6, 7, 1), decoyAt('d2', 8, 7, 1)];
+    const go = () => previewNumbers(
+      s, caster,
+      [{ def: rail, squares: abilityPreview(OPEN, caster, rail, [{ x: 14, y: 7 }]) }],
+      allSeen(s), decoys,
+    );
+    expect(go()).toEqual(go());
+    const ids = go().map((n) => n.targetId);
+    expect(ids.indexOf('d1'), 'decoys come after every unit').toBeGreaterThan(
+      Math.max(...s.units.map((u) => ids.indexOf(u.unitId))),
+    );
+    expect(ids.indexOf('d1')).toBeLessThan(ids.indexOf('d2'));
   });
 });
