@@ -860,6 +860,26 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 - **OPEN — Partial-team disconnect (matters at M3).** If one player on a multi-player
   team disconnects, does a teammate gain control of the abandoned characters? Current
   lean: yes, after one fully missed turn. Decide when building the server.
+- **RULED — A started room refuses fresh joins; a freed seat is reserved for RECONNECT (M3;
+  Builder OQ 2026-08-16 #4).** Once a match has started, a new socket may **not** take an empty or
+  freed seat — a fresh joiner would get a seat with an **empty control map** and still **count
+  toward the lock total**, so the turn could never complete (a real, reachable bug: a player leaves
+  mid-match, a stranger joins the freed seat). Ruling: the room **rejects a join to a started
+  match**; a seat vacated by a disconnect is **held for its original occupant to reclaim via
+  M3-RECONNECT** (identity-matched), never handed to an arbitrary new socket. **Spectators are out
+  of scope for v1** — recorded as the future option if the owner wants watchers, but a v1 room is
+  its players only. A one-line guard in the room's `join` can land now (cheap, closes the bug); the
+  full reclaim path is M3-RECONNECT's. This also settles that **the lock total is over
+  seated-and-controlling players only** — a socket that never `join`ed, or is refused, counts for
+  nothing (M3-ROOM decision 8 already holds "a socket is not a seat").
+- **RULED — A networked match starts when the room is FULL, with an explicit "start now" escape
+  hatch for short rooms (M3; Builder OQ 2026-08-16 #3, decision 8).** Auto-starting on "both teams
+  have someone" deals characters before the later players arrive and seats them controlling nothing,
+  so the automatic trigger is a **full** room. But a deliberately short room — a 2-player 2v2 where
+  each runs two characters — never fills, so `RoomHub.start()` is exposed as an explicit start, and
+  a minimal **"start now" protocol message** (backlog M3-START) lets such a room begin over the
+  network before M3-LOBBY exists. Until M3-START/M3-LOBBY, the networked game is effectively
+  full-room-only; M3-LOBBY's start button calls the same `start()`.
 
 ## Economy & timing
 
