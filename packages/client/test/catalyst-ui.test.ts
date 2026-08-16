@@ -229,7 +229,7 @@ describe('CAT2: the order that reaches the engine carries both', () => {
 
 const character = (over: Partial<HudCharacter> = {}): HudCharacter => ({
   unitId: 'vex-t0-0', name: 'Vex', archetype: 'firepower', colour: '#4f8cff',
-  hp: 95, maxHp: 95, energy: 0, shield: 0, locked: false, hasOrder: false, ...over,
+  hp: 95, maxHp: 95, energy: 0, shield: 0, locked: false, hasOrder: false, statuses: [], ...over,
 });
 const slot = (id: string, over: Partial<HudCatalyst> = {}): HudCatalyst => ({
   id, name: POOL[id]!.name, phase: POOL[id]!.phase, cost: catalystCost(POOL[id]!),

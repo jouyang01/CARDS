@@ -17,7 +17,7 @@ const def = (id: string): AbilityDef => [...VEX.abilities, VEX.ultimate].find((a
 
 const character = (over: Partial<HudCharacter> = {}): HudCharacter => ({
   unitId: 'vex-t0-0', name: 'Vex', archetype: 'firepower', colour: '#4f8cff',
-  hp: 95, maxHp: 95, energy: 0, shield: 0, locked: false, hasOrder: false, ...over,
+  hp: 95, maxHp: 95, energy: 0, shield: 0, locked: false, hasOrder: false, statuses: [], ...over,
 });
 
 const ability = (id: string, over: Partial<HudAbility> = {}): HudAbility => ({

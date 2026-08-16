@@ -2510,3 +2510,20 @@ lists dash and move only — entry under a unit's own power); the two rules diff
 something you *walk into* and a pad is something you *are on*, and because the existing pad ruling
 already handed a pad to a unit knocked onto one. **Flagged for the Designer**: this belongs in
 `docs/design/edge-cases.md` beside the PADS1 line, which is not mine to edit.
+
+**(11) BUFF-UI: the pip row gained a named, counted-down strip rather than a redesign (dev note).**
+Owner note: "UI for buffs needs to be more clear." The pips *were* the buff UI — eleven 0.09-unit
+coloured squares floating over a model. That is enough to notice a status and not nearly enough to
+play around one: "am I slowed, and does it wear off before I commit to this move?" had no answer on
+screen, and a colour-blind player got nothing from any of it. The minimal fix is to spell the
+existing vocabulary out rather than invent a second one: `status-pips.ts` gained `STATUS_LABELS`,
+`STATUS_BLURBS` and `statusChips`, which reuse `PIP_ORDER` and `PIP_COLORS` so the HUD strip and the
+floating pips can never disagree about what is on a character or in what order. The strip names each
+status, counts it down in turns, tints a dot with the pip colour, and carries a `title` explaining
+what the status does. Debuffs additionally get a class and a red left edge, because colour alone is
+the thing that was not working. Two judgment calls inside it: the blurbs describe the *effect* and
+never the magnitude (the numbers are the engine's constants, and a UI restating them is a second
+place to get a balance pass wrong), and duplicate `shield` instances collapse to one chip carrying
+the longest remaining and the summed amount — two shields absorb as one pool, which is what the HP
+bar already shows. The strip hides entirely when nothing is on the character; a reserved blank row
+reads as broken rather than as quiet.

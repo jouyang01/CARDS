@@ -105,6 +105,22 @@
       .hud-bar-track.shield .hud-bar-fill { background: var(--shield); }
       .hud-bar-track.energy .hud-bar-fill { background: var(--energy); }
       .hud-bar-value { opacity: 0.7; font-variant-numeric: tabular-nums; }
+      /* BUFF-UI: the buff/debuff strip. The floating pips say something is on
+         you; this says what, and for how long. Debuffs get a red left edge so
+         the two families separate without relying on the dot colour alone —
+         eleven colours is more than a player should have to memorise, and it
+         gives a colour-blind player nothing. */
+      .hud-statuses { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px;
+        margin-top: 3px; max-width: 260px; }
+      .hud-status { display: inline-flex; align-items: center; gap: 4px;
+        padding: 2px 6px 2px 4px; border-radius: 4px; font-size: 10px; line-height: 1.4;
+        background: rgb(255 255 255 / 0.07); border-left: 3px solid #6fbf73; }
+      .hud-status.harm { border-left-color: #d2624f; }
+      .hud-status-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+      .hud-status-name { font-weight: 600; letter-spacing: 0.2px; }
+      .hud-status-amount { opacity: 0.85; font-variant-numeric: tabular-nums; }
+      .hud-status-turns { opacity: 0.55; font-variant-numeric: tabular-nums; }
+
       .hud-switcher { grid-column: 1 / -1; display: flex; gap: 6px; margin-top: 2px; }
       .hud-chip { font-size: 11px; padding: 3px 8px; }
 

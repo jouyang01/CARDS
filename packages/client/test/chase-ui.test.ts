@@ -107,7 +107,7 @@ describe('CHASE1: it composes exactly like a drawn move', () => {
 describe('CHASE1: the HUD names the quarry', () => {
   const character = (): HudCharacter => ({
     unitId: 'me', name: 'Vex', archetype: 'firepower', colour: '#5aa9ff',
-    hp: 95, maxHp: 95, energy: 0, shield: 0, locked: false, hasOrder: false,
+    hp: 95, maxHp: 95, energy: 0, shield: 0, locked: false, hasOrder: false, statuses: [],
   });
   const model = (chase: HudModel['chase']): HudModel => ({
     active: character(), roster: [character()], abilities: [], catalysts: [],
