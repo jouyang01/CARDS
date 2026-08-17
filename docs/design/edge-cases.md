@@ -256,6 +256,33 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     (Builder OQ 2026-09-02 #6/decision 6, ratified).** A well-formed client sends one or the other;
     the chase is the more specific statement of intent, exactly as a dash supersedes a walk. The
     client enforces the same in `nextDraft`, so the two never disagree.
+  - **RULED — a chase may SPRINT when the turn spends no normal ability (CHASE-SPRINT; owner Dev
+    Note 2026-09-06, "Chase should be able to sprint or move depending on how many actions the
+    character has … if I … haven't used an attack or only a free action, I should get full sprinting
+    chase"; backlog CHASE-SPRINT — engine + client).** A chase's budget follows the **same
+    sprint-availability rule as a normal move**: **`movementBudget(chaser, sprint = true)` (8) when
+    the unit declared no normal ability; move budget (4) when it did** — a **free action does NOT
+    block the sprint-chase** (it never consumes the turn, FREE1). Chase already reads
+    `movementBudget(chaser, plan.sprint)`; the gap is that a chase order can carry the sprint flag
+    and the client must offer it — so a chase defaults to sprint-budget when no ability is armed, and
+    drops to move-budget when one is. A dash ability still cancels the chase entirely (the dash is
+    the movement). Ships with a test: a chase with no ability closes up to 8; a chase with an ability
+    closes at most 4; a chase with only a free action still sprints.
+- **RULED — Plan-time reachability must NOT use a fogged enemy's position (MOVE-FOG; owner Dev Note
+  2026-09-06, "Move command is blocked if an enemy is out of line of sight but on the tile that you
+  are trying to move. This is giving unintentional information"; backlog MOVE-FOG — client).** The
+  client's move preview (`reachableSquares`/`pathTo`) treats **every** unit as an obstacle,
+  including enemies the acting team **cannot see** — so a path that reroutes or stops short around an
+  invisible enemy **leaks that the enemy is there**, a hidden-information leak exactly like the
+  ones PREVIEW-FOG and M3-HIDDEN close. Ruling: at **plan time** the client computes reachability and
+  paths against the **team-visible unit set only** (fogged enemies are not obstacles — you do not
+  know they are there). The **engine resolution is unchanged** — it uses the true board, so a move
+  planned onto/through a hidden enemy's square **stops short at resolution** (the collision rule),
+  and *that* is where the enemy is revealed. The leak moves from plan time (wrong) to resolution
+  (right — acting/contact reveals). Client-only: feed `pathTo`/`reachableSquares` a fog-filtered
+  occupancy (own units + visible enemies), never the raw `state.units`. Ships with a client test: a
+  path planned toward a tile held by an out-of-sight enemy is drawn as if free (does not reveal it),
+  and resolution stops the mover short.
 - **RULED — Power-up pads: settlement, PADS-PASS pickup, PADS-SPREAD placement, and the
   trap-vs-pad difference (PADS1 + owner Dev Notes 2026-08-16; folding in Builder decisions 7–10).**
   A pad grants its effect once, **settled at a single fixed point at the end of Move** — after the
@@ -287,6 +314,18 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     PADS-PASS, swept by walking the line) — the detour a pad is meant to cost vanishes. This is a
     **floor, not a placement policy**: how far beyond touching, and which squares, is the Designer's
     (routed). Both maps' placeholder pads were re-laid as mirrored singles to satisfy it.
+  - **PADS-SCHEDULE — Might spawns early to be a rush; regular pads later; respawn is 4 turns
+    (owner Dev Notes 2026-09-06 #5/#6).** *"Might powerups should be contestable, meaning that it's
+    a rush to get to the might powerup"* + *"Regular power-ups began appearing on turn 4, while
+    Might power-ups spawned earlier on turn 2 … Respawn Timer: 4 turns."* So the per-pad schedule
+    is: **Might pads `firstTurn: 2`, regular (Health/Energy) pads `firstTurn: 4`, every pad
+    `everyTurns: 4`**. The early Might spawn is what makes it *the* turn-2 rush (both teams reach
+    for it at once); the later regular spawn keeps the opening about position, not pickups. This is
+    **data** — the Designer sets `firstTurn`/`everyTurns` per pad on both maps (routed; the existing
+    PADS1 mirror + PADS-SPREAD guards keep it honest); the schema already carries the fields, so no
+    engine change. **Client (PADS-LIGHTS):** the respawn countdown renders as **four coloured lights
+    on the pad tile**, one per remaining turn (owner: "tracked visually by four colored lights"),
+    extending PADS-INDICATOR's marker. Out of scope: RNG spawns; pad types beyond the three.
 - **RULED — Walked dash vs teleport; `shape` is the authority (R4, updated 2026-08-19).**
   Two dash models, distinguished by `shape` — and `shape` alone decides *how* a reposition
   happens; a `teleport` **effect** only says *that* the caster repositions (which makes it a
@@ -1010,6 +1049,38 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   the aimed area. Until shape expansion lands, the interim raw-target contract can
   nominally "shoot through" a wall with a single-square aim; acceptable as interim, fixed
   by item 5a.
+- **RULED — A cone is occluded by walls, not just clipped at them (LOS-OCCLUSION; owner Dev Note
+  2026-09-06, "LoS should block make it so attacks cannot hit you … my conal/straight line attacks
+  are going past the gray blocks"; backlog LOS-OCCLUSION — engine, HIGH).** `coneSquares`
+  (`shapes.ts` ~:255-270) currently **drops the wall tiles but does not occlude the squares behind
+  them** — so a cone reaches straight through a gray block and hits what is behind it, which is the
+  bug the owner is seeing. `lineSquares` stops at the first wall **on its axis** (~:208) but its
+  HITBOX1 half-tile side-band can still cover a tile behind a wall. **Ruling — a `line`/`cone`
+  covered tile is dropped when the caster has no line of sight to it:** filter every line/cone tile
+  by **`hasLineOfSight(board, casterCentre, tileCentre)`** (the engine's own LoS kernel — walls
+  block, **cover does NOT**, GAME_SPEC §3), so a wall casts a shadow behind it for the whole wedge,
+  not only along the axis. This reuses an existing integer/deterministic kernel (no trig, no float —
+  the no-trig guard holds) and makes "walls block attacks, cover only reduces" one rule for sight
+  and for shapes. **`circle`/`square` stay un-occluded** (a lobbed grenade / placed zone arcs over a
+  wall — unchanged). Ships with tests: a cone aimed through a wall covers nothing behind it; a cone
+  aimed past a *cover* block still covers behind it (cover is not a sight blocker); a line's
+  side-band behind a wall is dropped; `circle` over a wall is unchanged. **Determinism-critical
+  engine change — cross-engine signature will move (regenerate).**
+- **RULED — Melee attacks ignore cover, keyed by an ability flag not by range (MELEE-COVER; owner
+  Dev Note 2026-09-06, "Melee attacks should ignore COVER, but not the full vision"; backlog
+  MELEE-COVER — engine + Designer data).** `isBehindCover` already exempts `range ≤ 1`
+  (`combat.ts:175`), but under **Manhattan (MET1)** a melee ability that reaches a diagonal
+  neighbour is authored at **range 2**, so the range-≤1 heuristic **misfires** and a point-blank
+  melee still eats cover — the owner's report. Ruling: melee-ignores-cover keys off an explicit
+  **`melee: true` ability flag** (Designer-authored), not a range threshold — the engine skips the
+  cover reduction (`computeDamage` with `behindCover = false`) when the ability is `melee`,
+  **regardless of its range**. LoS/walls still apply (the owner: "but not the full vision") — a
+  melee attack still cannot hit through a wall (LOS-OCCLUSION); it just isn't *reduced* by a cover
+  block. The **Designer marks which abilities are `melee`** (data pass — the short-range strikers);
+  validation accepts the flag. This supersedes the range-≤1 heuristic (which stays as a harmless
+  fallback or is removed — Builder's call). Ships with a test: a `melee` ability into a
+  cover-protected target deals full damage; a non-melee one is still reduced; neither hits through a
+  wall.
 - **RULED — Energy on multi-hit.** `energyGain` is granted once per ability use if it
   hits ≥1 enemy (not per enemy hit) in v1.
 - **PROPOSED — Cover uses a corner-*inclusive* line/edge test (flag, review 2026-08-14).**
