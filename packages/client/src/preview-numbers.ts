@@ -146,7 +146,12 @@ export function previewNumbers(
        */
       const dealt = (at: Vec2): number => kind !== 'damage'
         ? amount
-        : computeDamage(amount, caster, isBehindCover(board, caster.pos, at, def.range));
+        // MELEE-COVER: a melee strike is not reduced by cover, so the preview
+        // must not reduce it either — the whole point of routing through the
+        // engine is that the two cannot disagree.
+        : computeDamage(amount, caster, def.melee === true
+          ? false
+          : isBehindCover(board, caster.pos, at, def.range));
 
       for (const target of state.units) {
         if (!target.alive || !area.has(`${target.pos.x},${target.pos.y}`)) continue;
