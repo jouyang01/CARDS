@@ -52,7 +52,7 @@ import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, st
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, axisSquares, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
-import { buildVision, teamCanSee } from './vision.js';
+import { buildVision, teamCanSee, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
@@ -1549,15 +1549,104 @@ function planChases(
     // A target that died this turn is dropped: a corpse has no square to chase.
     if (target === undefined || !target.alive) continue;
 
-    const seen = teamCanSee(vision, draft, chaser.owner, target);
-    const goal = seen ? snapshot.get(target.unitId) : lastKnownFor(draft, chaser.owner, target.unitId)?.pos;
-    if (goal === undefined) continue;                    // never seen → nothing to chase
+    const pursuit = walkChase(board, vision, draft, snapshot, chaser, target, movementBudget(chaser, plan.sprint));
+    if (pursuit === undefined) continue;                 // never seen → nothing to chase
 
-    const path = pathToward(board, draft, chaser, goal, movementBudget(chaser, plan.sprint));
-    events.push({ type: 'chaseResolved', unitId: chaser.unitId, targetUnitId: target.unitId, to: { x: goal.x, y: goal.y }, seen });
-    if (path.length > 0) chasers.push({ unit: chaser, path, halted: false });
+    events.push({
+      type: 'chaseResolved',
+      unitId: chaser.unitId,
+      targetUnitId: target.unitId,
+      to: { x: pursuit.goal.x, y: pursuit.goal.y },
+      seen: pursuit.seen,
+    });
+    if (pursuit.path.length > 0) chasers.push({ unit: chaser, path: pursuit.path, halted: false });
   }
   return chasers;
+}
+
+/**
+ * CHASE-FOLLOW — walk the pursuit one square at a time, asking again each step
+ * whether the target is in sight.
+ *
+ * Owner Dev Note: *"Chasing still isn't working as intended. You should follow
+ * the character that you're chasing all the way until you lose line of sight or
+ * you run out of movement."*
+ *
+ * The chase used to judge visibility **once, from the square the chaser had not
+ * moved off yet**. A target that outran the *stationary* chaser's sight was
+ * therefore treated as fully fogged, and the pursuit halted on the last-known
+ * square — even when walking there would have restored sight with budget to
+ * spare. The reported case: a chaser at (5,10) after a target that ran to
+ * (12,10) stopped at (9,10) with `seen:false`, three squares short of catching
+ * something it could see the whole way.
+ *
+ * So the goal is re-derived from the chaser's **live** square on every step.
+ * Nothing else moves while this runs — the target and every teammate are frozen
+ * at their post-Move squares — so team vision can change for exactly one reason,
+ * that the chaser moved, which is what makes stepping and re-asking meaningful
+ * rather than circular.
+ *
+ * **Golden rule #5 still holds at every step.** The goal is the target's true
+ * square only while the team can see it; otherwise it is the last-known square,
+ * which is a square this team was already shown. No step is ever taken toward a
+ * position the fog is hiding.
+ *
+ * Stopping is not a fourth rule — it is what happens when there is nothing left
+ * to do: `pathToward` improves on the current square or returns nothing, so
+ * "caught it" (adjacent, target's square occupied), "arrived at the last-known
+ * square and it is still not there" (already at the goal) and "walled off" are
+ * one branch. The budget is the only other exit, and it strictly decreases —
+ * every step costs at least 1 — so this terminates even if sight flickers.
+ */
+function walkChase(
+  board: Board,
+  vision: Vision,
+  draft: GameState,
+  snapshot: ReadonlyMap<string, Vec2>,
+  chaser: UnitState,
+  target: UnitState,
+  budget: number,
+): { path: Vec2[]; goal: Vec2; seen: boolean } | undefined {
+  /** Team vision with the chaser standing at `at` — everyone else frozen. */
+  const seenFrom = (at: Vec2): boolean => teamCanSee(
+    vision,
+    { ...draft, units: draft.units.map((u) => (u.unitId === chaser.unitId ? { ...u, pos: at } : u)) },
+    chaser.owner,
+    target,
+  );
+  /** What this chaser is allowed to walk at, from `at`. */
+  const goalFrom = (at: Vec2): { goal: Vec2; seen: boolean } | undefined => {
+    const seen = seenFrom(at);
+    const goal = seen ? snapshot.get(target.unitId) : lastKnownFor(draft, chaser.owner, target.unitId)?.pos;
+    return goal === undefined ? undefined : { goal, seen };
+  };
+
+  const first = goalFrom(chaser.pos);
+  if (first === undefined) return undefined;
+
+  const path: Vec2[] = [];
+  let at = chaser.pos;
+  let left = budget;
+  let current = first;
+  while (left > 0) {
+    // Re-route from here rather than stepping greedily: a single-square hop
+    // toward the goal would walk into walls the reachability search routes
+    // around, and the chase would be worse at pathfinding than a plain Move.
+    const route = pathToward(board, draft, { ...chaser, pos: at }, current.goal, left);
+    const next = route[0];
+    if (next === undefined) break; // caught it, arrived, or boxed in
+    left -= stepCost(next.x - at.x, next.y - at.y);
+    path.push(next);
+    at = next;
+    const now = goalFrom(at);
+    if (now === undefined) break; // the memory it was chasing is gone
+    current = now;
+  }
+
+  // Report the pursuit as it ended: what the chaser can see from where it
+  // stopped, and the goal that reading implies. A chase that gained sight on the
+  // way says so, which is the whole point of the tell.
+  return { path, goal: current.goal, seen: current.seen };
 }
 
 /**
