@@ -21,21 +21,29 @@ import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
 import wisp from '../../../data/characters/wisp.json';
 import aegis from '../../../data/characters/aegis.json';
+import cinder from '../../../data/characters/cinder.json';
+import lumen from '../../../data/characters/lumen.json';
+import ravok from '../../../data/characters/ravok.json';
+import thorn from '../../../data/characters/thorn.json';
 
 /**
- * The match every room runs, until M3-LOBBY lets players choose.
+ * What every room can be played with — the **pickable roster**, not a deal.
  *
  * Bundled rather than fetched: `data/` is static content and a Worker that had
  * to fetch its own rules before it could start a turn would have a cold-start
- * failure mode for no benefit. The deal mirrors the client's dev default (Vex +
- * Wisp against Bastion + Aegis) so a hot-seat player and a networked one are
- * looking at the same match.
+ * failure mode for no benefit. It matches the client's default `CATALOG`
+ * (Kestrel excluded until BASIC-MODES), so what a lobby offers is what the
+ * server will accept.
+ *
+ * **No `teams`** (M3-LOBBY-UI): the interim deal is gone from production, so a
+ * networked room gets its characters from the lobby's picks and from nowhere
+ * else. A config that still carried a deal would let a player press start and
+ * be handed characters nobody chose.
  */
-const CATALOG = [vex, bastion, wisp, aegis] as unknown as CharacterDef[];
+const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn] as unknown as CharacterDef[];
 const MATCH: MatchConfig = {
   map: duelArena as unknown as MapDef,
   roster: buildRoster(CATALOG),
-  teams: [[CATALOG[0]!, CATALOG[2]!], [CATALOG[1]!, CATALOG[3]!]],
   catalysts: buildCatalystPool(catalystData as unknown as CatalystData),
 };
 
@@ -83,18 +91,10 @@ export class RoomDurableObject {
       return Response.json(this.#hub.room);
     }
 
-    // M3-START's dev affordance. The in-match `start` message is the real path
-    // and M3-LOBBY's button will send it, but the client has no socket layer
-    // yet — so until it does, a short room is startable with one HTTP call
-    // (`POST /rooms/WXYZ/start`) and M3-HIDDEN becomes exercisable on two
-    // players instead of four. `start()` is a no-op on a room that cannot
-    // start, hence the room record as the answer: the caller reads back
-    // whether it took.
-    if (url.pathname === '/start') {
-      this.#hub.start();
-      await this.#persist();
-      return Response.json(this.#hub.room);
-    }
+    // (`/start` used to be here, behind the Worker's `POST /rooms/:code/start`.
+    // It existed only because the client had no socket to send the `start`
+    // message down; M3-LOBBY-UI gave it one, and both were deleted in that same
+    // slice — the socket message is the only way to start a match now.)
 
     if (url.pathname !== '/ws') return new Response('not found', { status: 404 });
     if (request.headers.get('Upgrade') !== 'websocket') {

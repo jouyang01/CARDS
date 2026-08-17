@@ -53,7 +53,14 @@ const joinFrame = (name?: string): string =>
   JSON.stringify({ type: 'join', version: PROTOCOL_VERSION, name });
 const submitFrame = (orders: UnitOrders[]): string => JSON.stringify({ type: 'submit', orders });
 
-/** A 2v2 room with `n` seats joined, wired to a live match config. */
+/**
+ * A 2v2 room with `n` seats joined and start pressed, wired to a live config.
+ *
+ * The press is new (LOBBY-START, ruled 2026-09-11): filling the room is no
+ * longer a start trigger, because a full room is precisely when a lobby has not
+ * been filled in yet. `start` is refused on a room that cannot start, so passing
+ * `n = 2` still leaves `state` undefined — the assertions below are unchanged.
+ */
 const running = (n = 4) => {
   const hub = new RoomHub(createRoom('WXYZ', '2v2'), config);
   const sockets: FakeSocket[] = [];
@@ -63,11 +70,12 @@ const running = (n = 4) => {
     hub.receive(`s${i}`, joinFrame(`P${i}`));
     sockets.push(s);
   }
+  if (n >= 4) hub.receive('s0', JSON.stringify({ type: 'start' }));
   return { hub, sockets };
 };
 
 describe('M3-PROTOCOL: the match starts and hands out the control map', () => {
-  it('starts when the room fills, and tells everybody', () => {
+  it('starts when a seated player presses start, and tells everybody', () => {
     const { hub, sockets } = running(4);
     expect(hub.room.state, 'a match exists').toBeDefined();
     for (const s of sockets) expect(s.of('matchStarted')).toHaveLength(1);

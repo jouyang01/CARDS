@@ -61,7 +61,15 @@ const joinFrame = (name: string): string =>
   JSON.stringify({ type: 'join', version: PROTOCOL_VERSION, name });
 const submitFrame = (orders: UnitOrders[]): string => JSON.stringify({ type: 'submit', orders });
 
-/** A full 2v2: seats s0/s2 on team 0, s1/s3 on team 1 (joins alternate). */
+/**
+ * A full 2v2: seats s0/s2 on team 0, s1/s3 on team 1 (joins alternate).
+ *
+ * **Started by pressing start** (LOBBY-START, ruled 2026-09-11). Filling the
+ * room used to be the trigger; it is not any more, because a full room is
+ * exactly the moment a lobby has *not* been filled in yet. Nothing about
+ * M3-HIDDEN changed — these seats never pick, so the config's interim deal is
+ * what they play, as before.
+ */
 const running = (map: MapDef = OPEN) => {
   const hub = new RoomHub(createRoom('WXYZ', '2v2'), config(map));
   const sockets: Record<string, FakeSocket> = {};
@@ -71,6 +79,7 @@ const running = (map: MapDef = OPEN) => {
     hub.open(`s${i}`, s);
     hub.receive(`s${i}`, joinFrame(`P${i}`));
   }
+  hub.receive('s0', JSON.stringify({ type: 'start' }));
   return { hub, sockets };
 };
 

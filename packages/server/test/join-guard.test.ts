@@ -51,13 +51,20 @@ class FakeSocket implements Sink {
 const joinFrame = (name?: string): string =>
   JSON.stringify({ type: 'join', version: PROTOCOL_VERSION, name });
 
-/** A full 2v2 — which starts on its own — with one spare socket left over. */
+/**
+ * A full, started 2v2 with one spare socket left over.
+ *
+ * Start is pressed rather than triggered by the fourth join (LOBBY-START, ruled
+ * 2026-09-11). The guard under test is about a room being *started*, not about
+ * how it got that way, so this is a fixture change and nothing more.
+ */
 const started = () => {
   const hub = new RoomHub(createRoom('WXYZ', '2v2'), config);
   for (let i = 0; i < 4; i++) {
     hub.open(`s${i}`, new FakeSocket());
     hub.receive(`s${i}`, joinFrame(`P${i}`));
   }
+  hub.receive('s0', JSON.stringify({ type: 'start' }));
   expect(hub.room.state, 'the fixture is a *started* room').toBeDefined();
   return hub;
 };

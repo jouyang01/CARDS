@@ -34,7 +34,7 @@ import {
   type ServerMessage,
 } from './protocol.js';
 import {
-  canStart, charactersPerSeat, join, leave, lobbyReady, resolveRoomTurn, seatBounds, setPicks,
+  canStart, charactersPerSeat, join, leave, lobbyReady, resolveRoomTurn, setPicks,
   startFromPicks, startMatch, type Pick, type Room,
 } from './room.js';
 import { filterEvents, ordersForTeam, teamView, visibleEnemyIds } from './view.js';
@@ -48,7 +48,19 @@ import { filterEvents, ordersForTeam, teamView, visibleEnemyIds } from './view.j
 export interface MatchConfig {
   map: MapDef;
   roster: Roster;
-  teams: [CharacterDef[], CharacterDef[]];
+  /**
+   * The **interim deal** — a fixed pair of teams to start with when no lobby
+   * has been filled in (M3-START's short-room escape hatch, and every test that
+   * predates picking).
+   *
+   * **Optional, and absent in production** (M3-LOBBY-UI). A room whose config
+   * carries no deal can only start from its lobby, which is what makes the pick
+   * screen the single way into a networked match: a room that could deal
+   * characters itself would let a player press start and be handed somebody
+   * else's choices. The DO omits it; a test that does not care about picking
+   * passes one.
+   */
+  teams?: [CharacterDef[], CharacterDef[]];
   catalysts?: CatalystPool;
 }
 
@@ -122,15 +134,14 @@ export class RoomHub {
     if (msg.type === 'pick') return this.#receivePick(seatId, msg.picks);
 
     if (msg.type === 'start') {
-      // M3-START. Refused rather than ignored when it cannot take: a start
-      // button that silently does nothing is the worst of the two failures.
-      // Only a seated player may press it — a socket that never joined is not
-      // in the room and has no standing to decide the room is ready.
+      // LOBBY-START: pressing start is now the **only** way into a match, so a
+      // refusal has to say so rather than being ignored — a start button that
+      // silently does nothing is the worst of the two failures. Only a seated
+      // player may press it: a socket that never joined is not in the room and
+      // has no standing to decide it is ready.
       if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
-      if (this.#room.state !== undefined || !canStart(this.#room)) {
-        return this.#send(seatId, errorMessage('cannotStart'));
-      }
-      return this.start();
+      if (!this.start()) return this.#send(seatId, errorMessage('cannotStart'));
+      return;
     }
 
     if (msg.version !== PROTOCOL_VERSION) {
@@ -161,7 +172,6 @@ export class RoomHub {
     // …and everybody's lobby moved, including the joiner's: what each seat owes
     // is a function of how many players its team has, so a join re-prices it.
     this.#sendLobby();
-    this.#startIfReady();
   }
 
   /**
@@ -179,9 +189,6 @@ export class RoomHub {
     if (!result.ok) return this.#send(seatId, errorMessage(result.reason));
     this.#room = result.room;
     this.#sendLobby();
-    // The last pick can be what completes a full room — the start the join that
-    // filled it had to hold back.
-    this.#startIfReady();
   }
 
   /**
@@ -213,45 +220,39 @@ export class RoomHub {
   }
 
   /**
-   * Start the match when the room is **full** (M3-PROTOCOL interim).
+   * Start the match. Returns whether it actually began.
    *
-   * Full, not merely "both teams have somebody". Starting the moment two
-   * players are in strands everyone who arrives after: the deal has already
-   * happened, so a third joiner is seated into a running match controlling
-   * nothing. Waiting for the format's seat bound means every character has an
-   * owner and nobody is left holding an empty control map.
+   * **LOBBY-START: this is the only way in.** The full-room auto-start is gone
+   * (ruled 2026-09-11, edge-cases "LOBBY-START"): "start when the room is FULL"
+   * predates there being anything to pick, and with a lobby in the protocol a
+   * four-player 2v2 fills on the fourth join *before anybody has chosen a
+   * character* — so the trigger fired straight over the empty pick screen,
+   * unreachable in exactly the room that most wants one. Being full is no
+   * longer a trigger; pressing start is.
    *
-   * The cost is that a **short room never starts on its own** — a 2v2 that two
-   * players intend to run with two characters each is a legal configuration
-   * with no trigger here. That is what `start()` is for, and what M3-LOBBY's
-   * explicit start button replaces this whole method with.
+   * Gated on `lobbyReady` — every seat's picks complete, both teams coverable.
+   * The config's `teams` is the **interim deal**, and it applies only to a room
+   * that has not started picking at all: M3-START's short-room hatch and the
+   * tests that predate the lobby. **Once one seat has picked, `lobbyReady` is
+   * the only door** — dealing over a half-filled lobby would throw away choices
+   * a player is still making, which is the one outcome worse than waiting.
+   * Production omits `teams` entirely, so there the picks are the only way a
+   * match ever gets its characters.
+   *
+   * Returns `false` rather than throwing for a room that cannot start yet: the
+   * handler has to turn that into a message either way, and pressing start too
+   * early is an ordinary thing a player does.
    */
-  #startIfReady(): void {
-    if (this.#room.seats.length < seatBounds(this.#room.format).max) return;
-    // A full room whose players are **mid-pick** is not ready (M3-LOBBY): the
-    // interim deal would fire and throw their choices away, which is a worse
-    // outcome than waiting for the start button they are already heading for.
-    // A room where nobody has picked at all is untouched — that is M3-START's
-    // full-room trigger, and it is what every current caller does.
-    if (this.#room.seats.some((s) => s.picks.length > 0) && !lobbyReady(this.#room)) return;
-    this.start();
-  }
-
-  /**
-   * Start now, whoever is in. The lobby's button (M3-LOBBY) and the escape
-   * hatch for a short room that will never fill.
-   *
-   * **The lobby's picks win when it has them.** `startFromPicks` seeds each
-   * unit's triad from the character that chose it (CAT-SELECT); the config's
-   * `teams` is the interim deal, and it survives only for a room that started
-   * without a lobby — M3-START's escape hatch and the tests that predate picking.
-   */
-  start(): void {
-    if (this.#config === undefined || this.#room.state !== undefined) return;
+  start(): boolean {
+    if (this.#config === undefined || this.#room.state !== undefined) return false;
+    const picking = this.#room.seats.some((s) => s.picks.length > 0);
+    const deal = picking ? undefined : this.#config.teams;
     const started = lobbyReady(this.#room)
       ? startFromPicks(this.#room, this.#config.map, this.#config.roster)
-      : startMatch(this.#room, this.#config.map, this.#config.teams);
-    if (!started.ok) return;
+      : deal === undefined
+        ? { ok: false as const }
+        : startMatch(this.#room, this.#config.map, deal);
+    if (!started.ok) return false;
     this.#room = started.room;
     // Each seat is told the board **and its own characters** — the control map,
     // delivered per-seat because "which of these am I ordering" is the one
@@ -267,6 +268,7 @@ export class RoomHub {
       });
     }
     this.#sendDecision();
+    return true;
   }
 
   /**
