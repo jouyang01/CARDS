@@ -2793,3 +2793,130 @@ waiting on. `of` in the Decision payload now counts your own team rather than th
     frames the top rank of the board underneath the strip. A third measurement now runs after
     `beginTurn`. It did **not** fix the two e2e failures, which is part of how I established they
     were not mine.
+
+## Builder session — 2026-09-07 (combat correctness + client polish)
+
+**(1) LOS-OCCLUSION reuses `hasLineOfSight` rather than writing an occlusion routine.**
+`coneSquares` dropped wall squares but left everything behind them covered; `lineSquares` broke on
+the first wall *on its axis* while HITBOX1's side-band still reached tiles a wall beside the axis
+shadowed. Both now filter through the engine's own sight kernel, which makes "walls block, cover
+only reduces" **one rule answering one question** — sight and shapes cannot drift apart, and the
+kernel is already integer/deterministic so the no-trig guard holds. `circle`/`square` stay
+un-occluded: a lobbed grenade arcs over the block, which is what a lobbed shape is for.
+
+**(2) The HITBOX1 golden signature did NOT move, and should not have.** The AC expected a
+regeneration. Its fixture board is `openBoard(41)` — wall-free — so nothing occludes and the hitbox
+geometry the signature pins is exactly what LOS-OCCLUSION leaves alone. Forcing the number to change
+would have meant changing something that should not have changed.
+
+**(3) MELEE-COVER keys off a flag, and the range-≤1 fallback stays.** `isBehindCover`'s
+`range <= 1` exemption is left in place: with the flag doing the real work it changes nothing the
+flag does not already cover, and it keeps honest any caller that passes no ability. The client
+preview follows in the same commit — PREVIEW-MODIFIERS routes through `computeDamage` precisely so
+preview and resolution cannot disagree, and leaving the preview cover-reducing a melee hit would
+have reintroduced the disagreement by the back door.
+
+**(4) CHASE-SPRINT derives the budget instead of reading `order.sprint`.** A chase's route is
+picked at the end of Move, after everyone else has finished, so there is nothing for a player to opt
+into at plan time and a client that never set the flag would silently get the short budget. The
+condition is Sprint's own — no normal ability, no Dash catalyst — so a free action does not block it.
+The client applies the same condition through `chaseSprints`, deliberately a thin alias of
+`sprintAllowed`: two rules that must agree are two rules that will eventually disagree.
+
+**(5) Two CHASE1 tests encoded the old budget and were updated, not deleted.** "A chase can still be
+sprinted" became "a chase sprints whether or not the order says so" — the flag being redundant *is*
+the change. The last-known case kept its real assertion (it stops dead at the remembered square and
+does not pursue into fog) and gained a second case pushed back far enough that eight squares is
+still short, so the original point survives the new budget.
+
+**(6) MOVE-FOG filters the state rather than special-casing the query.** Plan-time reachability now
+runs against `planningState(state, fogView(...).units)` — a state whose unseen units are absent.
+Structurally the same move the server makes for M3-HIDDEN, with the same property: no "should I hide
+this" branch that could be written the wrong way round. Applied to the reach envelope, the drawn
+route, the chase route **and the committed path** — a preview and an order that disagreed would leak
+through whichever the player trusted. The engine is untouched: resolution walks the true board and
+the contact is the reveal, which is correct.
+
+**(7) STATUS-ICONS-SIZE needed the strip to WRAP.** Doubling the glyphs broke my own invariant that
+a full row fits over a unit — eleven at the new size sprawl 2.16 tiles and start labelling the
+neighbours. The choice was a token +22% that keeps one line, or wrapping. `pipOffsets` now returns
+`{x, y}` slots and wraps at six, each row centred on its own count; the wrap is what buys the size.
+Worst case is two tidy rows instead of one illegible one, and most turns show one to three anyway.
+
+**(8) ANIM-SLOW is flat (460 → 760 ms/beat), not per-phase.** A quiet turn is *short* — it has fewer
+beats — rather than slow, so per-phase weighting would fix nothing and would make pacing two numbers
+instead of one. `MS_PER_BEAT` moved to `animate.ts` so a test can pin it without importing a module
+that pulls in Three.
+
+**(9) PADS-LIGHTS shows nothing before a pad's first spawn.** A pad still waiting for `firstTurn` has
+never been taken, so counting down to its first appearance would read as "somebody grabbed this" on
+turn one. It also shows the full countdown on the turn of pickup, before the record has ticked —
+that is exactly when the player is watching the pad go out.
+
+**(10) I implemented PADS-SCHEDULE although the backlog routes it to the Designer — flagged.** The
+backlog lists "PADS-SCHEDULE (data)" under *Routed to Designer*, but the owner pasted Dev Note #6
+directly into my session, and Dev Notes are required scope for the Builder. It is a two-field data
+change the schema already carries (`firstTurn` 2 for Might / 4 for regular, `everyTurns` 4
+everywhere), so implementing it costs nothing and leaving it undone would have been silently
+dropping a note. Both maps set, guarded by a new content test. **If the Designer intended different
+squares alongside these timings, the timings are independent and survive a re-placement.**
+
+**(11) Dev Note #5 ("Might should be contestable — a rush") is satisfied by the TIMING, not by
+moving pads — flagged.** The Analyzer's own reading in edge-cases is that "the early Might spawn is
+what makes it *the* turn-2 rush", and turn 2 is when both teams are still converging. I did **not**
+move the Might pads, because pad *placement* is explicitly the Designer's and the current pair sits
+one per side (`duel-arena` (6,3)/(11,3)) — mirror-fair, but each closer to its own team, which is
+"two safe pickups" rather than "one contested prize". **If the owner wants a genuine race, the
+placement is the lever, not the clock**, and the centre-most legal mirrored columns are (7,y)/(10,y)
+on `duel-arena` and (9,y)/(12,y) on `iron-basin` (PADS-SPREAD forbids the truly central pair, which
+is adjacent). That is a Designer call and I did not take it.
+
+**(12) RENDER-DRIVE-FIX drives with Sprint and a higher cap, not a re-aim.** The AC offered three
+options. Re-aiming at a wall-free row means mapping a board row to a clip fraction, which is exactly
+the fragile coordinate reasoning that made the drive brittle in the first place; Sprint (always legal
+here — nothing is armed) plus an eight-turn cap is twice the ground per turn with no new geometry
+assumption. The helper is now shared by both drives rather than duplicated in each.
+
+## Open Questions for the Analyzer — 2026-09-07
+
+1. **PADS-SCHEDULE: I implemented it, though the backlog routes it to the Designer** (decision 10).
+   The owner pasted Dev Note #6 into my session and Dev Notes are Builder scope, so leaving it would
+   have been silently dropping a note. It is two fields per pad on two maps, schema unchanged,
+   guarded by a new content test. If the Designer had different timings in mind, this is the file to
+   overrule — but the timings are independent of placement and survive a re-lay.
+
+2. **Dev Note #5 ("Might should be contestable — a rush") is only HALF satisfied, and the other
+   half is yours** (decision 11). The turn-2 spawn is in. But `duel-arena`'s Might pads sit at
+   (6,3)/(11,3) — mirror-fair, yet one closer to each team, which is *two safe pickups* rather than
+   *one contested prize*. The clock alone does not make a race if each side has its own. **Placement
+   is the lever**, and it is explicitly the Designer's, so I did not touch it. If you want the race:
+   the centre-most legal mirrored pair is (7,y)/(10,y) on `duel-arena` and (9,y)/(12,y) on
+   `iron-basin` — PADS-SPREAD forbids the truly central pair because it is adjacent. Needs a ruling
+   before it is worth building anything else on.
+
+3. **MELEE-COVER ships the flag with no ability marked** — the `melee: true` data pass is the
+   Designer's (backlog says so). Until it lands the rule is inert in real content: every shipped
+   ability still eats cover. Worth confirming that is the intended sequencing rather than a gap.
+
+4. **LOS-OCCLUSION's golden signature did not move** (decision 2). The AC said to regenerate it; the
+   fixture board is wall-free so there was nothing to regenerate. Flagging in case the AC's author
+   expected the geometry itself to change — it did not, and should not have.
+
+5. **RENDER-DRIVE-FIX needed a second fix the item did not anticipate.** Sprint + a higher cap fixed
+   the *premise* (contact now happens on turn 2 instead of never), and LAST-KNOWN passes. But the
+   chase test then failed on its own assertion: it clicks the median of all red pixels, and with two
+   enemies now in view that median lands in the gap *between* the two bodies. Added
+   `largestCluster` to `pixels.ts` so the click targets one body. Mentioning it because it is a
+   harness weakness that was masked by the drive never working — anything else that "finds a unit by
+   its pixels" has the same bug latent in it.
+
+6. **STATUS-ICONS-SIZE forced a layout change the item did not scope** (decision 7). Doubling the
+   glyphs breaks the "a full row fits over a unit" invariant, so the strip now wraps at six. If you
+   would rather have one line and smaller icons, the constant is `PIP_ROW_MAX` — but then the Dev
+   Note is only token-satisfied.
+
+7. **`MS_PER_BEAT` moved from `app.ts` to `animate.ts`** so the ANIM-SLOW test can pin it without
+   importing a module that pulls in Three. Trivial, but it is a public constant now.
+
+8. **Nothing has still booted a real Workers runtime** (carried). 124 server tests through the
+   `Sink` seam; M3-DEPLOY still owns the first real execution.
