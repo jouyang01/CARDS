@@ -18,7 +18,7 @@
  */
 
 import type { FormatId, GameState, TurnEvent, UnitOrders, Vec2 } from '@cards/engine';
-import type { JoinRejection, Room, Seat } from './room.js';
+import type { JoinRejection, Pick, PickRejection, Room, Seat } from './room.js';
 
 /** Bumped whenever a message's meaning changes. Clients send it on connect. */
 export const PROTOCOL_VERSION = 1;
@@ -46,6 +46,34 @@ export interface RoomView {
   locked: string[];
 }
 
+/**
+ * The lobby, as one seat's team may see it (M3-LOBBY).
+ *
+ * Per-seat for the same reason `decision` is: **character picks are blind across
+ * teams**. The ruling that mirrors are legal ("blind-pick mirrors", edge-cases
+ * R3) only means anything if neither side sees the other's picks while choosing
+ * — a lobby that broadcast them would turn every pick after the first into a
+ * counter-pick, which is a different game from the one that was ruled on.
+ *
+ * The split is M3-LOCKLIST's, applied to picks instead of locks: **own team in
+ * full** (teammates coordinate — hidden information is team vs team, never
+ * within one) and **the enemy as a bare count** of seats that have finished
+ * choosing, which is all a waiting UI needs.
+ */
+export interface LobbyView {
+  /** Own-team picks by seat id, teammates included. */
+  picks: Record<string, Pick[]>;
+  /** How many characters each own-team seat owes, by seat id (`charactersPerSeat`). */
+  owed: Record<string, number>;
+  /** Own-team seat ids that have picked everything they owe. */
+  ready: string[];
+  /** Enemy seats that have finished choosing — a count, never ids. */
+  enemyReady: number;
+  enemyOf: number;
+  /** Whether the whole lobby could start now (`lobbyReady`). */
+  canStart: boolean;
+}
+
 /** Client → server. */
 export type ClientMessage =
   | { type: 'join'; version: number; name?: string }
@@ -61,12 +89,24 @@ export type ClientMessage =
    * and the message M3-LOBBY's start button will send.
    */
   | { type: 'start' }
+  /**
+   * Choose this seat's characters and their triads (M3-LOBBY). One message for
+   * the whole seat rather than one per character: the rules being checked
+   * (`wrongCount`, R3 across the team) are properties of the seat's *set* of
+   * picks, so a per-character message could only ever be validated once they had
+   * all arrived.
+   *
+   * Re-sendable until the match starts — changing your mind in a lobby is not an
+   * error, and each send replaces the seat's picks wholesale.
+   */
+  | { type: 'pick'; picks: Pick[] }
   /** A liveness probe the client can send; the server answers `pong`. */
   | { type: 'ping' };
 
 /** Why the server refused a connection or a message. */
 export type ErrorCode =
   | JoinRejection
+  | PickRejection
   | 'badVersion'
   | 'badMessage'
   | 'notJoined'
@@ -89,6 +129,12 @@ export type ServerMessage =
   /** Sent to everybody else: the room changed. */
   | { type: 'roomUpdated'; room: RoomView }
   | { type: 'seatLeft'; seatId: string; room: RoomView }
+  /**
+   * The lobby, as this seat's team may see it (M3-LOBBY). Per-seat, never
+   * broadcast — see {@link LobbyView}. Re-sent on every lobby change, because
+   * what a seat owes moves when somebody joins or leaves.
+   */
+  | { type: 'lobby'; room: RoomView; lobby: LobbyView }
   /**
    * The match began: the board **as this seat's team may see it**, and who this
    * seat is ordering. Per-seat, never broadcast (M3-HIDDEN).
@@ -140,11 +186,12 @@ export function roomView(room: Room, canStart: boolean, locked: readonly string[
   return {
     code: room.code,
     format: room.format,
-    seats: room.seats.map((s) => ({
-      ...s,
-      unitIds: [...s.unitIds],
-      picks: s.picks.map((p) => ({ ...p })),
-    })),
+    // Picks are **stripped here** and delivered by the per-seat `lobby` message
+    // instead (M3-LOBBY). A `RoomView` rides `joined`, `roomUpdated` and
+    // `seatLeft`, all broadcast as the same bytes to both teams — carrying picks
+    // in it would hand the enemy every choice as it was made, and blind-pick
+    // mirrors would stop being blind. Same shape of fix as M3-LOCKLIST's.
+    seats: room.seats.map((s) => ({ ...s, unitIds: [...s.unitIds], picks: [] })),
     turn: room.turn,
     canStart,
     started: room.state !== undefined,
@@ -173,6 +220,13 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   const msg = parsed as Record<string, unknown>;
   if (msg['type'] === 'ping') return { type: 'ping' };
   if (msg['type'] === 'start') return { type: 'start' };
+  // Picks are checked for *shape* only — whether the ids name real characters,
+  // add up to what the seat owes, or clash under R3 is `setPicks`' business, and
+  // a second copy of those rules here is a second copy to keep in step.
+  if (msg['type'] === 'pick' && Array.isArray(msg['picks'])) {
+    const picks = parsePicks(msg['picks']);
+    return picks === undefined ? undefined : { type: 'pick', picks };
+  }
   // Orders go straight to the engine's own validation, which drops any illegal
   // component deterministically (`planUnit`). What this checks is only that the
   // frame *is* a submission — re-implementing order legality here would be a
@@ -195,6 +249,29 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   return undefined;
 }
 
+/**
+ * A frame's picks as `Pick[]`, or `undefined` if any of them is not one.
+ *
+ * All-or-nothing, like `submit`'s orders: a lobby that quietly kept the picks it
+ * could parse would seat a player with a character they did not choose.
+ */
+function parsePicks(raw: readonly unknown[]): Pick[] | undefined {
+  const picks: Pick[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) return undefined;
+    const p = entry as Record<string, unknown>;
+    if (typeof p['characterId'] !== 'string') return undefined;
+    const triad: unknown = p['catalysts'];
+    if (triad === undefined) {
+      picks.push({ characterId: p['characterId'] });
+      continue;
+    }
+    if (!Array.isArray(triad) || triad.some((id) => typeof id !== 'string')) return undefined;
+    picks.push({ characterId: p['characterId'], catalysts: triad as string[] });
+  }
+  return picks;
+}
+
 /** Human text for an error code, so every handler says the same thing. */
 export const ERROR_TEXT: Record<ErrorCode, string> = {
   roomFull: 'this room is full',
@@ -208,6 +285,11 @@ export const ERROR_TEXT: Record<ErrorCode, string> = {
   notYours: 'that character belongs to another seat',
   inProgress: 'this match has already started',
   cannotStart: 'this room cannot start yet',
+  unknownSeat: 'no such seat in this room',
+  wrongCount: 'that is not the number of characters this seat plays',
+  unknownCharacter: 'no such character',
+  duplicateCharacter: 'a teammate already picked that character',
+  badCatalysts: 'a triad is one Prep, one Dash and one Blast catalyst',
 };
 
 export const errorMessage = (code: ErrorCode): ServerMessage =>
