@@ -74,7 +74,10 @@ import {
 import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js';
 import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from '@cards/engine';
-import { camoTiles, fogView, rememberSightings, revealedView, type FogGhost, type FogView } from './fog.js';
+import {
+  camoTiles, fogView, planningState, rememberSightings, revealedView,
+  type FogGhost, type FogView,
+} from './fog.js';
 import { padViews, type PadView, type ViewState } from './playback.js';
 import { applyScenario, type ScenarioId } from './scenarios.js';
 import { statusChips, statusPips, viewableStatuses } from './status-pips.js';
@@ -767,6 +770,12 @@ export function startHotSeat(
     if (unit === undefined) return;
     const draft = draftFor(unit);
     const character = characterFor(unit);
+    // MOVE-FOG: every plan-time reachability query runs against the units this
+    // seat can SEE, not the true unit list. Planning against the truth let an
+    // invisible enemy block a square, so sweeping a move target across the fog
+    // located a hidden body exactly. Resolution still uses the real board — the
+    // engine stops the mover on contact, and that contact is the reveal.
+    const planned = planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units);
 
     // ── VISION1: fog of war ──────────────────────────────────────────────────
     // Planning is the only time hiding anything is honest — during playback the
@@ -818,7 +827,7 @@ export function startHotSeat(
     const sprinting = hover.move === 'sprint' || (hover.move === undefined && draft.sprint);
     const showMove = hover.move !== undefined
       || (!isDash && (draft.sprint || interaction.mode === 'move' || draft.movePath.length > 0));
-    renderer.highlight('reach', showMove ? moveEnvelope(map, state, unit, sprinting) : [], REACH, 0.22);
+    renderer.highlight('reach', showMove ? moveEnvelope(map, planned, unit, sprinting) : [], REACH, 0.22);
 
     // ── Layer: the tiles an aim actually covers ──────────────────────────────
     // While the pointer is over the board with a mode armed, this previews the
@@ -921,13 +930,13 @@ export function startHotSeat(
     // for a chase that resolves over eight.
     const chaseRoute = chaseTarget === undefined
       ? []
-      : pathTo(map, state, unit, chaseTarget.pos,
+      : pathTo(map, planned, unit, chaseTarget.pos,
         movementBudget(unit, chaseSprints(draft, dashCatalystArmed(draft))));
     const route = isDash
       ? dashRoute(unit, chosen, preview.aim)
       : chaseTarget !== undefined
         ? chaseRoute
-        : previewMovePath(map, state, unit, draft, interaction);
+        : previewMovePath(map, planned, unit, draft, interaction);
     renderer.drawPath(
       route.length > 0 ? [unit.pos, ...route] : [],
       isDash ? DASH_LINE : chaseTarget !== undefined ? CHASE_LINE : draft.sprint ? SPRINT_LINE : MOVE_LINE,
@@ -1347,7 +1356,14 @@ export function startHotSeat(
       interaction = afterCommit();
       render();
     } else if (interaction.mode === 'move' || draft.sprint) {
-      draft.movePath = pathTo(map, state, unit, sq, movementBudget(unit, draft.sprint));
+      // MOVE-FOG: the committed path is planned against the visible board too —
+      // otherwise the preview and the order would disagree, and the order would
+      // be the one that leaked.
+      draft.movePath = pathTo(
+        map,
+        planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units),
+        unit, sq, movementBudget(unit, draft.sprint),
+      );
       interaction = afterCommit();
       render();
     }

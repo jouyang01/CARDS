@@ -76,6 +76,30 @@ export interface FogGhost {
 }
 
 /** What a renderer should draw for one viewer. */
+/**
+ * MOVE-FOG — the board a **plan-time** query is allowed to walk.
+ *
+ * Owner Dev Note: *"Move command is blocked if an enemy is out of line of sight
+ * but on the tile that you are trying to move. This is giving unintentional
+ * information."* It was: the move preview ran `reachableSquares` against the
+ * true unit list, so an invisible enemy blocked a square and the route bent
+ * around a body the player was not being shown. Sweeping a move target across
+ * the fog located a hidden unit exactly.
+ *
+ * The fix is to plan against the units this team can see. Structurally this is
+ * the same move the server makes for M3-HIDDEN — hand the query a state with the
+ * unseen units removed — and it has the same property: there is no "should I
+ * hide this" branch to get wrong, because the hidden units are not there.
+ *
+ * **Resolution still uses the true board.** The engine stops the mover short
+ * when it walks into someone, and that contact is where the enemy is revealed —
+ * which is the correct outcome, not a bug to paper over. A plan may be optimistic;
+ * a plan may not be a scout.
+ */
+export function planningState(state: GameState, visible: readonly UnitState[]): GameState {
+  return { ...state, units: [...visible] };
+}
+
 export interface FogView {
   /** Enemies out of sight, at their last-spotted squares (LAST-KNOWN). */
   ghosts: FogGhost[];
