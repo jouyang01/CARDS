@@ -493,7 +493,10 @@ function planCatalyst(
  * nine of the shipped catalysts fall out of those three rules, and so will any
  * the Designer adds, because none of them needs a new `EFFECT_KIND`.
  */
-function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: PlannedAbility, events: TurnEvent[]): void {
+function fireCatalyst(
+  draft: GameState, board: Board, unit: UnitState, c: PlannedAbility, events: TurnEvent[],
+  contested?: ReadonlySet<string>,
+): void {
   if (!unit.alive) return;
   unit.catalystsUsed.push(c.def.id);
   events.push({ type: 'catalystUsed', unitId: unit.unitId, catalystId: c.def.id });
@@ -507,7 +510,7 @@ function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: Planne
   // and a once-per-match burst out of a thicket is exactly the tell.
   revealIfConcealed(board, unit, unit.pos, c.def.id, events);
   if (c.def.effects.some((e) => e.kind === 'teleport')) {
-    teleport(draft, board, unit, c.aim[0], events);
+    teleport(draft, board, unit, c.aim[0], events, contested);
   }
   const onSelf = c.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind) || e.kind === 'decoy');
   if (onSelf.length > 0) applySelfEffects(draft, unit, onSelf, source, events);
@@ -536,10 +539,13 @@ function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: Planne
  * Adrenaline and Overdrive simply broken. Uniform across all three colours, so
  * there is one rule rather than three.
  */
-function runCatalysts(draft: GameState, board: Board, plans: UnitPlan[], phase: AbilityPhase, events: TurnEvent[]): void {
+function runCatalysts(
+  draft: GameState, board: Board, plans: UnitPlan[], phase: AbilityPhase, events: TurnEvent[],
+  contested?: ReadonlySet<string>,
+): void {
   for (const plan of orderedPlans(draft, plans)) {
     const c = plan.catalyst;
-    if (c !== undefined && c.def.phase === phase) fireCatalyst(draft, board, plan.unit, c, events);
+    if (c !== undefined && c.def.phase === phase) fireCatalyst(draft, board, plan.unit, c, events, contested);
   }
 }
 
@@ -1029,6 +1035,56 @@ function impactBlasts(
 // ── Dash ────────────────────────────────────────────────────────────────────
 
 /**
+ * BLINK-CLASH — the destinations two or more blinks aim at on the same turn.
+ *
+ * Owner Dev Note: *"if two characters try to end their movement or dash/blink on
+ * the exact same square, a collision occurs … Right now in CARDS, blinks do not
+ * work like that. If Veil and Aegis try to blink to the same spot, only one of
+ * them makes it to the square, the other one does not move at all."*
+ *
+ * That was exactly it, and the asymmetry was an accident of iteration order: a
+ * teleport refuses an occupied square, so whichever blink the loop reached first
+ * landed and the second found a body in the way. Two identical orders, two
+ * different outcomes, decided by nothing a player can see.
+ *
+ * The claims are therefore counted **before anything moves**, and a contested
+ * square is refused to every unit that aimed at it — which is CLASH-AR rule 2's
+ * shape ("both ending on the square → both forced back to the square they last
+ * held") applied to a movement with no path: a blink's last-held square is the
+ * one it started on, so both stay put.
+ *
+ * **This is the minimal compliant reading, and it is narrower than the note.**
+ * AR stops the conflicting characters "on the square immediately before their
+ * intended final destination" — but a blink has no squares between origin and
+ * destination to stop on (that is what makes it a blink; the note says so
+ * itself, "blinks typically bypass obstacles mid-journey"). Inventing a
+ * traversal for it would be inventing geometry and an unlisted ruling, so this
+ * fixes the half that is unambiguously wrong — the coin-flip — and leaves "does
+ * a blocked blink land adjacent along the line?" to the Designer.
+ *
+ * Both kinds of blink count: a dash **ability** that is not a `path` charge, and
+ * a Shift-style dash **catalyst**. They resolve in the same phase onto the same
+ * board, so a rule that saw only one of them would just move the coin flip.
+ */
+function contestedBlinks(plans: readonly UnitPlan[]): ReadonlySet<string> {
+  const claims = new Map<string, number>();
+  const claim = (p: Vec2 | undefined): void => {
+    if (p === undefined) return;
+    const k = vecKey(p);
+    claims.set(k, (claims.get(k) ?? 0) + 1);
+  };
+  for (const plan of plans) {
+    if (!plan.unit.alive) continue;
+    const a = plan.ability;
+    if (a !== undefined && a.def.phase === 'dash' && a.def.shape !== 'path') claim(a.aim[0]);
+    claim(plan.shiftTo);
+  }
+  const out = new Set<string>();
+  for (const [k, n] of claims) if (n > 1) out.add(k);
+  return out;
+}
+
+/**
  * Dash phase: dashers move (charge path or teleport), damage-dealing dashes hit
  * the first enemy struck, and self-statuses (e.g. Untargetable) apply. Blast
  * immunity for the vacated square is emergent — Blast is resolved afterwards
@@ -1042,7 +1098,10 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
   // (CAT-DASH-COST) was already taken at plan time — `planUnit` drops the walk
   // for any unit spending a Dash catalyst — so nothing here needs to touch
   // `plan.movePath`.
-  runCatalysts(draft, board, plans, 'dash', events);
+  // BLINK-CLASH: settled before anything moves, so it cannot depend on which
+  // blink the loop below reaches first.
+  const contested = contestedBlinks(plans);
+  runCatalysts(draft, board, plans, 'dash', events, contested);
   // A blocked Shift leaves the unit where it started, and everything it planned
   // from the landing square now describes nothing. Dropping those is the safe
   // reading — a plan is never allowed to act from a square its owner is not on.
@@ -1073,7 +1132,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       // end-of-Blast, the occupant would still be there, and the teleport would
       // simply fizzle — the exception the owner asked for would never fire.
       shovedAside = clearLandingWithKnockback(draft, board, plan.unit, a, displaced, events);
-      teleport(draft, board, plan.unit, a.aim[0], events);
+      teleport(draft, board, plan.unit, a.aim[0], events, contested);
     }
 
     // DASH-IMPACT: an optional AoE at takeoff and/or landing, expanded from the
@@ -1208,9 +1267,20 @@ function walkCharge(draft: GameState, board: Board, unit: UnitState, path: reado
   return crossed;
 }
 
-/** Teleport to `dest` if it is an open, unoccupied square (walls may be crossed). */
-function teleport(draft: GameState, board: Board, unit: UnitState, dest: Vec2 | undefined, events: TurnEvent[]): boolean {
+/**
+ * Teleport to `dest` if it is an open, unoccupied, **uncontested** square (walls
+ * may be crossed).
+ *
+ * `contested` is BLINK-CLASH: the destinations two or more blinks aimed at this
+ * phase. See {@link contestedBlinks} for why they are refused to everybody
+ * rather than to whoever the loop reached second.
+ */
+function teleport(
+  draft: GameState, board: Board, unit: UnitState, dest: Vec2 | undefined, events: TurnEvent[],
+  contested?: ReadonlySet<string>,
+): boolean {
   if (dest === undefined) return false;
+  if (contested?.has(vecKey(dest)) === true) return false;
   const t = terrainAt(board, dest);
   if (t === 'wall' || t === 'cover' || t === 'oob') return false;
   if (draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, dest))) return false;
