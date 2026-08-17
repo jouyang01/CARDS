@@ -94,6 +94,18 @@ export interface AbilityDef {
   range: number;
   /** For shape 'circle': area radius around the aimed square. */
   radius?: number;
+  /**
+   * A **melee** strike (MELEE-COVER): cover does not reduce it, whatever its
+   * range.
+   *
+   * A flag rather than a range threshold because under Manhattan (MET1) a melee
+   * ability that reaches a diagonal neighbour is authored at **range 2**, so the
+   * old `range <= 1` heuristic missed exactly the abilities it was meant to
+   * catch — a point-blank strike still ate the cover reduction, which is the
+   * owner's report. Walls still stop it (LOS-OCCLUSION): "ignores cover" is not
+   * "ignores vision".
+   */
+  melee?: boolean;
   /** Turns before reusable. 0 = every turn. */
   cooldown: number;
   /** Energy granted on use (self-target) or on hitting ≥1 enemy. */

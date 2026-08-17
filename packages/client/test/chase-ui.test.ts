@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CharacterDef, TurnEvent } from '@cards/engine';
 import { createHud, type HudCharacter, type HudModel } from '../src/hud.js';
-import { emptyDraft, nextDraft, toUnitOrders } from '../src/targeting.js';
+import { chaseSprints, emptyDraft, nextDraft, sprintAllowed, toUnitOrders, type OrderDraft } from '../src/targeting.js';
 import { logEntriesForTurn, type LogNames } from '../src/combat-log.js';
 import { LAYER_LIFT } from '../src/renderer3d.js';
 import vex from '../../../data/characters/vex.json';
@@ -162,5 +162,44 @@ describe('CHASE1: the resolution reads back', () => {
     // it — and it must still yield to "this is who you are ordering".
     expect(LAYER_LIFT.chase).toBeGreaterThan(LAYER_LIFT.catalyst);
     expect(LAYER_LIFT.chase).toBeLessThan(LAYER_LIFT.select);
+  });
+});
+
+/**
+ * CHASE-SPRINT (client half) — the drawn route must promise the distance the
+ * engine will actually deliver.
+ *
+ * The engine derives a chase's budget from the turn rather than from
+ * `order.sprint`, because a chase's route is chosen at the end of Move and
+ * there is nothing to opt into at plan time. So the client cannot ask the draft
+ * either — it has to apply the same condition, or the preview lies.
+ */
+describe('CHASE-SPRINT: the client agrees with the engine about the budget', () => {
+  const draft = (over: Partial<OrderDraft> = {}): OrderDraft => ({ ...emptyDraft('u'), ...over });
+
+  it('a chase with no ability armed sprints', () => {
+    expect(chaseSprints(draft())).toBe(true);
+  });
+
+  it('a chase with an ability armed does not', () => {
+    expect(chaseSprints(draft({ abilityId: 'shot' }))).toBe(false);
+  });
+
+  it('a free action does not block it — FREE1 extends to chases', () => {
+    expect(chaseSprints(draft({ freeAbilityId: 'trap' }))).toBe(true);
+  });
+
+  it('a Dash catalyst does block it — that catalyst is the whole turn', () => {
+    expect(chaseSprints(draft(), true)).toBe(false);
+  });
+
+  it('and it is the same condition Sprint uses, not a second rule', () => {
+    // Deliberately an alias. Two rules that must agree are two rules that will
+    // eventually disagree.
+    for (const d of [draft(), draft({ abilityId: 'shot' }), draft({ freeAbilityId: 'trap' })]) {
+      for (const cat of [false, true]) {
+        expect(chaseSprints(d, cat)).toBe(sprintAllowed(d, cat));
+      }
+    }
   });
 });

@@ -98,9 +98,9 @@ export function viewableStatuses<T extends { kind: EffectKind }>(
  * is a *chained* boot against Haste's wing, deliberately: the counter-relation
  * should be legible from the silhouette before the colour is read at all.
  *
- * Kept schematic on purpose. These are drawn at roughly fourteen pixels over a
- * unit's head; detail there is noise, and silhouette is the only thing that
- * survives.
+ * Kept schematic on purpose. Even after STATUS-ICONS-SIZE these are small marks
+ * over a unit's head; fine detail there is noise, and silhouette is the thing
+ * that survives.
  */
 export const GLYPH_BOX = 24;
 
@@ -346,18 +346,51 @@ export function statusChips(
 }
 
 /** Pip geometry, in world units — square, tight, above the shield bar. */
-export const PIP_SIZE = 0.09;
-export const PIP_GAP = 0.025;
+/**
+ * STATUS-ICONS-SIZE — owner Dev Note: *"The icons for buffs/debuffs are too
+ * small on the screen UI."*
+ *
+ * These were sized when a pip was a flat colour square, where the only job was
+ * "something is there" and 0.09 was enough to notice. STATUS-ICONS made them
+ * *drawings* — a sword, a broken sword, an hourglass — and a drawing you cannot
+ * resolve is worse than a colour you can, because it asks to be read and then
+ * refuses. Raised to a size where the silhouette actually carries, with the gap
+ * kept proportional so a full eleven-icon row still fits over a unit.
+ */
+export const PIP_SIZE = 0.18;
+export const PIP_GAP = 0.05;
+/**
+ * Icons per row before the strip wraps.
+ *
+ * A row must still fit over a unit — eleven icons at this size would sprawl over
+ * two tiles and start labelling the neighbours. Wrapping is what buys the size:
+ * six across is 1.33 tiles, and the eleven-status worst case becomes two tidy
+ * rows instead of one illegible one. Most turns show one to three anyway.
+ */
+export const PIP_ROW_MAX = 6;
 
 /**
- * Where each pip's centre sits along the row's local X, centred on the unit.
+ * Where each pip's centre sits in the strip's local XY, centred on the unit.
  *
  * Lives here rather than in `renderer3d` because it is the one part of the row
  * that can be wrong in a way nothing catches: an off-centre row still draws, and
  * a WebGL context is not available to the unit suite. The arithmetic is
  * therefore testable on its own.
  */
-export function pipOffsets(count: number): number[] {
-  const span = count * PIP_SIZE + Math.max(0, count - 1) * PIP_GAP;
-  return Array.from({ length: count }, (_, i) => -span / 2 + PIP_SIZE / 2 + i * (PIP_SIZE + PIP_GAP));
+export function pipOffsets(count: number): { x: number; y: number }[] {
+  const rows = Math.max(1, Math.ceil(count / PIP_ROW_MAX));
+  const pitch = PIP_SIZE + PIP_GAP;
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    const row = Math.floor(i / PIP_ROW_MAX);
+    const inRow = Math.min(PIP_ROW_MAX, count - row * PIP_ROW_MAX);
+    const span = inRow * PIP_SIZE + (inRow - 1) * PIP_GAP;
+    // Rows stack downward from the top one, so the strip grows toward the unit
+    // rather than climbing into the nameplate above it.
+    out.push({
+      x: -span / 2 + PIP_SIZE / 2 + (i % PIP_ROW_MAX) * pitch,
+      y: -(row - (rows - 1) / 2) * pitch,
+    });
+  }
+  return out;
 }

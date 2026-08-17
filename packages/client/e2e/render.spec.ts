@@ -15,6 +15,7 @@ import {
   isRangeWash,
   isSceneBackground,
   isTeamRed,
+  largestCluster,
   pixelAt,
   type Image,
 } from './pixels.js';
@@ -688,14 +689,14 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
    * Returns false once the match is over — a drive that keeps going after a
    * Double KO would sit on an invisible Lock In until the timeout.
    */
-  const resolveTurn = async (page: Page, perSeat?: () => Promise<void>): Promise<boolean> => {
+  const resolveTurn = async (page: Page, perSeat?: (page: Page) => Promise<void>): Promise<boolean> => {
     for (let i = 0; i < 10; i++) {
       const lock = lockIn(page);
       if (!(await lock.isVisible())) break;
       // `perSeat` runs once per character on the clock, not once per turn: the
       // HUD hands the board to the next seat after each Lock In, so ordering
       // only the first one walks half the board and wonders why nobody met.
-      if (perSeat !== undefined) await perSeat();
+      if (perSeat !== undefined) await perSeat(page);
       await lock.click();
       await page.waitForTimeout(150);
       if (await page.locator('.hud-playback').isVisible()) break;
@@ -717,6 +718,33 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
       await page.waitForTimeout(250);
     }
     return false;
+  };
+
+  /**
+   * RENDER-DRIVE-FIX — walk a seat's characters at each other until somebody is
+   * in sight.
+   *
+   * The old helper clicked **Move** and gave up after five turns. `duel-arena`
+   * puts a wall pillar either side of the centre row, so a four-square move
+   * spends most of its budget going around and the two teams — thirteen squares
+   * apart, with six squares of sight — never met inside the cap. Both drives
+   * then failed on their *premise* rather than on what they assert.
+   *
+   * Two changes, both of them things a player would actually do: **Sprint**
+   * instead of Move (nothing is armed, so it is always available, and it is
+   * twice the ground), and a cap with enough room that a detour around the
+   * pillar does not exhaust it.
+   */
+  const CLOSE_TURNS = 8;
+  const closeTheDistance = async (page: Page): Promise<void> => {
+    // Sprint, not Move: no ability is armed in either drive, so the longer
+    // reposition is always legal and halves the number of turns this takes.
+    const sprint = page.locator('.hud-move', { hasText: /^Sprint/ });
+    const move = page.locator('.hud-move', { hasText: /^Move/ });
+    const control = (await sprint.isVisible()) && !(await sprint.isDisabled()) ? sprint : move;
+    if (!(await control.isVisible()) || (await control.isDisabled())) return;
+    await control.click();
+    await clickAt(page, 0.5, 0.5);
   };
 
   test('an armed pad marker is on the board, in its own colour family', async ({ page }) => {
@@ -755,14 +783,8 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     // state under test rather than skipping because it did not start there.
     const chase = page.locator('.hud-move', { hasText: 'Chase' });
     await expect(chase).toBeVisible();
-    const walkToCentre = async (): Promise<void> => {
-      const move = page.locator('.hud-move', { hasText: /^Move/ });
-      if (!(await move.isVisible()) || (await move.isDisabled())) return;
-      await move.click();
-      await clickAt(page, 0.5, 0.5);
-    };
-    for (let turn = 0; turn < 5 && (await chase.isDisabled()); turn++) {
-      if (!(await resolveTurn(page, walkToCentre))) break;
+    for (let turn = 0; turn < CLOSE_TURNS && (await chase.isDisabled()); turn++) {
+      if (!(await resolveTurn(page, closeTheDistance))) break;
     }
     expect(await chase.isDisabled(), 'never got an enemy into sight to chase').toBe(false);
 
@@ -771,8 +793,12 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     // else — by its pixels — and click the middle of the biggest red cluster.
     const baseline = await pixels(page);
     const before = countPixels(baseline, isChaseOrange);
-    const enemyPixels = findPixels(baseline, isTeamRed, 2);
-    expect(enemyPixels.length, 'no enemy on screen after closing the distance').toBeGreaterThan(10);
+    const allRed = findPixels(baseline, isTeamRed, 2);
+    expect(allRed.length, 'no enemy on screen after closing the distance').toBeGreaterThan(10);
+    // One BODY, not every red pixel on the frame. With two enemies in view the
+    // median of all of them lands in the gap between the two — empty ground,
+    // where a click arms nothing.
+    const enemyPixels = largestCluster(allRed, 6);
     const clip = await boardClip(page);
     const scale = { x: clip.width / baseline.width, y: clip.height / baseline.height };
     // The median of each axis, so an antialiased fringe cannot drag the point
@@ -799,21 +825,14 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     // another test pins it. What this one wants is the *other* side: an enemy
     // rendered while fog is still on the board, which is the frame a last-known
     // ghost lives in. Walk in until one is on screen and the fog has not lifted.
-    const walkToCentre = async (): Promise<void> => {
-      const move = page.locator('.hud-move', { hasText: /^Move/ });
-      if (!(await move.isVisible()) || (await move.isDisabled())) return;
-      await move.click();
-      await clickAt(page, 0.5, 0.5);
-    };
-
     let sawEnemyUnderFog = false;
-    for (let turn = 0; turn < 5 && !sawEnemyUnderFog; turn++) {
+    for (let turn = 0; turn < CLOSE_TURNS && !sawEnemyUnderFog; turn++) {
       const image = await pixels(page);
       // Both at once: an enemy body composited, and fog still covering part of
       // the board. Either alone is uninteresting — the pair is the state a
       // ghost is drawn in, and the state a "draw everything" regression breaks.
       sawEnemyUnderFog = countPixels(image, isFogged) > 0 && countPixels(image, isTeamRed) > 0;
-      if (!sawEnemyUnderFog && !(await resolveTurn(page, walkToCentre))) break;
+      if (!sawEnemyUnderFog && !(await resolveTurn(page, closeTheDistance))) break;
     }
     expect(sawEnemyUnderFog, 'never composited an enemy while the board was still fogged').toBe(true);
   });

@@ -77,6 +77,26 @@ export const DEAD_ALPHA = 0.3;
  * deferred-death rule, made visible).
  */
 export const READOUT_BEATS = 2.2;
+
+/**
+ * The single pacing constant: one beat of `choreograph`'s timeline in
+ * milliseconds. Everything animated is a multiple of a beat, so playback speed
+ * is this number and nothing else.
+ *
+ * ANIM-SLOW — owner Dev Note: *"The resolution animations are hard to tell
+ * what's going on. We should slow them down."* Four phases, up to eight units
+ * and every knockback, heal and death land inside one resolution; at 460ms a
+ * beat the whole turn was over before a player had finished reading the first
+ * phase of it. Raised so Prep → Dash → Blast → Move reads as four things that
+ * happened in an order rather than one event with a lot in it.
+ *
+ * Flat rather than per-phase on purpose. A quiet turn is *short* rather than
+ * slow — the timeline has fewer beats in it — so the thing that drags is the
+ * number of beats, which per-phase weighting would not fix and would make the
+ * pacing two numbers instead of one. Skip is still the escape hatch, and
+ * skip==watch holds because none of this touches the fold.
+ */
+export const MS_PER_BEAT = 760;
 /** Peak height of a knockback/pull arc, in world units. */
 const ARC = 0.35;
 

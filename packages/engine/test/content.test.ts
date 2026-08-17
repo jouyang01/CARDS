@@ -96,6 +96,18 @@ describe('map content', () => {
       }
     });
 
+    it(`${m.id} runs the owner's pad schedule (PADS-SCHEDULE)`, () => {
+      // Owner Dev Notes #5/#6: "Regular power-ups began appearing on turn 4,
+      // while Might power-ups spawned earlier on turn 2 … Respawn Timer: 4
+      // turns." The early Might spawn is what makes it *the* turn-2 rush — both
+      // teams reach for it while the opening is still about position.
+      for (const pad of m.powerups ?? []) {
+        const where = `${m.id} ${pad.type} pad at (${pad.x},${pad.y})`;
+        expect(pad.everyTurns, `${where}: respawn is four turns`).toBe(4);
+        expect(pad.firstTurn, `${where}: first spawn`).toBe(pad.type === 'might' ? 2 : 4);
+      }
+    });
+
     it(`${m.id} spreads its power-up pads — none touch (PADS-SPREAD)`, () => {
       // Two pads side by side are one prize worth double, taken by a unit that
       // stands between them or — since PADS-PASS — merely walks past. The

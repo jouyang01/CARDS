@@ -394,6 +394,22 @@ function planUnit(
   // supersedes a walk. A well-formed client never sends both.
   if (chase !== undefined) movePath = [];
 
+  // CHASE-SPRINT — a chase that spends no normal ability runs at sprint budget.
+  //
+  // Owner Dev Note: "If I choose chase and haven't used an attack or only a free
+  // action, I should get full sprinting chase." A chase *is* the unit's Move, so
+  // it should cost and buy exactly what a Move does; there was no reason for the
+  // same turn to close eight squares as a walk and four as a chase.
+  //
+  // Derived rather than taken from `order.sprint`, because the client cannot
+  // draw a chase's route at plan time — the engine picks it at the end of Move,
+  // after everyone else has finished — so there is nothing for a player to opt
+  // into and a client that never sets the flag would silently get the short
+  // budget. The condition is `sprint`'s own: no normal ability, no Dash
+  // catalyst. A free action does not block it, which is the half of the note
+  // that names Second Wind and Overwatch Trap.
+  const chaseSprint = chase !== undefined && ability === undefined && !dashCatalyst;
+
   return {
     unit,
     ability,
@@ -402,7 +418,7 @@ function planUnit(
     shiftTo: freeAbility === undefined ? shiftTo : undefined,
     movePath,
     chase,
-    sprint,
+    sprint: sprint || chaseSprint,
   };
 }
 
@@ -1065,7 +1081,12 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
         if (struck.has(victim.unitId)) continue;
         struck.add(victim.unitId);
         if (isUntargetable(victim)) continue; // UNTGT1 — no damage, no rider, no energy
-        const behindCover = isBehindCover(board, from, victim.pos, a.def.range);
+        // MELEE-COVER: a melee strike is not reduced by cover at any range. The
+        // wall check is elsewhere and unaffected — you still cannot reach
+        // through one.
+        const behindCover = a.def.melee === true
+          ? false
+          : isBehindCover(board, from, victim.pos, a.def.range);
         const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
         events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
         onDamageTaken(board, victim, a.def.id, events); // CAMO-REVEAL: + reveal if concealed
@@ -1192,6 +1213,8 @@ interface Hit {
   fixedDamage?: number;
   /** Delayed detonations do not reveal or break the caster's Stealth. */
   delayed?: boolean;
+  /** MELEE-COVER: skip the cover reduction for this hit. */
+  melee?: boolean;
 }
 
 function runBlast(
@@ -1262,7 +1285,7 @@ function runBlast(
           if (untargetable) continue; // the whole harmful half is skipped, energy included
           // Energy stays enemy-only, so splashing an ally pays nothing.
           if (enemy) hitEnemy = true;
-          if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw: e.amount ?? 0, range: a.def.range });
+          if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw: e.amount ?? 0, range: a.def.range, melee: a.def.melee === true });
           else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });
           else debuffs.push({ victim: target, effect: e, source: sourceOf(plan.unit, a.def.id) }); // weaken/slow/root/reveal
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
@@ -1287,7 +1310,11 @@ function runBlast(
   for (const hit of hits) {
     if (!hit.victim.alive) continue;
     const final =
-      hit.fixedDamage ?? computeDamage(hit.raw, hit.attacker, isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range));
+      hit.fixedDamage ?? computeDamage(
+        hit.raw,
+        hit.attacker,
+        hit.melee === true ? false : isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range),
+      );
     const res = applyDamage(hit.victim, final);
     events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: hit.attacker.unitId, abilityId: hit.abilityId });
     onDamageTaken(board, hit.victim, hit.abilityId, events); // CAMO-REVEAL: + reveal if concealed

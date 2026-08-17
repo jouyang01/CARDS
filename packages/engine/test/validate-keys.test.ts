@@ -56,7 +56,7 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     // the runtime list fails here rather than in someone's content.
     const everything: AbilityDef = {
       id: 'x', name: 'X', phase: 'dash', shape: 'path', range: 4, radius: 1, cooldown: 2,
-      energyGain: 0, delayTurns: 1, chargeHits: 'all', free: false, oncePerMatch: false,
+      energyGain: 0, delayTurns: 1, chargeHits: 'all', free: false, melee: false, oncePerMatch: false,
       impact: { origin: 1, destination: 2 },
       effects: [{ kind: 'damage', amount: 10, duration: 2 }], description: 'test',
     };

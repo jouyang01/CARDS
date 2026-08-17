@@ -159,3 +159,60 @@ describe('PADS-INDICATOR: the marker sits where board state sits', () => {
     }
   });
 });
+
+/**
+ * PADS-LIGHTS — the respawn countdown, as four coloured lights.
+ *
+ * Owner Dev Note: *"Respawn Timer: 4 turns (tracked visually by four colored
+ * lights on the spawning pad)."* A consumed pad went dark and said nothing
+ * about *when*, so contesting one was guesswork. The lights make the respawn a
+ * clock you can plan against — which is the only reason to put a pad on a timer
+ * in the first place.
+ */
+describe('PADS-LIGHTS: a consumed pad counts itself back', () => {
+  const PAD = { x: 3, y: 3, type: 'might' as const, firstTurn: 2, everyTurns: 4 };
+  const MAP: MapDef = { ...OPEN, powerups: [PAD] };
+  const withTurn = (turn: number, availableOnTurn?: number): GameState => ({
+    ...match(), turn,
+    powerups: availableOnTurn === undefined ? [] : [{ pos: { x: 3, y: 3 }, availableOnTurn }],
+  });
+
+  it('shows one light per turn remaining', () => {
+    // Taken on turn 4 with everyTurns 4 → back on turn 8.
+    for (const [turn, lit] of [[4, 4], [5, 3], [6, 2], [7, 1]] as const) {
+      const [pad] = padViews(MAP, withTurn(turn, 8));
+      expect(pad!.lights, `turn ${turn}`).toBe(lit);
+      expect(pad!.armed).toBe(false);
+    }
+  });
+
+  it('and none at all once it is live again', () => {
+    // A live pad shows its glyph; a countdown on it would be a lie.
+    const [pad] = padViews(MAP, withTurn(8, 8));
+    expect(pad!.armed).toBe(true);
+    expect(pad!.lights).toBe(0);
+  });
+
+  it('never more lights than the respawn is long', () => {
+    // The owner asked for four lights because the timer is four turns. A pad
+    // whose record somehow ran ahead must not sprout a fifth.
+    const [pad] = padViews(MAP, withTurn(1, 99));
+    expect(pad!.lights).toBeLessThanOrEqual(PAD.everyTurns);
+  });
+
+  it('a pad taken THIS turn shows the full countdown immediately', () => {
+    // The record has not ticked yet at the moment of pickup, but the player is
+    // watching the pad go out — that is exactly when the clock should appear.
+    const [pad] = padViews(MAP, withTurn(4), new Set(['3,3']));
+    expect(pad!.armed).toBe(false);
+    expect(pad!.lights).toBe(PAD.everyTurns);
+  });
+
+  it('a pad still waiting for its first spawn shows no countdown', () => {
+    // Turn 1, firstTurn 2: never taken, so counting down would read as
+    // "somebody grabbed this" before the match had started.
+    const [pad] = padViews(MAP, withTurn(1));
+    expect(pad!.armed).toBe(false);
+    expect(pad!.lights).toBe(0);
+  });
+});

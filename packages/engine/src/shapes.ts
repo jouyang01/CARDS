@@ -43,6 +43,7 @@ import {
   terrainAt,
   vecKey,
 } from './board.js';
+import { hasLineOfSight } from './vision.js';
 import type { AbilityDef, Vec2 } from './types.js';
 
 /** Sign of a number as a unit step component. */
@@ -206,6 +207,11 @@ export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number):
   for (const hit of hits) {
     if (!inBounds(board, hit.p)) continue; // a ray that leaves the board never returns
     if (terrainAt(board, hit.p) === 'wall') break;
+    // LOS-OCCLUSION. Breaking on the first wall handles the beam's own axis, but
+    // HITBOX1's half-tile side-band reaches tiles a wall beside the axis still
+    // shadows — those are dropped here rather than ending the beam, because the
+    // axis itself may run on past them.
+    if (!hasLineOfSight(board, from, hit.p)) continue;
     out.push(hit.p);
   }
   return out;
@@ -251,9 +257,15 @@ export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number):
  * The squares a cone covers, caster excluded, in row-major order.
  *
  * A tile is covered when the wedge comes within half a tile of its centre
- * (HITBOX1) — the wedge is the region, the hitbox decides which tiles it takes.
- * Wall squares in the wedge are dropped but do not occlude squares behind them
- * (v1 keeps cones simple; see DECISIONS.md).
+ * (HITBOX1) — the wedge is the region, the hitbox decides which tiles it takes —
+ * **and the caster can see it** (LOS-OCCLUSION).
+ *
+ * The sight filter is what makes a wall cast a shadow across the whole wedge
+ * rather than punching one tile-shaped hole in it. Before it, dropping the wall
+ * squares themselves left everything behind them covered, so a cone aimed at a
+ * gray block hit whatever was standing on the far side — the owner's report.
+ * Cover is deliberately *not* a sight blocker (GAME_SPEC §3), so a cone fired
+ * past a cover block still reaches behind it and is merely reduced.
  */
 export function coneSquares(board: Board, from: Vec2, dir: Vec2, range: number): Vec2[] {
   const d2 = dir.x * dir.x + dir.y * dir.y;
@@ -268,7 +280,11 @@ export function coneSquares(board: Board, from: Vec2, dir: Vec2, range: number):
       const p: Vec2 = { x: from.x + dx, y: from.y + dy };
       if (!inBounds(board, p)) continue;
       if (terrainAt(board, p) === 'wall') continue;
-      if (wedgeCovers(dir.x * dx + dir.y * dy, dir.x * dy - dir.y * dx, d2, range)) out.push(p);
+      if (!wedgeCovers(dir.x * dx + dir.y * dy, dir.x * dy - dir.y * dx, d2, range)) continue;
+      // LOS-OCCLUSION. Asked last because it is the most expensive test and the
+      // wedge has already thrown away most of the box.
+      if (!hasLineOfSight(board, from, p)) continue;
+      out.push(p);
     }
   }
   return out;

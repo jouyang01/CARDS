@@ -107,16 +107,17 @@ describe('CHASE1: a chase closes on where the target FINISHED moving', () => {
     expect(at(state, 'a').x).toBeGreaterThan(5);
   });
 
-  it('a chase can still be sprinted', () => {
-    // Sprint is "no ability, more squares"; a chase is movement, so nothing
-    // about it should shrink the budget.
+  it('a chase sprints whether or not the order says so (CHASE-SPRINT)', () => {
+    // Superseded by CHASE-SPRINT: a chase that spends no ability *is* a sprint,
+    // so the flag is now redundant rather than the thing that buys the squares.
+    // Before, the same turn closed eight squares as a walk and four as a chase.
     // The target stays inside vision, or the fog rule would cap both runs at the
-    // same last-known square and the sprint would look like it did nothing.
+    // same last-known square and the budget would look like it did nothing.
     const flee: UnitOrders[] = [{ unitId: 'e', movePath: [{ x: 10, y: 10 }, { x: 11, y: 10 }] }];
     const plain = run(board(), chase('a', 'e'), flee);
     const sprinted = run(board(), [{ unitId: 'a', chase: 'e', sprint: true }], flee);
-    expect(at(plain.state, 'a')).toEqual({ x: 9, y: 10 });
-    expect(at(sprinted.state, 'a'), 'the extra squares are spent on the chase').toEqual({ x: 10, y: 10 });
+    expect(at(plain.state, 'a'), 'the flag is not what buys the squares').toEqual({ x: 10, y: 10 });
+    expect(at(sprinted.state, 'a')).toEqual(at(plain.state, 'a'));
   });
 
   it('a chaser that cannot improve its position holds still', () => {
@@ -166,8 +167,22 @@ describe('CHASE1: you cannot chase a target you cannot see', () => {
     });
   });
 
-  it('and short of the budget to arrive, it still heads only for the remembered square', () => {
-    const s = loseSight(); // `a` is on (4,10): 5 away, budget 4
+  it('reaches the remembered square on a sprint budget and stops dead there', () => {
+    // `a` is on (4,10), the remembered square is (9,10): five away, which a
+    // chase now covers (CHASE-SPRINT raised the budget from 4 to 8). The point
+    // of the case survives the change and gets sharper — it arrives and does
+    // **not** carry on to (14,10), where the target actually is.
+    const s = loseSight();
+    const { state, events } = run(s, chase('a', 'e'), idle, BRUSHY);
+    expect(at(state, 'a')).toEqual({ x: 9, y: 10 });
+    expect(events.find((e) => e.type === 'chaseResolved')).toMatchObject({ to: { x: 9, y: 10 }, seen: false });
+  });
+
+  it('…and short of even that budget, it still heads only for the remembered square', () => {
+    // Pushed back so eight squares is genuinely not enough: the original point,
+    // restated against the new budget.
+    const s = loseSight();
+    s.units.find((u) => u.unitId === 'a')!.pos = { x: 0, y: 10 }; // 9 away, budget 8
     const { state, events } = run(s, chase('a', 'e'), idle, BRUSHY);
     expect(at(state, 'a')).toEqual({ x: 8, y: 10 });
     expect(events.find((e) => e.type === 'chaseResolved')).toMatchObject({ to: { x: 9, y: 10 }, seen: false });

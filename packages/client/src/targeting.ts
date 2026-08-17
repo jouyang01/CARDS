@@ -181,6 +181,23 @@ export function sprintAllowed(draft: OrderDraft, dashCatalystArmed = false): boo
 }
 
 /**
+ * CHASE-SPRINT — will this chase order run at sprint budget?
+ *
+ * The engine derives a chase's budget rather than reading `order.sprint`,
+ * because a chase's route is picked at the end of Move and there is nothing for
+ * a player to opt into at plan time. The client therefore cannot ask the draft
+ * either: it has to apply the **same condition** the engine applies, or the
+ * drawn route will promise a distance the resolution does not deliver.
+ *
+ * That condition is `sprintAllowed`'s — no normal ability, no Dash catalyst — so
+ * this is deliberately a thin alias rather than a second rule. It exists to be
+ * named and tested, not to decide anything new.
+ */
+export function chaseSprints(draft: OrderDraft, dashCatalystArmed = false): boolean {
+  return sprintAllowed(draft, dashCatalystArmed);
+}
+
+/**
  * Is the ability hotbar usable at all right now? (CAT-DASH-FULL.)
  *
  * A Dash catalyst is the unit's whole active turn, so the hotbar goes dark with

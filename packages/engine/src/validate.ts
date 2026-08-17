@@ -33,7 +33,7 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
  */
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
-  'delayTurns', 'chargeHits', 'free', 'oncePerMatch', 'impact', 'effects', 'description',
+  'delayTurns', 'chargeHits', 'free', 'melee', 'oncePerMatch', 'impact', 'effects', 'description',
 ] as const;
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
