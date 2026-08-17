@@ -893,6 +893,66 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     expect(sawEnemyUnderFog, 'never composited an enemy while the board was still fogged').toBe(true);
   });
 
+  /**
+   * MOVE-SPRINT-FIRST — the owner's *"Vex's first sprint action does not move
+   * the character"*, asked at the layer the report came from.
+   *
+   * The client modules answer this in `move-sprint-first.test.ts` and answer it
+   * cleanly, which is exactly why the browser has to be asked too: the two
+   * candidate explanations left were the app wiring and a stale bundle, and
+   * neither is visible from a unit test. This is the drive that establishes
+   * which — it fails if the button, the click handler or the order assembly is
+   * broken, and it is green against a build made from this tree.
+   *
+   * Bodies rather than an exact square: the landing tile is `duel-arena`'s wall
+   * pillar and MOVE1's re-route talking, and pinning it would turn a map edit
+   * into a movement-bug report.
+   */
+  const blueBodies = (image: Image): { x: number; y: number }[] => {
+    let rest = findPixels(image, isTeamBlue, 2);
+    const out: { x: number; y: number }[] = [];
+    // Two characters per seat, and a peel per body; the floor drops the route
+    // line and antialiased fringes, which are not units.
+    for (let i = 0; i < 4 && rest.length > 60; i++) {
+      const blob = largestCluster(rest, 6);
+      if (blob.length < 60) break;
+      const seen = new Set(blob.map((p) => `${p.x},${p.y}`));
+      rest = rest.filter((p) => !seen.has(`${p.x},${p.y}`));
+      out.push({
+        x: Math.round(blob.reduce((s, p) => s + p.x, 0) / blob.length),
+        y: Math.round(blob.reduce((s, p) => s + p.y, 0) / blob.length),
+      });
+    }
+    return out.sort((a, b) => a.y - b.y || a.x - b.x);
+  };
+
+  test('the opening Sprint of the match actually moves a unit (MOVE-SPRINT-FIRST)', async ({ page }) => {
+    const sprint = page.locator('.hud-move', { hasText: /^Sprint/ });
+    const move = page.locator('.hud-move', { hasText: /^Move/ });
+    // The HUD prints the budget it would spend, which is the only place the
+    // engine's number is legible from out here — so read it rather than
+    // hard-coding SPRINT_RANGE, and the assertion survives a rebalance.
+    const budget = async (): Promise<number> =>
+      Number(/\((\d+)\)/.exec((await move.textContent()) ?? '')?.[1] ?? '0');
+
+    const walk = await budget();
+    expect(walk, 'the Move control should be pricing a walk before anything is armed').toBeGreaterThan(0);
+    await expect(sprint).toBeEnabled();
+    await sprint.click();
+    await page.waitForTimeout(150);
+    expect(await budget(), 'arming Sprint did not re-price the turn').toBeGreaterThan(walk);
+
+    const before = blueBodies(await pixels(page));
+    expect(before.length, 'both of the seat\'s characters should be on screen').toBeGreaterThan(1);
+    await clickAt(page, 0.5, 0.5); // straight at the middle — further than any budget reaches
+    expect(await resolveTurn(page), 'the opening turn did not resolve').toBe(true);
+
+    const after = blueBodies(await pixels(page));
+    const stayed = after.filter((a) => before.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 12));
+    expect(stayed.length, 'the first Sprint left every unit exactly where it started')
+      .toBeLessThan(before.length);
+  });
+
 });
 
 
