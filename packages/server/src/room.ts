@@ -15,10 +15,12 @@
  */
 
 import type {
-  CatalystPool, CharacterDef, FormatId, GameState, MapDef, PlayerOrders, Roster,
-  TeamId, TurnEvent, UnitOrders,
+  CatalystPicks, CatalystPool, CatalystTriad, CharacterDef, FormatId, GameState, MapDef,
+  PlayerOrders, Roster, TeamId, TurnEvent, UnitOrders,
 } from '@cards/engine';
-import { createMatch, deriveSeats, getFormat, mergeSeatOrders, resolveTurn } from '@cards/engine';
+import {
+  createMatch, deriveSeats, getFormat, mergeSeatOrders, resolveTurn, validateCatalystTriad,
+} from '@cards/engine';
 
 /** Room codes are four letters — sayable down a phone, and 456 976 of them. */
 export const ROOM_CODE_LENGTH = 4;
@@ -30,6 +32,33 @@ export const ROOM_CODE_LENGTH = 4;
  * has to apologise for.
  */
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPRSTVWXYZ';
+
+/**
+ * GAME_SPEC §1: "a player controls **1 or 2 characters**". The cap is what makes
+ * 4v4's "minimum 4 players" a consequence rather than a fourth number — a team
+ * of `charactersPerTeam` characters needs at least half that many seats to be
+ * coverable at all.
+ */
+export const MAX_CHARACTERS_PER_PLAYER = 2;
+
+/**
+ * One character a seat brings to the match, with the triad that character
+ * carries (M3-LOBBY, the ruled pick model).
+ *
+ * **A pick is a character, not a player.** In a 2-player 2v2 each seat makes two
+ * of these, and the catalyst triad hangs off the *character* rather than the
+ * player — that is the ruling (edge-cases, "M3-LOBBY pick model"), and it is why
+ * this is a record per character rather than a `characterIds: string[]` beside a
+ * single triad.
+ *
+ * `catalysts` absent means "not chosen": a lobby mid-pick is the normal state of
+ * a lobby, and `createMatch` already falls back to `DEFAULT_CATALYSTS` for a
+ * hole, so an unchosen triad needs no placeholder invented for it here.
+ */
+export interface Pick {
+  characterId: string;
+  catalysts?: CatalystTriad;
+}
 
 /** A player occupying one seat in a room. */
 export interface Seat {
@@ -45,6 +74,16 @@ export interface Seat {
    * so client and server seat the same characters the same way.
    */
   unitIds: string[];
+  /**
+   * What this seat has chosen in the lobby (M3-LOBBY), in pick order. Empty
+   * until it picks; `charactersPerSeat` says how many it owes.
+   *
+   * Kept separate from `unitIds` on purpose: a pick is a *character id* the
+   * player chose, a unit id is what `createMatch` minted from it. Collapsing the
+   * two would make the lobby depend on the id scheme of a state that does not
+   * exist yet.
+   */
+  picks: Pick[];
 }
 
 export interface Room {
@@ -170,7 +209,7 @@ export function join(room: Room, seatId: string, name?: string): JoinResult {
   if (room.state !== undefined) return { ok: false, reason: 'inProgress' };
   if (room.seats.some((s) => s.seatId === seatId)) return { ok: false, reason: 'duplicateSeat' };
   if (room.seats.length >= seatBounds(room.format).max) return { ok: false, reason: 'roomFull' };
-  const seat: Seat = { seatId, team: nextTeam(room), name: name ?? seatId, unitIds: [] };
+  const seat: Seat = { seatId, team: nextTeam(room), name: name ?? seatId, unitIds: [], picks: [] };
   return { ok: true, room: { ...room, seats: [...room.seats, seat] }, seat };
 }
 
@@ -194,6 +233,191 @@ export function canStart(room: Room): boolean {
   return [0, 1].every((team) => room.seats.some((s) => s.team === team));
 }
 
+/**
+ * How many characters each seat on `team` picks, in that team's join order.
+ *
+ * This is `deriveSeats`' split, stated forwards. The engine deals a team's
+ * character list across its players by giving the **first `doubles` players two
+ * characters** and the rest one; the lobby has to ask for picks in exactly that
+ * shape, because `teamsFromPicks` concatenates the seats' picks in this same
+ * order and `deriveSeats` will slice them back apart at `startMatch`. Two
+ * different answers to "how many does this seat run" is how a player ends up
+ * picking a character nobody controls.
+ *
+ * A seat can be owed **0** — a team with more seats than characters (only
+ * reachable in 1v1) — and a team can be **under-covered**, which is what
+ * `teamCovered` is for. Neither is an error here; this function only reports the
+ * split.
+ */
+export function teamSplit(room: Room, team: TeamId): number[] {
+  const perTeam = getFormat(room.format).charactersPerTeam;
+  const players = room.seats.filter((s) => s.team === team).length;
+  const seated = Math.min(players, perTeam);
+  const doubles = perTeam - seated; // this many seats run two, as in `deriveSeats`
+  return Array.from({ length: players }, (_, pl) => {
+    if (pl >= seated) return 0;
+    return pl < doubles ? MAX_CHARACTERS_PER_PLAYER : 1;
+  });
+}
+
+/** How many characters this seat picks. `0` for a seat that is not in the room. */
+export function charactersPerSeat(room: Room, seatId: string): number {
+  const seat = room.seats.find((s) => s.seatId === seatId);
+  if (seat === undefined) return 0;
+  const index = room.seats.filter((s) => s.team === seat.team).findIndex((s) => s.seatId === seatId);
+  return teamSplit(room, seat.team)[index] ?? 0;
+}
+
+/**
+ * Can this team's seats cover its characters at all?
+ *
+ * GAME_SPEC §1: a player runs at most two characters, so a 4v4 team needs two
+ * players before its four characters have anyone to order them — which is where
+ * the spec's "4v4 requires a minimum of 4 players" comes from. `canStart` only
+ * asks whether both teams have *somebody*, which was enough while `startMatch`
+ * dealt characters itself; a lobby that asks players to pick has to know that
+ * the picks it collects will add up.
+ */
+export function teamCovered(room: Room, team: TeamId): boolean {
+  const perTeam = getFormat(room.format).charactersPerTeam;
+  return teamSplit(room, team).reduce((a, b) => a + b, 0) === perTeam;
+}
+
+export type PickRejection =
+  /** No such seat in this room. */
+  | 'unknownSeat'
+  /** The match is already running; picks are a lobby thing. */
+  | 'inProgress'
+  /** Not the number of characters this seat runs (`charactersPerSeat`). */
+  | 'wrongCount'
+  /** A character id that is not in the roster. */
+  | 'unknownCharacter'
+  /** R3: the same character twice on one team, across all of its seats. */
+  | 'duplicateCharacter'
+  /** A triad that is not one Prep, one Dash and one Blast from the pool. */
+  | 'badCatalysts';
+
+export type PickResult =
+  | { ok: true; room: Room }
+  | { ok: false; reason: PickRejection; errors: string[] };
+
+/**
+ * Record a seat's lobby picks, validated. Returns a **new** room, like `join`.
+ *
+ * Every rule the ruled pick model names is checked here and nowhere else:
+ *
+ * - **Count** — a seat picks exactly the characters it will order. Fewer leaves
+ *   a character unowned; more would silently drop one at `teamsFromPicks`.
+ * - **Roster membership** — a character id nobody can spawn is caught in the
+ *   lobby, where a player can pick again, rather than at `createMatch`, where it
+ *   is an exception in the middle of starting a match.
+ * - **R3 across the WHOLE team** — the ruling's sharpest edge: uniqueness is a
+ *   property of the team's complement, not of one seat's picks, so this checks
+ *   against *the other seats on the same team* too. Two players bringing the
+ *   same character between them is precisely the case the rule exists for.
+ *   Mirrors across teams stay legal and are not checked.
+ * - **Triads** — delegated to the engine's `validateCatalystTriad`, so "one per
+ *   phase" has one implementation. A pick with no triad is legal (a lobby
+ *   mid-choice); it falls back to `DEFAULT_CATALYSTS` at match creation.
+ *
+ * Rejections are values with the offending detail attached, because a lobby has
+ * to tell the player *which* pick it refused, not merely that it refused.
+ */
+export function setPicks(
+  room: Room,
+  seatId: string,
+  picks: readonly Pick[],
+  roster: Roster,
+  catalysts: CatalystPool = {},
+): PickResult {
+  const seat = room.seats.find((s) => s.seatId === seatId);
+  if (seat === undefined) return { ok: false, reason: 'unknownSeat', errors: [`no seat ${seatId}`] };
+  if (room.state !== undefined) return { ok: false, reason: 'inProgress', errors: ['the match has started'] };
+
+  const owed = charactersPerSeat(room, seatId);
+  if (picks.length !== owed) {
+    return { ok: false, reason: 'wrongCount', errors: [`seat ${seatId} picks ${owed}, got ${picks.length}`] };
+  }
+
+  const unknown = picks.filter((p) => roster[p.characterId] === undefined).map((p) => p.characterId);
+  if (unknown.length > 0) {
+    return { ok: false, reason: 'unknownCharacter', errors: unknown.map((id) => `"${id}" is not in the roster`) };
+  }
+
+  // R3 over the team's whole complement: this seat's picks plus every teammate's.
+  const taken = new Set<string>();
+  for (const other of room.seats) {
+    if (other.team !== seat.team || other.seatId === seatId) continue;
+    for (const p of other.picks) taken.add(p.characterId);
+  }
+  const dupes: string[] = [];
+  for (const p of picks) {
+    if (taken.has(p.characterId)) dupes.push(p.characterId);
+    taken.add(p.characterId);
+  }
+  if (dupes.length > 0) {
+    return {
+      ok: false,
+      reason: 'duplicateCharacter',
+      errors: dupes.map((id) => `"${id}" is already on team ${seat.team}`),
+    };
+  }
+
+  const badTriads = picks.flatMap((p) =>
+    p.catalysts === undefined ? [] : validateCatalystTriad(p.catalysts, catalysts, p.characterId));
+  if (badTriads.length > 0) return { ok: false, reason: 'badCatalysts', errors: badTriads };
+
+  const stored = picks.map((p) => (p.catalysts === undefined
+    ? { characterId: p.characterId }
+    : { characterId: p.characterId, catalysts: [...p.catalysts] }));
+  return {
+    ok: true,
+    room: { ...room, seats: room.seats.map((s) => (s.seatId === seatId ? { ...s, picks: stored } : s)) },
+  };
+}
+
+/**
+ * Is the lobby ready to start? Startable as a room, coverable as two teams, and
+ * every seat has picked what it owes.
+ *
+ * Strictly stronger than `canStart`, which stays what it is: "could this room
+ * ever play". A lobby needs the second half too, and `startFromPicks` is gated
+ * on this rather than on `canStart`.
+ */
+export function lobbyReady(room: Room): boolean {
+  if (room.state !== undefined || !canStart(room)) return false;
+  if (!teamCovered(room, 0) || !teamCovered(room, 1)) return false;
+  return room.seats.every((s) => s.picks.length === charactersPerSeat(room, s.seatId));
+}
+
+/**
+ * The lobby's picks as `createMatch`'s two arguments.
+ *
+ * The order is team, then the team's seats in join order, then each seat's picks
+ * in pick order — which is exactly the order `deriveSeats` slices back apart, so
+ * a seat's own picks come back to it as its `unitIds`. `undefined` when the
+ * lobby is not ready, because a half-picked team has no character list.
+ */
+export function teamsFromPicks(
+  room: Room,
+  roster: Roster,
+): { teams: [CharacterDef[], CharacterDef[]]; picks: CatalystPicks } | undefined {
+  if (!lobbyReady(room)) return undefined;
+  const teams: [CharacterDef[], CharacterDef[]] = [[], []];
+  const triads: [(CatalystTriad | undefined)[], (CatalystTriad | undefined)[]] = [[], []];
+  for (const team of [0, 1] as const) {
+    for (const seat of room.seats.filter((s) => s.team === team)) {
+      for (const pick of seat.picks) {
+        const character = roster[pick.characterId];
+        if (character === undefined) return undefined;
+        teams[team].push(character);
+        triads[team].push(pick.catalysts);
+      }
+    }
+  }
+  return { teams, picks: [triads[0], triads[1]] };
+}
+
 
 /**
  * Start the match: create the authoritative `GameState` and deal characters to
@@ -213,13 +437,42 @@ export function startMatch(
   room: Room,
   map: MapDef,
   teams: [CharacterDef[], CharacterDef[]],
+  picks?: CatalystPicks,
 ): { ok: true; room: Room } | { ok: false; reason: 'cannotStart' } {
   if (room.state !== undefined || !canStart(room)) return { ok: false, reason: 'cannotStart' };
-  const state = createMatch(map, room.format, teams);
+  return { ok: true, room: dealSeats(room, createMatch(map, room.format, teams, picks)) };
+}
 
-  // `deriveSeats` splits each team's characters across that team's players; the
-  // seats it returns are in the same team-then-join order as ours, so zipping
-  // them is a positional match rather than a lookup by a name neither side has.
+/**
+ * Start from the lobby's own picks (M3-LOBBY), rather than from a caller-supplied
+ * roster deal.
+ *
+ * The one function that turns a finished lobby into a match: it is gated on
+ * `lobbyReady` rather than `canStart`, and it seeds each unit's triad from the
+ * character that picked it via CAT-SELECT's `picks` argument. `startMatch`'s
+ * interim deal survives beside it only until the lobby protocol is wired — the
+ * two share `dealSeats`, so "who controls whom" still has a single answer.
+ */
+export function startFromPicks(
+  room: Room,
+  map: MapDef,
+  roster: Roster,
+): { ok: true; room: Room } | { ok: false; reason: 'cannotStart' } {
+  const chosen = teamsFromPicks(room, roster);
+  if (chosen === undefined) return { ok: false, reason: 'cannotStart' };
+  return startMatch(room, map, chosen.teams, chosen.picks);
+}
+
+/**
+ * Hand each seat the characters it controls.
+ *
+ * `deriveSeats` splits each team's characters across that team's players; the
+ * seats it returns are in the same team-then-join order as ours, so zipping them
+ * is a positional match rather than a lookup by a name neither side has. It is
+ * also the same split `teamSplit` reports to the lobby, which is what makes a
+ * seat's picks come back to it as its own units.
+ */
+function dealSeats(room: Room, state: GameState): Room {
   const perTeam: [number, number] = [
     room.seats.filter((s) => s.team === 0).length,
     room.seats.filter((s) => s.team === 1).length,
@@ -233,7 +486,7 @@ export function startMatch(
     ...seat,
     unitIds: byTeam[seat.team][taken[seat.team]++] ?? [],
   }));
-  return { ok: true, room: { ...room, seats, state, turn: state.turn } };
+  return { ...room, seats, state, turn: state.turn };
 }
 
 /** Which seat controls `unitId`, if any — the control map, read backwards. */

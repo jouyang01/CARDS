@@ -140,7 +140,11 @@ export function roomView(room: Room, canStart: boolean, locked: readonly string[
   return {
     code: room.code,
     format: room.format,
-    seats: room.seats.map((s) => ({ ...s, unitIds: [...s.unitIds] })),
+    seats: room.seats.map((s) => ({
+      ...s,
+      unitIds: [...s.unitIds],
+      picks: s.picks.map((p) => ({ ...p })),
+    })),
     turn: room.turn,
     canStart,
     started: room.state !== undefined,
