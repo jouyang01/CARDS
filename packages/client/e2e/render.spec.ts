@@ -847,22 +847,22 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     const enemyPixels = largestCluster(allRed, 6);
     const clip = await boardClip(page);
     const scale = { x: clip.width / baseline.width, y: clip.height / baseline.height };
-    // The median across the body's width, so an antialiased fringe cannot drag
-    // the point off it the way a mean would.
+    // The median of each axis, so an antialiased fringe cannot drag the point
+    // off the body the way a mean would.
+    //
+    // **This is also BODY-CLICK's regression test.** The middle of a body used
+    // to be the one place on it you could not click: a unit stands 0.6 above the
+    // floor under a pitched camera, `squareFromPoint` raycasted only the ground
+    // plane, and the pixels at a waist therefore resolved to the square behind
+    // it — measured, at the time, as "the median arms nothing, 70%-100% down the
+    // silhouette all arm". The test clicked the foot to get past it. Now that
+    // the ray asks the unit meshes first, the middle of a body is that unit's
+    // square, and pointing at the middle of what you mean to click is what the
+    // suite should be asserting.
     const median = (ns: number[]): number => [...ns].sort((a2, b2) => a2 - b2)[Math.floor(ns.length / 2)]!;
-    // …but the **foot** of the silhouette vertically, not its middle. A unit is
-    // a box standing 0.6 above the floor, and `squareFromPoint` raycasts the
-    // *ground plane* — so the pixels at a body's waist project onto a square
-    // behind it. Measured: clicking the vertical median of the cluster leaves
-    // the control reading "Chase" (nothing armed, no route drawn — this test's
-    // failure), while anything from 70% down the silhouette to its bottom edge
-    // arms it. 85% sits in the middle of that band; the ⅗-tile-wide bottom face
-    // is what keeps the ray inside the unit's own square.
-    const ys = enemyPixels.map((q) => q.y);
-    const [top, foot] = [Math.min(...ys), Math.max(...ys)];
     const target = {
       x: median(enemyPixels.map((q) => q.x)),
-      y: top + (foot - top) * 0.85,
+      y: median(enemyPixels.map((q) => q.y)),
     };
 
     await chase.click();
@@ -925,6 +925,39 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     }
     return out.sort((a, b) => a.y - b.y || a.x - b.x);
   };
+
+  test('clicking a character to move onto its tile still moves you (BODY-CLICK)', async ({ page }) => {
+    // Owner Dev Note: *"BUG: When moving to a location that another character
+    // occupies … the character does not move at all."* Two failures in a row
+    // produced that, and this drives both: the click has to land on the body's
+    // square (BODY-CLICK, the raycast), and MOVE1 then has to turn an occupied
+    // destination into a walk to the nearest legal square rather than into
+    // nothing (`body-click.test.ts` owns that half in isolation).
+    //
+    // The seat's *other* character is the target, because it is the one body
+    // guaranteed to be on screen on turn 1 — the enemy team spawns outside
+    // vision — and because a teammate's tile is the likelier misclick anyway.
+    const before = blueBodies(await pixels(page));
+    expect(before.length, 'need both of the seat\'s characters on screen').toBeGreaterThan(1);
+
+    await page.locator('.hud-move', { hasText: /^Move/ }).click();
+    await page.waitForTimeout(150);
+
+    // The teammate is whichever body is not the selected one; either works, so
+    // take the second in the suite's stable top-to-bottom order.
+    const clip = await boardClip(page);
+    const image = await pixels(page);
+    const scale = { x: clip.width / image.width, y: clip.height / image.height };
+    const mate = blueBodies(image)[1]!;
+    await page.mouse.click(clip.x + mate.x * scale.x, clip.y + mate.y * scale.y);
+    await page.waitForTimeout(250);
+
+    expect(await resolveTurn(page), 'the turn did not resolve').toBe(true);
+    const after = blueBodies(await pixels(page));
+    const stayed = after.filter((a) => before.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 12));
+    expect(stayed.length, 'clicking a character produced no movement at all')
+      .toBeLessThan(before.length);
+  });
 
   test('the opening Sprint of the match actually moves a unit (MOVE-SPRINT-FIRST)', async ({ page }) => {
     const sprint = page.locator('.hud-move', { hasText: /^Sprint/ });

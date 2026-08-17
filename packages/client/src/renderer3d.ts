@@ -955,6 +955,42 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         -((clientY - rect.top) / rect.height) * 2 + 1,
       );
       raycaster.setFromCamera(ndc, camera);
+
+      // BODY-CLICK: unit bodies are asked **before** the floor.
+      //
+      // Owner Dev Note: *"BUG: When moving to a location that another character
+      // occupies … the character does not move at all."* A unit is a box
+      // standing 0.6 above the ground, and the camera is pitched — so the pixels
+      // of a body cover the floor *behind* it, and a ray that only ever met the
+      // floor answered with that square. Clicking a character therefore selected
+      // a tile one or two squares past it: a chase armed nothing (a chase must
+      // name a unit, and there was none on the resolved square), and a move
+      // aimed at somebody's tile walked somewhere else entirely.
+      //
+      // Only **drawn** bodies are offered. A unit the seat cannot see has its
+      // group hidden by `show()`, so it is not in this list and cannot be picked
+      // out of the fog — the ray is as blind as the renderer is.
+      //
+      // The square comes from the unit's own position rather than from where the
+      // ray struck the box: a body is nearly a tile wide and a hit near its top
+      // edge is still that unit's square, which is the whole point.
+      const bodies: Mesh[] = [];
+      for (const g of unitObjects.values()) {
+        if (!g.visible) continue;
+        const body = g.getObjectByName('body');
+        if (body instanceof Mesh) bodies.push(body);
+      }
+      const onBody = raycaster.intersectObjects(bodies, false)[0];
+      if (onBody !== undefined) {
+        // `g.position` is already in `world`'s local space — it was set from
+        // `toWorld` — so unlike a ray hit it needs no conversion back.
+        const g = onBody.object.parent;
+        if (g !== null) {
+          const sq = toSquare(map, g.position);
+          if (onBoard(map, sq)) return sq;
+        }
+      }
+
       const hits = raycaster.intersectObject(ground, false);
       const hit = hits[0];
       if (hit === undefined) return undefined;
