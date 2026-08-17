@@ -77,9 +77,9 @@ export interface HudCharacter {
   locked: boolean;
   hasOrder: boolean;
   /**
-   * Everything currently on this character (BUFF-UI), in pip order. The
-   * floating pips say *something* is on you; this strip is the only place that
-   * says what it is and how long it lasts.
+   * Everything currently on this character (BUFF-UI), in pip order. The plate's
+   * icon row says *something* is on you; this strip is the only place that says
+   * what it is and how long it lasts.
    */
   statuses: StatusChip[];
 }

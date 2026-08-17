@@ -177,3 +177,78 @@ export function nameplateKey(plate: Nameplate, team: TeamId): string {
     plate.energy, plate.ult ? 'U' : '', pips,
   ].join('|');
 }
+
+// ── NAMEPLATE-LAYOUT: where things sit on the plate ─────────────────────────
+
+/**
+ * The plate's raster, in pixels. World size is `renderer3d`'s `PLATE_W/H`, and
+ * the two are in a fixed ratio — 160 px per world unit — which is what lets the
+ * icon sizing below be checked against STATUS-ICONS-SIZE's world-space floor
+ * without a WebGL context in the room.
+ */
+export const PLATE_PX = { w: 272, h: 106 } as const;
+/** Pixels per world unit, i.e. `PLATE_PX.w / renderer3d's PLATE_W`. */
+export const PLATE_PX_PER_UNIT = 160;
+
+/**
+ * Icon geometry on the plate.
+ *
+ * `30` is not a taste call: STATUS-ICONS-SIZE raised the floating pips to 0.18
+ * world units because a *drawing* you cannot resolve is worse than a colour you
+ * can, and moving the row onto the plate must not quietly give that back. At
+ * 160 px per world unit, 30 px is 0.1875 — the same read or slightly better,
+ * which is the whole reason that item folds into this repaint instead of
+ * shipping twice.
+ */
+export const ICON_PX = 30;
+export const ICON_GAP_PX = 4;
+/** The gap between the end of the name and the first icon. */
+export const NAME_GAP_PX = 10;
+/** The plate's left/right margin, shared with the bars below. */
+export const PLATE_PAD_PX = 8;
+
+/** Where one plate's name and status row sit, in canvas pixels. */
+export interface PlateLayout {
+  /** Left edge of the name — NAMEPLATE-LAYOUT justifies it, so this is the pad. */
+  nameX: number;
+  /** Left edge of each icon that fits, in `PIP_ORDER` (debuffs first). */
+  iconXs: number[];
+  /** Top edge of the icon row, so icons and name share a line. */
+  iconY: number;
+  /** How many icons did not fit. Drawn as a `+N` rather than dropped silently. */
+  overflow: number;
+}
+
+/**
+ * Lay out the name line: name hard left, status icons immediately to its right.
+ *
+ * Pure arithmetic over a measured name width, so the arrangement the owner
+ * asked for is testable without a canvas — the same reason `status-pips.ts`
+ * holds the vocabulary rather than the renderer.
+ *
+ * **Truncation is reported, not hidden.** Eleven icons cannot fit beside a name
+ * on a plate this wide, and a row that silently stopped at four would be a plate
+ * claiming a unit is carrying less than it is. `PIP_ORDER` puts debuffs first,
+ * so what survives the cut is what is being done *to* you — the urgent read —
+ * and the count of what did not follows it.
+ */
+export function plateLayout(nameWidthPx: number, pipCount: number): PlateLayout {
+  const iconY = 1;
+  const start = PLATE_PAD_PX + nameWidthPx + NAME_GAP_PX;
+  const pitch = ICON_PX + ICON_GAP_PX;
+  // The `+N` marker only earns its width when something is actually cut, so the
+  // room for it is reserved on the second pass rather than always.
+  const roomFor = (reserve: number): number => Math.max(
+    0,
+    Math.floor((PLATE_PX.w - PLATE_PAD_PX - reserve - start + ICON_GAP_PX) / pitch),
+  );
+  const OVERFLOW_PX = 26;
+  let shown = Math.min(pipCount, roomFor(0));
+  if (shown < pipCount) shown = Math.min(pipCount, roomFor(OVERFLOW_PX));
+  return {
+    nameX: PLATE_PAD_PX,
+    iconXs: Array.from({ length: shown }, (_, i) => start + i * pitch),
+    iconY,
+    overflow: pipCount - shown,
+  };
+}

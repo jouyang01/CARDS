@@ -12,14 +12,20 @@
  * part that decides *what* you see is testable without a WebGL context, and
  * `renderer3d` only has to draw the marks it is handed. STATUS-ICONS keeps that
  * boundary by shipping the icons as **path data** rather than as images: the
- * renderer rasterises them to a texture, the HUD drops them into an `<svg>`, and
- * neither owns the vocabulary.
+ * nameplate raster paints them onto its canvas, the HUD drops them into an
+ * `<svg>`, and neither owns the vocabulary.
+ *
+ * Since NAMEPLATE-LAYOUT the row lives *on the plate*, beside the name, rather
+ * than floating under it as its own quads — so the geometry that used to live
+ * here (pip size, gap, wrap-at-six) is `nameplates.ts`'s `plateLayout` now. What
+ * stays is the vocabulary: which statuses are drawable, in what order, in what
+ * colour, and — new here — on whose side.
  *
  * It derives nothing. The kinds come straight off engine state during Decision,
  * and off the `statusApplied` / `statusRemoved` event pair during playback.
  */
 
-import type { EffectKind } from '@cards/engine';
+import { BENEFICIAL_KINDS, HARMFUL_KINDS, type EffectKind } from '@cards/engine';
 
 /**
  * Display order, and simultaneously the whitelist: only the eleven kinds that
@@ -53,8 +59,52 @@ export const PIP_COLORS: Readonly<Record<string, number>> = {
   stealth: 0x9aa2c0,
 };
 
-/** Debuffs, for anything that wants to tint rather than enumerate. */
-export const HARMFUL_PIPS: ReadonlySet<EffectKind> = new Set<EffectKind>(['root', 'slow', 'weaken', 'reveal']);
+/**
+ * Debuffs, for anything that wants to tint rather than enumerate.
+ *
+ * NAMEPLATE-LAYOUT: **derived from the engine's FF1 table, not restated.** This
+ * used to be its own literal set — the same four kinds, written out a second
+ * time — which is a polarity table the engine cannot keep honest. A status that
+ * changed sides, or a new harmful kind that became drawable, would have had to
+ * be remembered here. Now it cannot: the members are whatever `PIP_ORDER` and
+ * `HARMFUL_KINDS` agree on.
+ */
+export const HARMFUL_PIPS: ReadonlySet<EffectKind> =
+  new Set<EffectKind>(PIP_ORDER.filter((kind) => HARMFUL_KINDS.has(kind)));
+
+/**
+ * NAMEPLATE-LAYOUT — **polarity is the colour** (ar-parity §4.8).
+ *
+ * The owner's directive: buffs blue, debuffs red. Two channels, one read — the
+ * glyph carries *identity* (sword, eye, wing) and the tint carries *whose side
+ * it is on*, which is the question a player asks first and answers from across
+ * the board. `PIP_COLORS` still exists and still does its job in the HUD strip
+ * and the inspect panel, where there is room to name a status and eleven hues
+ * are a legend rather than a guess; over a unit's head there is room for one
+ * bit, and this is that bit.
+ *
+ * Two colours only, deliberately. A third for "neutral" would be a hue nobody
+ * has a meaning for, and the FF1 table's neutral row (`teleport`, `decoy`,
+ * `trap`) contains no status a unit can carry — those are placements, not
+ * things on a body — so the case does not arise for anything `PIP_ORDER` draws.
+ */
+export const PIP_TINT = { harmful: 0xff6b5e, beneficial: 0x6ba8ff } as const;
+
+/**
+ * The tint for one status kind, straight off the engine's polarity table.
+ *
+ * Beneficial is the fallback rather than a third state: every kind in
+ * `PIP_ORDER` is in one of the engine's two rows (a content test asserts the
+ * rows partition `EFFECT_KINDS` exactly), so the branch is total for everything
+ * that can be drawn, and a kind that somehow arrived from neither would rather
+ * read as "something is on this unit" than as an alarm.
+ */
+export const pipTint = (kind: EffectKind): number =>
+  HARMFUL_KINDS.has(kind) ? PIP_TINT.harmful : PIP_TINT.beneficial;
+
+/** Beneficial statuses, the other half of the same engine table. */
+export const BENEFICIAL_PIPS: ReadonlySet<EffectKind> =
+  new Set<EffectKind>(PIP_ORDER.filter((kind) => BENEFICIAL_KINDS.has(kind)));
 
 /**
  * STATUS-ICONS — statuses that are **the owning team's business only**.
@@ -71,7 +121,7 @@ export const OWNER_ONLY_PIPS: ReadonlySet<EffectKind> = new Set<EffectKind>(['st
 /**
  * The statuses a viewer on `viewerOwns`-or-not may be shown for this unit.
  *
- * One gate, applied before both the floating icons and the HUD strip, so the
+ * One gate, applied before both the plate's icon row and the HUD strip, so the
  * two can never disagree about what an enemy is allowed to see. Everything else
  * about a visible unit is public: if you can see them, you can see that they
  * are Rooted.
@@ -88,8 +138,8 @@ export function viewableStatuses<T extends { kind: EffectKind }>(
  *
  * **Path data, not pictures.** The vocabulary lives here as SVG path strings in
  * a fixed 24×24 box because two very different consumers need the same mark:
- * `renderer3d` rasterises it onto a canvas texture to float over a unit, and the
- * HUD strip drops it straight into an `<svg>`. Shipping an image would mean two
+ * `textures.ts` paints it onto the nameplate canvas, and the HUD strip drops it
+ * straight into an `<svg>`. Shipping an image would mean two
  * assets to keep in step, or a texture the DOM cannot use; shipping geometry
  * means one source and no files.
  *
@@ -98,9 +148,9 @@ export function viewableStatuses<T extends { kind: EffectKind }>(
  * is a *chained* boot against Haste's wing, deliberately: the counter-relation
  * should be legible from the silhouette before the colour is read at all.
  *
- * Kept schematic on purpose. Even after STATUS-ICONS-SIZE these are small marks
- * over a unit's head; fine detail there is noise, and silhouette is the thing
- * that survives.
+ * Kept schematic on purpose. Even at NAMEPLATE-LAYOUT's size these are small
+ * marks over a unit's head; fine detail there is noise, and silhouette is the
+ * thing that survives.
  */
 export const GLYPH_BOX = 24;
 
@@ -201,6 +251,16 @@ export interface StatusPip {
   kind: EffectKind;
   color: number;
   /**
+   * NAMEPLATE-LAYOUT's polarity ink — red for a debuff, blue for a buff.
+   *
+   * Carried alongside `color` rather than replacing it because the two answer
+   * different questions for different consumers: the nameplate has room for
+   * polarity and nothing else, while the HUD strip and the inspect panel name
+   * the status and can afford its own hue. One `statusPips` call feeds both, so
+   * they can never disagree about *which* statuses are on a unit.
+   */
+  tint: number;
+  /**
    * The numeral drawn on the glyph: turns left, or — for `shield` — the
    * absorption remaining, which is the number a player actually plans against.
    * Absent when there is nothing worth stamping.
@@ -234,6 +294,7 @@ export function statusPips(
     return {
       kind,
       color: PIP_COLORS[kind] ?? 0xffffff,
+      tint: pipTint(kind),
       ...(numeral > 0 ? { numeral } : {}),
     };
   });
@@ -345,52 +406,3 @@ export function statusChips(
   });
 }
 
-/** Pip geometry, in world units — square, tight, above the shield bar. */
-/**
- * STATUS-ICONS-SIZE — owner Dev Note: *"The icons for buffs/debuffs are too
- * small on the screen UI."*
- *
- * These were sized when a pip was a flat colour square, where the only job was
- * "something is there" and 0.09 was enough to notice. STATUS-ICONS made them
- * *drawings* — a sword, a broken sword, an hourglass — and a drawing you cannot
- * resolve is worse than a colour you can, because it asks to be read and then
- * refuses. Raised to a size where the silhouette actually carries, with the gap
- * kept proportional so a full eleven-icon row still fits over a unit.
- */
-export const PIP_SIZE = 0.18;
-export const PIP_GAP = 0.05;
-/**
- * Icons per row before the strip wraps.
- *
- * A row must still fit over a unit — eleven icons at this size would sprawl over
- * two tiles and start labelling the neighbours. Wrapping is what buys the size:
- * six across is 1.33 tiles, and the eleven-status worst case becomes two tidy
- * rows instead of one illegible one. Most turns show one to three anyway.
- */
-export const PIP_ROW_MAX = 6;
-
-/**
- * Where each pip's centre sits in the strip's local XY, centred on the unit.
- *
- * Lives here rather than in `renderer3d` because it is the one part of the row
- * that can be wrong in a way nothing catches: an off-centre row still draws, and
- * a WebGL context is not available to the unit suite. The arithmetic is
- * therefore testable on its own.
- */
-export function pipOffsets(count: number): { x: number; y: number }[] {
-  const rows = Math.max(1, Math.ceil(count / PIP_ROW_MAX));
-  const pitch = PIP_SIZE + PIP_GAP;
-  const out: { x: number; y: number }[] = [];
-  for (let i = 0; i < count; i++) {
-    const row = Math.floor(i / PIP_ROW_MAX);
-    const inRow = Math.min(PIP_ROW_MAX, count - row * PIP_ROW_MAX);
-    const span = inRow * PIP_SIZE + (inRow - 1) * PIP_GAP;
-    // Rows stack downward from the top one, so the strip grows toward the unit
-    // rather than climbing into the nameplate above it.
-    out.push({
-      x: -span / 2 + PIP_SIZE / 2 + (i % PIP_ROW_MAX) * pitch,
-      y: -(row - (rows - 1) / 2) * pitch,
-    });
-  }
-  return out;
-}

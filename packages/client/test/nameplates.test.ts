@@ -6,8 +6,10 @@ import {
 } from '@cards/engine';
 import { fogView } from '../src/fog.js';
 import {
-  decoyCaster, decoyNameplate, nameplateKey, snapshotDecoy, ultReady, unitNameplate,
+  ICON_GAP_PX, ICON_PX, NAME_GAP_PX, PLATE_PAD_PX, PLATE_PX, PLATE_PX_PER_UNIT,
+  decoyCaster, decoyNameplate, nameplateKey, plateLayout, snapshotDecoy, ultReady, unitNameplate,
 } from '../src/nameplates.js';
+import { PIP_ORDER } from '../src/status-pips.js';
 import vex from '../../../data/characters/vex.json';
 import wisp from '../../../data/characters/wisp.json';
 
@@ -247,5 +249,76 @@ describe('UI-NAMEPLATES: the texture cache key', () => {
   it('and separates the teams, since the name is inked in the team colour', () => {
     const plate = unitNameplate(base, roster, 0);
     expect(nameplateKey(plate, 0)).not.toBe(nameplateKey(plate, 1));
+  });
+});
+
+/**
+ * NAMEPLATE-LAYOUT (ar-parity §4.8) — the owner's rearrangement of the plate.
+ *
+ * The raster itself needs a canvas, so what is pinned here is the arithmetic it
+ * is driven by: name hard left, row on the same line to its right, and an icon
+ * big enough that moving it onto the plate did not undo STATUS-ICONS-SIZE.
+ */
+describe('NAMEPLATE-LAYOUT: name left, status row beside it', () => {
+  const NAME_W = 96; // roughly "Bastion" at the plate's 26px bold
+
+  it('justifies the name to the plate margin instead of centring it', () => {
+    expect(plateLayout(NAME_W, 0).nameX).toBe(PLATE_PAD_PX);
+  });
+
+  it('starts the row past the end of the name, on the same line', () => {
+    const layout = plateLayout(NAME_W, 3);
+    expect(layout.iconXs[0], 'the first icon clears the name')
+      .toBe(PLATE_PAD_PX + NAME_W + NAME_GAP_PX);
+    // Same line: the row shares the name band at the top of the plate, well
+    // above the HP bar it used to sit under.
+    expect(layout.iconY).toBeLessThan(PLATE_PX.h / 4);
+  });
+
+  it('grows rightward at one icon plus one gap', () => {
+    const xs = plateLayout(NAME_W, 3).iconXs;
+    expect(xs).toHaveLength(3);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBe(ICON_PX + ICON_GAP_PX);
+  });
+
+  it('keeps every icon inside the plate', () => {
+    for (const n of [1, 3, 5, PIP_ORDER.length]) {
+      for (const x of plateLayout(NAME_W, n).iconXs) {
+        expect(x + ICON_PX, `${n} icons`).toBeLessThanOrEqual(PLATE_PX.w - PLATE_PAD_PX);
+      }
+    }
+  });
+
+  it('counts what did not fit rather than dropping it silently', () => {
+    // Eleven icons cannot sit beside a name on a plate this wide, and a row
+    // that just stopped would be a plate under-reporting what a unit carries.
+    const full = plateLayout(NAME_W, PIP_ORDER.length);
+    expect(full.iconXs.length).toBeGreaterThan(0);
+    expect(full.iconXs.length + full.overflow).toBe(PIP_ORDER.length);
+    expect(full.overflow).toBeGreaterThan(0);
+  });
+
+  it('and reports no overflow when the row fits', () => {
+    const layout = plateLayout(NAME_W, 2);
+    expect(layout.overflow).toBe(0);
+    expect(layout.iconXs).toHaveLength(2);
+  });
+
+  it('shows nothing, and claims nothing, for a unit carrying nothing', () => {
+    expect(plateLayout(NAME_W, 0)).toMatchObject({ iconXs: [], overflow: 0 });
+  });
+
+  it('gives a long name fewer icons rather than pushing them off the edge', () => {
+    const short = plateLayout(40, PIP_ORDER.length);
+    const long = plateLayout(150, PIP_ORDER.length);
+    expect(long.iconXs.length).toBeLessThan(short.iconXs.length);
+    expect(long.overflow).toBeGreaterThan(short.overflow);
+  });
+
+  it('does not undo STATUS-ICONS-SIZE — the icon is at least as big as the pips were', () => {
+    // The floating row was raised to 0.18 world units because a drawing you
+    // cannot resolve is worse than a colour you can. Moving it onto the plate
+    // must not quietly hand that back, and this is the conversion that says so.
+    expect(ICON_PX / PLATE_PX_PER_UNIT).toBeGreaterThanOrEqual(0.18);
   });
 });

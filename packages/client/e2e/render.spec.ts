@@ -747,22 +747,68 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     await clickAt(page, 0.5, 0.5);
   };
 
+  /**
+   * PADS-SCHEDULE — a pad is dormant until its `firstTurn`, so "is a pad drawn"
+   * is a question with a clock on it, and the drive has to wind that clock.
+   *
+   * `isPadTeal` is the **Health** predicate, and duel-arena opens Might on turn
+   * 2 but the regular flavours on turn 4 (PADS-PLACEMENT put Might in the
+   * centre and Health on the flanks). A dormant plate draws at 0.14 opacity,
+   * which is far below the predicate's floor — correctly, since "nearly
+   * invisible" is what dormant is supposed to look like — so a frame sampled on
+   * turn 2 has no teal in it at all. That is what this pair was failing on: the
+   * schedule, not the renderer.
+   *
+   * Resolving until the plate appears rather than hard-coding "three turns"
+   * keeps the *schedule* out of the suite. The numbers are the Designer's to
+   * tune (`everyTurns` 4 → 5 on iron-basin is an open lever), and a test that
+   * pinned them would go red on a balance pass instead of on a render bug.
+   *
+   * **Sampled from straight overhead**, which is the other half of why this
+   * pair had never passed. A pad is a flat mark on the floor and the default
+   * camera is pitched, so a raised block hides the ground one row *behind* it —
+   * and PADS-PLACEMENT (PR #57) parks duel-arena's Health pads on `y = 3`,
+   * directly north of the wall line at `y = 4`, where the wall boxes cover them
+   * completely. (Measured, not guessed: the Energy pads on `y = 11` composite
+   * fine at the same turn, and the Might pads on `y = 7` show only slivers past
+   * the cover boxes at `y = 8`.) That is a **placement** problem for the
+   * Designer, not a renderer one — flagged, not fixed here — so the question
+   * this test is actually asking, "does an armed pad composite at all", is
+   * asked from the projection where nothing can be in the way.
+   */
+  const PAD_TURNS = 5;
+
+  /** Switch to the top-down projection, where a ground mark cannot be occluded. */
+  const lookStraightDown = async (page: Page): Promise<void> => {
+    const proj = page.locator('.hud-view .hud-small').first();
+    // The button is labelled with the projection it is currently *in*.
+    if ((await proj.textContent()) !== 'Top-down') await proj.click();
+    await expect(proj).toHaveText('Top-down');
+    await page.waitForTimeout(200);
+  };
+
+  const drivePadOpen = async (page: Page): Promise<number> => {
+    await lookStraightDown(page);
+    let teal = countPixels(await pixels(page), isPadTeal);
+    for (let turn = 0; turn < PAD_TURNS && teal <= 20; turn++) {
+      if (!(await resolveTurn(page))) break; // the match ended; report what we saw
+      await lookStraightDown(page); // playback re-frames the camera, not the pitch
+      teal = countPixels(await pixels(page), isPadTeal);
+    }
+    return teal;
+  };
+
   test('an armed pad marker is on the board, in its own colour family', async ({ page }) => {
-    // duel-arena ships a mirrored pair of Health pads on the centre row, and
-    // they are public terrain — drawn for both teams, fog or no fog. They open
-    // on `firstTurn: 2`, so the drive resolves one turn first: on turn 1 every
-    // pad is deliberately dormant and nearly invisible, which is the state
-    // *not* being asserted here.
-    expect(await resolveTurn(page), 'the match ended before turn 2').toBe(true);
+    // duel-arena ships a mirrored pair of Health pads, and they are public
+    // terrain — drawn for both teams, fog or no fog.
     expect(
-      countPixels(await pixels(page), isPadTeal),
+      await drivePadOpen(page),
       'no pad marker composited — the maps carry pads nobody can see',
     ).toBeGreaterThan(20);
   });
 
   test('a pad marker survives the next turn boundary', async ({ page }) => {
-    expect(await resolveTurn(page)).toBe(true);
-    expect(countPixels(await pixels(page), isPadTeal)).toBeGreaterThan(20);
+    expect(await drivePadOpen(page)).toBeGreaterThan(20);
     if (!(await resolveTurn(page))) return; // match ended; nothing left to assert
     // Whether this particular pad was taken or not, *a* Health pad is still
     // drawn: a consumed one keeps its plate and loses only its glyph. The
@@ -801,12 +847,22 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     const enemyPixels = largestCluster(allRed, 6);
     const clip = await boardClip(page);
     const scale = { x: clip.width / baseline.width, y: clip.height / baseline.height };
-    // The median of each axis, so an antialiased fringe cannot drag the point
-    // off the body the way a mean would.
+    // The median across the body's width, so an antialiased fringe cannot drag
+    // the point off it the way a mean would.
     const median = (ns: number[]): number => [...ns].sort((a2, b2) => a2 - b2)[Math.floor(ns.length / 2)]!;
+    // …but the **foot** of the silhouette vertically, not its middle. A unit is
+    // a box standing 0.6 above the floor, and `squareFromPoint` raycasts the
+    // *ground plane* — so the pixels at a body's waist project onto a square
+    // behind it. Measured: clicking the vertical median of the cluster leaves
+    // the control reading "Chase" (nothing armed, no route drawn — this test's
+    // failure), while anything from 70% down the silhouette to its bottom edge
+    // arms it. 85% sits in the middle of that band; the ⅗-tile-wide bottom face
+    // is what keeps the ray inside the unit's own square.
+    const ys = enemyPixels.map((q) => q.y);
+    const [top, foot] = [Math.min(...ys), Math.max(...ys)];
     const target = {
       x: median(enemyPixels.map((q) => q.x)),
-      y: median(enemyPixels.map((q) => q.y)),
+      y: top + (foot - top) * 0.85,
     };
 
     await chase.click();
@@ -836,6 +892,67 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     }
     expect(sawEnemyUnderFog, 'never composited an enemy while the board was still fogged').toBe(true);
   });
+
+  /**
+   * MOVE-SPRINT-FIRST — the owner's *"Vex's first sprint action does not move
+   * the character"*, asked at the layer the report came from.
+   *
+   * The client modules answer this in `move-sprint-first.test.ts` and answer it
+   * cleanly, which is exactly why the browser has to be asked too: the two
+   * candidate explanations left were the app wiring and a stale bundle, and
+   * neither is visible from a unit test. This is the drive that establishes
+   * which — it fails if the button, the click handler or the order assembly is
+   * broken, and it is green against a build made from this tree.
+   *
+   * Bodies rather than an exact square: the landing tile is `duel-arena`'s wall
+   * pillar and MOVE1's re-route talking, and pinning it would turn a map edit
+   * into a movement-bug report.
+   */
+  const blueBodies = (image: Image): { x: number; y: number }[] => {
+    let rest = findPixels(image, isTeamBlue, 2);
+    const out: { x: number; y: number }[] = [];
+    // Two characters per seat, and a peel per body; the floor drops the route
+    // line and antialiased fringes, which are not units.
+    for (let i = 0; i < 4 && rest.length > 60; i++) {
+      const blob = largestCluster(rest, 6);
+      if (blob.length < 60) break;
+      const seen = new Set(blob.map((p) => `${p.x},${p.y}`));
+      rest = rest.filter((p) => !seen.has(`${p.x},${p.y}`));
+      out.push({
+        x: Math.round(blob.reduce((s, p) => s + p.x, 0) / blob.length),
+        y: Math.round(blob.reduce((s, p) => s + p.y, 0) / blob.length),
+      });
+    }
+    return out.sort((a, b) => a.y - b.y || a.x - b.x);
+  };
+
+  test('the opening Sprint of the match actually moves a unit (MOVE-SPRINT-FIRST)', async ({ page }) => {
+    const sprint = page.locator('.hud-move', { hasText: /^Sprint/ });
+    const move = page.locator('.hud-move', { hasText: /^Move/ });
+    // The HUD prints the budget it would spend, which is the only place the
+    // engine's number is legible from out here — so read it rather than
+    // hard-coding SPRINT_RANGE, and the assertion survives a rebalance.
+    const budget = async (): Promise<number> =>
+      Number(/\((\d+)\)/.exec((await move.textContent()) ?? '')?.[1] ?? '0');
+
+    const walk = await budget();
+    expect(walk, 'the Move control should be pricing a walk before anything is armed').toBeGreaterThan(0);
+    await expect(sprint).toBeEnabled();
+    await sprint.click();
+    await page.waitForTimeout(150);
+    expect(await budget(), 'arming Sprint did not re-price the turn').toBeGreaterThan(walk);
+
+    const before = blueBodies(await pixels(page));
+    expect(before.length, 'both of the seat\'s characters should be on screen').toBeGreaterThan(1);
+    await clickAt(page, 0.5, 0.5); // straight at the middle — further than any budget reaches
+    expect(await resolveTurn(page), 'the opening turn did not resolve').toBe(true);
+
+    const after = blueBodies(await pixels(page));
+    const stayed = after.filter((a) => before.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 12));
+    expect(stayed.length, 'the first Sprint left every unit exactly where it started')
+      .toBeLessThan(before.length);
+  });
+
 });
 
 

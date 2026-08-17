@@ -2942,3 +2942,91 @@ drift. Debuffs-first ordering now reads as red-nearest-the-name, which is the ur
 read. STATUS-ICONS-SIZE folds into the same repaint. **(3) The health pad was already at AR
 parity** — heal 10 + healOverTime 10×2 is exactly "10 on pickup, +20 over 2 turns" — so the
 directive resolves to a confirmation, recorded so nobody fixes it into divergence.
+
+## 2026-09-08 — Builder: the render checks were the tests; the sprint bug is not there
+
+1. **The pad e2e sampled the wrong turn AND the wrong camera.** The schedule half was mine:
+   PADS-SCHEDULE moved the regular flavours to `firstTurn: 4` while the test kept sampling turn 2
+   and looking for Health teal, so the frame was honestly empty of it. The drive now resolves until
+   the plate appears rather than pinning the schedule — those numbers are the Designer's to tune.
+   The other half is not mine and is not fixed here: **PADS-PLACEMENT put duel-arena's Health pads
+   in the camera's occlusion shadow.** They sit on `y = 3`, directly north of the wall line at
+   `y = 4`, and in the default pitched view a raised block hides the ground one row behind it, so
+   the pads composite **zero** pixels. Measured, not inferred: the Energy pads on `y = 11` composite
+   normally on the same turn, and the Might pads on `y = 7` show only slivers past the cover boxes
+   on `y = 8`. The test now samples from the top-down projection, where the question it is actually
+   asking ("does an armed pad composite at all") cannot be confounded by geometry. **The placement
+   itself is a live problem and belongs to the Designer** — see the Open Questions below.
+
+2. **A ground-plane raycast under a lifted body is a general click-accuracy bug, not a chase bug.**
+   `squareFromPoint` intersects the ground plane, and a unit is a box standing 0.6 above it, so the
+   pixels at a body's waist resolve to the square *behind* it. That is why the chase e2e armed
+   nothing: it clicked the silhouette's median. Measured across one body — the median arms nothing,
+   70%–100% down it all arm — and the test now clicks the foot at 85%. Fixed in the test because the
+   test is what was wrong, but the same geometry applies to a **player** clicking near or on a unit,
+   which is worth a ruling rather than a Builder guess.
+
+3. **MOVE-SPRINT-FIRST does not reproduce**, established in the running hot-seat before touching
+   code as the item required. Sprint arms, the Move control re-prices 4 → 8, a route is drawn, and
+   the unit resolves eight squares away with no page errors. MOVE-FOG is cleared specifically: on
+   turn 1 the fog-filtered plan and the true-board plan are identical, because the filter keeps the
+   mover's own entry and its object identity. Shipped as two regression tests instead of a fix — one
+   per candidate explanation, since a unit test cannot see the wiring and a browser test cannot see
+   the arithmetic — and recorded here so the next report of it starts from "which build".
+
+4. **`HARMFUL_PIPS` is now derived from the engine's FF1 table rather than restated.** It was its own
+   literal set of the same four kinds; NAMEPLATE-LAYOUT asked for the polarity mapping "verbatim",
+   and the only way to have it verbatim is to not have a copy. `PIP_COLORS` (identity, eleven hues)
+   survives untouched for the HUD strip and inspect panel; the plate gets `pipTint`, which is two
+   colours and asks `HARMFUL_KINDS` directly.
+
+5. **The floating pip quads are gone, and with them `pipOffsets` and the wrap-at-six decision**
+   (2026-09-07 #6, which the Analyzer had already marked superseded). The row is painted into the
+   plate's raster now. The size floor STATUS-ICONS-SIZE won is kept as a *conversion* rather than a
+   constant: 30 px on a 272 px plate at 160 px per world unit is 0.1875 against the old 0.18, and a
+   test pins that arithmetic so the fold cannot quietly hand the size back.
+
+6. **Eleven icons do not fit beside a name**, so the row reports what it cut as a `+N` rather than
+   stopping silently. A row that just ends is a plate under-claiming what a unit is carrying, which
+   is worse than an honest count; `PIP_ORDER` puts debuffs first, so what survives the cut is what
+   is being done to you.
+
+7. **M3-LOBBY was not started.** Reasons in the Open Questions — the short version is that its
+   character/catalyst ownership model is genuinely underspecified against what the engine offers,
+   and guessing it would put a wrong data model in `room.ts` for the next session to unpick.
+
+## Open Questions for the Analyzer — 2026-09-08
+
+1. **Health pads are invisible on `duel-arena` (and Might is nearly so).** Not a render bug and not
+   a test artefact — a flat ground mark one row north of a raised block is completely hidden by it
+   under the shipped camera. Today that means the map's Health pads cannot be seen at all from the
+   default view, and the central Might prize shows a sliver. Three levers, all outside my lane:
+   move the pads off the shadow rows (Designer), lift the pad marker above the block band (renderer
+   — but a pad drawn *over* a wall is its own lie), or add a pad marker that reads at the plate/HUD
+   level. Needs a ruling before anyone tunes pads further.
+
+2. **Clicking a unit's body selects the square behind it.** Same geometry as #1 from the input side:
+   `squareFromPoint` raycasts the ground plane only, so a click anywhere above a body's foot lands a
+   tile or two further from the camera. Chase is where it bit hardest (a chase must name a unit),
+   but every board click has it. Is the fix "raycast the unit meshes first and prefer a unit hit"?
+   That is a real behaviour change to targeting, so I did not make it.
+
+3. **MOVE-SPRINT-FIRST: what should close it?** It does not reproduce and is now guarded at both
+   layers. I have left it to you to close or re-scope — if the owner can still reproduce it, the
+   thing to capture next time is the build (the bundle hash in the page) rather than the symptom.
+
+4. **M3-LOBBY's pick model is underspecified, and one part of it is an ENGINE ASK.** The AC says the
+   lobby picks "each player's catalyst triad + character", but: (a) a *seat* is not a *character* —
+   in a two-player 2v2 each player controls two characters, so "a player's character" is really N
+   picks per seat, and R3's "unique within a team" has to be enforced across the team's whole
+   complement rather than per seat; and (b) the engine models the catalyst triad **per unit**
+   (`spawnUnit` gives every unit `DEFAULT_CATALYSTS`) and `createMatch` takes no catalyst argument at
+   all — so "a player's triad" either means one triad applied to all of that player's characters, or
+   the engine needs a way to seed per-unit triads at match creation. **ENGINE ASK** either way.
+   I stopped rather than guess: a wrong pick model in `room.ts` is expensive to unpick, and the item
+   is already labelled large/multi-session.
+
+5. **Is the `+N` overflow marker on the nameplate the behaviour you want?** The alternative is
+   shrinking the icons until eleven fit, which gives back STATUS-ICONS-SIZE, or wrapping to a second
+   line, which is the thing NAMEPLATE-LAYOUT replaced. `+N` is my call and the least bad of the
+   three, but it is a call.

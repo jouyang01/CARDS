@@ -280,19 +280,19 @@ export function startHotSeat(
   const toRenderUnits = (units: readonly UnitState[], viewer: TeamId): RenderUnit[] => {
   const plans = intentFor(viewer);
   return units.map((u) => {
-    // UI-NAMEPLATES: one model, and the icon row comes out of it too — the
-    // plate and the floating icons must never disagree about what is on a unit,
-    // and the surest way to guarantee that is to build them once.
+    // UI-NAMEPLATES: one model, and the icon row comes out of it too — since
+    // NAMEPLATE-LAYOUT the row is painted into the plate itself, so the two
+    // cannot disagree about what is on a unit even in principle.
     const plate = unitNameplate(u, roster, viewer);
     return {
       unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
       energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
       shield: shieldOf(u),
-      // STATUS-AUDIT: read straight off engine state during Decision. An active
-      // status is one with turns left — an expired instance is not a status.
-      // STATUS-ICONS: durations and the shield pool ride along as the glyph's
-      // numeral, so the row says how long as well as what.
-      pips: plate.pips,
+      // STATUS-AUDIT / STATUS-ICONS: the status row rides *inside* the plate
+      // since NAMEPLATE-LAYOUT — read straight off engine state during
+      // Decision (an active status is one with turns left), with durations and
+      // the shield pool as the glyph's numeral so the row says how long as
+      // well as what.
       nameplate: plate,
       // UI-INTENT: allied plans only — `intentBadges` filtered by owner, so an
       // enemy simply has no entry here and the renderer draws nothing.
@@ -560,10 +560,6 @@ export function startHotSeat(
     return [...view.units.values()].map((v) => ({
       unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
       energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
-      // …and during playback, off the folded event log — same icons, same
-      // order, and no numerals: the log carries neither durations nor shield
-      // pools, and inventing them is worse than leaving them off.
-      pips: statusPips(viewableStatuses([...v.statuses].map((kind) => ({ kind })), v.owner === viewer)),
       // UI-NAMEPLATES during playback: the same plate, fed by the fold rather
       // than by state, so an HP bar ticks down as the blow lands instead of
       // jumping when the turn ends.
@@ -574,7 +570,10 @@ export function startHotSeat(
         shield: v.shield,
         energy: v.energy,
         ult: v.energy >= ULT_COST,
-        pips: [],
+        // …and the status row off the folded event log — same icons, same
+        // order, and no numerals: the log carries neither durations nor shield
+        // pools, and inventing them is worse than leaving them off.
+        pips: statusPips(viewableStatuses([...v.statuses].map((kind) => ({ kind })), v.owner === viewer)),
       },
     }));
   };
@@ -1084,8 +1083,8 @@ export function startHotSeat(
       shield: shieldOf(unit),
       locked: locked.has(unit.unitId),
       hasOrder: draftHasOrder(draftFor(unit)),
-      // BUFF-UI. Same source as the floating pips (`statusPips`) and the same
-      // order, so the strip and the pips cannot disagree about what is on a
+      // BUFF-UI. Same source as the plate's icon row (`statusPips`) and the
+      // same order, so the strip and the row cannot disagree about what is on a
       // character — this one just spells it out.
       statuses: statusChips(unit.statuses),
     };

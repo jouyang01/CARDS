@@ -20,11 +20,13 @@ import { ULT_COST } from '@cards/engine';
 import {
   GLYPH_BOX, GLYPH_STROKE, statusGlyph, type StatusPip,
 } from './status-pips.js';
-import { nameplateKey, type Nameplate } from './nameplates.js';
+import {
+  ICON_GAP_PX, ICON_PX, PLATE_PAD_PX, PLATE_PX, nameplateKey, plateLayout, type Nameplate,
+} from './nameplates.js';
 
 /** The canvas a nameplate is rasterised at. World size is `renderer3d`'s. */
-const PLATE_PX_W = 272;
-const PLATE_PX_H = 106;
+const PLATE_PX_W = PLATE_PX.w;
+const PLATE_PX_H = PLATE_PX.h;
 
 /**
  * STATUS-ICONS — a status glyph, rasterised once and reused.
@@ -174,6 +176,82 @@ export function intentTexture(label: string, locked: boolean): CanvasTexture | n
   return texture;
 }
 
+/**
+ * NAMEPLATE-LAYOUT — the status row, drawn onto the plate beside the name.
+ *
+ * Painted straight from the path vocabulary rather than through
+ * `glyphTexture`: that cache exists so a *floating quad* can point at an image,
+ * and there is no quad here — the icons are part of the plate's own raster,
+ * which is already keyed and cached by content.
+ *
+ * **The ink is polarity, not identity** (ar-parity §4.8). Red says something is
+ * being done to you and blue says something is protecting you, and that is the
+ * bit worth carrying at this size; the glyph is still the sword, the eye, the
+ * hourglass. `PIP_ORDER` puts debuffs first, so with the row growing rightward
+ * the red icons land nearest the name — urgent first, which is why the order
+ * survives the move unchanged.
+ */
+function drawStatusRow(
+  ctx: CanvasRenderingContext2D,
+  pips: readonly StatusPip[],
+  layout: ReturnType<typeof plateLayout>,
+): void {
+  const scale = ICON_PX / GLYPH_BOX;
+  layout.iconXs.forEach((x, i) => {
+    const pip = pips[i];
+    if (pip === undefined) return;
+    const ink = `#${pip.tint.toString(16).padStart(6, '0')}`;
+
+    // A dark backing, as the floating pips had: these sit over a lit board and
+    // a bare stroke on grass is unreadable whatever colour it is.
+    ctx.fillStyle = 'rgba(9, 10, 14, 0.62)';
+    ctx.beginPath();
+    ctx.roundRect(x, layout.iconY, ICON_PX, ICON_PX, ICON_PX * 0.22);
+    ctx.fill();
+
+    ctx.save();
+    ctx.translate(x, layout.iconY);
+    ctx.scale(scale, scale);
+    ctx.fillStyle = ink;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = GLYPH_STROKE;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const part of statusGlyph(pip.kind)) {
+      const path = new Path2D(part.d);
+      if (part.fill === true) ctx.fill(path);
+      else ctx.stroke(path);
+    }
+    ctx.restore();
+
+    if (pip.numeral === undefined) return;
+    // Bottom-right, white rather than in the status colour: the number is a
+    // magnitude, not a second copy of the polarity.
+    ctx.font = `700 ${Math.round(ICON_PX * 0.42)}px system-ui, sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(9, 10, 14, 0.9)';
+    ctx.strokeText(String(pip.numeral), x + ICON_PX - 1, layout.iconY + ICON_PX);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(String(pip.numeral), x + ICON_PX - 1, layout.iconY + ICON_PX);
+  });
+
+  if (layout.overflow <= 0) return;
+  // What did not fit is counted, not dropped: a row that quietly stopped would
+  // be a plate claiming the unit is carrying less than it is.
+  const last = layout.iconXs[layout.iconXs.length - 1];
+  const x = last === undefined ? PLATE_PAD_PX : last + ICON_PX + ICON_GAP_PX;
+  ctx.font = '700 18px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(9, 10, 14, 0.9)';
+  ctx.strokeText(`+${layout.overflow}`, x, layout.iconY + ICON_PX / 2);
+  ctx.fillStyle = '#d6dbe6';
+  ctx.fillText(`+${layout.overflow}`, x, layout.iconY + ICON_PX / 2);
+}
+
 export function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | null {
   const key = nameplateKey(plate, team);
   const cached = plateTextures.get(key);
@@ -189,19 +267,22 @@ export function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | nul
   const ctx = canvas.getContext('2d');
   if (ctx === null) return null;
 
-  const pad = 8;
+  const pad = PLATE_PAD_PX;
   const barW = PLATE_PX_W - pad * 2;
 
-  // Name, above the bar, in the team's colour so friend/foe reads before the
-  // name is even parsed.
+  // NAMEPLATE-LAYOUT: name hard left above the bar (it was centred), in the
+  // team's colour so friend/foe reads before the name is even parsed — and the
+  // status row on the same line, immediately to its right.
   ctx.font = '700 26px system-ui, sans-serif';
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
+  const layout = plateLayout(ctx.measureText(plate.name).width, plate.pips.length);
   ctx.lineWidth = 5;
   ctx.strokeStyle = 'rgba(9, 10, 14, 0.92)';
-  ctx.strokeText(plate.name, PLATE_PX_W / 2, 2);
+  ctx.strokeText(plate.name, layout.nameX, 2);
   ctx.fillStyle = team === 0 ? '#9dc2ff' : '#ffb3aa';
-  ctx.fillText(plate.name, PLATE_PX_W / 2, 2);
+  ctx.fillText(plate.name, layout.nameX, 2);
+  drawStatusRow(ctx, plate.pips, layout);
 
   // HP bar, with the number inside it (the screenshot's defining detail).
   const barY = 38;
@@ -219,6 +300,7 @@ export function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | nul
     ctx.fillRect(pad + barW * hpFrac, barY, barW * shieldFrac, barH);
   }
   ctx.font = '700 19px system-ui, sans-serif';
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineWidth = 4;
   ctx.strokeStyle = 'rgba(9, 10, 14, 0.85)';

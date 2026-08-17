@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { EffectKind, GameState, TurnEvent } from '@cards/engine';
-import { HARMFUL_PIPS, PIP_COLORS, PIP_GAP, PIP_ORDER, PIP_ROW_MAX, PIP_SIZE, pipOffsets, statusPips } from '../src/status-pips.js';
+import { BENEFICIAL_KINDS, HARMFUL_KINDS, type EffectKind, type GameState, type TurnEvent } from '@cards/engine';
+import {
+  BENEFICIAL_PIPS, HARMFUL_PIPS, PIP_COLORS, PIP_ORDER, PIP_TINT, pipTint, statusPips,
+} from '../src/status-pips.js';
 import { initView, playEvents } from '../src/playback.js';
 
 /**
@@ -56,60 +58,64 @@ describe('statusPips builds a stable row', () => {
   });
 
   it('carries the colour with the kind, so the renderer looks nothing up', () => {
-    expect(statusPips([{ kind: 'slow' }])).toEqual([{ kind: 'slow', color: PIP_COLORS['slow'] }]);
+    expect(statusPips([{ kind: 'slow' }]))
+      .toEqual([{ kind: 'slow', color: PIP_COLORS['slow'], tint: PIP_TINT.harmful }]);
   });
 });
 
-describe('the strip is laid out centred, whatever its length', () => {
-  it('centres on the unit — a single pip sits exactly on the axis', () => {
-    expect(pipOffsets(1)).toEqual([{ x: 0, y: -0 }]);
-  });
-
-  it('stays centred as pips are added', () => {
-    for (const n of [2, 3, 5, PIP_ORDER.length]) {
-      const slots = pipOffsets(n);
-      expect(slots).toHaveLength(n);
-      // Every row is centred on its own, so the x's of a full row cancel; with
-      // a short second row they cancel per row rather than overall.
-      for (let row = 0; row * PIP_ROW_MAX < n; row++) {
-        const inRow = slots.slice(row * PIP_ROW_MAX, (row + 1) * PIP_ROW_MAX);
-        expect(inRow.reduce((a, b) => a + b.x, 0)).toBeCloseTo(0, 9);
-      }
+/**
+ * NAMEPLATE-LAYOUT — polarity is the colour (ar-parity §4.8).
+ *
+ * The point of these is not the two hex values; it is that the *membership*
+ * comes from the engine's FF1 table rather than from a list retyped over here.
+ * A colour table the engine cannot keep honest is the failure mode this item
+ * exists to remove, so the assertions are written against `HARMFUL_KINDS` and
+ * `BENEFICIAL_KINDS` and would go red the moment a kind changed sides in the
+ * engine and not here.
+ */
+describe('polarity tint: buffs blue, debuffs red', () => {
+  it('tints every harmful drawable status red', () => {
+    for (const kind of PIP_ORDER.filter((k) => HARMFUL_KINDS.has(k))) {
+      expect(pipTint(kind), kind).toBe(PIP_TINT.harmful);
     }
   });
 
-  it('spaces them by exactly one gap, edge to edge, within a row', () => {
-    const slots = pipOffsets(4);
-    for (let i = 1; i < slots.length; i++) {
-      expect(slots[i]!.x - slots[i - 1]!.x).toBeCloseTo(PIP_SIZE + PIP_GAP, 9);
+  it('tints every beneficial drawable status blue', () => {
+    for (const kind of PIP_ORDER.filter((k) => BENEFICIAL_KINDS.has(k))) {
+      expect(pipTint(kind), kind).toBe(PIP_TINT.beneficial);
     }
   });
 
-  it('wraps past PIP_ROW_MAX rather than growing wider (STATUS-ICONS-SIZE)', () => {
-    // Wrapping is what buys the bigger icons: eleven across at this size would
-    // sprawl over two tiles and start labelling the neighbours.
-    const slots = pipOffsets(PIP_ROW_MAX + 1);
-    expect(slots[PIP_ROW_MAX]!.y, 'the seventh icon is on a new row').not.toBeCloseTo(slots[0]!.y, 9);
-    // Each row is centred on its *own* count, so a lone second-row icon sits on
-    // the axis rather than under the first row's left edge. A ragged left edge
-    // would read as a broken layout.
-    expect(slots[PIP_ROW_MAX]!.x).toBeCloseTo(0, 9);
+  it('and the two are actually different, or nothing above can fail', () => {
+    expect(PIP_TINT.harmful).not.toBe(PIP_TINT.beneficial);
   });
 
-  it('a full strip still fits over a unit body (0.55 tiles wide) plus a little', () => {
-    const xs = pipOffsets(PIP_ORDER.length).map((p) => p.x);
-    const width = Math.max(...xs) - Math.min(...xs) + PIP_SIZE;
-    expect(width).toBeLessThan(1.5); // never wider than a square and a half
+  it('covers the whole row — every kind PIP_ORDER draws has a side', () => {
+    for (const kind of PIP_ORDER) {
+      expect(HARMFUL_KINDS.has(kind) || BENEFICIAL_KINDS.has(kind), kind).toBe(true);
+    }
   });
 
-  it('and no more rows than it needs', () => {
-    const rows = new Set(pipOffsets(PIP_ORDER.length).map((p) => p.y.toFixed(6)));
-    expect(rows.size).toBe(Math.ceil(PIP_ORDER.length / PIP_ROW_MAX));
-    expect(new Set(pipOffsets(3).map((p) => p.y.toFixed(6))).size).toBe(1);
+  it('names the sides the owner named: DoT red, HoT blue', () => {
+    // The two kinds ar-parity §4.8 calls out by name. Neither is drawable today
+    // (they are not in PIP_ORDER), so this pins the *table*, which is the thing
+    // that would be wrong if the polarity were retyped instead of derived.
+    expect(pipTint('damageOverTime')).toBe(PIP_TINT.harmful);
+    expect(pipTint('healOverTime')).toBe(PIP_TINT.beneficial);
   });
 
-  it('is empty for no pips rather than throwing on the centring maths', () => {
-    expect(pipOffsets(0)).toEqual([]);
+  it('derives its debuff set from the engine rather than restating it', () => {
+    expect([...HARMFUL_PIPS].sort()).toEqual(PIP_ORDER.filter((k) => HARMFUL_KINDS.has(k)).sort());
+    expect([...BENEFICIAL_PIPS].sort()).toEqual(PIP_ORDER.filter((k) => BENEFICIAL_KINDS.has(k)).sort());
+    expect([...HARMFUL_PIPS].some((k) => BENEFICIAL_PIPS.has(k)), 'the two sets are disjoint').toBe(false);
+  });
+
+  it('and the row carries its tint, so the plate looks nothing up', () => {
+    const [debuff, buff] = [statusPips([{ kind: 'root' }])[0]!, statusPips([{ kind: 'might' }])[0]!];
+    expect(debuff.tint).toBe(PIP_TINT.harmful);
+    expect(buff.tint).toBe(PIP_TINT.beneficial);
+    // Identity is still carried alongside it — the HUD strip needs the hue.
+    expect(debuff.color).toBe(PIP_COLORS['root']);
   });
 });
 
