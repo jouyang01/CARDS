@@ -45,11 +45,8 @@ import {
 } from 'three';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
-import {
-  GLYPH_BOX, GLYPH_STROKE, PIP_GAP, PIP_SIZE, pipOffsets, statusGlyph, type StatusPip,
-} from './status-pips.js';
 import { type Nameplate } from './nameplates.js';
-import { glyphTexture, intentTexture, plateTexture } from './textures.js';
+import { intentTexture, plateTexture } from './textures.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -92,11 +89,11 @@ const GHOST_ALPHA = 0.22;
 /** The owner's decoy plate sits just above the trap marker in the overlay band. */
 const DECOY_PLATE_LIFT = 0.05;
 /**
- * UI-NAMEPLATES: the plate hangs above the unit and the status row hangs under
- * it (ar-parity §4.1 — "status icons in a row under the bar"). Both live inside
- * the billboarded `bars` group, so they face the camera and cancel zoom.
+ * UI-NAMEPLATES: the plate hangs above the unit inside the billboarded `bars`
+ * group, so it faces the camera and cancels zoom. Since NAMEPLATE-LAYOUT the
+ * status row is *part of that plate* rather than a second thing hanging under
+ * it — see `nameplates.ts`.
  */
-const PIP_ROW_Y = -0.13;
 /** Plate size in world units. Its canvas resolution lives in `textures.ts`. */
 const PLATE_W = 1.7;
 const PLATE_H = 0.66;
@@ -261,12 +258,6 @@ export interface RenderUnit {
   alive: boolean;
   label: string;
   shield?: number;
-  /**
-   * Statuses to show as pips above the bars (STATUS-AUDIT). Already ordered and
-   * coloured by `status-pips.ts` — the renderer draws what it is handed and
-   * decides nothing about which statuses matter.
-   */
-  pips?: readonly StatusPip[];
   /**
    * UI-NAMEPLATES: the name / HP / energy plate to float above this unit.
    *
@@ -471,9 +462,6 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     );
     plate.name = 'plate';
     bars.add(plate);
-    const pips = new Group();
-    pips.name = 'pips';
-    pips.position.y = PIP_ROW_Y;
     // UI-INTENT's tile sits above the nameplate — the plan is the newest thing
     // on screen and the one a teammate is scanning for, so it leads.
     const intent = new Mesh(
@@ -483,7 +471,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     intent.name = 'intent';
     intent.position.y = PLATE_H / 2 + 0.14;
     intent.visible = false;
-    bars.add(pips, intent);
+    bars.add(intent);
     return bars;
   };
 
@@ -511,35 +499,6 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     if (plate === undefined) return;
     (mesh.material as MeshBasicMaterial).map = plateTexture(plate, team);
     (mesh.material as MeshBasicMaterial).needsUpdate = true;
-  };
-
-  /**
-   * Rebuild a unit's status row. Cheap enough to redo per `show()` (at most
-   * eleven small quads per unit) and rebuilding avoids a second reconcile
-   * path — the pips are the one part of a unit that legitimately changes shape
-   * turn to turn. The *textures* are cached, so the redo is quads, not raster.
-   */
-  const setPips = (bars: Group, pips: readonly StatusPip[]): void => {
-    const row = bars.getObjectByName('pips');
-    if (!(row instanceof Group)) return;
-    disposeChildren(row);
-    const offsets = pipOffsets(pips.length);
-    pips.forEach((pip, i) => {
-      const quad = new Mesh(
-        new PlaneGeometry(PIP_SIZE, PIP_SIZE),
-        // STATUS-ICONS: the pip is a drawn glyph now, not a colour. The colour
-        // survives *as the glyph's ink* rather than as the whole mark, so the
-        // learned position and the learned hue both still work and the shape
-        // does the identifying.
-        new MeshBasicMaterial({ map: glyphTexture(pip), transparent: true }),
-      );
-      quad.name = pip.kind;
-      // STATUS-ICONS-SIZE: the strip wraps past six icons, so a slot carries a
-      // row offset as well as a column one.
-      const at = offsets[i] ?? { x: 0, y: 0 };
-      quad.position.set(at.x, at.y, 0);
-      row.add(quad);
-    });
   };
 
   const buildUnit = (unit: RenderUnit): Group => {
@@ -826,7 +785,6 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           const known = unit.ghost !== true;
           setPlate(bars, known && unit.alive ? unit.nameplate : undefined, unit.owner);
           setIntent(bars, known && unit.alive ? unit.intent : undefined);
-          setPips(bars, unit.alive && known ? (unit.pips ?? []) : []); // a corpse or a ghost carries nothing
         }
         refreshOpacity(unit.unitId);
         live.add(unit.unitId);
