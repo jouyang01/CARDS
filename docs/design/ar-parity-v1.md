@@ -265,6 +265,31 @@ exist (`preview-numbers.ts`), fog-gated and polarity-aware. The **power-up pads*
 floor land with `PADS1`, which should include their board rendering (pad glyph plus a
 respawn countdown on the tile).
 
+### 4.8 `NAMEPLATE-LAYOUT` — revision to the shipped UI-NAMEPLATES (owner directives)
+
+UI-NAMEPLATES shipped (PR #54); the owner's follow-up adjusts its arrangement and colours:
+
+- **Name is left-justified above the HP bar** (it was centred). The bar keeps its width; the
+  name aligns to its left edge.
+- **The status icon row moves from under the bar to beside the name** — same line, to the
+  name's right, growing rightward. The icons stop competing with the energy bar below.
+- **Polarity is the colour: buffs are BLUE, debuffs are RED.** The glyph carries *identity*
+  (sword, eye, wing…), the tint carries *polarity* — two channels, one read. Mapping is the
+  FF1 polarity table verbatim: harmful kinds (`weaken, slow, root, reveal` + `damageOverTime`)
+  red; beneficial kinds (`shield, might, haste, energized, unstoppable, untargetable, stealth`
+  + `healOverTime`) blue. Shield keeps its numeral, now blue; Stealth's mask stays
+  own-team-only, now blue. `PIP_ORDER` (debuffs first) survives — with the row beside the
+  name, debuffs-first means **red icons sit nearest the name**, which is the urgent-first read.
+- STATUS-ICONS-SIZE (already backlogged) should land as part of this rather than separately —
+  one repaint of the same row, not two.
+
+### 4.9 Health power-up — AR parity CONFIRMED, no change
+
+The owner asked for the healing power-up to match AR's. **It already does**, verified against
+the shipped table (`powerups.ts`): ours grants `heal 10` + `healOverTime 10 × 2 turns` — AR's
+is *"10 healing on pickup, +20 more over 2 turns."* Identical: 10 now, 20 over two ticks, 30
+total. Recorded here so nobody "fixes" it into divergence.
+
 ## 5. Map design — my own maps break the rule you named
 
 **Your principle:** AR maps never have too much cover, too many pillars, or **too many stealth
@@ -425,6 +450,40 @@ already reads it.
 ### 7.5 `UI-VIEWPORT` and `SCORE1`
 
 Unchanged from §4 and §6 — both were already ready to spec.
+
+### 7.6 `PADS-PLACEMENT` — Might is the centre prize (Designer ruling; answers the Builder)
+
+The Builder implemented PADS-SCHEDULE (Might spawns turn 2) and correctly routed placement
+here: with Might pads at (6,3)/(11,3), each team had its **own** safe pickup — *"the clock
+alone does not make a race if each side has its own."* The Builder computed the centre-most
+legal mirrored pairs — (7,y)/(10,y) on duel-arena, (9,y)/(12,y) on iron-basin, the closest
+non-adjacent pairs under PADS-SPREAD — and left the y and the swap to the Designer.
+
+**RULED — Might moves into the central strongpoint on both maps; health takes the vacated
+flank row.** Shipped in this PR (data-only):
+
+| map | Might (turn 2) | Health (turn 4) | Energy (turn 4, unchanged) |
+|---|---|---|---|
+| `duel-arena` | **(7,7) / (10,7)** — the room's interior row | (6,3) / (11,3) — the old Might row | (6,11) / (11,11) |
+| `iron-basin` | **(9,9) / (12,9)** — the room's interior row | (8,5) / (13,5) — the old Might row | (8,13) / (13,13) |
+
+Why this shape, rather than just sliding Might inward on its old row:
+
+1. **The pair is now a prize, not two pickups.** Both Might pads sit 3 tiles apart inside one
+   room; from each team's nearest spawn the near pad is Manhattan 6 and the *far* pad 9 — both
+   teams genuinely reach both pads on turn 2, so holding "your" pad means standing where the
+   enemy contests it. Schedules stayed with the **type** (Might turn 2 — the rush; utility
+   turn 4), not the position.
+2. **It answers maps-v1's open playtest question** — "is the central room worth taking?" The
+   room now has a reason: the damage buff spawns inside it, every 4 turns, forever.
+3. **Health belongs on the flank.** A heal you collect while disengaging is doing its job; a
+   heal in the centre of the fight is just more fighting. The swap gives each pad type the
+   geometry its purpose wants.
+
+Placement invariants re-verified after the edit: mirror-paired, on open tiles, PADS-SPREAD
+clean, full suite green (1420 tests). **Playtest flag:** two Might pads in one room every 4
+turns may make the room *too* important at 4v4 — if so, the lever is `everyTurns` 4 → 5 on
+iron-basin, not moving the pads back out.
 
 ## 8. Catalysts — moving toward AR's four-per-phase pool
 
