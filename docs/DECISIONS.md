@@ -2920,3 +2920,25 @@ assumption. The helper is now shared by both drives rather than duplicated in ea
 
 8. **Nothing has still booted a real Workers runtime** (carried). 124 server tests through the
    `Sink` seam; M3-DEPLOY still owns the first real execution.
+
+## 2026-08-15 — Might is the centre prize; nameplate layout; health-pad parity (Designer)
+
+Answers the Builder's PADS-SCHEDULE handoff and two owner directives. Specs in ar-parity
+§4.8/§4.9/§7.6; pad moves shipped in data. **(1) The Builder's framing was exactly right and
+the fix is geometry, not schedule.** Two mirror-fair Might pads, each nearer one team, are two
+safe pickups — the turn-2 clock makes them *punctual*, not *contested*. Moving the pair into
+the central strongpoint — duel-arena (7,7)/(10,7), iron-basin (9,9)/(12,9), the centre-most
+non-adjacent mirrored pairs the Builder computed — puts both pads within turn-2 reach of both
+teams (near pad Manhattan 6, far pad 9, from either side), so holding "your" pad means
+standing where the enemy contests it. Health took the vacated flank rows: a heal collected
+while disengaging is doing its job, a heal in the centre of the fight is just more fighting.
+Schedules stayed with the type, not the position. This also closes maps-v1's open playtest
+question — the central room is worth taking now because the damage buff lives there. Flagged
+lever if the room over-dominates at 4v4: everyTurns 4 → 5, not moving pads back out.
+**(2) Nameplate revision: glyph carries identity, tint carries polarity.** Name left-justified
+above the bar, icon row beside the name, buffs blue / debuffs red per the FF1 polarity table
+verbatim — one mapping already ruled elsewhere, reused rather than a second colour table to
+drift. Debuffs-first ordering now reads as red-nearest-the-name, which is the urgent-first
+read. STATUS-ICONS-SIZE folds into the same repaint. **(3) The health pad was already at AR
+parity** — heal 10 + healOverTime 10×2 is exactly "10 on pickup, +20 over 2 turns" — so the
+directive resolves to a confirmation, recorded so nobody fixes it into divergence.

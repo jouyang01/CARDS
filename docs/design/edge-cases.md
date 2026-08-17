@@ -35,35 +35,25 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > Manhattan; MET1 stands for walking). The three `impact` fields in
 > `data/characters/{aegis,ravok,wisp}.json` are already written and inert until DASH-IMPACT.
 
-> **⚠ NOT YET FOLDED IN — the screenshot UI batch, 2026-08-14 (Designer, owner reference).**
-> Everything else from the AR parity audit (`docs/design/ar-parity-v1.md`) has since been
-> **built** — DOT-HOT, CHASE1, PADS1, TIMER-40, UI-VIEWPORT, SCORE1, the MAP-CAPS guard, and
-> Regenergy completing the 4/4/4 catalyst pool — so this pointer now covers only what remains:
-> **six client items specced from the owner's AR in-match screenshot** (ar-parity §4.1–4.6),
-> none of which exist in the client yet (verified: no nameplate/inspect/intent module ships):
-> 1. **`UI-NAMEPLATES`** — name above the model, **HP numeral inside the bar**, shield segment,
->    energy bar + **"ULT" tag at 100**, all gated on `canSee`; **decoys carry a full fake
->    nameplate from the cast snapshot** (a Wisp model with no nameplate is un-disguised on
->    sight) — that snapshot rule needs one line here when folded in.
-> 2. **`STATUS-ICONS`** — replace the colour pips with AR's icon vocabulary: **Might = sword,
->    Reveal = eye** (owner directives), full table in §4.2; Shield's icon carries the remaining
->    amount; **Stealth's mask renders to the owning team only**. `PIP_ORDER` (debuffs first,
->    fixed slots) survives as the ordering.
-> 3. **`UI-INSPECT`** — hover any **visible** unit: five ability slots with live cooldowns,
->    catalysts spent/remaining, statuses with durations. Own team always; enemies only under
->    `canSee`; **a decoy answers with Wisp's frozen cast-time kit** — live data or a refusal
->    would each un-disguise it.
-> 4. **`UI-TOPBAR`** — friendly portraits · kills vs target · **turn X of Y** · enemy score ·
->    enemy portraits, per the screenshot layout (SCORE1's data, AR's arrangement).
-> 5. **`UI-TIMER`** — tenths + colour shift under 10 s, Time Bank pips, and a visible animation
->    when the bank's +10 s fires.
-> 6. **`UI-INTENT`** — teammates' queued ability slot + lock state above allied units during
->    Decision. The "Teammate information" ruling has been in force since the Teams batch and
->    has never had a UI; at 2v2 default, a duo that cannot see each other's plan is two solos.
+> **⚠ NOT YET FOLDED IN — nameplate layout revision + pad placement, 2026-08-15 (Designer,
+> owner directives + Builder handoff).** The screenshot UI batch has since **shipped** (PR #54);
+> this pointer now covers the follow-ups, specced in `ar-parity-v1.md` §4.8, §4.9 and §7.6:
+> 1. **`NAMEPLATE-LAYOUT` (client)** — revise the shipped nameplate: **name left-justified
+>    above the HP bar; the status icon row moves to sit beside the name; buffs tinted BLUE,
+>    debuffs RED** (glyph = identity, tint = polarity, mapping = the FF1 table verbatim;
+>    `healOverTime` blue, `damageOverTime` red). `PIP_ORDER` survives — debuffs-first now means
+>    red nearest the name. Fold **STATUS-ICONS-SIZE** into this item: one repaint, not two.
+> 2. **`PADS-PLACEMENT` — done in data, record the ruling.** Might pads moved into the central
+>    strongpoint on both maps — duel-arena (7,7)/(10,7), iron-basin (9,9)/(12,9) — and health
+>    took the vacated flank rows. Answers the Builder's handoff ("two safe pickups rather than
+>    one contested prize") and closes maps-v1's "is the central room worth taking?" playtest
+>    question. Schedules stayed with the type (Might turn 2, utility turn 4). Playtest lever if
+>    the room over-dominates at 4v4: `everyTurns` 4 → 5 on iron-basin, not moving pads out.
+> 3. **Health power-up parity: CONFIRMED, nothing to build** — the shipped table already grants
+>    heal 10 + healOverTime 10×2 = AR's "10 on pickup, +20 over 2 turns" exactly. Recorded so
+>    nobody "fixes" it into divergence.
 >
-> Damage-preview numbers already ship fog-gated (nothing to do); pad rendering shipped with
-> PADS-INDICATOR. Still open, nothing depends on it: whether AR had an incoming-damage
-> modifier (ar-parity §1.3).
+> Still open, nothing depends on it: whether AR had an incoming-damage modifier (§1.3).
 
 ## Combat simultaneity
 

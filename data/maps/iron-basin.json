@@ -74,10 +74,10 @@
     ]
   ],
   "powerups": [
-    { "x": 8, "y": 9, "type": "health", "firstTurn": 4, "everyTurns": 4 },
-    { "x": 13, "y": 9, "type": "health", "firstTurn": 4, "everyTurns": 4 },
-    { "x": 8, "y": 5, "type": "might", "firstTurn": 2, "everyTurns": 4 },
-    { "x": 13, "y": 5, "type": "might", "firstTurn": 2, "everyTurns": 4 },
+    { "x": 9, "y": 9, "type": "might", "firstTurn": 2, "everyTurns": 4 },
+    { "x": 12, "y": 9, "type": "might", "firstTurn": 2, "everyTurns": 4 },
+    { "x": 8, "y": 5, "type": "health", "firstTurn": 4, "everyTurns": 4 },
+    { "x": 13, "y": 5, "type": "health", "firstTurn": 4, "everyTurns": 4 },
     { "x": 8, "y": 13, "type": "energy", "firstTurn": 4, "everyTurns": 4 },
     { "x": 13, "y": 13, "type": "energy", "firstTurn": 4, "everyTurns": 4 }
   ]
