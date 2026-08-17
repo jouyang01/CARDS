@@ -1130,16 +1130,12 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
     applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
-    // CAMO-REVEAL: a dash that lands no damage still gives a concealed dasher
-    // away if it carried a debuff or a shove. Measured from `origin` — the tile
-    // it launched from is the one that hid it. The `hitEnemy` branch below is
-    // the pre-existing unconditional reveal, left exactly as it was.
-    if (!hitEnemy && isHarmfulUse(a.def)) revealIfConcealed(board, plan.unit, origin, a.def.id, events);
-    if (hitEnemy) {
-      breakStealth(plan.unit, events);
-      applyStatus(plan.unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
-      events.push({ type: 'statusApplied', unitId: plan.unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
-    }
+    // CAMO-REVEAL / REVEAL-FIX: a dash gives a *concealed* dasher away, whether
+    // it landed damage or merely carried a debuff or a shove — and gives an open
+    // one away not at all. Measured from `origin`: the tile it launched from is
+    // the one that hid it, not the one it arrived on. One gate for both cases
+    // now that the damaging branch is no longer unconditional.
+    if (hitEnemy || isHarmfulUse(a.def)) revealIfConcealed(board, plan.unit, origin, a.def.id, events);
     if (!vecEq(plan.unit.pos, origin)) repositioned.push(plan.unit);
   }
 
@@ -1339,23 +1335,32 @@ function runBlast(
     if (victim.alive) collectDisplacement(pending, effects, victim, source, attackerId);
   }
 
-  // A *damaging* attack reveals you and breaks your own Stealth (GAME_SPEC §6).
-  // Unconditional — concealed or not — and unchanged by CAMO-REVEAL: dropping it
-  // for open attackers would let a unit shoot from open ground and disappear
-  // into brush the next turn with no penalty at all.
+  // REVEAL-FIX: a damaging attack reveals you **iff you were concealed when you
+  // made it** — the same `revealIfConcealed` gate CAMO-REVEAL uses, rather than
+  // the unconditional reveal this loop used to apply.
+  //
+  // Reverses the 2026-08-31 correction, owner-directed: *"when a character
+  // attacks from an area where enemies lack line of sight or vision, attack and
+  // movement remain completely hidden."* The old rule was a no-op for a
+  // positionally-hidden attacker (`canSee` tests range and line of sight before
+  // it ever asks about `reveal`) and pointless for an already-visible one — but
+  // since NAMEPLATE-LAYOUT it *shows*, as a red debuff over a unit that was
+  // standing in plain sight, which reads as a punishment for attacking.
+  //
+  // `breakStealth` is not lost with it. Stealth alone satisfies `isConcealed`
+  // whatever the tile, so every stealthed attacker still goes through the gate;
+  // the only units it now skips are ones with no Stealth to break.
   for (const unit of draft.units) {
     const abilityId = dealtDamage.get(unit.unitId);
     if (abilityId === undefined) continue;
-    breakStealth(unit, events);
-    applyStatus(unit, 'reveal', REVEAL_ON_ATTACK_TURNS);
-    events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'reveal', duration: REVEAL_ON_ATTACK_TURNS, sourceUnitId: unit.unitId, abilityId });
+    revealIfConcealed(board, unit, unit.pos, abilityId, events);
   }
 
-  // CAMO-REVEAL adds the case that loop cannot see: a concealed unit that USED
-  // an offensive ability which dealt no damage — a pure debuff, a shove, or a
-  // shot that whiffed. `dealtDamage` is keyed on damage actually landing, so
-  // these units are absent from it; skipping them is what let a Bola fired out
-  // of a thicket leave the thicket un-given-away.
+  // CAMO-REVEAL's other case: a concealed unit that USED an offensive ability
+  // which dealt no damage — a pure debuff, a shove, or a shot that whiffed.
+  // `dealtDamage` is keyed on damage actually landing, so these units are absent
+  // from it; skipping them is what let a Bola fired out of a thicket leave the
+  // thicket un-given-away.
   for (const unit of draft.units) {
     if (dealtDamage.has(unit.unitId)) continue; // already revealed above
     const def = harmfulUse.get(unit.unitId);
