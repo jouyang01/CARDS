@@ -95,6 +95,19 @@ export interface AbilityDef {
   /** For shape 'circle': area radius around the aimed square. */
   radius?: number;
   /**
+   * BASIC-AXIS — for shape `cone`: extra damage on the wedge's **central line**
+   * (Designer §3.1, adopted from AR's Titus).
+   *
+   * The axis is not new geometry: CONE-B already measures every tile's
+   * perpendicular distance from it to decide coverage, so "on the axis" is that
+   * same integer, compared against half a tile instead of the wedge's width. A
+   * hammer that rewards the straight-on read, rather than a second shape.
+   *
+   * Added to the ability's damage *before* Might, Weaken and cover, exactly as a
+   * larger authored number would be — one multiplier path, not two.
+   */
+  axisBonus?: number;
+  /**
    * A **melee** strike (MELEE-COVER): cover does not reduce it, whatever its
    * range.
    *

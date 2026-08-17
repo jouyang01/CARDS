@@ -33,7 +33,8 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
  */
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
-  'delayTurns', 'chargeHits', 'free', 'melee', 'oncePerMatch', 'impact', 'effects', 'description',
+  'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'oncePerMatch', 'impact',
+  'effects', 'description',
 ] as const;
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
@@ -75,6 +76,12 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   }
   if (a.shape === 'circle' && (!isInt(a.radius) || (a.radius ?? 0) < 1)) {
     errs.push(`${path}: circle shape requires integer radius >= 1`);
+  }
+  // BASIC-AXIS: a cone-only knob. On any other shape there is no axis to be on,
+  // and a silently-ignored field is a balance number nobody can find.
+  if (a.axisBonus !== undefined) {
+    if (a.shape !== 'cone') errs.push(`${path}: axisBonus is only meaningful on a cone (shape is "${a.shape}")`);
+    if (!isInt(a.axisBonus) || a.axisBonus < 1) errs.push(`${path}: axisBonus must be an integer >= 1 when present`);
   }
   if (!isInt(a.cooldown) || a.cooldown < 0) errs.push(`${path}: cooldown must be a non-negative integer`);
   if (!isInt(a.energyGain) || a.energyGain < 0) errs.push(`${path}: energyGain must be a non-negative integer`);

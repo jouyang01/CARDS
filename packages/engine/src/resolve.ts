@@ -50,7 +50,7 @@ import {
 import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
-import { aimInRange, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
+import { aimInRange, axisSquares, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import { buildVision, teamCanSee } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
@@ -98,6 +98,15 @@ interface PlannedAbility {
   def: AbilityDef;
   aim: Vec2[];
   area: Vec2[];
+  /**
+   * BASIC-AXIS — the covered tiles on a cone's central line, empty for every
+   * other shape and for a cone without the knob.
+   *
+   * Computed here with the area rather than at Blast time for one reason: the
+   * area is anchored at the caster's **planning** position, and an axis derived
+   * later from a post-Dash position would name tiles the area does not contain.
+   */
+  axis: Vec2[];
   isUlt: boolean;
 }
 
@@ -458,7 +467,11 @@ function planCatalyst(
   const aimStep = order.aimStep;
   if (aimStep !== undefined && !isAimStep(aimStep)) return undefined;
   if (!aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
-  return { def, aim, area: expandShape(board, def, unit.pos, aim, aimStep), isUlt: false };
+  return {
+    def, aim, isUlt: false,
+    area: expandShape(board, def, unit.pos, aim, aimStep),
+    axis: axisSquares(board, def, unit.pos, aim, aimStep),
+  };
 }
 
 /**
@@ -545,7 +558,11 @@ function planAbility(
   const aimStep = order.aimStep;
   if (aimStep !== undefined && !isAimStep(aimStep)) return undefined;
   if (!aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
-  return { def, aim, area: expandShape(board, def, unit.pos, aim, aimStep), isUlt };
+  return {
+    def, aim, isUlt,
+    area: expandShape(board, def, unit.pos, aim, aimStep),
+    axis: axisSquares(board, def, unit.pos, aim, aimStep),
+  };
 }
 
 /** Is an ability's aim geometrically legal for its shape and range? */
@@ -1271,6 +1288,11 @@ function runBlast(
     // included. Beneficial effects still only reach your own team: friendly fire
     // means your attacks endanger allies, not that you heal enemies.
     const area = new Set(a.area.map(vecKey));
+    // BASIC-AXIS: the wedge's central line hits harder. Added to the ability's
+    // own damage before Might, Weaken and cover, exactly as a larger authored
+    // number would be — the bonus is part of the blow, not a second one.
+    const axis = new Set(a.axis.map(vecKey));
+    const axisBonus = a.def.axisBonus ?? 0;
     let hitEnemy = false;
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
@@ -1281,7 +1303,10 @@ function runBlast(
           if (untargetable) continue; // the whole harmful half is skipped, energy included
           // Energy stays enemy-only, so splashing an ally pays nothing.
           if (enemy) hitEnemy = true;
-          if (e.kind === 'damage') hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw: e.amount ?? 0, range: a.def.range, melee: a.def.melee === true });
+          if (e.kind === 'damage') {
+            const raw = (e.amount ?? 0) + (axis.has(vecKey(target.pos)) ? axisBonus : 0);
+            hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw, range: a.def.range, melee: a.def.melee === true });
+          }
           else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });
           else debuffs.push({ victim: target, effect: e, source: sourceOf(plan.unit, a.def.id) }); // weaken/slow/root/reveal
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
