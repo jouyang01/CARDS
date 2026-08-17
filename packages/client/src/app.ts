@@ -66,6 +66,7 @@ import {
   pathTo,
   rangeEnvelope,
   shapeOutline,
+  chaseSprints,
   sprintAllowed,
   toUnitOrders,
   type OrderDraft,
@@ -914,9 +915,14 @@ export function startHotSeat(
     // the chase actually resolves against.
     const chaseTarget = draft.chaseTargetId === undefined ? undefined : chaseableEnemies()
       .find((u) => u.unitId === draft.chaseTargetId);
+    // CHASE-SPRINT: the drawn route has to use the budget the *engine* will use,
+    // which for a chase is derived from the turn rather than taken from the
+    // draft's sprint flag. Reading `draft.sprint` here drew a four-square route
+    // for a chase that resolves over eight.
     const chaseRoute = chaseTarget === undefined
       ? []
-      : pathTo(map, state, unit, chaseTarget.pos, movementBudget(unit, draft.sprint));
+      : pathTo(map, state, unit, chaseTarget.pos,
+        movementBudget(unit, chaseSprints(draft, dashCatalystArmed(draft))));
     const route = isDash
       ? dashRoute(unit, chosen, preview.aim)
       : chaseTarget !== undefined

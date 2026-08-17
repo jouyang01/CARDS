@@ -394,6 +394,22 @@ function planUnit(
   // supersedes a walk. A well-formed client never sends both.
   if (chase !== undefined) movePath = [];
 
+  // CHASE-SPRINT — a chase that spends no normal ability runs at sprint budget.
+  //
+  // Owner Dev Note: "If I choose chase and haven't used an attack or only a free
+  // action, I should get full sprinting chase." A chase *is* the unit's Move, so
+  // it should cost and buy exactly what a Move does; there was no reason for the
+  // same turn to close eight squares as a walk and four as a chase.
+  //
+  // Derived rather than taken from `order.sprint`, because the client cannot
+  // draw a chase's route at plan time — the engine picks it at the end of Move,
+  // after everyone else has finished — so there is nothing for a player to opt
+  // into and a client that never sets the flag would silently get the short
+  // budget. The condition is `sprint`'s own: no normal ability, no Dash
+  // catalyst. A free action does not block it, which is the half of the note
+  // that names Second Wind and Overwatch Trap.
+  const chaseSprint = chase !== undefined && ability === undefined && !dashCatalyst;
+
   return {
     unit,
     ability,
@@ -402,7 +418,7 @@ function planUnit(
     shiftTo: freeAbility === undefined ? shiftTo : undefined,
     movePath,
     chase,
-    sprint,
+    sprint: sprint || chaseSprint,
   };
 }
 
