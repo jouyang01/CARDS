@@ -1453,6 +1453,13 @@ interface Mover {
   unit: UnitState;
   path: Vec2[];
   halted: boolean;
+  /**
+   * Where this mover stood before step 0 — CLASH-CORNER's last fallback when a
+   * blocked passer has to walk back off a square somebody else is resting on.
+   * Captured at construction because `unit.pos` is live and has moved on by the
+   * time the walk-back needs it.
+   */
+  origin: Vec2;
 }
 
 function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: ReadonlySet<string>, events: TurnEvent[]): void {
@@ -1472,7 +1479,7 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
     // Re-clamp by *cost* (a Blast-phase Slow may have shrunk the budget since the
     // path was validated in Prep); diagonals cost 1/2/1/2… (MV3).
     const path = pathWithinBudget(plan.movePath, plan.unit.pos, budget);
-    if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false });
+    if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false, origin: { ...plan.unit.pos } });
   }
 
   // CLASH-AR (a): one collector for the whole Move phase — normal movers and
@@ -1559,7 +1566,7 @@ function planChases(
       to: { x: pursuit.goal.x, y: pursuit.goal.y },
       seen: pursuit.seen,
     });
-    if (pursuit.path.length > 0) chasers.push({ unit: chaser, path: pursuit.path, halted: false });
+    if (pursuit.path.length > 0) chasers.push({ unit: chaser, path: pursuit.path, halted: false, origin: { ...chaser.pos } });
   }
   return chasers;
 }
@@ -1856,6 +1863,54 @@ function destroyDecoysUnderEnemies(draft: GameState, units: readonly UnitState[]
 }
 
 /**
+ * CLASH-CORNER — a blocked passer bounces off a square somebody else is resting
+ * on, rather than coming to rest on top of them.
+ *
+ * CLASH-AR rule 3 lets an ender and a passer share a square *at the end of a
+ * step*: the ender rests, the passer walks on next step, and nothing is wrong
+ * because nothing rests together. That promise is only good while the passer can
+ * actually walk on. Wedge it against a stationary unit, a wall or the map edge
+ * and it stops where it stands — which is the ender's square, and Collisions
+ * forbids two units resting on one.
+ *
+ * The ruling is the ender's own bounce (rule 2, already shipped) applied to the
+ * unit that turned out to be an ender after all: **step back to the last square
+ * it held alone.** Passing was never promised to complete; when it does not, the
+ * pass was a stop, and stopping before the block is what a stop has always meant.
+ *
+ * The walk-back runs along the mover's **own path**, newest first, ending at the
+ * origin — so it only ever retreats over ground this unit actually covered, and
+ * it terminates. A square another unit has since taken is skipped, which is the
+ * chain case: two blocked passers each fall back one.
+ */
+function bounceOffOccupied(draft: GameState, m: Mover, step: number, events: TurnEvent[]): void {
+  const sharing = (p: Vec2): boolean =>
+    draft.units.some((u) => u.alive && u.unitId !== m.unit.unitId && vecEq(u.pos, p));
+  if (!sharing(m.unit.pos)) return; // resting alone — the ordinary case, nothing to undo
+
+  // Everything this unit stood on before here, newest first. It failed to leave
+  // `path[step - 1]`, so the retreat starts one before that; the origin is the
+  // floor, and a unit always has one.
+  const behind: Vec2[] = [];
+  for (let i = step - 2; i >= 0; i--) behind.push(m.path[i]!);
+  behind.push(m.origin);
+
+  for (const p of behind) {
+    if (sharing(p)) continue; // somebody else came to rest here too — keep walking back
+    const from = m.unit.pos;
+    m.unit.pos = { x: p.x, y: p.y };
+    // Emitted as an ordinary step so the renderer animates the bounce instead of
+    // teleporting the model. No stack is ever shown: the unit is off the shared
+    // square within the same step it entered it.
+    events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
+    return;
+  }
+  // Every square it covered is now somebody else's rest. Leaving it put is the
+  // only move left — it cannot walk through them — and the case is flagged
+  // rather than resolved by inventing a rule (Open Questions 2026-09-10).
+}
+
+/**
  * Resolve one simultaneous step across all still-moving units.
  *
  * **CLASH-AR — only an ender is stopped.** The rule used to be "a contested
@@ -1955,8 +2010,14 @@ function stepMovers(
       if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died → path discarded
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
+      bounceOffOccupied(draft, m, step, events);
     }
   }
+
+  // (CLASH-CORNER's walk-back runs inline above, on the mover that just halted,
+  // so a bounced unit is off the shared square before the next step reads the
+  // board — and in the movers' fixed order, so the outcome is the same on every
+  // machine.)
 
   // CLASH-AR pad amendment (a): a square two or more units entered on this very
   // step is claimed by none of them. Recorded per (unit, square) rather than per
