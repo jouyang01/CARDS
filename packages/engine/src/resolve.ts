@@ -1780,6 +1780,7 @@ function walkChase(
   const first = goalFrom(chaser.pos);
   if (first === undefined) return undefined;
 
+  const solid = chaseObstacles(draft, chaser);
   const path: Vec2[] = [];
   let at = chaser.pos;
   let left = budget;
@@ -1788,7 +1789,7 @@ function walkChase(
     // Re-route from here rather than stepping greedily: a single-square hop
     // toward the goal would walk into walls the reachability search routes
     // around, and the chase would be worse at pathfinding than a plain Move.
-    const route = pathToward(board, draft, { ...chaser, pos: at }, current.goal, left);
+    const route = pathToward(board, draft, { ...chaser, pos: at }, current.goal, left, solid);
     const next = route[0];
     if (next === undefined) break; // caught it, arrived, or boxed in
     left -= stepCost(next.x - at.x, next.y - at.y);
@@ -1806,6 +1807,53 @@ function walkChase(
 }
 
 /**
+ * CHASE-COLLIDE — what a chase may not walk into or through.
+ *
+ * Owner Dev Notes: *"When Chasing Veil after she uses Veil & Decoy, it moves the
+ * character onto the decoy space. This should not be possible."* and *"Chasing
+ * should still follow collision rules — no phasing through units."*
+ *
+ * Two reports, one cause: the chase's router could not see either kind of
+ * obstacle.
+ *
+ * **Bodies.** `reachableSquares` marks an occupied square `canStop: false` but
+ * still expands *through* it, because a player drawing a path is allowed to plan
+ * through an ally (edge-cases, "Ally pass-through is a planning affordance").
+ * A chase is not a player drawing a line: it routes and walks in the same
+ * instant, against a board where every other unit has already finished moving.
+ * So a route through a body is a route that `stepMovers` halts on its first
+ * step — and it did: a chaser at (5,10) with an enemy at (6,10) and its target
+ * at (8,10) planned straight through and moved **nothing**, when walking around
+ * would have caught it. Treating bodies as walls *for this router only* is what
+ * "follow collision rules" means for a path nobody gets to draw.
+ *
+ * **Decoys.** A Wisp decoy is deliberately kept out of `state.units` and
+ * "blocks nothing" (R2), which is right for a real move — walking onto one is
+ * how you prove it fake, and R2 destroys it on exactly that. But the chase is
+ * not a player choosing to test it: Wisp veils, the chaser loses the sightline,
+ * the goal falls back to the last-known square, and the decoy is *standing on
+ * that square* — so the chase walked onto the fake and popped it for free, which
+ * is the report, verbatim. The decoy is rendered to the enemy team as a Wisp, so
+ * to the team being fooled it is a body, and this router treats it as one.
+ *
+ * **Own-team decoys are transparent**, matching R2's own asymmetry (own-team
+ * decoys are untouched by damage): a team is not fooled by its own illusion, and
+ * blocking it on one would be a tell nobody asked for. No fog is leaked either
+ * way — an enemy decoy is *shown* to this team, so routing around it uses only
+ * what the team can already see (golden rule #5).
+ */
+function chaseObstacles(draft: GameState, chaser: UnitState): ReadonlySet<string> {
+  const solid = new Set<string>();
+  for (const u of draft.units) {
+    if (u.alive && u.unitId !== chaser.unitId) solid.add(vecKey(u.pos));
+  }
+  for (const d of draft.decoys) {
+    if (d.teamId !== chaser.owner) solid.add(vecKey(d.pos));
+  }
+  return solid;
+}
+
+/**
  * The best legal route `unit` can take toward `goal` on `budget`: the goal
  * itself when it is reachable and standable, otherwise the reachable square
  * that gets closest to it. Empty when the unit cannot improve on where it
@@ -1819,9 +1867,12 @@ function walkChase(
  * fixed expansion order, and the scan below keeps the first strict improvement,
  * so equal candidates resolve the same way on every machine.
  */
-function pathToward(board: Board, draft: GameState, unit: UnitState, goal: Vec2, budget: number): Vec2[] {
+function pathToward(
+  board: Board, draft: GameState, unit: UnitState, goal: Vec2, budget: number,
+  impassable?: ReadonlySet<string>,
+): Vec2[] {
   if (budget <= 0) return [];
-  const squares = reachableSquares(board, draft, unit, budget);
+  const squares = reachableSquares(board, draft, unit, budget, impassable);
   let best: Vec2 | undefined;
   let bestDist = distance(unit.pos, goal);
   for (const sq of squares) {
