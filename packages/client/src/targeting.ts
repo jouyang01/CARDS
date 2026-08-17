@@ -13,6 +13,7 @@
 import {
   ULT_COST,
   aimInRange,
+  axisSquares,
   buildBoard,
   circleSquares,
   direction8,
@@ -20,6 +21,7 @@ import {
   dominantCardinal,
   expandShape,
   findAbility,
+  innerSquares,
   isAimStep,
   stepToVector,
   movementBudget,
@@ -138,6 +140,12 @@ export function abilityTooltip(def: AbilityDef): string[] {
   const econ = [`cooldown ${def.cooldown}`, `energy +${def.energyGain}`];
   if (def.delayTurns !== undefined) econ.push(`delay ${def.delayTurns}t`);
   lines.push(econ.join(' · '));
+  // AUTO-PREVIEW: the numeric tell, above the raw effect list. It is the line
+  // that says where an ability pays *differently* — an axis bonus, a core/ring
+  // split, a heal riding a damage line — which the effect dump cannot, because
+  // those differences live on the ability rather than in one effect.
+  const tell = damageTell(def);
+  if (tell !== '') lines.push(tell);
   if (def.effects.length > 0) lines.push(def.effects.map(effectLabel).join(', '));
   lines.push(def.description);
   return lines;
@@ -242,6 +250,74 @@ export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef
   // Same call the engine makes, same step — so the preview is exactly the tile
   // set that will be hit, rotation included.
   return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
+}
+
+/**
+ * AUTO-PREVIEW — the subset of an aim's tiles that hits **harder** than the rest.
+ *
+ * Owner Dev Note: *"new auto attacks need new visual indicators in preview and
+ * numerical descriptions for the damage differences."* Three of the reworked
+ * basics changed their *footprint*, which `abilityPreview` already draws
+ * correctly because it is `expandShape` — but two of them changed their
+ * *interior*: Bastion's Crushing Slam pays a bonus along the cone's axis
+ * (BASIC-AXIS) and Cinder's Ember Bolt pays a different number in the circle's
+ * core (BASIC-INNER). Both were invisible, so the ability read as one flat
+ * number over one flat shape.
+ *
+ * Engine-derived, never re-computed: `axisSquares` and `innerSquares` are the
+ * same functions the resolver uses to decide which tiles take the different
+ * amount, so the band drawn is exactly the band paid. A client that measured
+ * "which tiles look like they are on the axis" would be a second geometry to
+ * drift from the first.
+ *
+ * Empty for every ability without one of the two knobs, which is most of them.
+ */
+export function previewBands(
+  map: MapDef,
+  unit: UnitState,
+  ability: AbilityDef,
+  aim: readonly Vec2[],
+  aimStep?: number,
+): Vec2[] {
+  if (!aimLegal(unit, ability, aim, aimStep)) return [];
+  const board = buildBoard(map);
+  return [
+    ...axisSquares(board, ability, unit.pos, aim, aimStep),
+    ...innerSquares(board, ability, aim),
+  ];
+}
+
+/**
+ * AUTO-PREVIEW — the one-line numeric tell for what an ability does, and where
+ * it does something different.
+ *
+ * The second half of the Dev Note: *"numerical descriptions for the damage
+ * differences."* A footprint says where; this says how much, and it is the only
+ * place the *differences* are written down — an axis bonus, a core-versus-ring
+ * split, a line that heals allies while it damages enemies (FF1 polarity, which
+ * is why those two numbers cover the same tiles and cannot be told apart by
+ * colour).
+ *
+ * Read entirely off the `AbilityDef`, so a Designer edit to a number or a knob
+ * shows up here with no client change. Ordered damage-first because that is the
+ * number a player checks against an enemy's HP.
+ */
+export function damageTell(def: AbilityDef): string {
+  const parts: string[] = [];
+  const damage = def.effects.find((e) => e.kind === 'damage')?.amount;
+  if (damage !== undefined) {
+    // BASIC-INNER reads as a split rather than a base, because the core number
+    // *replaces* the ring's — "22 core / 14 ring", not "14 and sometimes 22".
+    if (def.innerAmount !== undefined) parts.push(`${def.innerAmount} core / ${damage} ring`);
+    else parts.push(`${damage} dmg`);
+    // BASIC-AXIS is genuinely additive, so it reads as a bonus on top.
+    if (def.axisBonus !== undefined) parts.push(`+${def.axisBonus} on the axis`);
+  }
+  const heal = def.effects.find((e) => e.kind === 'heal')?.amount;
+  if (heal !== undefined) parts.push(`+${heal} heal to allies`);
+  const shield = def.effects.find((e) => e.kind === 'shield')?.amount;
+  if (shield !== undefined) parts.push(`+${shield} shield`);
+  return parts.join(' · ');
 }
 
 /**
