@@ -12,7 +12,8 @@ import {
   type MapDef,
   type UnitState,
 } from '@cards/engine';
-import { aimFor, aimLegal, commitAim, dashRoute, isBlockedDashLanding, rangeEnvelope } from '../src/targeting.js';
+import { aimFor, aimLegal, commitAim, dashRoute, emptyDraft, isBlockedDashLanding, rangeEnvelope } from '../src/targeting.js';
+import { IDLE, arm, hoverBoard, previewAim, refusedAim, type Interaction } from '../src/order-mode.js';
 import vex from '../../../data/characters/vex.json';
 import wisp from '../../../data/characters/wisp.json';
 import aegis from '../../../data/characters/aegis.json';
@@ -258,32 +259,52 @@ describe('DASH-CAT-ROUTE: Shift draws a route, not a patch of tiles', () => {
 });
 
 /**
- * DASH-OCCUPIED, client half. Two more reasons `commitAim` says no, both of the
- * same species as the range refusal: an order the engine will silently discard
- * is worse than a click that visibly does not take.
+ * DASH-OCCUPIED, client half — **and what BLINK-ADJ did to it.**
+ *
+ * The client used to refuse a teleport aimed at an occupied square, on the
+ * grounds that the engine would fizzle it and an order that silently does
+ * nothing is worse than a click that visibly does not take. BLINK-ADJ removed
+ * the premise: the engine now lands the blink on the nearest legal square, so
+ * refusing the click would block an order that works — the same bug in the other
+ * direction.
+ *
+ * The refusal these tests were written for is therefore gone, and what they pin
+ * now is that it is gone *and that the reasoning did not leak into the other
+ * gates*: an out-of-range click is still refused, because that one really does
+ * describe an order the engine will drop.
  */
-describe('DASH-OCCUPIED: the client refuses a dash that would fizzle', () => {
+describe('DASH-OCCUPIED: an occupied square is no longer a reason to refuse', () => {
   const occupiedBy = (s: GameState, u: UnitState) => {
     const other = s.units.find((x) => x.unitId !== u.unitId)!;
     other.pos = { x: u.pos.x + 2, y: u.pos.y };
     return other.pos;
   };
 
-  it('refuses a teleport aimed at a square somebody is standing on', () => {
+  it('accepts a teleport aimed at a square somebody is standing on (BLINK-ADJ)', () => {
+    // Flipped: the engine lands it beside them, so the click is a real order.
     const s = match(WISP);
     const u = actor(s, 'wisp');
     const taken = occupiedBy(s, u);
-    expect(commitAim(OPEN, s, u, ability(WISP, 'blink'), taken)).toBeUndefined();
+    expect(commitAim(OPEN, s, u, ability(WISP, 'blink'), taken)).toBeDefined();
   });
 
-  it('…including an ALLY\'s square — the rule is "another character"', () => {
-    // Friendly fire is on, but bodies are still bodies.
+  it('…including an ALLY\'s square', () => {
     const pair: MapDef = { ...OPEN, spawns: [[{ x: 2, y: 10 }, { x: 2, y: 8 }], [{ x: 18, y: 10 }, { x: 18, y: 8 }]] };
     const s = createMatch(pair, '2v2', [[WISP, VEX], [AEGIS, VEX]]);
     const u = actor(s, 'wisp');
     const ally = s.units.find((x) => x.owner === u.owner && x.unitId !== u.unitId)!;
     ally.pos = { x: u.pos.x + 2, y: u.pos.y };
-    expect(commitAim(pair, s, u, ability(WISP, 'blink'), { ...ally.pos })).toBeUndefined();
+    expect(commitAim(pair, s, u, ability(WISP, 'blink'), { ...ally.pos })).toBeDefined();
+  });
+
+  it('but an OUT-OF-RANGE blink is still refused — that order really is dropped', () => {
+    // The distinction the flip must not blur. An occupied square is somewhere
+    // the engine will put you *near*; a square past the range is somewhere it
+    // will not put you at all.
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const blink = ability(WISP, 'blink');
+    expect(commitAim(OPEN, s, u, blink, { x: u.pos.x + blink.range + 3, y: u.pos.y })).toBeUndefined();
   });
 
   it('still accepts the neighbouring free square, so the gate is not blanket', () => {
@@ -360,5 +381,59 @@ describe('DASH-OCCUPIED: a line or cone aimed at yourself is a no-op', () => {
     const s = match(VEX);
     const u = actor(s, 'vex');
     expect(commitAim(OPEN, s, u, ability(VEX, 'rail_shot'), { x: u.pos.x + 1, y: u.pos.y })).toBeDefined();
+  });
+});
+
+/**
+ * AIM-RANGE-TELL — an out-of-range hover says "no" out loud (Builder OQ
+ * 2026-09-10 #4).
+ *
+ * AIM-PREVIEW-RANGE stopped the overlay promising a reach the ability does not
+ * have, by painting nothing. Correct, and silent — and silence is
+ * indistinguishable from a broken preview, especially for a blink, where the
+ * complaint that started this file was an ability that looked like it had no
+ * range at all.
+ */
+describe('AIM-RANGE-TELL: the refused square is marked, not merely blank', () => {
+  const hovering = (square: { x: number; y: number }): Interaction =>
+    hoverBoard(arm('aim'), square)!;
+
+  it('marks the hovered square when the click would be refused', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const blink = ability(WISP, 'blink'); // square, range 4
+    const far = { x: u.pos.x + blink.range + 3, y: u.pos.y };
+    expect(refusedAim(OPEN, s, u, blink, hovering(far))).toEqual([far]);
+  });
+
+  it('marks nothing when the click would take', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    expect(refusedAim(OPEN, s, u, ability(WISP, 'blink'), hovering({ x: u.pos.x + 2, y: u.pos.y })))
+      .toEqual([]);
+  });
+
+  it('the marker appears exactly where the aim disappears', () => {
+    // Both read the same gate, so the boundary is one boundary. A tile that
+    // painted neither would be a hole; one that painted both would be a
+    // contradiction.
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const blink = ability(WISP, 'blink');
+    for (let x = 0; x < OPEN.width; x += 3) {
+      for (let y = 0; y < OPEN.height; y += 3) {
+        const it0 = hovering({ x, y });
+        const painted = previewAim(OPEN, s, u, blink, emptyDraft(u.unitId), it0).aim.length > 0;
+        const marked = refusedAim(OPEN, s, u, blink, it0).length > 0;
+        expect(painted, `square ${x},${y}`).toBe(!marked);
+      }
+    }
+  });
+
+  it('says nothing at all when no ability is armed', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    expect(refusedAim(OPEN, s, u, undefined, hovering({ x: 0, y: 0 }))).toEqual([]);
+    expect(refusedAim(OPEN, s, u, ability(WISP, 'blink'), IDLE)).toEqual([]);
   });
 });

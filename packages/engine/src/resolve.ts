@@ -52,7 +52,7 @@ import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, st
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
-import { buildVision, teamCanSee, type Vision } from './vision.js';
+import { buildVision, teamCanSee, teamHasSightline, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
@@ -1280,15 +1280,73 @@ function teleport(
   contested?: ReadonlySet<string>,
 ): boolean {
   if (dest === undefined) return false;
-  if (contested?.has(vecKey(dest)) === true) return false;
-  const t = terrainAt(board, dest);
-  if (t === 'wall' || t === 'cover' || t === 'oob') return false;
-  if (draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, dest))) return false;
+  const landing = blinkLanding(draft, board, unit, dest, contested);
+  if (landing === undefined) return false; // boxed in on every side — nowhere to go
+  if (vecEq(landing, unit.pos)) return false; // already there; no step to emit
   const from = unit.pos;
-  unit.pos = { x: dest.x, y: dest.y };
+  unit.pos = { x: landing.x, y: landing.y };
   events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
   triggerTrapsOnEntry(draft, board, unit, events);
   return true;
+}
+
+/** Can this unit come to rest here? Terrain, bodies and the contested set. */
+function blinkSquareFree(
+  draft: GameState, board: Board, unit: UnitState, p: Vec2, contested?: ReadonlySet<string>,
+): boolean {
+  if (contested?.has(vecKey(p)) === true) return false;
+  const t = terrainAt(board, p);
+  if (t === 'wall' || t === 'cover' || t === 'oob') return false;
+  return !draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
+}
+
+/**
+ * BLINK-ADJ — where a blink actually arrives.
+ *
+ * Owner Dev Note: *"Blocked blink should land adjacent instead of not at all."*
+ *
+ * A blink's destination can be unavailable three ways — **blocked terrain**
+ * (wall, cover, edge), **occupied** by a unit resting there, or **contested** by
+ * another blink aimed at the same square (the case PR #64 resolved as "neither
+ * lands"). The owner rules all three the same: land on the nearest legal square
+ * rather than failing. It is AR's "stop on the square immediately before the
+ * destination", made precise for a movement that has no squares in between —
+ * *nearest* is the well-defined version of *before* when there is no path to
+ * walk back along.
+ *
+ * Nearest is **Manhattan** (MET1, the movement metric), scanned in expanding
+ * rings so the first ring searched is the adjacent one — which is what makes a
+ * blink onto a body land beside it. Within a ring the scan is row-major, so ties
+ * break the same way on every machine.
+ *
+ * **Contested blinks both land.** The shared square is refused to everyone, so
+ * each falls to its own nearest ring; and because teleports resolve in the
+ * plans' fixed order, whoever goes first takes the square and is *standing*
+ * there when the next one scans — so the second sees it occupied and moves on to
+ * its next-nearest. The ordering rule the ruling asks for falls out of the
+ * sequence rather than needing a tiebreak of its own, and Collisions holds.
+ */
+function blinkLanding(
+  draft: GameState, board: Board, unit: UnitState, dest: Vec2, contested?: ReadonlySet<string>,
+): Vec2 | undefined {
+  if (blinkSquareFree(draft, board, unit, dest, contested)) return dest;
+  // Rings of constant Manhattan distance, nearest first. The cap is the board's
+  // own span: beyond it every square is out of bounds, so the search is finite
+  // and a genuinely boxed-in blink returns nothing rather than looping.
+  const span = board.width + board.height;
+  for (let r = 1; r <= span; r++) {
+    let best: Vec2 | undefined;
+    for (let y = dest.y - r; y <= dest.y + r; y++) {
+      for (let x = dest.x - r; x <= dest.x + r; x++) {
+        if (Math.abs(x - dest.x) + Math.abs(y - dest.y) !== r) continue; // this ring only
+        const p: Vec2 = { x, y };
+        if (!blinkSquareFree(draft, board, unit, p, contested)) continue;
+        best ??= p; // row-major: the first one found in this ring wins the tie
+      }
+    }
+    if (best !== undefined) return best;
+  }
+  return undefined;
 }
 
 // ── Blast ───────────────────────────────────────────────────────────────────
@@ -1700,8 +1758,13 @@ function walkChase(
   target: UnitState,
   budget: number,
 ): { path: Vec2[]; goal: Vec2; seen: boolean } | undefined {
-  /** Team vision with the chaser standing at `at` — everyone else frozen. */
-  const seenFrom = (at: Vec2): boolean => teamCanSee(
+  /**
+   * CHASE-LOS: a **sightline** from the chaser standing at `at`, everyone else
+   * frozen — line of sight and concealment, no range cap. A pursuer does not
+   * stop looking at something in the open because it got seven tiles away; it
+   * loses it when the quarry breaks the line, behind a wall or into brush.
+   */
+  const seenFrom = (at: Vec2): boolean => teamHasSightline(
     vision,
     { ...draft, units: draft.units.map((u) => (u.unitId === chaser.unitId ? { ...u, pos: at } : u)) },
     chaser.owner,
@@ -1969,7 +2032,9 @@ function destroyDecoysUnderEnemies(draft: GameState, units: readonly UnitState[]
  * it terminates. A square another unit has since taken is skipped, which is the
  * chain case: two blocked passers each fall back one.
  */
-function bounceOffOccupied(draft: GameState, m: Mover, step: number, events: TurnEvent[]): void {
+function bounceOffOccupied(
+  draft: GameState, movers: readonly Mover[], m: Mover, step: number, events: TurnEvent[],
+): void {
   const sharing = (p: Vec2): boolean =>
     draft.units.some((u) => u.alive && u.unitId !== m.unit.unitId && vecEq(u.pos, p));
   if (!sharing(m.unit.pos)) return; // resting alone — the ordinary case, nothing to undo
@@ -1991,9 +2056,39 @@ function bounceOffOccupied(draft: GameState, m: Mover, step: number, events: Tur
     events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
     return;
   }
-  // Every square it covered is now somebody else's rest. Leaving it put is the
-  // only move left — it cannot walk through them — and the case is flagged
-  // rather than resolved by inventing a rule (Open Questions 2026-09-10).
+  // CLASH-CONGA: every square it covered is somebody else's rest — a conga line
+  // — so there is nothing to bounce *to*. The move is cancelled instead.
+  cancelMove(movers, m, events);
+}
+
+/**
+ * CLASH-CONGA — send a mover back to the square it started the phase on, and
+ * anybody squatting there after it.
+ *
+ * The last resort under CLASH-CORNER's bounce: when a wedged passer finds every
+ * square on its own path taken as well, walking back is not available and
+ * standing still would stack. Cancelling is, because **origins are pairwise
+ * distinct** — two units cannot have begun the phase on one square — so a board
+ * where everyone is home is collision-free by construction.
+ *
+ * The cascade terminates for the same reason. Each call sends one more unit to
+ * its own origin and a unit already home returns immediately, so at worst every
+ * mover is cancelled once. A unit standing on somebody else's origin is by
+ * definition not on its own, so each step of the chain finds a fresh unit.
+ *
+ * Only movers in this phase's own set are cancellable, and that is enough: a
+ * mover cannot come to rest on a *chaser's* origin (the chaser was a stationary
+ * body while the movers ran, so the occupancy check refused it), and vice versa.
+ */
+function cancelMove(movers: readonly Mover[], m: Mover, events: TurnEvent[]): void {
+  m.halted = true;
+  if (vecEq(m.unit.pos, m.origin)) return; // already home — nothing to undo
+  const from = m.unit.pos;
+  m.unit.pos = { x: m.origin.x, y: m.origin.y };
+  events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
+  // Whoever walked onto the square this unit just reclaimed goes home too.
+  const squatter = movers.find((x) => x !== m && x.unit.alive && vecEq(x.unit.pos, m.origin));
+  if (squatter !== undefined) cancelMove(movers, squatter, events);
 }
 
 /**
@@ -2096,7 +2191,7 @@ function stepMovers(
       if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died → path discarded
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
-      bounceOffOccupied(draft, m, step, events);
+      bounceOffOccupied(draft, movers, m, step, events);
     }
   }
 

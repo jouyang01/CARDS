@@ -112,7 +112,8 @@ const PAD_SIZE = 0.62;
  * covered tile always reads on top of the envelope that contains it.
  */
 export type HighlightLayer =
-  | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'impact' | 'free' | 'catalyst' | 'chase' | 'select';
+  | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'band' | 'impact' | 'free' | 'catalyst'
+  | 'chase' | 'select';
 
 /**
  * Route lines get their own layers for the same reason the aim overlays do: a
@@ -148,6 +149,11 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
   range: OVERLAY_BASE + 0.004,
   reach: OVERLAY_BASE + 0.008,
   aim: OVERLAY_BASE + 0.014,
+  // AUTO-PREVIEW: the subset of an aim that hits *harder* — a cone's axis line
+  // (BASIC-AXIS) or a circle's core (BASIC-INNER). Directly above the aim it
+  // qualifies, because it is a reading of those same tiles rather than a
+  // separate area, and below `impact` so a dash's detonation still leads.
+  band: OVERLAY_BASE + 0.015,
   impact: OVERLAY_BASE + 0.016,
   free: OVERLAY_BASE + 0.018,
   catalyst: OVERLAY_BASE + 0.020,
@@ -163,7 +169,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, impact: 0.86, free: 0.8, catalyst: 0.72, chase: 0.98, select: 0.92,
+  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, band: 0.62, impact: 0.86, free: 0.8, catalyst: 0.72, chase: 0.98, select: 0.92,
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;

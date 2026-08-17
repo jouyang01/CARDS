@@ -282,6 +282,38 @@ export function teamCanSee(vision: Vision, state: GameState, team: TeamId, targe
   return state.units.some((u) => u.alive && u.owner === team && canSee(vision, u, target));
 }
 
+/**
+ * CHASE-LOS — can any living member of `team` draw a **sightline** to `target`,
+ * ignoring how far away it is?
+ *
+ * `canSee` composes three independent gates: **range** (a 6-tile Manhattan
+ * radius), **line of sight** (walls), and **concealment** (brush, Stealth,
+ * Reveal). This is the same predicate with the first one removed, and it exists
+ * because a chase asks a different question from a fog-of-war render.
+ *
+ * Owner Dev Note: *"If a character is one tile away, it will only chase 1 tile
+ * even if the target sprints 8 tiles away … The chase should get the chasing
+ * character AS CLOSE to the target as possible … assuming they have vision of
+ * the character. If they lose vision of the chase target, it should get the
+ * chasing character as close to the last place the chase target was seen."*
+ * "Lose vision" there means the quarry **broke the sightline** — ducked behind a
+ * wall, into brush, into Stealth — not that it simply outran an arbitrary
+ * radius. A pursuer locked onto something in the open does not stop looking at
+ * it because it got seven tiles away.
+ *
+ * **Only the chase uses this.** `canSee`, `recordLastKnown` and every render
+ * path keep the range cap, so the team's persistent memory and the fog a player
+ * looks at are untouched: this widens what a pursuit may *follow*, never what a
+ * team may *know*.
+ */
+export function teamHasSightline(vision: Vision, state: GameState, team: TeamId, target: UnitState): boolean {
+  if (!target.alive) return false;
+  if (target.owner === team) return true;
+  return state.units.some((u) => u.alive && u.owner === team
+    && hasLineOfSight(vision.board, u.pos, target.pos)
+    && !isConcealedFrom(vision, target, u.pos));
+}
+
 /** Enemy units the `team` can collectively see, in `state.units` order. */
 export function visibleEnemiesForTeam(vision: Vision, state: GameState, team: TeamId): UnitState[] {
   return state.units.filter((u) => u.owner !== team && teamCanSee(vision, state, team, u));

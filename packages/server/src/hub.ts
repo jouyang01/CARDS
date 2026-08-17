@@ -33,7 +33,10 @@ import {
   roomView,
   type ServerMessage,
 } from './protocol.js';
-import { canStart, join, leave, resolveRoomTurn, seatBounds, startMatch, type Room } from './room.js';
+import {
+  canStart, charactersPerSeat, join, leave, lobbyReady, resolveRoomTurn, seatBounds, setPicks,
+  startFromPicks, startMatch, type Pick, type Room,
+} from './room.js';
 import { filterEvents, ordersForTeam, teamView, visibleEnemyIds } from './view.js';
 
 /**
@@ -116,6 +119,8 @@ export class RoomHub {
 
     if (msg.type === 'submit') return this.#receiveSubmit(seatId, msg.orders);
 
+    if (msg.type === 'pick') return this.#receivePick(seatId, msg.picks);
+
     if (msg.type === 'start') {
       // M3-START. Refused rather than ignored when it cannot take: a start
       // button that silently does nothing is the worst of the two failures.
@@ -153,7 +158,58 @@ export class RoomHub {
     // just got the same room inside `joined` — sending both would have the
     // client apply one state twice and, worse, make "did I join?" ambiguous.
     this.#broadcast({ type: 'roomUpdated', room: this.#view() }, seatId);
+    // …and everybody's lobby moved, including the joiner's: what each seat owes
+    // is a function of how many players its team has, so a join re-prices it.
+    this.#sendLobby();
     this.#startIfReady();
+  }
+
+  /**
+   * Record a seat's lobby picks (M3-LOBBY).
+   *
+   * Every rule lives in `setPicks`; this is the transport. A refusal is answered
+   * to the picker alone with the code that names it — a lobby that said only
+   * "no" would leave a player re-clicking the same illegal pick — and nothing is
+   * broadcast, because a refused pick did not change the room.
+   */
+  #receivePick(seatId: string, picks: Pick[]): void {
+    if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
+    const roster = this.#config?.roster ?? {};
+    const result = setPicks(this.#room, seatId, picks, roster, this.#config?.catalysts ?? {});
+    if (!result.ok) return this.#send(seatId, errorMessage(result.reason));
+    this.#room = result.room;
+    this.#sendLobby();
+    // The last pick can be what completes a full room — the start the join that
+    // filled it had to hold back.
+    this.#startIfReady();
+  }
+
+  /**
+   * Send every seat the lobby as **its** team may see it (M3-LOBBY).
+   *
+   * Per-seat and never broadcast, exactly like `#sendDecision`: own-team picks in
+   * full (teammates coordinate), the enemy as a bare count of seats that have
+   * finished choosing. Silent once the match is running — there is no lobby then.
+   */
+  #sendLobby(): void {
+    if (this.#room.state !== undefined) return;
+    for (const seat of this.#room.seats) {
+      const mine = this.#room.seats.filter((s) => s.team === seat.team);
+      const theirs = this.#room.seats.filter((s) => s.team !== seat.team);
+      const done = (s: (typeof mine)[number]) => s.picks.length === charactersPerSeat(this.#room, s.seatId);
+      this.#send(seat.seatId, {
+        type: 'lobby',
+        room: this.#view(),
+        lobby: {
+          picks: Object.fromEntries(mine.map((s) => [s.seatId, s.picks.map((p) => ({ ...p }))])),
+          owed: Object.fromEntries(mine.map((s) => [s.seatId, charactersPerSeat(this.#room, s.seatId)])),
+          ready: mine.filter(done).map((s) => s.seatId),
+          enemyReady: theirs.filter(done).length,
+          enemyOf: theirs.length,
+          canStart: lobbyReady(this.#room),
+        },
+      });
+    }
   }
 
   /**
@@ -172,16 +228,29 @@ export class RoomHub {
    */
   #startIfReady(): void {
     if (this.#room.seats.length < seatBounds(this.#room.format).max) return;
+    // A full room whose players are **mid-pick** is not ready (M3-LOBBY): the
+    // interim deal would fire and throw their choices away, which is a worse
+    // outcome than waiting for the start button they are already heading for.
+    // A room where nobody has picked at all is untouched — that is M3-START's
+    // full-room trigger, and it is what every current caller does.
+    if (this.#room.seats.some((s) => s.picks.length > 0) && !lobbyReady(this.#room)) return;
     this.start();
   }
 
   /**
    * Start now, whoever is in. The lobby's button (M3-LOBBY) and the escape
    * hatch for a short room that will never fill.
+   *
+   * **The lobby's picks win when it has them.** `startFromPicks` seeds each
+   * unit's triad from the character that chose it (CAT-SELECT); the config's
+   * `teams` is the interim deal, and it survives only for a room that started
+   * without a lobby — M3-START's escape hatch and the tests that predate picking.
    */
   start(): void {
     if (this.#config === undefined || this.#room.state !== undefined) return;
-    const started = startMatch(this.#room, this.#config.map, this.#config.teams);
+    const started = lobbyReady(this.#room)
+      ? startFromPicks(this.#room, this.#config.map, this.#config.roster)
+      : startMatch(this.#room, this.#config.map, this.#config.teams);
     if (!started.ok) return;
     this.#room = started.room;
     // Each seat is told the board **and its own characters** — the control map,
@@ -320,6 +389,9 @@ export class RoomHub {
     // is stop the room waiting forever on a socket that is gone.
     this.#submissions.delete(seatId);
     this.#broadcast({ type: 'seatLeft', seatId, room: this.#view() });
+    // A departure re-prices the lobby: the survivors on that team now owe more
+    // characters than they picked, so their pick screens have to be told.
+    this.#sendLobby();
     if (this.#room.state !== undefined && this.#room.seats.length > 0
       && this.#submissions.size >= this.#room.seats.length) {
       this.resolveNow();

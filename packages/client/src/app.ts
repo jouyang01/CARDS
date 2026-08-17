@@ -44,11 +44,13 @@ import {
   previewCatalystAim,
   previewFreeAim,
   previewMovePath,
+  refusedAim,
   type Interaction,
 } from './order-mode.js';
 import {
   abilityOptions,
   abilityPreview,
+  previewBands,
   impactPreview,
   abilityTooltip,
   aimFor,
@@ -145,6 +147,13 @@ const SPRINT_LINE = 0x8fd6ff;
 const DASH_LINE = 0xffd23f;
 /** CHASE1's route + quarry ring: orange, distinct from move blue and dash yellow. */
 const CHASE_LINE = 0xff8a3d;
+/**
+ * AUTO-PREVIEW's harder-hitting band. Warm and pale against `AIM`'s orange —
+ * the same family, brighter, because it *is* the aim with more behind it.
+ */
+const BAND = 0xffe9a8;
+/** AIM-RANGE-TELL's refusal marker — the one red on the planning overlays. */
+const REFUSED = 0xff5a4e;
 
 /**
  * Title + status line, overlaid on the top-left of the canvas (UI-VIEWPORT).
@@ -830,6 +839,19 @@ export function startHotSeat(
     const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
     renderer.highlight('aim', covered, AIM, 0.5);
 
+    // ── AUTO-PREVIEW: the tiles inside the aim that hit HARDER ───────────────
+    // "New auto attacks need new visual indicators in preview." A cone's axis
+    // (BASIC-AXIS) and a circle's core (BASIC-INNER) pay a different number on
+    // tiles the aim overlay draws identically, so the ability read as one flat
+    // number over one flat shape. Its own layer, directly above the aim it
+    // qualifies: it is a reading of those same tiles, not a separate area.
+    renderer.highlight(
+      'band',
+      chosen !== undefined ? previewBands(map, unit, chosen, preview.aim, preview.aimStep) : [],
+      BAND,
+      0.5,
+    );
+
     // ── DASH-PREVIEW: a dash's impact disc(s) ────────────────────────────────
     // "Shadowstep Strike needs to show what boxes are being hit, not just the
     // box of arrival." Its own layer rather than more tiles in `covered`: the
@@ -837,7 +859,6 @@ export function startHotSeat(
     // a player choosing between two landing squares is reading the second.
     // Plan-time only — the engine detonates from wherever the dash really stops.
     const impact = impactPreview(map, unit, chosen, preview.aim, preview.aimStep);
-    renderer.highlight('impact', [...impact.origin, ...impact.destination], IMPACT, 0.4);
 
     // ── UI2 Layer 1: the continuous shape over Layer 2's tiles ───────────────
     // The tiles are the truth (centre-in binary, AIM2); the wedge/beam/disk is

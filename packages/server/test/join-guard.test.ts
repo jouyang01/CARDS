@@ -69,8 +69,8 @@ describe('M3-JOIN-GUARD: the rule, at the record', () => {
     expect(first.ok, 'joinable before the start').toBe(true);
 
     const dealt = startMatch({ ...room, seats: [
-      { seatId: 's0', team: 0, name: 's0', unitIds: [] },
-      { seatId: 's1', team: 1, name: 's1', unitIds: [] },
+      { seatId: 's0', team: 0, name: 's0', unitIds: [], picks: [] },
+      { seatId: 's1', team: 1, name: 's1', unitIds: [], picks: [] },
     ] }, OPEN, TEAMS);
     expect(dealt.ok).toBe(true);
     if (!dealt.ok) return;

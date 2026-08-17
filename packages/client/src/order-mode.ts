@@ -127,6 +127,33 @@ export function previewAim(
 }
 
 /**
+ * AIM-RANGE-TELL — the square the pointer is over when the aim it would make is
+ * **refused**, so "no" is something the board says rather than something it
+ * withholds.
+ *
+ * Builder OQ 2026-09-10 #4. AIM-PREVIEW-RANGE stopped the overlay from
+ * promising a reach the ability does not have, and did it by painting nothing —
+ * which is correct and silent. Silence is indistinguishable from "the preview is
+ * broken", especially for a blink, where the whole complaint that started this
+ * was an ability that looked like it had no range.
+ *
+ * The same gate decides both, so the marker appears exactly where the aim
+ * disappears: one square, under the pointer, for the caller to draw in a colour
+ * that means no.
+ */
+export function refusedAim(
+  map: MapDef,
+  state: GameState,
+  unit: UnitState,
+  ability: AbilityDef | undefined,
+  interaction: Interaction,
+): Vec2[] {
+  const square = interaction.hover.square;
+  if (ability === undefined || interaction.mode !== 'aim' || square === undefined) return [];
+  return commitAim(map, state, unit, ability, square) === undefined ? [{ ...square }] : [];
+}
+
+/**
  * The catalyst's aim to paint (CAT2) — its own mode and its own slot, so
  * aiming a Shift never disturbs the ability aim sitting next to it.
  */

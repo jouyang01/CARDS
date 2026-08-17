@@ -3240,3 +3240,115 @@ same cap logic as Vex's Overwatch; an immortal minefield is the stall the caps e
 
 5. **M3-LOBBY was not started this session** — the three scheduled items plus three Dev Notes filled
    it. It is unblocked and unambiguous; it is simply large.
+
+## 2026-09-11 — Builder: the chase sees, blinks land, and the lobby gets a data model
+
+1. **CHASE-LOS changed only the chase's *step* predicate, not its *admissibility* gate.** `walkChase`
+   now asks `teamHasSightline` (range-less: line of sight, then concealment), so a chaser closes on a
+   target it can see across an open map at any distance — which is what the item asked for. But
+   `planUnit` still admits a chase order only when `teamCanSee(...) || lastKnownFor(...) !== undefined`,
+   and `teamCanSee`'s *first* gate is range. So a target visible-but-distant at plan time is still
+   refused the order before the fixed loop ever runs. The Spec Notes said "change ONLY the chase
+   predicate", so I did not widen the plan gate — flagged below rather than guessed at.
+
+2. **BLINK-ADJ supersedes two earlier fizzles, and both test files say so rather than losing the
+   case.** DASH-OCCUPIED's "a teleport onto a body does nothing" and BLINK-CLASH's "neither lands"
+   were the rulings this one replaces; ten tests asserted them. Each was rewritten with the reason it
+   flipped, not deleted, so the history of the rule is readable from the tests. The client's
+   `isBlockedDashLanding` veto went with them — it survives as a *tell* (documented as not a gate),
+   because a client that refused the click would have made the engine's new landing unreachable.
+
+3. **The blink's landing needs no tie-break of its own.** Teleports resolve in a fixed order and each
+   one scans a board the earlier ones have already moved on, so the first blinker takes the nearest
+   square and is standing on it when the second scans. The scan itself is Manhattan rings, row-major
+   within a ring — deterministic, and the only ordering the rule contains.
+
+4. **CLASH-CONGA terminates because origins are pairwise distinct.** A cancel sends exactly one more
+   unit home, and no two units share a phase-start square, so the recursion is bounded by the number
+   of movers. Recorded because the function is recursive and the bound is not local to it.
+
+5. **AUTO-PREVIEW's band is the engine's own `axisSquares`/`innerSquares`, never a client guess at
+   which tiles look central.** The drawn band and the paid band are then the same set by construction,
+   and the property test asserts it for every reworked auto at every aim.
+
+6. **Lumen's difference is a number, not a colour.** FF1 picks each effect's targets by *team*, not by
+   square, so the heal covers exactly the damage's tiles. There is no "heal half" of the footprint to
+   paint, and the only honest tell is writing both numbers down (`damageTell`).
+
+7. **M3-LOBBY: `lobbyReady` is deliberately stricter than `canStart`, and `teamCovered` is derived
+   from GAME_SPEC §1 rather than tabulated.** A player runs at most two characters, so a team of N
+   characters needs at least ⌈N/2⌉ seats before its characters have anyone to order them — which is
+   where the spec's "4v4 requires a minimum of 4 players" comes from. `canStart` only asks whether both
+   teams have somebody, which was enough while `startMatch` dealt characters itself; a lobby that asks
+   players to pick has to know the picks will add up. `canStart` is unchanged; the new predicate sits
+   beside it.
+
+8. **`teamSplit` states `deriveSeats`' split forwards, and that is load-bearing.** The lobby asks each
+   seat for exactly as many characters as `deriveSeats` will hand it back, in the same team-then-join
+   order, so a seat's own picks return to it as its own `unitIds`. Two different answers to "how many
+   does this seat run" is how a player picks a character somebody else ends up controlling; the test
+   asserts the round trip against the engine rather than restating the arithmetic.
+
+9. **Picks are blind across teams, so they are stripped from the broadcast `RoomView` and delivered by
+   a per-seat `lobby` message.** The R3 ruling calls cross-team mirrors "blind-pick mirrors", which
+   only means anything if neither side watches the other choose — a broadcast pick list would make
+   every pick after the first a counter-pick. The split is M3-LOCKLIST's, applied to picks instead of
+   locks: own team in full (teammates coordinate; hidden information is team vs team), the enemy as a
+   bare count of seats that have finished. Flagged below as a reading of an implication rather than of
+   a stated rule.
+
+10. **A full room that is mid-pick now waits instead of auto-starting over the picks.** The ruled
+    trigger — a full room starts — predates there being anything to pick, and firing it while a player
+    is halfway through choosing would discard their choices silently. The guard is narrow: it holds
+    only when some seat has picked *and* the lobby is incomplete, so a room where nobody picks behaves
+    exactly as it did. The larger question this exposes is question 2 below.
+
+11. **The client reads the protocol types from `@cards/server` as types only.** Subpath exports
+    (`./protocol`, `./room`, `./hub`) were added to the server package so the client can import the
+    wire's definition instead of keeping a second copy of it in step by hand. `import type` is erased,
+    so nothing of the server reaches the bundle — the budget check is unchanged at 178.7 kB gz. The
+    end-to-end test imports the hub for real, which is what makes it an end-to-end test.
+
+## Open Questions for the Analyzer — 2026-09-11
+
+1. **CHASE-LOS is complete in the loop and incomplete at the gate.** (`planUnit` in `resolve.ts`;
+   `chase.test.ts`, the case that had to be given a prior sighting to pass.) `walkChase` now follows a
+   target it has a sightline to at any range, but `planUnit` still *admits* a chase order only when
+   `teamCanSee(...)` — range-capped — or a last-known square exists. So the exact scenario the item
+   describes (an enemy visible down an open lane, further away than `VISION_RANGE`) is refused at plan
+   time and never reaches the fixed loop. Widening the gate to `teamHasSightline` is a two-word change
+   and I did not make it, because the Spec Notes said to change only the chase predicate. **Needs a
+   ruling: is the admissibility gate part of CHASE-LOS, or is the range cap on *ordering* a chase
+   intentional?**
+
+2. **Does the full-room auto-start retire now that a lobby exists?** (`#startIfReady` in `hub.ts`.)
+   The ruled trigger is "a networked match starts when the room is FULL". With picking in the
+   protocol, a four-player 2v2 fills on the fourth join *before anyone has picked*, so the auto-start
+   fires and the lobby is unreachable in exactly the room that is most likely to want it. I shipped
+   the minimal compliant guard (hold only when picks are outstanding), which does not help a room that
+   has not started picking yet. The clean answer looks like "a room with a lobby starts on the start
+   button, not on being full", but that reverses a stated ruling, so it is yours. Short rooms are
+   unaffected either way.
+
+3. **Confirm picks are hidden across teams.** (Decision 9 above; `protocol.ts` `LobbyView`,
+   `lobby-protocol.test.ts`.) The edge-cases ruling implies it by calling mirrors "blind-pick", but no
+   entry says it outright, and it is a hidden-information rule — golden rule 5 territory, so I would
+   rather have it written down than inferred. If picks are meant to be public, the fix is deleting the
+   filter, not adding one.
+
+4. **`POST /rooms/:code/start` is still there, and the AC says the lobby's start button deletes it.**
+   (`worker.ts`.) The socket now carries `start`, so the route is redundant *for a client with a lobby
+   screen* — and the lobby screen is the part of M3-LOBBY that has not been built. Deleting the route
+   this session would have left the networked match with no reachable start at all. It goes with the
+   UI slice.
+
+5. **M3-LOBBY's remaining scope, for the next batch:** the lobby **screen** (map/format/character/
+   catalyst pick UI over `RoomClient`), wiring `app.ts` to the socket, and then the route deletion.
+   The data model, the protocol and the network client all landed and are covered; what is left is
+   client UI, which is the biggest single piece and wants its own session.
+
+6. **A seat can be owed zero characters, and only in 1v1.** (`teamSplit`.) Two players on a one-
+   character team leaves the second with nothing to pick or order. `deriveSeats` has always done this
+   (it emits one seat and the second gets `?? []`), so it is not new, but a lobby makes it visible —
+   a player staring at a pick screen that asks for nothing. 1v1 is the dev format, so it is cheap
+   either way: refuse the second join in 1v1, or let the lobby say "spectating". Not ruled, not built.
