@@ -8,12 +8,18 @@
       "id": "barbed_sling",
       "name": "Barbed Sling",
       "phase": "blast",
-      "shape": "line",
-      "range": 6,
+      "shape": "circle",
+      "range": 5,
       "cooldown": 0,
       "energyGain": 8,
-      "effects": [{ "kind": "damage", "amount": 17 }],
-      "description": "A slung fistful of barbs. Steady poke while the garden grows."
+      "effects": [
+        {
+          "kind": "damage",
+          "amount": 15
+        }
+      ],
+      "description": "A slung burst of barbs that detonates where it lands \u2014 lobbed over walls, 15 damage in the blast. The zone kit pokes over the terrain it fights around.",
+      "radius": 1
     },
     {
       "id": "snare_bloom",
@@ -25,10 +31,17 @@
       "energyGain": 0,
       "free": true,
       "effects": [
-        { "kind": "trap", "amount": 12 },
-        { "kind": "root", "duration": 1 }
+        {
+          "kind": "trap",
+          "amount": 12,
+          "lifetime": 3
+        },
+        {
+          "kind": "root",
+          "duration": 1
+        }
       ],
-      "description": "FREE ACTION — costs no ability, so Thorn still slings this turn. Plants a hidden snare: 12 damage and Root on entry in any phase. A rooted victim loses their Move and stands in Barbed Sling range."
+      "description": "FREE ACTION \u2014 costs no ability, so Thorn still slings this turn. Plants a hidden snare: 12 damage and Root on entry in any phase. A rooted victim loses their Move and stands in Barbed Sling range."
     },
     {
       "id": "bramble_stride",
@@ -39,8 +52,14 @@
       "cooldown": 3,
       "energyGain": 5,
       "effects": [
-        { "kind": "damage", "amount": 10 },
-        { "kind": "root", "duration": 1 }
+        {
+          "kind": "damage",
+          "amount": 10
+        },
+        {
+          "kind": "root",
+          "duration": 1
+        }
       ],
       "description": "Thorn surges through the undergrowth up to 3 squares; the first unit crossed takes 10 damage and is Rooted for a turn. The escape that still leaves someone stuck to the floor."
     },
@@ -53,8 +72,13 @@
       "radius": 1,
       "cooldown": 2,
       "energyGain": 6,
-      "effects": [{ "kind": "heal", "amount": 20 }],
-      "description": "Restorative spores heal allies in the aimed area for 20. Smaller than a Mender's heal — Thorn's defense budget is partly spent on control."
+      "effects": [
+        {
+          "kind": "heal",
+          "amount": 20
+        }
+      ],
+      "description": "Restorative spores heal allies in the aimed area for 20. Smaller than a Mender's heal \u2014 Thorn's defense budget is partly spent on control."
     }
   ],
   "ultimate": {
@@ -67,9 +91,18 @@
     "cooldown": 0,
     "energyGain": 0,
     "effects": [
-      { "kind": "heal", "amount": 30 },
-      { "kind": "root", "duration": 1 },
-      { "kind": "weaken", "duration": 1 }
+      {
+        "kind": "heal",
+        "amount": 30
+      },
+      {
+        "kind": "root",
+        "duration": 1
+      },
+      {
+        "kind": "weaken",
+        "duration": 1
+      }
     ],
     "description": "The ground erupts: allies in the area heal 30; enemies are Rooted and Weakened for a turn. The board itself takes a side. (100 energy)"
   }

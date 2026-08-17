@@ -6,14 +6,21 @@
   "abilities": [
     {
       "id": "cleave",
-      "name": "Cleave",
+      "name": "Whirling Cleave",
       "phase": "blast",
-      "shape": "cone",
-      "range": 2,
+      "shape": "circle",
+      "range": 0,
       "cooldown": 0,
       "energyGain": 8,
-      "effects": [{ "kind": "damage", "amount": 22 }],
-      "description": "Wide melee swing. Range 2 — ignores cover."
+      "effects": [
+        {
+          "kind": "damage",
+          "amount": 22
+        }
+      ],
+      "description": "A full spin: every adjacent enemy takes 22. Melee \u2014 ignores cover. Dive the middle and swing all the way around.",
+      "melee": true,
+      "radius": 1
     },
     {
       "id": "bullrush",
@@ -23,10 +30,18 @@
       "range": 4,
       "cooldown": 3,
       "energyGain": 8,
-      "impact": { "destination": 2 },
+      "impact": {
+        "destination": 2
+      },
       "effects": [
-        { "kind": "damage", "amount": 14 },
-        { "kind": "knockback", "amount": 1 }
+        {
+          "kind": "damage",
+          "amount": 14
+        },
+        {
+          "kind": "knockback",
+          "amount": 1
+        }
       ],
       "description": "Charge in a straight line, then slam down where you stop: the first enemy hit and every enemy within 2 squares of the landing take 14 and are knocked back 1 square, losing their Move."
     },
@@ -39,10 +54,16 @@
       "cooldown": 3,
       "energyGain": 6,
       "effects": [
-        { "kind": "heal", "amount": 20 },
-        { "kind": "might", "duration": 1 }
+        {
+          "kind": "heal",
+          "amount": 20
+        },
+        {
+          "kind": "might",
+          "duration": 1
+        }
       ],
-      "description": "Heal 20 and gain Might for a turn. Sustain through aggression — the heal comes with a threat attached."
+      "description": "Heal 20 and gain Might for a turn. Sustain through aggression \u2014 the heal comes with a threat attached."
     },
     {
       "id": "shockwave",
@@ -54,10 +75,17 @@
       "cooldown": 2,
       "energyGain": 8,
       "effects": [
-        { "kind": "damage", "amount": 12 },
-        { "kind": "slow", "duration": 1 }
+        {
+          "kind": "damage",
+          "amount": 12
+        },
+        {
+          "kind": "slow",
+          "duration": 1
+        }
       ],
-      "description": "Stomp: all enemies within 2 squares take 12 and are Slowed. Disruption when surrounded."
+      "description": "Stomp: all enemies within 2 squares take 12 and are Slowed. Disruption when surrounded.",
+      "melee": true
     }
   ],
   "ultimate": {
@@ -70,8 +98,14 @@
     "cooldown": 0,
     "energyGain": 0,
     "effects": [
-      { "kind": "damage", "amount": 38 },
-      { "kind": "root", "duration": 1 }
+      {
+        "kind": "damage",
+        "amount": 38
+      },
+      {
+        "kind": "root",
+        "duration": 1
+      }
     ],
     "description": "Shatter the ground: all enemies within 3 squares take 38 and are Rooted. Stand in the middle of them and detonate. (100 energy)"
   }

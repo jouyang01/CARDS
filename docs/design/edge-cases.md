@@ -58,6 +58,36 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 >
 > Still open, nothing depends on it: whether AR had an incoming-damage modifier (§1.3).
 
+> **⚠ NOT YET FOLDED IN — CLASH-AR, the basics pass, and three Builder-OQ rulings,
+> 2026-08-15 (Designer; the clash text is the owner's verbatim AR source).** Full spec:
+> `docs/design/clashes-and-basics.md`. The Analyzer should fold and schedule:
+> 1. **`CLASH-AR` (engine — the owner marked it IMPORTANT).** Adopt AR's clash rules exactly.
+>    Rule 2 (both ending → all forced back to their previous square; pad denied) is **already
+>    shipped behaviour**. The deltas: rule 1 — two units *passing through* the same square on
+>    the same step both **continue** (today `stepMovers` stops all same-step co-targets; this
+>    supersedes that for passers and promotes CL1 from PROPOSED-deferred); rule 3 — an ender
+>    rests, a passer continues, and **the ender takes the pad even if the passer crossed
+>    earlier in the step clock**; and a **same-step simultaneous entry claims no pad** (today
+>    the tie falls to event order). 2-cycle swap block unchanged. Clashes are per-phase.
+> 2. **`BODY-CLICK` (client).** Clicking a unit's body selects that unit's square (chase: that
+>    unit) — raycast unit meshes before the ground plane; visible units only, so fog leaks
+>    nothing. Rules Builder OQ 2026-09-08 #2.
+> 3. **The `BASIC-*` engine knobs** for unique auto attacks, smallest first: `BASIC-AXIS`
+>    (`axisBonus` on cone — Bastion), `BASIC-BEAM` (`beamWidth` constant half-width — Aegis),
+>    `BASIC-INNER` (`innerRadius`/`innerAmount` on circle — Cinder), `BASIC-MODES` (two
+>    aim-time profiles — Kestrel; the largest, UI included). Each ships with its one character
+>    data edit. Lockwood wall-bounce and Helios chain are explicitly **not adopted**.
+> 4. **Shipped in data this PR, fold the records:** three redesigned autos (Lumen's
+>    damage+heal line via FF1 polarity; Thorn's lobbed circle; Ravok's self-circle whirl),
+>    the **melee pass** (Dagger Flurry, Crushing Slam, Whirling Cleave, Shield Bash, Shockwave
+>    — MELEE-COVER is no longer inert), **Thorn's snare `lifetime: 3`** (parity with the
+>    Overwatch tune), and the **shadow-row pad moves** (no pad on a square whose y+1 neighbour
+>    is wall/cover — rules Builder OQ 2026-09-08 #1; renderer lever explicitly rejected). The
+>    shadow-row rule wants a content-test guard next to PADS-SPREAD (Builder).
+>
+> Playtest flags: Thorn's no-cooldown lob over walls (range 5 → 4 if oppressive); rule 1
+> making mid-board crossings safer.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
