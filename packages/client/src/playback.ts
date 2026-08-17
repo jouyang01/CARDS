@@ -218,6 +218,11 @@ export interface PadView {
   pos: Vec2;
   type: PowerupType;
   armed: boolean;
+  /**
+   * PADS-LIGHTS: turns until this pad comes back, drawn as that many coloured
+   * lights on the tile. Zero on a live pad — a live pad shows its glyph.
+   */
+  lights: number;
 }
 
 /**
@@ -243,6 +248,37 @@ export function padViews(
     const armed = state.turn >= pad.firstTurn
       && (record === undefined || state.turn >= record.availableOnTurn)
       && !takenThisTurn.has(key);
-    return { pos: { x: pad.x, y: pad.y }, type: pad.type, armed };
+    return {
+      pos: { x: pad.x, y: pad.y },
+      type: pad.type,
+      armed,
+      lights: padLights(pad, state, record?.availableOnTurn, takenThisTurn.has(key)),
+    };
   });
+}
+
+/**
+ * PADS-LIGHTS — how many turns until this pad comes back.
+ *
+ * Owner Dev Note: *"Respawn Timer: 4 turns (tracked visually by four colored
+ * lights on the spawning pad)."* A dark pad told a player nothing about *when*,
+ * so contesting one was guesswork; the lights make the respawn a clock you can
+ * plan against, which is the whole point of a pad being on a timer.
+ *
+ * Zero when the pad is live (a live pad shows its glyph, not a countdown) and
+ * when it has not opened yet — a pad still waiting for `firstTurn` has never
+ * been taken, and counting down to its first appearance would read as "somebody
+ * grabbed this" on turn one.
+ */
+export function padLights(
+  pad: { x: number; y: number; firstTurn: number; everyTurns: number },
+  state: GameState,
+  availableOnTurn: number | undefined,
+  takenThisTurn: boolean,
+): number {
+  // Taken this very turn: the full countdown, before the record has ticked.
+  if (takenThisTurn) return pad.everyTurns;
+  if (availableOnTurn === undefined) return 0; // never taken
+  const left = availableOnTurn - state.turn;
+  return left > 0 ? Math.min(left, pad.everyTurns) : 0;
 }

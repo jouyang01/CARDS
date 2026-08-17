@@ -31,7 +31,7 @@ import {
 } from '@cards/engine';
 import { createRenderer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
-import { focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
+import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { type Cue } from './choreograph.js';
 import {
   IDLE,
@@ -146,12 +146,6 @@ const DASH_LINE = 0xffd23f;
 /** CHASE1's route + quarry ring: orange, distinct from move blue and dash yellow. */
 const CHASE_LINE = 0xff8a3d;
 
-/**
- * The single pacing constant: one beat of `choreograph`'s timeline in
- * milliseconds. Everything animated is a multiple of a beat, so playback speed
- * is this number and nothing else.
- */
-const MS_PER_BEAT = 460;
 /**
  * Title + status line, overlaid on the top-left of the canvas (UI-VIEWPORT).
  * The only chrome whose size is assumed rather than measured — it is a text

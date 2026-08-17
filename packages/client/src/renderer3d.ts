@@ -228,6 +228,11 @@ export interface RenderPad {
   pos: Vec2;
   type: PowerupType;
   armed: boolean;
+  /**
+   * PADS-LIGHTS: turns until respawn, drawn as that many lit pips along the
+   * pad's edge. Zero (or absent) draws none, which is what a live pad wants.
+   */
+  lights?: number;
 }
 
 /**
@@ -301,8 +306,14 @@ export interface RenderUnit {
  */
 const glyphTextures = new Map<string, CanvasTexture>();
 
-/** Texture resolution for one glyph. Drawn small, so this is generous. */
-const GLYPH_PX = 64;
+/**
+ * Texture resolution for one glyph.
+ *
+ * Raised with the on-screen size (STATUS-ICONS-SIZE): a bigger quad drawn from
+ * the same 64px texture is a bigger *blurry* icon, which is the complaint with
+ * extra steps.
+ */
+const GLYPH_PX = 128;
 
 function glyphTexture(pip: StatusPip): CanvasTexture | null {
   const ink = `#${pip.color.toString(16).padStart(6, '0')}`;
@@ -748,7 +759,10 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         new MeshBasicMaterial({ map: glyphTexture(pip), transparent: true }),
       );
       quad.name = pip.kind;
-      quad.position.set(offsets[i] ?? 0, 0, 0);
+      // STATUS-ICONS-SIZE: the strip wraps past six icons, so a slot carries a
+      // row offset as well as a column one.
+      const at = offsets[i] ?? { x: 0, y: 0 };
+      quad.position.set(at.x, at.y, 0);
       row.add(quad);
     });
   };
@@ -1062,6 +1076,29 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         plate.rotation.x = -Math.PI / 2;
         plate.position.copy(at).setY(PAD_LIFT);
         padLayer.add(plate);
+
+        // PADS-LIGHTS: a consumed pad wears one lit pip per turn until it comes
+        // back. A dark pad said nothing about *when*, so contesting one was
+        // guesswork; the lights turn the respawn into a clock you can plan
+        // against, which is the whole reason a pad is on a timer.
+        if (!pad.armed && (pad.lights ?? 0) > 0) {
+          const lights = pad.lights ?? 0;
+          const pitch = TILE * PAD_SIZE * 0.26;
+          for (let i = 0; i < lights; i++) {
+            const pip = new Mesh(
+              new PlaneGeometry(TILE * 0.11, TILE * 0.11),
+              new MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.92 }),
+            );
+            pip.rotation.x = -Math.PI / 2;
+            // Centred as a row along the pad's near edge, so four of them read
+            // as a countdown rather than as a second glyph.
+            pip.position.copy(at)
+              .setY(PAD_LIFT + 0.001)
+              .add(new Vector3((i - (lights - 1) / 2) * pitch, 0, TILE * PAD_SIZE * 0.34));
+            padLayer.add(pip);
+          }
+        }
+
         if (!pad.armed) continue;
         // An armed pad wears a plus. The plate alone is one more coloured tile
         // among many; the cross is what says "stand here and get something".

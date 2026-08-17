@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type UnitOrders } from '@cards/engine';
 import { createTurnPlayer, cuesOfPhase } from '../src/turn-player.js';
 import { playEvents, type ViewState } from '../src/playback.js';
+import { MS_PER_BEAT } from '../src/animate.js';
 
 /**
  * A3's required invariant: **skipping lands on a `ViewState` identical to
@@ -146,5 +147,29 @@ describe('A3: phase progression is driven by the caller, not by animation', () =
     const player = createTurnPlayer(prev, events);
     player.skip();
     expect(JSON.stringify(prev)).toBe(before);
+  });
+});
+
+/**
+ * ANIM-SLOW — owner Dev Note: *"The resolution animations are hard to tell
+ * what's going on. We should slow them down."*
+ *
+ * Four phases, up to eight units, and every knockback, heal and death land
+ * inside one resolution. The pacing is one constant, so this pins it — a
+ * "harmless" retune back toward the old speed is exactly the regression the
+ * note is about.
+ */
+describe('ANIM-SLOW: playback is paced to be read', () => {
+  it('a beat is long enough that a phase reads as its own event', () => {
+    expect(MS_PER_BEAT).toBeGreaterThanOrEqual(700);
+  });
+
+  it('but not so long that a quiet turn drags', () => {
+    // The escape hatch for a busy turn is Skip, not a crawl.
+    expect(MS_PER_BEAT).toBeLessThanOrEqual(1000);
+  });
+
+  it('it is one number, so playback speed has one place to change', () => {
+    expect(Number.isInteger(MS_PER_BEAT)).toBe(true);
   });
 });

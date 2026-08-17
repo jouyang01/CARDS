@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EffectKind, GameState, TurnEvent } from '@cards/engine';
-import { HARMFUL_PIPS, PIP_COLORS, PIP_GAP, PIP_ORDER, PIP_SIZE, pipOffsets, statusPips } from '../src/status-pips.js';
+import { HARMFUL_PIPS, PIP_COLORS, PIP_GAP, PIP_ORDER, PIP_ROW_MAX, PIP_SIZE, pipOffsets, statusPips } from '../src/status-pips.js';
 import { initView, playEvents } from '../src/playback.js';
 
 /**
@@ -60,28 +60,52 @@ describe('statusPips builds a stable row', () => {
   });
 });
 
-describe('the row is laid out centred, whatever its length', () => {
+describe('the strip is laid out centred, whatever its length', () => {
   it('centres on the unit — a single pip sits exactly on the axis', () => {
-    expect(pipOffsets(1)).toEqual([0]);
+    expect(pipOffsets(1)).toEqual([{ x: 0, y: -0 }]);
   });
 
   it('stays centred as pips are added', () => {
     for (const n of [2, 3, 5, PIP_ORDER.length]) {
-      const xs = pipOffsets(n);
-      expect(xs).toHaveLength(n);
-      expect(xs.reduce((a, b) => a + b, 0)).toBeCloseTo(0, 9);
+      const slots = pipOffsets(n);
+      expect(slots).toHaveLength(n);
+      // Every row is centred on its own, so the x's of a full row cancel; with
+      // a short second row they cancel per row rather than overall.
+      for (let row = 0; row * PIP_ROW_MAX < n; row++) {
+        const inRow = slots.slice(row * PIP_ROW_MAX, (row + 1) * PIP_ROW_MAX);
+        expect(inRow.reduce((a, b) => a + b.x, 0)).toBeCloseTo(0, 9);
+      }
     }
   });
 
-  it('spaces them by exactly one gap, edge to edge', () => {
-    const xs = pipOffsets(4);
-    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeCloseTo(PIP_SIZE + PIP_GAP, 9);
+  it('spaces them by exactly one gap, edge to edge, within a row', () => {
+    const slots = pipOffsets(4);
+    for (let i = 1; i < slots.length; i++) {
+      expect(slots[i]!.x - slots[i - 1]!.x).toBeCloseTo(PIP_SIZE + PIP_GAP, 9);
+    }
   });
 
-  it('a full row still fits over a unit body (0.55 tiles wide) plus a little', () => {
-    const xs = pipOffsets(PIP_ORDER.length);
-    const width = xs[xs.length - 1]! - xs[0]! + PIP_SIZE;
+  it('wraps past PIP_ROW_MAX rather than growing wider (STATUS-ICONS-SIZE)', () => {
+    // Wrapping is what buys the bigger icons: eleven across at this size would
+    // sprawl over two tiles and start labelling the neighbours.
+    const slots = pipOffsets(PIP_ROW_MAX + 1);
+    expect(slots[PIP_ROW_MAX]!.y, 'the seventh icon is on a new row').not.toBeCloseTo(slots[0]!.y, 9);
+    // Each row is centred on its *own* count, so a lone second-row icon sits on
+    // the axis rather than under the first row's left edge. A ragged left edge
+    // would read as a broken layout.
+    expect(slots[PIP_ROW_MAX]!.x).toBeCloseTo(0, 9);
+  });
+
+  it('a full strip still fits over a unit body (0.55 tiles wide) plus a little', () => {
+    const xs = pipOffsets(PIP_ORDER.length).map((p) => p.x);
+    const width = Math.max(...xs) - Math.min(...xs) + PIP_SIZE;
     expect(width).toBeLessThan(1.5); // never wider than a square and a half
+  });
+
+  it('and no more rows than it needs', () => {
+    const rows = new Set(pipOffsets(PIP_ORDER.length).map((p) => p.y.toFixed(6)));
+    expect(rows.size).toBe(Math.ceil(PIP_ORDER.length / PIP_ROW_MAX));
+    expect(new Set(pipOffsets(3).map((p) => p.y.toFixed(6))).size).toBe(1);
   });
 
   it('is empty for no pips rather than throwing on the centring maths', () => {
