@@ -290,6 +290,60 @@ export function coneSquares(board: Board, from: Vec2, dir: Vec2, range: number):
   return out;
 }
 
+/**
+ * BASIC-AXIS — is the tile at offset `(dx, dy)` on the wedge's central line?
+ *
+ * `b` is the same perpendicular offset `wedgeCovers` already measures, in units
+ * of |dir|; the tile is on the axis when its centre is within half a tile of the
+ * line, i.e. `|b| / |dir| <= 1/2`. Squared and cross-multiplied that is
+ * `4b² <= |dir|²` — integers throughout, no division and no trig, which is the
+ * whole reason the axis was worth exposing rather than approximating.
+ */
+export function onConeAxis(dir: Vec2, dx: number, dy: number): boolean {
+  const b = dir.x * dy - dir.y * dx;
+  return 4 * b * b <= dir.x * dir.x + dir.y * dir.y;
+}
+
+/**
+ * The direction a `line`/`cone` points. A quantized step (AIM2) wins when the
+ * order carries one; otherwise the direction is derived from caster→target, so
+ * click-to-aim orders keep working exactly as before.
+ */
+function aimDirection(
+  casterPos: Vec2,
+  target: Vec2 | undefined,
+  aimStep: number | undefined,
+  fallback: (from: Vec2, to: Vec2) => Vec2,
+): Vec2 | undefined {
+  if (isAimStep(aimStep)) return stepToVector(aimStep);
+  if (target === undefined) return undefined;
+  const v = fallback(casterPos, target);
+  return v.x === 0 && v.y === 0 ? undefined : v;
+}
+
+/**
+ * BASIC-AXIS — the covered tiles that lie on a cone's central line.
+ *
+ * A sibling of {@link expandShape} rather than a second return value from it,
+ * because only one shape and only one authored field ever asks: everything else
+ * gets an empty list and pays a single comparison for it. Derived from the same
+ * direction and the same wedge, so the axis can never name a tile the area does
+ * not contain.
+ */
+export function axisSquares(
+  board: Board,
+  ability: Pick<AbilityDef, 'shape' | 'range' | 'axisBonus'>,
+  casterPos: Vec2,
+  aim: readonly Vec2[],
+  aimStep?: number,
+): Vec2[] {
+  if (ability.shape !== 'cone' || ability.axisBonus === undefined) return [];
+  const dir = aimDirection(casterPos, aim[0], aimStep, dominantCardinal);
+  if (dir === undefined) return [];
+  return coneSquares(board, casterPos, dir, ability.range)
+    .filter((p) => onConeAxis(dir, p.x - casterPos.x, p.y - casterPos.y));
+}
+
 /** Sum of two squares — the one place this module spells out |v|². */
 function sqLen(x: number, y: number): number {
   return x * x + y * y;
@@ -394,17 +448,8 @@ export function expandShape(
   aimStep?: number,
 ): Vec2[] {
   const target = aim[0];
-  /**
-   * The direction a `line`/`cone` points. A quantized step (AIM2) wins when the
-   * order carries one; otherwise the direction is derived from caster→target, so
-   * click-to-aim orders keep working exactly as before.
-   */
-  const aimVector = (fallback: (from: Vec2, to: Vec2) => Vec2): Vec2 | undefined => {
-    if (isAimStep(aimStep)) return stepToVector(aimStep);
-    if (target === undefined) return undefined;
-    const v = fallback(casterPos, target);
-    return v.x === 0 && v.y === 0 ? undefined : v;
-  };
+  const aimVector = (fallback: (from: Vec2, to: Vec2) => Vec2): Vec2 | undefined =>
+    aimDirection(casterPos, target, aimStep, fallback);
   switch (ability.shape) {
     case 'self':
       return [{ x: casterPos.x, y: casterPos.y }];

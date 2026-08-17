@@ -18,11 +18,12 @@ import type { AbilityDef, CharacterDef, GameState, MapDef, UnitOrders } from '..
  * in brush could take a hit, fire a catalyst, or land a pure debuff and keep its
  * concealment into the next turn. That is the half of the rule this adds.
  *
- * **Additive, and the tests below are as much about what did NOT change.** The
- * existing reveal-on-dealing-damage stays unconditional: narrowing it to
- * concealed units only would let a unit shoot from open ground on one turn and
- * disappear into brush on the next for free, which is the opposite of what a
- * reveal mechanic is for.
+ * **Since REVEAL-FIX there is only this rule.** Reveal-on-dealing-damage used to
+ * be a second, unconditional one sitting beside it; the owner has ruled it out
+ * (`reveal-fix.test.ts` owns that reversal), so *every* path to a reveal now
+ * asks the same question — were you concealed when you did it? The "what must
+ * NOT change" block below is what survived that narrowing: a shot out of brush
+ * is still a shot out of brush.
  */
 
 const POOL = buildCatalystPool(
@@ -129,11 +130,26 @@ describe('CAMO-REVEAL: acting in the open arms nothing new', () => {
 });
 
 describe('CAMO-REVEAL: what must NOT change', () => {
-  it('an open unit that DEALS damage is still revealed — the regression guard', () => {
-    // The one the spec was corrected over. Narrowing reveal-on-damage to
-    // concealed units would let a unit shoot from open ground on one turn and
-    // vanish into brush on the next with no penalty, gutting the mechanic.
+  it('REVEAL-FIX: an open unit that DEALS damage gains no reveal either', () => {
+    // Flipped by REVEAL-FIX, owner-directed and ruled in edge-cases. This
+    // guarded the 2026-08-31 correction — reveal on damage whether hidden or
+    // not — on the argument that narrowing it would let a unit shoot from open
+    // ground and vanish into brush next turn for free. The owner has ruled the
+    // other way: *"when a character attacks from an area where enemies lack
+    // line of sight or vision, attack and movement remain completely hidden."*
+    // The debuff was invisible until NAMEPLATE-LAYOUT drew it; now it reads as
+    // a punishment for attacking from a square that was never hiding anyone.
+    //
+    // The mechanic it was protecting is intact and pinned right below: the shot
+    // still has to *come from* concealment to be given away, which is the case
+    // the reveal was ever about.
     const { state } = run(board(IN_OPEN), [{ unitId: 'a', ability: { abilityId: 'shot', target: AIM } }]);
+    expect(unit(state, 'e').hp).toBeLessThan(100); // it really did land
+    expect(revealed(state, 'a')).toBe(false);
+  });
+
+  it('…while the same shot from BRUSH still is — the rule that survived', () => {
+    const { state } = run(board(), [{ unitId: 'a', ability: { abilityId: 'shot', target: AIM } }]);
     expect(unit(state, 'e').hp).toBeLessThan(100);
     expect(revealed(state, 'a')).toBe(true);
   });

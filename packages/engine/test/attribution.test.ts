@@ -119,8 +119,8 @@ const support: CharacterDef = {
   ultimate: ability({ id: 'sup-ult', shape: 'circle', range: 8, radius: 2, effects: [{ kind: 'heal', amount: 40 }] }),
 };
 const bothRoster: Roster = { 'test-char': char, 'support-char': support };
-const runBoth = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
-  resolveTurn(s, OPEN(), [{ team: 0 as TeamId, units: u0 }, { team: 1 as TeamId, units: u1 }], bothRoster);
+const runBoth = (s: GameState, u0: UnitOrders[], u1: UnitOrders[], map = OPEN()) =>
+  resolveTurn(s, map, [{ team: 0 as TeamId, units: u0 }, { team: 1 as TeamId, units: u1 }], bothRoster);
 const supportUnit = (unitId: string, owner: TeamId, pos: { x: number; y: number }, over: Partial<GameState['units'][number]> = {}) =>
   ({ ...makeUnit(unitId, owner, pos, over), characterId: 'support-char' });
 const heals = (events: TurnEvent[]) => events.filter((e) => e.type === 'heal') as Extract<TurnEvent, { type: 'heal' }>[];
@@ -175,10 +175,24 @@ describe('A0-heal: heal and statusApplied events carry their source', () => {
     expect(root).toMatchObject({ sourceUnitId: 'placer', abilityId: 'snare' });
   });
 
-  it('the reveal a damaging attack inflicts on YOU names the attack that did it', () => {
+  it('REVEAL-FIX: attacking from OPEN ground inflicts no reveal to attribute', () => {
+    // Flipped by REVEAL-FIX (owner-directed, edge-cases). This used to assert
+    // the attribution on an unconditional self-reveal; there is now no self-
+    // reveal to attribute, because the attacker was never hidden. Kept as the
+    // negative so the attribution suite still owns the case.
     const u = makeUnit('u', 0, { x: 0, y: 4 });
     const e = makeUnit('e', 1, { x: 3, y: 4 });
     const { events } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'shoot', target: [{ x: 8, y: 4 }] } }], []);
+    expect(statuses(events).find((s) => s.unitId === 'u' && s.status === 'reveal')).toBeUndefined();
+  });
+
+  it('…but a reveal earned from BRUSH still names the attack that did it', () => {
+    // The half of the old case that survives: when the gate does fire, the
+    // event still has to say which attack gave the position away.
+    const BRUSHY = makeMap(['.........', '.........', '.........', '.........', 'b........', '.........', '.........', '.........', '.........']);
+    const u = makeUnit('u', 0, { x: 0, y: 4 });
+    const e = makeUnit('e', 1, { x: 3, y: 4 });
+    const { events } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'shoot', target: [{ x: 8, y: 4 }] } }], [], BRUSHY);
     const reveal = statuses(events).find((s) => s.unitId === 'u' && s.status === 'reveal');
     expect(reveal).toMatchObject({ sourceUnitId: 'u', abilityId: 'shoot' });
   });
@@ -205,12 +219,16 @@ describe('A0-heal: heal and statusApplied events carry their source', () => {
     const shooter = makeUnit('shooter', 0, { x: 0, y: 6 });
     const enemy = makeUnit('enemy', 1, { x: 3, y: 6 });
     const hexer = supportUnit('hexer', 1, { x: 6, y: 6 });
+    // The shooter fires out of brush, so REVEAL-FIX's gate actually opens and
+    // the turn still carries a benefit, a debuff and a reveal. On open ground
+    // there would be no self-reveal to check the attribution of at all.
+    const BRUSHY = makeMap(['.........', '.........', '.........', '.........', '.........', '.........', 'b........', '.........', '.........']);
     const { events } = runBoth(makeState([hurt, medic, shooter, enemy, hexer]), [
       { unitId: 'medic', ability: { abilityId: 'mend', target: [{ x: 5, y: 4 }] } },
       { unitId: 'shooter', ability: { abilityId: 'shoot', target: [{ x: 8, y: 6 }] } },
     ], [
       { unitId: 'hexer', ability: { abilityId: 'hex', target: [{ x: 3, y: 6 }] } },
-    ]);
+    ], BRUSHY);
     const attributed = [...heals(events), ...statuses(events)];
     expect(heals(events).length).toBeGreaterThan(0); // a benefit...
     expect(statuses(events).length).toBeGreaterThan(1); // ...a debuff, and a reveal

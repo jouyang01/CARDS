@@ -51,17 +51,29 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     expect(validateAbility(bad, 'x').join(' ')).toMatch(/effects\[0\]: unknown key "ammount"/);
   });
 
-  it('accepts every legal key at once', () => {
-    // The whole surface in one object, so a key that is legal but omitted from
-    // the runtime list fails here rather than in someone's content.
-    const everything: AbilityDef = {
+  it('accepts every legal key, across the shapes that may carry them', () => {
+    // The whole surface, so a key that is legal but omitted from the runtime
+    // list fails here rather than in someone's content.
+    //
+    // Two objects rather than one, because some keys are **shape-exclusive**:
+    // `chargeHits` is only valid on a `path` and `axisBonus` only on a `cone`,
+    // each for the same reason — a balance field the engine cannot read on that
+    // shape is a number nobody can find. The coverage assertion is over the
+    // union, so the guard is exactly as strong as it was.
+    const charge: AbilityDef = {
       id: 'x', name: 'X', phase: 'dash', shape: 'path', range: 4, radius: 1, cooldown: 2,
       energyGain: 0, delayTurns: 1, chargeHits: 'all', free: false, melee: false, oncePerMatch: false,
       impact: { origin: 1, destination: 2 },
       effects: [{ kind: 'damage', amount: 10, duration: 2 }], description: 'test',
     };
-    expect(validateAbility(everything, 'x')).toEqual([]);
-    expect(Object.keys(everything).sort()).toEqual([...ABILITY_KEYS].sort());
+    const wedge: AbilityDef = {
+      id: 'y', name: 'Y', phase: 'blast', shape: 'cone', range: 3, cooldown: 0, energyGain: 4,
+      melee: true, axisBonus: 8, effects: [{ kind: 'damage', amount: 10 }], description: 'test',
+    };
+    expect(validateAbility(charge, 'x')).toEqual([]);
+    expect(validateAbility(wedge, 'y')).toEqual([]);
+    expect([...new Set([...Object.keys(charge), ...Object.keys(wedge)])].sort())
+      .toEqual([...ABILITY_KEYS].sort());
   });
 
   it('rejecting unknown keys did not break rejecting bad VALUES', () => {

@@ -18,8 +18,9 @@
           "amount": 24
         }
       ],
-      "description": "Short cone smash. Melee range \u2014 ignores cover.",
-      "melee": true
+      "description": "Short cone smash, heaviest straight ahead. Melee range — ignores cover.",
+      "melee": true,
+      "axisBonus": 8
     },
     {
       "id": "bulwark",

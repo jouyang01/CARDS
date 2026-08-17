@@ -288,17 +288,21 @@ describe('CHASE1: the other three ruled cases', () => {
   it('chase vs chase converges — both read the same post-Move snapshot', () => {
     // A chases B while B chases A. Neither may see the other mid-chase, or the
     // second to resolve would be chasing a moving target and the result would
-    // depend on visiting order. They meet in the middle and stop adjacent.
+    // depend on visiting order — which is what this case is really about, and
+    // which is unchanged.
     const s = makeState([
       makeUnit('a', 0, { x: 4, y: 10 }, { characterId: 'test-char' }),
       makeUnit('e', 1, { x: 10, y: 10 }, { characterId: 'test-char' }),
     ]);
     const { state } = run(s, chase('a', 'e'), chase('e', 'a'));
-    // 6 apart, budget 4 each, so both aim for the square next to the other and
-    // meet at (7,10) on the same step — a contest, which Collisions resolves by
-    // letting neither in. They converge and stop one square short of touching.
-    expect(at(state, 'a')).toEqual({ x: 6, y: 10 });
-    expect(at(state, 'e')).toEqual({ x: 8, y: 10 });
+    // Where they *end* moved with CLASH-AR, and the ruling named this exact
+    // consequence: crossing paths are safer now. Each aims at the square beside
+    // the other's frozen position — (9,10) and (5,10) — and CHASE-SPRINT pays
+    // for the whole run. They meet on (7,10) mid-path, and because both are
+    // merely passing through, both continue and swap sides. Under the old
+    // stops-everybody rule they gridlocked there at (6,10)/(8,10).
+    expect(at(state, 'a')).toEqual({ x: 9, y: 10 });
+    expect(at(state, 'e')).toEqual({ x: 5, y: 10 });
   });
 
   it('a chase-vs-chase is symmetric — swapping the teams mirrors the result', () => {

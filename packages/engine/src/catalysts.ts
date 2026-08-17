@@ -35,6 +35,49 @@ export const CATALYST_PHASES: readonly AbilityPhase[] = ['prep', 'dash', 'blast'
  */
 export const DEFAULT_CATALYSTS: readonly string[] = ['second_wind', 'shift', 'adrenaline'];
 
+/**
+ * CAT-SELECT — the triad one character carries, as the lobby picks it.
+ *
+ * A plain array of ids, in no particular order: the *phases* are what has to be
+ * distinct, and requiring a fixed order would make a lobby that lists Blast
+ * first send something the engine rejected for a reason nobody could see.
+ */
+export type CatalystTriad = readonly string[];
+
+/**
+ * Is this a legal triad? Errors as text, like every other validator here.
+ *
+ * The rule is one catalyst per phase (CAT1) — three ids, each in the pool, and
+ * one each of Prep, Dash and Blast. That is what the resolver assumes when it
+ * looks up "this unit's Dash catalyst", and a two-Dash triad would leave a unit
+ * with a phase it can never act in and another it could act in twice.
+ *
+ * Lives here rather than in `validate.ts` (where the backlog put it) because the
+ * check needs the pool to know an id's phase, and `catalysts.ts` already imports
+ * `validate.ts` — the other direction would be a cycle. Same shape, one file
+ * across.
+ */
+export function validateCatalystTriad(triad: CatalystTriad, pool: CatalystPool, path = 'triad'): string[] {
+  const errs: string[] = [];
+  if (triad.length !== CATALYST_PHASES.length) {
+    errs.push(`${path}: a triad is ${CATALYST_PHASES.length} catalysts, got ${triad.length}`);
+  }
+  const phases = new Set<string>();
+  for (const id of triad) {
+    const def = pool[id];
+    if (def === undefined) {
+      errs.push(`${path}: "${id}" is not in the catalyst pool`);
+      continue;
+    }
+    if (phases.has(def.phase)) errs.push(`${path}: two ${def.phase} catalysts ("${id}") — one per phase`);
+    phases.add(def.phase);
+  }
+  for (const phase of CATALYST_PHASES) {
+    if (!phases.has(phase)) errs.push(`${path}: no ${phase} catalyst`);
+  }
+  return errs;
+}
+
 /** Flatten the per-phase pool into the id→def index the resolver looks up. */
 export function buildCatalystPool(data: CatalystData): CatalystPool {
   const pool: Record<string, AbilityDef> = {};

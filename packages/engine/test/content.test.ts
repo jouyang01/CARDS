@@ -122,6 +122,22 @@ describe('map content', () => {
       }
     });
 
+    it(`${m.id} keeps every pad out of the camera's shadow (SHADOW-ROW)`, () => {
+      // A pad is a flat mark on the floor and the board is drawn from a pitched
+      // camera, so a raised block hides the ground one row *behind* it — the
+      // square at `y - 1`, north of the block. duel-arena shipped its Health
+      // pads at `y = 3`, immediately north of the wall line at `y = 4`, and they
+      // composited **zero** pixels: a contested prize nobody could see (Builder
+      // OQ 2026-09-08 #1). The pads were moved in data; this is the guard that
+      // was owed with the move.
+      //
+      // Stated as a property of the *map* rather than of the renderer because
+      // the alternative lever was rejected — drawing a pad over the block that
+      // occludes it would be a mark that lies about where it is. Placement is
+      // the Designer's, and this is the rule placement has to satisfy.
+      expect(padsInShadow(m)).toEqual([]);
+    });
+
     it(`${m.id} keeps its terrain runs under the caps (MAP-CAPS)`, () => {
       for (const [kind, cap] of Object.entries(TERRAIN_RUN_CAPS) as [TerrainKey, number][]) {
         for (const [axis, run] of Object.entries(longestRuns(m, kind))) {
@@ -165,6 +181,57 @@ export function longestRuns(m: MapDef, kind: TerrainKey): { row: number; column:
     column: scan(m.width, m.height, (x, y) => `${x},${y}`),
   };
 }
+
+/**
+ * SHADOW-ROW — pads whose south neighbour is a raised block, and which the
+ * camera therefore hides.
+ *
+ * Returns the offenders rather than a boolean so a failure names the pad and the
+ * block that swallowed it; a bare `false` on a map with six pads is a bug report
+ * you then have to go and write yourself.
+ */
+function padsInShadow(m: MapDef): string[] {
+  const blocked = new Set([...m.walls, ...m.cover].map((p) => `${p.x},${p.y}`));
+  return (m.powerups ?? [])
+    .filter((pad) => blocked.has(`${pad.x},${pad.y + 1}`))
+    .map((pad) => `${pad.type} pad (${pad.x},${pad.y}) behind the block at (${pad.x},${pad.y + 1})`);
+}
+
+describe('SHADOW-ROW: the shadow guard actually catches a bad map', () => {
+  // A guard on the guard, for the same reason MAP-CAPS has one: both shipped
+  // maps pass, so the assertion above could be vacuous and nobody would find out
+  // until a map shipped an invisible pad again.
+  const withBlockAt = (kind: 'walls' | 'cover', at: { x: number; y: number }): MapDef => ({
+    id: 'bad', name: 'bad', width: 12, height: 12, walls: [], cover: [], brush: [],
+    spawns: [[{ x: 0, y: 0 }], [{ x: 11, y: 0 }]],
+    powerups: [{ x: 5, y: 5, type: 'might', firstTurn: 2, everyTurns: 4 }],
+    [kind]: [at],
+  } as MapDef);
+
+  it('catches a pad tucked north of a WALL', () => {
+    expect(padsInShadow(withBlockAt('walls', { x: 5, y: 6 }))).toHaveLength(1);
+  });
+
+  it('catches a pad tucked north of COVER — same silhouette, same shadow', () => {
+    expect(padsInShadow(withBlockAt('cover', { x: 5, y: 6 }))).toHaveLength(1);
+  });
+
+  it('and names the pad it caught, so a failure reads as a bug report', () => {
+    expect(padsInShadow(withBlockAt('walls', { x: 5, y: 6 }))[0]).toContain('(5,5)');
+  });
+
+  it('the block has to be directly SOUTH — the shadow falls one way', () => {
+    // North, east and west of a pad are all fine: the camera looks down the
+    // +y axis, so only the row below a pad can stand in front of it.
+    for (const at of [{ x: 5, y: 4 }, { x: 4, y: 5 }, { x: 6, y: 5 }, { x: 5, y: 7 }]) {
+      expect(padsInShadow(withBlockAt('walls', at)), `block at (${at.x},${at.y})`).toEqual([]);
+    }
+  });
+
+  it('a map with no pads at all is not a violation', () => {
+    expect(padsInShadow({ ...withBlockAt('walls', { x: 5, y: 6 }), powerups: [] })).toEqual([]);
+  });
+});
 
 describe('MAP-CAPS: the run-cap guard actually catches a bad map', () => {
   // A guard on the guard. Both shipped maps pass, so without a deliberately
