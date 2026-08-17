@@ -2032,7 +2032,9 @@ function destroyDecoysUnderEnemies(draft: GameState, units: readonly UnitState[]
  * it terminates. A square another unit has since taken is skipped, which is the
  * chain case: two blocked passers each fall back one.
  */
-function bounceOffOccupied(draft: GameState, m: Mover, step: number, events: TurnEvent[]): void {
+function bounceOffOccupied(
+  draft: GameState, movers: readonly Mover[], m: Mover, step: number, events: TurnEvent[],
+): void {
   const sharing = (p: Vec2): boolean =>
     draft.units.some((u) => u.alive && u.unitId !== m.unit.unitId && vecEq(u.pos, p));
   if (!sharing(m.unit.pos)) return; // resting alone — the ordinary case, nothing to undo
@@ -2054,9 +2056,39 @@ function bounceOffOccupied(draft: GameState, m: Mover, step: number, events: Tur
     events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
     return;
   }
-  // Every square it covered is now somebody else's rest. Leaving it put is the
-  // only move left — it cannot walk through them — and the case is flagged
-  // rather than resolved by inventing a rule (Open Questions 2026-09-10).
+  // CLASH-CONGA: every square it covered is somebody else's rest — a conga line
+  // — so there is nothing to bounce *to*. The move is cancelled instead.
+  cancelMove(movers, m, events);
+}
+
+/**
+ * CLASH-CONGA — send a mover back to the square it started the phase on, and
+ * anybody squatting there after it.
+ *
+ * The last resort under CLASH-CORNER's bounce: when a wedged passer finds every
+ * square on its own path taken as well, walking back is not available and
+ * standing still would stack. Cancelling is, because **origins are pairwise
+ * distinct** — two units cannot have begun the phase on one square — so a board
+ * where everyone is home is collision-free by construction.
+ *
+ * The cascade terminates for the same reason. Each call sends one more unit to
+ * its own origin and a unit already home returns immediately, so at worst every
+ * mover is cancelled once. A unit standing on somebody else's origin is by
+ * definition not on its own, so each step of the chain finds a fresh unit.
+ *
+ * Only movers in this phase's own set are cancellable, and that is enough: a
+ * mover cannot come to rest on a *chaser's* origin (the chaser was a stationary
+ * body while the movers ran, so the occupancy check refused it), and vice versa.
+ */
+function cancelMove(movers: readonly Mover[], m: Mover, events: TurnEvent[]): void {
+  m.halted = true;
+  if (vecEq(m.unit.pos, m.origin)) return; // already home — nothing to undo
+  const from = m.unit.pos;
+  m.unit.pos = { x: m.origin.x, y: m.origin.y };
+  events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
+  // Whoever walked onto the square this unit just reclaimed goes home too.
+  const squatter = movers.find((x) => x !== m && x.unit.alive && vecEq(x.unit.pos, m.origin));
+  if (squatter !== undefined) cancelMove(movers, squatter, events);
 }
 
 /**
@@ -2159,7 +2191,7 @@ function stepMovers(
       if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died → path discarded
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
-      bounceOffOccupied(draft, m, step, events);
+      bounceOffOccupied(draft, movers, m, step, events);
     }
   }
 

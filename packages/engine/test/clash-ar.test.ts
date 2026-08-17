@@ -363,3 +363,92 @@ describe('CLASH-CORNER: a blocked passer never rests on an occupied square', () 
     expect(new Set(rests(state)).size).toBe(rests(state).length);
   });
 });
+
+/**
+ * CLASH-CONGA — the last resort under CLASH-CORNER's bounce.
+ *
+ * The bounce walks a wedged passer back along its own path. A conga line takes
+ * that away: every square it covered is somebody else's rest, so there is
+ * nowhere to step back to and standing still would stack. The ruling cancels the
+ * move instead — back to the phase-start origin, which is safe because two units
+ * cannot have begun the phase on one square.
+ */
+describe('CLASH-CONGA: with nowhere to bounce, the move is cancelled', () => {
+  const rests = (s: GameState): string[] =>
+    s.units.filter((u) => u.alive).map((u) => `${u.pos.x},${u.pos.y}`);
+
+  it('nobody is ever stacked, however tightly the movers are packed', () => {
+    // Four units on one row walking east into a stationary wall of a body, with
+    // an ender settling onto the row from the column. Whatever the clock does
+    // with them, the invariant is the invariant.
+    const s = makeState([
+      makeUnit('a', 0, { x: 2, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('c', 0, { x: 3, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('d', 0, { x: 4, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('b', 0, { x: 7, y: X.y }, { characterId: 'test-char' }), // the wall
+      makeUnit('e', 1, { x: X.x, y: 2 }, { characterId: 'test-char' }),
+    ]);
+    const { state } = run(
+      s,
+      [
+        { unitId: 'a', sprint: true, movePath: east(2, 9) },
+        { unitId: 'c', sprint: true, movePath: east(3, 9) },
+        { unitId: 'd', sprint: true, movePath: east(4, 9) },
+      ],
+      [{ unitId: 'e', movePath: south(2, 5) }],
+      BARE,
+    );
+    expect(new Set(rests(state)).size, 'no two living units on one square').toBe(rests(state).length);
+  });
+
+  it('a cancelled mover is back on the square it started the phase on', () => {
+    // The cancel is not "somewhere safe" — it is specifically home, which is
+    // what makes the cascade collision-free rather than merely lucky.
+    const s = makeState([
+      makeUnit('a', 0, { x: 2, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('c', 0, { x: 3, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('b', 0, { x: 6, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: X.x, y: 3 }, { characterId: 'test-char' }),
+    ]);
+    const { state } = run(
+      s,
+      [
+        { unitId: 'a', sprint: true, movePath: east(2, 8) },
+        { unitId: 'c', sprint: true, movePath: east(3, 8) },
+      ],
+      [{ unitId: 'e', movePath: south(3, 5) }],
+      BARE,
+    );
+    // Everyone is somewhere legal, and anybody who could not find a bounce is
+    // on their own starting square rather than wedged onto a neighbour.
+    expect(new Set(rests(state)).size).toBe(rests(state).length);
+    for (const [id, home] of [['a', 2], ['c', 3]] as const) {
+      const p = at(state, id);
+      const cancelled = p.x === home && p.y === X.y;
+      const moved = p.x > home;
+      expect(cancelled || moved, `${id} either advanced or went home`).toBe(true);
+    }
+  });
+
+  it('the ender that caused it still keeps its square', () => {
+    // The cascade only ever touches movers that could not resolve; the unit
+    // whose rest started the pile-up is not displaced by it.
+    const s = makeState([
+      makeUnit('a', 0, { x: 3, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('c', 0, { x: 2, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('b', 0, { x: 6, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: X.x, y: 3 }, { characterId: 'test-char' }),
+    ]);
+    const { state } = run(
+      s,
+      [
+        { unitId: 'a', sprint: true, movePath: east(3, 8) },
+        { unitId: 'c', sprint: true, movePath: east(2, 8) },
+      ],
+      [{ unitId: 'e', movePath: south(3, 5) }],
+      BARE,
+    );
+    expect(at(state, 'e'), 'the ender rested where rule 3 says it does').toEqual(X);
+    expect(at(state, 'b'), 'and the stationary body never moved').toEqual({ x: 6, y: X.y });
+  });
+});
