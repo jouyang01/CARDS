@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MOVE_RANGE, VISION_RANGE } from '../src/constants.js';
+import { MOVE_RANGE, SPRINT_RANGE, VISION_RANGE } from '../src/constants.js';
 import { buildCatalystPool, type CatalystData } from '../src/catalysts.js';
 import { resolveTurn, type Roster } from '../src/resolve.js';
 import { makeMap, makeState, makeUnit } from './helpers.js';
@@ -77,11 +77,25 @@ describe('CHASE1: a chase closes on where the target FINISHED moving', () => {
     // The point of the whole feature: the target moves 3 further away during
     // this same turn, and the chase still ends up adjacent to it. A move order
     // written at plan time could not have known where to aim.
+    //
+    // **Flipped by CHASE-FOLLOW**, and this case is the bug report. It used to
+    // stop at (9,10) — which reads like "5 → 9 on a MOVE_RANGE budget" and is
+    // not: 9 is the *last-known square*, and the chase halted there because it
+    // asked "can I see it?" once, from (5,10), where the answer was no. Walking
+    // even one square east restores sight, and the chaser had sprint budget in
+    // hand. Now the question is asked again on every step, so it trails the
+    // target all the way in.
     const s = board();
-    const { state } = run(s, chase('a', 'e'), [{ unitId: 'e', movePath: [{ x: 10, y: 10 }, { x: 11, y: 10 }, { x: 12, y: 10 }] }]);
+    const { state, events } = run(s, chase('a', 'e'), [{ unitId: 'e', movePath: [{ x: 10, y: 10 }, { x: 11, y: 10 }, { x: 12, y: 10 }] }]);
     expect(at(state, 'e')).toEqual({ x: 12, y: 10 });
-    // 5 → 9 on a MOVE_RANGE budget, stopping short of the occupied square.
-    expect(at(state, 'a')).toEqual({ x: 5 + MOVE_RANGE, y: 10 });
+    expect(at(state, 'a'), 'ends adjacent to the target, not on the memory of it').toEqual({ x: 11, y: 10 });
+    // …and says so: the pursuit it reports is the one it actually finished.
+    expect(events).toContainEqual({
+      type: 'chaseResolved', unitId: 'a', targetUnitId: 'e', to: { x: 12, y: 10 }, seen: true,
+    });
+    // Guard on the guard: without CHASE-SPRINT's budget this would be a
+    // different test, and the old expectation would coincidentally still pass.
+    expect(SPRINT_RANGE).toBeGreaterThan(MOVE_RANGE);
   });
 
   it('stops short of the target rather than trying to stand on it', () => {
@@ -208,6 +222,46 @@ describe('CHASE1: you cannot chase a target you cannot see', () => {
     unit(s, 'a').pos = { x: 13, y: 10 };
     const { events } = run(s, chase('a', 'e'), idle, BRUSHY);
     expect(events.find((e) => e.type === 'chaseResolved')).toMatchObject({ seen: true, to: { x: 14, y: 10 } });
+  });
+
+  it('CHASE-FOLLOW: sight regained MID-chase re-points it and it keeps going', () => {
+    // The case the old code could not express, and the reason the fix exists.
+    // Fog by **distance** rather than brush, because that is the kind a chaser
+    // can walk out of: the target is beyond vision range from where the chaser
+    // stands, so the chase legitimately sets off for the remembered square —
+    // and a few steps east it comes back into range and the goal updates.
+    //
+    // Asking once meant that never happened: the chase committed to the memory
+    // at (8,10) and stopped there holding four squares of unspent budget.
+    const s = makeState([
+      makeUnit('a', 0, { x: 4, y: 10 }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: 8, y: 10 }, { characterId: 'test-char' }),
+    ]);
+    const seen = run(s, idle, idle); // turn 1: four apart, in plain sight
+    expect(known(seen.state, 0, 'e')?.pos).toEqual({ x: 8, y: 10 });
+
+    // Turn 2: the target runs four east, to eight away — past vision range.
+    const ran = run(seen.state, chase('a', 'e'), [{
+      unitId: 'e', movePath: [9, 10, 11, 12].map((x) => ({ x, y: 10 })),
+    }]);
+    expect(at(ran.state, 'e')).toEqual({ x: 12, y: 10 });
+    expect(VISION_RANGE, 'the premise: it really was out of sight at the start').toBeLessThan(8);
+
+    expect(at(ran.state, 'a'), 'ends adjacent to the target it re-acquired').toEqual({ x: 11, y: 10 });
+    expect(ran.events.find((e) => e.type === 'chaseResolved')).toMatchObject({ to: { x: 12, y: 10 }, seen: true });
+  });
+
+  it('…and sight that never comes back still stops the chase dead on the memory', () => {
+    // The line the re-evaluation must not cross. Brush conceals from every
+    // non-adjacent observer, so walking toward the memory buys nothing here:
+    // every step is taken toward (9,10) — a square team 0 was shown — and the
+    // chaser stops on it rather than drifting on toward the truth at (14,10).
+    // Re-asking the question must not turn into asking a different one.
+    const s = loseSight();
+    unit(s, 'a').pos = { x: 2, y: 10 }; // 7 to the memory, 12 to the truth
+    const { state, events } = run(s, chase('a', 'e'), idle, BRUSHY);
+    expect(at(state, 'a')).toEqual({ x: 9, y: 10 });
+    expect(events.find((e) => e.type === 'chaseResolved')).toMatchObject({ to: { x: 9, y: 10 }, seen: false });
   });
 
   it('the memory is per team — one side seeing does not brief the other', () => {

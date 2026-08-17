@@ -33,7 +33,8 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
  */
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
-  'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'oncePerMatch', 'impact',
+  'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'innerRadius', 'innerAmount',
+  'oncePerMatch', 'impact',
   'effects', 'description',
 ] as const;
 
@@ -82,6 +83,27 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   if (a.axisBonus !== undefined) {
     if (a.shape !== 'cone') errs.push(`${path}: axisBonus is only meaningful on a cone (shape is "${a.shape}")`);
     if (!isInt(a.axisBonus) || a.axisBonus < 1) errs.push(`${path}: axisBonus must be an integer >= 1 when present`);
+  }
+  // BASIC-INNER: a circle-only pair, and a pair — an inner radius with nothing
+  // to deal there, or an inner amount with no disc to deal it in, is a number
+  // the engine would silently ignore.
+  if (a.innerRadius !== undefined || a.innerAmount !== undefined) {
+    if (a.shape !== 'circle') errs.push(`${path}: innerRadius/innerAmount are only meaningful on a circle (shape is "${a.shape}")`);
+    if (a.innerRadius === undefined || a.innerAmount === undefined) {
+      errs.push(`${path}: innerRadius and innerAmount must be given together`);
+    }
+    if (a.innerRadius !== undefined && (!isInt(a.innerRadius) || a.innerRadius < 0)) {
+      errs.push(`${path}: innerRadius must be a non-negative integer`);
+    }
+    if (a.innerAmount !== undefined && (!isInt(a.innerAmount) || a.innerAmount < 1)) {
+      errs.push(`${path}: innerAmount must be an integer >= 1`);
+    }
+    // An inner disc as wide as the circle is the circle: the ring vanishes and
+    // the ability has two numbers for one footprint, which is a data mistake
+    // rather than a design.
+    if (isInt(a.innerRadius) && isInt(a.radius) && a.innerRadius >= a.radius) {
+      errs.push(`${path}: innerRadius (${a.innerRadius}) must be smaller than radius (${a.radius}) or there is no ring left`);
+    }
   }
   if (!isInt(a.cooldown) || a.cooldown < 0) errs.push(`${path}: cooldown must be a non-negative integer`);
   if (!isInt(a.energyGain) || a.energyGain < 0) errs.push(`${path}: energyGain must be a non-negative integer`);

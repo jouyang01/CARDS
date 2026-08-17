@@ -344,6 +344,27 @@ export function axisSquares(
     .filter((p) => onConeAxis(dir, p.x - casterPos.x, p.y - casterPos.y));
 }
 
+/**
+ * BASIC-INNER — the covered tiles inside a circle's inner disc.
+ *
+ * The same sibling arrangement {@link axisSquares} uses, and for the same
+ * reason: one shape and one authored pair ever ask, so everything else gets an
+ * empty list for the price of a comparison. Built from `circleSquares` at the
+ * smaller radius rather than by re-deriving a disc, so the inner tiles are a
+ * subset of the area by construction and CIRCLE-FIX's `r − ½` reading applies
+ * to both circles identically.
+ */
+export function innerSquares(
+  board: Board,
+  ability: Pick<AbilityDef, 'shape' | 'innerRadius' | 'innerAmount'>,
+  aim: readonly Vec2[],
+): Vec2[] {
+  if (ability.shape !== 'circle' || ability.innerRadius === undefined) return [];
+  const centre = aim[0];
+  if (centre === undefined) return [];
+  return circleSquares(board, centre, ability.innerRadius);
+}
+
 /** Sum of two squares — the one place this module spells out |v|². */
 function sqLen(x: number, y: number): number {
   return x * x + y * y;

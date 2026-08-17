@@ -15,7 +15,7 @@
 
 import type { AbilityDef, GameState, MapDef, UnitState, Vec2 } from '@cards/engine';
 import { movementBudget } from '@cards/engine';
-import { aimFor, pathTo, type OrderDraft } from './targeting.js';
+import { commitAim, pathTo, type OrderDraft } from './targeting.js';
 
 /**
  * What a board click will do. `idle` means the click does nothing to the board —
@@ -94,8 +94,23 @@ export const hoverMove = (current: Interaction, kind: 'move' | 'sprint' | undefi
  * The aim to PAINT right now: the hovered square's aim while the pointer is over
  * the board in aim mode, else whatever the draft has committed.
  *
- * Both branches ultimately come from `aimFor`, so a preview and the commit that
- * follows it can never describe different orders.
+ * **AIM-PREVIEW-RANGE.** Owner Dev Note: *"Blink and Intercept are both 'blink'
+ * dashes that appear to have no range limit. The range shown when mousing over
+ * the board should be locked to the effective range of the skill."* They were,
+ * and it was the preview lying rather than the ability misbehaving: this painted
+ * whatever square the pointer was over, so a range-4 Blink drew its landing
+ * marker and its yellow route ten squares away. AIM-RANGE had already taught the
+ * *click* to refuse that, so the ability was never castable there — but a player
+ * reads reach off the overlay, not off what happens when they click.
+ *
+ * So the hover branch goes through `commitAim`, the same gate the click uses,
+ * and paints nothing when it refuses. Both branches now come from one resolver
+ * rather than two, which is the stronger form of the promise this function
+ * already made: a preview and the commit that follows it cannot describe
+ * different orders, and cannot disagree about whether there is an order at all.
+ *
+ * A `line` or `cone` is unaffected — an aim past its range is still a legal
+ * *direction*, and the shape clips itself.
  */
 export function previewAim(
   map: MapDef,
@@ -106,7 +121,7 @@ export function previewAim(
   interaction: Interaction,
 ): { aim: Vec2[]; aimStep?: number } {
   if (ability !== undefined && interaction.mode === 'aim' && interaction.hover.square !== undefined) {
-    return aimFor(map, state, unit, ability, interaction.hover.square);
+    return commitAim(map, state, unit, ability, interaction.hover.square) ?? { aim: [] };
   }
   return { aim: draft.aim, aimStep: draft.aimStep };
 }
@@ -124,7 +139,8 @@ export function previewCatalystAim(
   interaction: Interaction,
 ): Vec2[] {
   if (def !== undefined && interaction.mode === 'catalyst' && interaction.hover.square !== undefined) {
-    return aimFor(map, state, unit, def, interaction.hover.square).aim;
+    // AIM-PREVIEW-RANGE, same gate: a Shift is a blink too.
+    return commitAim(map, state, unit, def, interaction.hover.square)?.aim ?? [];
   }
   return draft.catalystAim;
 }
@@ -142,7 +158,8 @@ export function previewFreeAim(
   interaction: Interaction,
 ): Vec2[] {
   if (def !== undefined && interaction.mode === 'free' && interaction.hover.square !== undefined) {
-    return aimFor(map, state, unit, def, interaction.hover.square).aim;
+    // AIM-PREVIEW-RANGE, same gate — a trap placed out of reach is not a plan.
+    return commitAim(map, state, unit, def, interaction.hover.square)?.aim ?? [];
   }
   return draft.freeAim;
 }

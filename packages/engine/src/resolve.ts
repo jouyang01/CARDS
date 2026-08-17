@@ -50,9 +50,9 @@ import {
 import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
-import { aimInRange, axisSquares, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
+import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
-import { buildVision, teamCanSee } from './vision.js';
+import { buildVision, teamCanSee, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
@@ -107,6 +107,12 @@ interface PlannedAbility {
    * later from a post-Dash position would name tiles the area does not contain.
    */
   axis: Vec2[];
+  /**
+   * BASIC-INNER — the covered tiles inside a circle's inner disc, empty for
+   * every other shape and for a circle without the knob. Computed here beside
+   * the area for the same anchoring reason the axis is.
+   */
+  inner: Vec2[];
   isUlt: boolean;
 }
 
@@ -471,6 +477,7 @@ function planCatalyst(
     def, aim, isUlt: false,
     area: expandShape(board, def, unit.pos, aim, aimStep),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
+    inner: innerSquares(board, def, aim),
   };
 }
 
@@ -486,7 +493,10 @@ function planCatalyst(
  * nine of the shipped catalysts fall out of those three rules, and so will any
  * the Designer adds, because none of them needs a new `EFFECT_KIND`.
  */
-function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: PlannedAbility, events: TurnEvent[]): void {
+function fireCatalyst(
+  draft: GameState, board: Board, unit: UnitState, c: PlannedAbility, events: TurnEvent[],
+  contested?: ReadonlySet<string>,
+): void {
   if (!unit.alive) return;
   unit.catalystsUsed.push(c.def.id);
   events.push({ type: 'catalystUsed', unitId: unit.unitId, catalystId: c.def.id });
@@ -500,7 +510,7 @@ function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: Planne
   // and a once-per-match burst out of a thicket is exactly the tell.
   revealIfConcealed(board, unit, unit.pos, c.def.id, events);
   if (c.def.effects.some((e) => e.kind === 'teleport')) {
-    teleport(draft, board, unit, c.aim[0], events);
+    teleport(draft, board, unit, c.aim[0], events, contested);
   }
   const onSelf = c.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind) || e.kind === 'decoy');
   if (onSelf.length > 0) applySelfEffects(draft, unit, onSelf, source, events);
@@ -529,10 +539,13 @@ function fireCatalyst(draft: GameState, board: Board, unit: UnitState, c: Planne
  * Adrenaline and Overdrive simply broken. Uniform across all three colours, so
  * there is one rule rather than three.
  */
-function runCatalysts(draft: GameState, board: Board, plans: UnitPlan[], phase: AbilityPhase, events: TurnEvent[]): void {
+function runCatalysts(
+  draft: GameState, board: Board, plans: UnitPlan[], phase: AbilityPhase, events: TurnEvent[],
+  contested?: ReadonlySet<string>,
+): void {
   for (const plan of orderedPlans(draft, plans)) {
     const c = plan.catalyst;
-    if (c !== undefined && c.def.phase === phase) fireCatalyst(draft, board, plan.unit, c, events);
+    if (c !== undefined && c.def.phase === phase) fireCatalyst(draft, board, plan.unit, c, events, contested);
   }
 }
 
@@ -562,6 +575,7 @@ function planAbility(
     def, aim, isUlt,
     area: expandShape(board, def, unit.pos, aim, aimStep),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
+    inner: innerSquares(board, def, aim),
   };
 }
 
@@ -1021,6 +1035,56 @@ function impactBlasts(
 // ── Dash ────────────────────────────────────────────────────────────────────
 
 /**
+ * BLINK-CLASH — the destinations two or more blinks aim at on the same turn.
+ *
+ * Owner Dev Note: *"if two characters try to end their movement or dash/blink on
+ * the exact same square, a collision occurs … Right now in CARDS, blinks do not
+ * work like that. If Veil and Aegis try to blink to the same spot, only one of
+ * them makes it to the square, the other one does not move at all."*
+ *
+ * That was exactly it, and the asymmetry was an accident of iteration order: a
+ * teleport refuses an occupied square, so whichever blink the loop reached first
+ * landed and the second found a body in the way. Two identical orders, two
+ * different outcomes, decided by nothing a player can see.
+ *
+ * The claims are therefore counted **before anything moves**, and a contested
+ * square is refused to every unit that aimed at it — which is CLASH-AR rule 2's
+ * shape ("both ending on the square → both forced back to the square they last
+ * held") applied to a movement with no path: a blink's last-held square is the
+ * one it started on, so both stay put.
+ *
+ * **This is the minimal compliant reading, and it is narrower than the note.**
+ * AR stops the conflicting characters "on the square immediately before their
+ * intended final destination" — but a blink has no squares between origin and
+ * destination to stop on (that is what makes it a blink; the note says so
+ * itself, "blinks typically bypass obstacles mid-journey"). Inventing a
+ * traversal for it would be inventing geometry and an unlisted ruling, so this
+ * fixes the half that is unambiguously wrong — the coin-flip — and leaves "does
+ * a blocked blink land adjacent along the line?" to the Designer.
+ *
+ * Both kinds of blink count: a dash **ability** that is not a `path` charge, and
+ * a Shift-style dash **catalyst**. They resolve in the same phase onto the same
+ * board, so a rule that saw only one of them would just move the coin flip.
+ */
+function contestedBlinks(plans: readonly UnitPlan[]): ReadonlySet<string> {
+  const claims = new Map<string, number>();
+  const claim = (p: Vec2 | undefined): void => {
+    if (p === undefined) return;
+    const k = vecKey(p);
+    claims.set(k, (claims.get(k) ?? 0) + 1);
+  };
+  for (const plan of plans) {
+    if (!plan.unit.alive) continue;
+    const a = plan.ability;
+    if (a !== undefined && a.def.phase === 'dash' && a.def.shape !== 'path') claim(a.aim[0]);
+    claim(plan.shiftTo);
+  }
+  const out = new Set<string>();
+  for (const [k, n] of claims) if (n > 1) out.add(k);
+  return out;
+}
+
+/**
  * Dash phase: dashers move (charge path or teleport), damage-dealing dashes hit
  * the first enemy struck, and self-statuses (e.g. Untargetable) apply. Blast
  * immunity for the vacated square is emergent — Blast is resolved afterwards
@@ -1034,7 +1098,10 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
   // (CAT-DASH-COST) was already taken at plan time — `planUnit` drops the walk
   // for any unit spending a Dash catalyst — so nothing here needs to touch
   // `plan.movePath`.
-  runCatalysts(draft, board, plans, 'dash', events);
+  // BLINK-CLASH: settled before anything moves, so it cannot depend on which
+  // blink the loop below reaches first.
+  const contested = contestedBlinks(plans);
+  runCatalysts(draft, board, plans, 'dash', events, contested);
   // A blocked Shift leaves the unit where it started, and everything it planned
   // from the landing square now describes nothing. Dropping those is the safe
   // reading — a plan is never allowed to act from a square its owner is not on.
@@ -1065,7 +1132,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       // end-of-Blast, the occupant would still be there, and the teleport would
       // simply fizzle — the exception the owner asked for would never fire.
       shovedAside = clearLandingWithKnockback(draft, board, plan.unit, a, displaced, events);
-      teleport(draft, board, plan.unit, a.aim[0], events);
+      teleport(draft, board, plan.unit, a.aim[0], events, contested);
     }
 
     // DASH-IMPACT: an optional AoE at takeoff and/or landing, expanded from the
@@ -1200,9 +1267,20 @@ function walkCharge(draft: GameState, board: Board, unit: UnitState, path: reado
   return crossed;
 }
 
-/** Teleport to `dest` if it is an open, unoccupied square (walls may be crossed). */
-function teleport(draft: GameState, board: Board, unit: UnitState, dest: Vec2 | undefined, events: TurnEvent[]): boolean {
+/**
+ * Teleport to `dest` if it is an open, unoccupied, **uncontested** square (walls
+ * may be crossed).
+ *
+ * `contested` is BLINK-CLASH: the destinations two or more blinks aimed at this
+ * phase. See {@link contestedBlinks} for why they are refused to everybody
+ * rather than to whoever the loop reached second.
+ */
+function teleport(
+  draft: GameState, board: Board, unit: UnitState, dest: Vec2 | undefined, events: TurnEvent[],
+  contested?: ReadonlySet<string>,
+): boolean {
   if (dest === undefined) return false;
+  if (contested?.has(vecKey(dest)) === true) return false;
   const t = terrainAt(board, dest);
   if (t === 'wall' || t === 'cover' || t === 'oob') return false;
   if (draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, dest))) return false;
@@ -1293,6 +1371,12 @@ function runBlast(
     // number would be — the bonus is part of the blow, not a second one.
     const axis = new Set(a.axis.map(vecKey));
     const axisBonus = a.def.axisBonus ?? 0;
+    // BASIC-INNER: a tile inside the disc takes `innerAmount` **instead of** the
+    // ability's own number — a replacement, because "22 in the centre, 14 in the
+    // ring" is how the falloff is authored. Still before Might, Weaken and
+    // cover: it is which blow landed, not a second one.
+    const inner = new Set(a.inner.map(vecKey));
+    const innerAmount = a.def.innerAmount;
     let hitEnemy = false;
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
@@ -1304,7 +1388,9 @@ function runBlast(
           // Energy stays enemy-only, so splashing an ally pays nothing.
           if (enemy) hitEnemy = true;
           if (e.kind === 'damage') {
-            const raw = (e.amount ?? 0) + (axis.has(vecKey(target.pos)) ? axisBonus : 0);
+            const key = vecKey(target.pos);
+            const base = innerAmount !== undefined && inner.has(key) ? innerAmount : (e.amount ?? 0);
+            const raw = base + (axis.has(key) ? axisBonus : 0);
             hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw, range: a.def.range, melee: a.def.melee === true });
           }
           else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });
@@ -1453,6 +1539,13 @@ interface Mover {
   unit: UnitState;
   path: Vec2[];
   halted: boolean;
+  /**
+   * Where this mover stood before step 0 — CLASH-CORNER's last fallback when a
+   * blocked passer has to walk back off a square somebody else is resting on.
+   * Captured at construction because `unit.pos` is live and has moved on by the
+   * time the walk-back needs it.
+   */
+  origin: Vec2;
 }
 
 function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: ReadonlySet<string>, events: TurnEvent[]): void {
@@ -1472,7 +1565,7 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
     // Re-clamp by *cost* (a Blast-phase Slow may have shrunk the budget since the
     // path was validated in Prep); diagonals cost 1/2/1/2… (MV3).
     const path = pathWithinBudget(plan.movePath, plan.unit.pos, budget);
-    if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false });
+    if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false, origin: { ...plan.unit.pos } });
   }
 
   // CLASH-AR (a): one collector for the whole Move phase — normal movers and
@@ -1549,15 +1642,104 @@ function planChases(
     // A target that died this turn is dropped: a corpse has no square to chase.
     if (target === undefined || !target.alive) continue;
 
-    const seen = teamCanSee(vision, draft, chaser.owner, target);
-    const goal = seen ? snapshot.get(target.unitId) : lastKnownFor(draft, chaser.owner, target.unitId)?.pos;
-    if (goal === undefined) continue;                    // never seen → nothing to chase
+    const pursuit = walkChase(board, vision, draft, snapshot, chaser, target, movementBudget(chaser, plan.sprint));
+    if (pursuit === undefined) continue;                 // never seen → nothing to chase
 
-    const path = pathToward(board, draft, chaser, goal, movementBudget(chaser, plan.sprint));
-    events.push({ type: 'chaseResolved', unitId: chaser.unitId, targetUnitId: target.unitId, to: { x: goal.x, y: goal.y }, seen });
-    if (path.length > 0) chasers.push({ unit: chaser, path, halted: false });
+    events.push({
+      type: 'chaseResolved',
+      unitId: chaser.unitId,
+      targetUnitId: target.unitId,
+      to: { x: pursuit.goal.x, y: pursuit.goal.y },
+      seen: pursuit.seen,
+    });
+    if (pursuit.path.length > 0) chasers.push({ unit: chaser, path: pursuit.path, halted: false, origin: { ...chaser.pos } });
   }
   return chasers;
+}
+
+/**
+ * CHASE-FOLLOW — walk the pursuit one square at a time, asking again each step
+ * whether the target is in sight.
+ *
+ * Owner Dev Note: *"Chasing still isn't working as intended. You should follow
+ * the character that you're chasing all the way until you lose line of sight or
+ * you run out of movement."*
+ *
+ * The chase used to judge visibility **once, from the square the chaser had not
+ * moved off yet**. A target that outran the *stationary* chaser's sight was
+ * therefore treated as fully fogged, and the pursuit halted on the last-known
+ * square — even when walking there would have restored sight with budget to
+ * spare. The reported case: a chaser at (5,10) after a target that ran to
+ * (12,10) stopped at (9,10) with `seen:false`, three squares short of catching
+ * something it could see the whole way.
+ *
+ * So the goal is re-derived from the chaser's **live** square on every step.
+ * Nothing else moves while this runs — the target and every teammate are frozen
+ * at their post-Move squares — so team vision can change for exactly one reason,
+ * that the chaser moved, which is what makes stepping and re-asking meaningful
+ * rather than circular.
+ *
+ * **Golden rule #5 still holds at every step.** The goal is the target's true
+ * square only while the team can see it; otherwise it is the last-known square,
+ * which is a square this team was already shown. No step is ever taken toward a
+ * position the fog is hiding.
+ *
+ * Stopping is not a fourth rule — it is what happens when there is nothing left
+ * to do: `pathToward` improves on the current square or returns nothing, so
+ * "caught it" (adjacent, target's square occupied), "arrived at the last-known
+ * square and it is still not there" (already at the goal) and "walled off" are
+ * one branch. The budget is the only other exit, and it strictly decreases —
+ * every step costs at least 1 — so this terminates even if sight flickers.
+ */
+function walkChase(
+  board: Board,
+  vision: Vision,
+  draft: GameState,
+  snapshot: ReadonlyMap<string, Vec2>,
+  chaser: UnitState,
+  target: UnitState,
+  budget: number,
+): { path: Vec2[]; goal: Vec2; seen: boolean } | undefined {
+  /** Team vision with the chaser standing at `at` — everyone else frozen. */
+  const seenFrom = (at: Vec2): boolean => teamCanSee(
+    vision,
+    { ...draft, units: draft.units.map((u) => (u.unitId === chaser.unitId ? { ...u, pos: at } : u)) },
+    chaser.owner,
+    target,
+  );
+  /** What this chaser is allowed to walk at, from `at`. */
+  const goalFrom = (at: Vec2): { goal: Vec2; seen: boolean } | undefined => {
+    const seen = seenFrom(at);
+    const goal = seen ? snapshot.get(target.unitId) : lastKnownFor(draft, chaser.owner, target.unitId)?.pos;
+    return goal === undefined ? undefined : { goal, seen };
+  };
+
+  const first = goalFrom(chaser.pos);
+  if (first === undefined) return undefined;
+
+  const path: Vec2[] = [];
+  let at = chaser.pos;
+  let left = budget;
+  let current = first;
+  while (left > 0) {
+    // Re-route from here rather than stepping greedily: a single-square hop
+    // toward the goal would walk into walls the reachability search routes
+    // around, and the chase would be worse at pathfinding than a plain Move.
+    const route = pathToward(board, draft, { ...chaser, pos: at }, current.goal, left);
+    const next = route[0];
+    if (next === undefined) break; // caught it, arrived, or boxed in
+    left -= stepCost(next.x - at.x, next.y - at.y);
+    path.push(next);
+    at = next;
+    const now = goalFrom(at);
+    if (now === undefined) break; // the memory it was chasing is gone
+    current = now;
+  }
+
+  // Report the pursuit as it ended: what the chaser can see from where it
+  // stopped, and the goal that reading implies. A chase that gained sight on the
+  // way says so, which is the whole point of the tell.
+  return { path, goal: current.goal, seen: current.seen };
 }
 
 /**
@@ -1767,6 +1949,54 @@ function destroyDecoysUnderEnemies(draft: GameState, units: readonly UnitState[]
 }
 
 /**
+ * CLASH-CORNER — a blocked passer bounces off a square somebody else is resting
+ * on, rather than coming to rest on top of them.
+ *
+ * CLASH-AR rule 3 lets an ender and a passer share a square *at the end of a
+ * step*: the ender rests, the passer walks on next step, and nothing is wrong
+ * because nothing rests together. That promise is only good while the passer can
+ * actually walk on. Wedge it against a stationary unit, a wall or the map edge
+ * and it stops where it stands — which is the ender's square, and Collisions
+ * forbids two units resting on one.
+ *
+ * The ruling is the ender's own bounce (rule 2, already shipped) applied to the
+ * unit that turned out to be an ender after all: **step back to the last square
+ * it held alone.** Passing was never promised to complete; when it does not, the
+ * pass was a stop, and stopping before the block is what a stop has always meant.
+ *
+ * The walk-back runs along the mover's **own path**, newest first, ending at the
+ * origin — so it only ever retreats over ground this unit actually covered, and
+ * it terminates. A square another unit has since taken is skipped, which is the
+ * chain case: two blocked passers each fall back one.
+ */
+function bounceOffOccupied(draft: GameState, m: Mover, step: number, events: TurnEvent[]): void {
+  const sharing = (p: Vec2): boolean =>
+    draft.units.some((u) => u.alive && u.unitId !== m.unit.unitId && vecEq(u.pos, p));
+  if (!sharing(m.unit.pos)) return; // resting alone — the ordinary case, nothing to undo
+
+  // Everything this unit stood on before here, newest first. It failed to leave
+  // `path[step - 1]`, so the retreat starts one before that; the origin is the
+  // floor, and a unit always has one.
+  const behind: Vec2[] = [];
+  for (let i = step - 2; i >= 0; i--) behind.push(m.path[i]!);
+  behind.push(m.origin);
+
+  for (const p of behind) {
+    if (sharing(p)) continue; // somebody else came to rest here too — keep walking back
+    const from = m.unit.pos;
+    m.unit.pos = { x: p.x, y: p.y };
+    // Emitted as an ordinary step so the renderer animates the bounce instead of
+    // teleporting the model. No stack is ever shown: the unit is off the shared
+    // square within the same step it entered it.
+    events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
+    return;
+  }
+  // Every square it covered is now somebody else's rest. Leaving it put is the
+  // only move left — it cannot walk through them — and the case is flagged
+  // rather than resolved by inventing a rule (Open Questions 2026-09-10).
+}
+
+/**
  * Resolve one simultaneous step across all still-moving units.
  *
  * **CLASH-AR — only an ender is stopped.** The rule used to be "a contested
@@ -1866,8 +2096,14 @@ function stepMovers(
       if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died → path discarded
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
+      bounceOffOccupied(draft, m, step, events);
     }
   }
+
+  // (CLASH-CORNER's walk-back runs inline above, on the mover that just halted,
+  // so a bounced unit is off the shared square before the next step reads the
+  // board — and in the movers' fixed order, so the outcome is the same on every
+  // machine.)
 
   // CLASH-AR pad amendment (a): a square two or more units entered on this very
   // step is claimed by none of them. Recorded per (unit, square) rather than per

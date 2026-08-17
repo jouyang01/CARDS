@@ -229,3 +229,137 @@ describe('CLASH-AR: the report it was ruled to fix', () => {
     expect(at(state, 'e'), 'and the unit that was ending there still arrived').toEqual(X);
   });
 });
+
+/**
+ * CLASH-CORNER — the corner rule 3 opens, and the ruling that closes it.
+ *
+ * Rule 3 lets an ender and a passer share a square *at the end of a step*, on
+ * the promise that the passer walks on. Block the passer's next step and the
+ * promise breaks: it comes to rest on the ender, and Collisions forbids that.
+ * The ruling gives it the ender's own bounce — back to the last square it held
+ * alone.
+ */
+describe('CLASH-CORNER: a blocked passer never rests on an occupied square', () => {
+  /** A stationary wall of a unit, so a passer can be wedged against something. */
+  const blocker = (pos: Vec2) => makeUnit('b', 0, pos, { characterId: 'test-char' });
+
+  /** Every living unit's square, to check nobody is doubled up. */
+  const rests = (s: GameState): string[] =>
+    s.units.filter((u) => u.alive).map((u) => `${u.pos.x},${u.pos.y}`);
+
+  it('bounces to its last-held square when the next step is blocked', () => {
+    // `e` ends on the contested square (5,5). `a` means to pass through it and
+    // carry on east to (7,5) — but `b` is parked on (6,5), so the step after
+    // the pass is refused. Without the ruling `a` rests on (5,5) with `e`.
+    const s = makeState([
+      makeUnit('a', 0, { x: 3, y: X.y }, { characterId: 'test-char' }),
+      blocker({ x: 6, y: X.y }),
+      makeUnit('e', 1, { x: X.x, y: 3 }, { characterId: 'test-char' }),
+    ]);
+    const { state } = run(
+      s,
+      [{ unitId: 'a', movePath: east(3, 7) }],
+      [{ unitId: 'e', movePath: south(3, 5) }],
+      BARE,
+    );
+    expect(at(state, 'e'), 'the ender rested, as rule 3 says').toEqual(X);
+    expect(at(state, 'a'), 'and the wedged passer fell back off it').toEqual({ x: 4, y: X.y });
+    expect(new Set(rests(state)).size, 'nobody is stacked').toBe(rests(state).length);
+  });
+
+  it('falls back along its own path, never onto a square it did not walk', () => {
+    // The retreat is one square, not a scatter: (4,5) is where `a` last stood
+    // alone, and it is on `a`'s own route.
+    const s = makeState([
+      makeUnit('a', 0, { x: 2, y: X.y }, { characterId: 'test-char' }),
+      blocker({ x: 6, y: X.y }),
+      makeUnit('e', 1, { x: X.x, y: 2 }, { characterId: 'test-char' }),
+    ]);
+    const { state, events } = run(
+      s,
+      // Sprinting, so the walk is not clamped to *end* on the blocker — a path
+      // that ends on an occupied square is refused at validation (MV2) and
+      // never reaches a clash rule at all.
+      [{ unitId: 'a', sprint: true, movePath: east(2, 7) }],
+      [{ unitId: 'e', movePath: south(2, 5) }],
+      BARE,
+    );
+    expect(at(state, 'a')).toEqual({ x: 4, y: X.y });
+    // The bounce is a step in the log, so playback animates it rather than
+    // snapping the model back.
+    const mine = events.filter((e) => e.type === 'moveStep' && e.unitId === 'a');
+    expect(mine.at(-1)).toMatchObject({ from: X, to: { x: 4, y: X.y } });
+  });
+
+  it('a BODY is the only thing that can wedge a passer — terrain never gets the chance', () => {
+    // The ruling names "a stationary unit, a wall, or the map edge". Only the
+    // first is reachable for a walked move, and it is worth pinning why: a path
+    // that runs through a wall (or off the board) is refused at **validation**,
+    // long before any step clock, so the unit simply does not move and there is
+    // no passer to wedge. A body is different precisely because MV2 lets a path
+    // cross one.
+    const WALLED: MapDef = makeMap(grid().map((row, y) =>
+      (y === X.y ? `${row.slice(0, 6)}#${row.slice(7)}` : row)));
+    const s = makeState([
+      makeUnit('a', 0, { x: 3, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: X.x, y: 3 }, { characterId: 'test-char' }),
+    ]);
+    const { state } = run(
+      s,
+      [{ unitId: 'a', movePath: east(3, 7) }], // straight through the wall on (6,5)
+      [{ unitId: 'e', movePath: south(3, 5) }],
+      WALLED,
+    );
+    expect(at(state, 'a'), 'the whole walk was refused, so nothing to bounce').toEqual({ x: 3, y: X.y });
+    expect(new Set(rests(state)).size).toBe(rests(state).length);
+  });
+
+  it('a chain of two blocked passers each fall back one', () => {
+    // `a` and `c` both cross the column; `e` ends on (5,5) and `b` blocks
+    // (6,5). `a` is wedged onto the ender and bounces to (4,5) — which is
+    // where `c` was going to be. Whoever the walk-back finds occupied, it keeps
+    // stepping back, so both end alone.
+    const s = makeState([
+      makeUnit('a', 0, { x: 3, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('c', 0, { x: 2, y: X.y }, { characterId: 'test-char' }),
+      blocker({ x: 6, y: X.y }),
+      makeUnit('e', 1, { x: X.x, y: 3 }, { characterId: 'test-char' }),
+    ]);
+    const { state } = run(
+      s,
+      [
+        { unitId: 'a', movePath: east(3, 7) },
+        { unitId: 'c', movePath: east(2, 5) },
+      ],
+      [{ unitId: 'e', movePath: south(3, 5) }],
+      BARE,
+    );
+    expect(new Set(rests(state)).size, 'nobody is stacked').toBe(rests(state).length);
+    expect(at(state, 'e')).toEqual(X);
+  });
+
+  it('the invariant itself: no two living units ever rest on one square', () => {
+    // The property the bug broke, asserted over the messiest board the fixture
+    // can build — four movers, one ender, one blocker, one contested square.
+    const s = makeState([
+      makeUnit('a', 0, { x: 2, y: X.y }, { characterId: 'test-char' }),
+      makeUnit('c', 0, { x: 3, y: X.y }, { characterId: 'test-char' }),
+      blocker({ x: 7, y: X.y }),
+      makeUnit('e', 1, { x: X.x, y: 2 }, { characterId: 'test-char' }),
+      makeUnit('f', 1, { x: X.x, y: 8 }, { characterId: 'test-char' }),
+    ]);
+    const { state } = run(
+      s,
+      [
+        { unitId: 'a', sprint: true, movePath: east(2, 6) },
+        { unitId: 'c', sprint: true, movePath: east(3, 6) },
+      ],
+      [
+        { unitId: 'e', movePath: south(2, 5) },
+        { unitId: 'f', movePath: [7, 6].map((y) => ({ x: X.x, y })) },
+      ],
+      BARE,
+    );
+    expect(new Set(rests(state)).size).toBe(rests(state).length);
+  });
+});
