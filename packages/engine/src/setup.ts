@@ -10,7 +10,7 @@
 
 import type { CharacterDef, GameState, MapDef, TeamId, UnitState } from './types.js';
 import { type Format, type FormatId, getFormat } from './formats.js';
-import { DEFAULT_CATALYSTS } from './catalysts.js';
+import { DEFAULT_CATALYSTS, type CatalystTriad } from './catalysts.js';
 import type { Roster } from './resolve.js';
 
 /** Index characters by id for the pipeline's ability lookups. */
@@ -20,8 +20,20 @@ export function buildRoster(characters: readonly CharacterDef[]): Roster {
   return roster;
 }
 
-/** A fresh unit for `character`, at `pos`, full HP, no energy/statuses. */
-export function spawnUnit(character: CharacterDef, unitId: string, owner: TeamId, pos: { x: number; y: number }): UnitState {
+/**
+ * A fresh unit for `character`, at `pos`, full HP, no energy/statuses.
+ *
+ * CAT-SELECT: `triad` is the lobby's pick for **this character**. Absent — every
+ * caller that is not a lobby — falls back to `DEFAULT_CATALYSTS`, so a hot-seat
+ * match and every existing test are untouched.
+ */
+export function spawnUnit(
+  character: CharacterDef,
+  unitId: string,
+  owner: TeamId,
+  pos: { x: number; y: number },
+  triad?: CatalystTriad,
+): UnitState {
   return {
     unitId,
     characterId: character.id,
@@ -34,12 +46,30 @@ export function spawnUnit(character: CharacterDef, unitId: string, owner: TeamId
     respawnIn: 0,
     cooldowns: {},
     statuses: [],
-    // Until the M3 lobby lets players pick, everyone gets the neutral triad
-    // (edge-cases: "Catalysts are chosen, not fixed to a character").
-    catalysts: [...DEFAULT_CATALYSTS],
+    // "Catalysts are chosen, not fixed to a character" (edge-cases). The neutral
+    // triad is the default for everyone who has not chosen.
+    catalysts: [...(triad ?? DEFAULT_CATALYSTS)],
     catalystsUsed: [],
   };
 }
+
+/**
+ * CAT-SELECT — the lobby's catalyst picks, shaped exactly like `teams`.
+ *
+ * `picks[team][i]` is the triad for `teams[team][i]`, so the two are read with
+ * the same index and there is no id-keyed map to fall out of step with the
+ * roster. Positional rather than keyed for a second reason: the ruled pick model
+ * is **per character**, and two characters of the same id on one board (a
+ * cross-team mirror, which R3 allows) must be able to carry different triads.
+ *
+ * Holes are legal and mean "this one did not choose" — a lobby where one player
+ * has locked in and another has not is the normal state of a lobby, and it
+ * should not have to invent a triad to describe it.
+ */
+export type CatalystPicks = readonly [
+  readonly (CatalystTriad | undefined)[],
+  readonly (CatalystTriad | undefined)[],
+];
 
 /**
  * A turn-1 `GameState` for any format. `teams[t]` lists team `t`'s characters,
@@ -50,14 +80,19 @@ export function spawnUnit(character: CharacterDef, unitId: string, owner: TeamId
  * Throws if a team has more characters than the map has spawn squares — call
  * `validateMapForFormat` first to surface that as data, not an exception.
  */
-export function createMatch(map: MapDef, format: FormatId, teams: [CharacterDef[], CharacterDef[]]): GameState {
+export function createMatch(
+  map: MapDef,
+  format: FormatId,
+  teams: [CharacterDef[], CharacterDef[]],
+  picks?: CatalystPicks,
+): GameState {
   const units: UnitState[] = [];
   for (const team of [0, 1] as const) {
     const spawns = map.spawns[team];
     teams[team].forEach((character, i) => {
       const spawn = spawns[i];
       if (spawn === undefined) throw new Error(`map ${map.id}: team ${team} has no spawn square for character ${i}`);
-      units.push(spawnUnit(character, `${character.id}-t${team}-${i}`, team, spawn));
+      units.push(spawnUnit(character, `${character.id}-t${team}-${i}`, team, spawn, picks?.[team]?.[i]));
     });
   }
   return { turn: 1, units, traps: [], delayed: [], decoys: [], powerups: [], lastKnown: [], kills: [0, 0], format, status: 'active', suddenDeath: false };
