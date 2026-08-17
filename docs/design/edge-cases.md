@@ -227,6 +227,27 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     and still loses the pad. **Consequence (named):** crossing paths get *safer* (both continue
     instead of gridlocking), a small mobility buff to through-the-middle routes that livens the
     Might-room geometry. Deterministic (integer step clock, fixed order).
+  - **SHIPPED PR #62 (verified 2026-09-09).** `stepMovers` stops only enders; `claimsBySquare`
+    carries the two pad amendments via `voided`; suite green. The one corner CLASH-AR left open is
+    ruled next.
+- **RULED — CLASH-CORNER: a passer that cannot take its next step bounces to its last-held square,
+  never rests on an occupied one (Builder OQ 2026-09-09 #2; backlog CLASH-CORNER — engine, small).**
+  Under CLASH-AR rule 3 an ender and a passer may share a square *at the end of a step*; normally the
+  passer walks on. But if the passer's **next** step is blocked (a stationary unit, a wall, the map
+  edge), it would come to rest on the ender's square — and **Collisions forbids two units resting on
+  one square**. The ruling matches the ender's own bounce (rule 2, already shipped): **the stuck
+  passer bounces back to its last-held square** — the last square it occupied *alone* before entering
+  the contested one — rather than resting on the occupied square. If that last-held square is itself
+  now claimed by another unit's rest, walk back one more along the passer's own path; a unit always
+  has its origin to fall back to, so the recursion terminates. Rationale: rule 3 makes *passing*
+  cheap but never promises the pass *completes*; when it cannot, the unit is an ender after all and
+  takes the ender's fate (stop before the block), not a new stacking exception. **This preserves the
+  Collisions invariant** — the property STEP-STACK-INVARIANT tests — with no floats, no RNG, and a
+  fixed walk-back order (N-unit-safe). Pads are unaffected: a bounced passer's claims already settled
+  by entry (PADS-PASS), and CLASH-AR (a)/(b) still decide the contested pad. **Ships with tests:** a
+  passer wedged against a stationary unit ends on its last-held square (not the occupied one); a
+  chain of two blocked passers each fall back one; the two-units-on-one-square assertion that the bug
+  would trip. The renderer shows the honest final rest — no transient stack is emitted.
 - **RULED — Displacement ignores the displacing attacker's own body (fixes MV1
   regression, 2026-08-17).** Since a charge now passes through and can land *beyond* its
   target, the victim's knockback path must **not** treat the charger's landing square as an
@@ -313,6 +334,40 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     drops to move-budget when one is. A dash ability still cancels the chase entirely (the dash is
     the movement). Ships with a test: a chase with no ability closes up to 8; a chase with an ability
     closes at most 4; a chase with only a free action still sprints.
+  - **RULED — CHASE-FOLLOW: a chase re-evaluates vision as the chaser ADVANCES, so it follows all
+    the way until it truly loses sight or runs out of movement (owner Dev Note 2026-09-09, "Chasing
+    still isn't working as intended. You should follow the character that you're chasing all the way
+    until you lose line of sight or you run out of movement"; backlog CHASE-FOLLOW — engine).** The
+    shipped `planChases` judges visibility and picks its goal **once, from the chaser's pre-move
+    origin** (`resolve.ts:1552-1556`): `teamCanSee` is measured with the chaser still on its starting
+    square, and `pathToward` then walks toward that one frozen goal. So a target that outran the
+    *stationary* chaser's vision by even one square is treated as fully fogged, and the chase halts at
+    the last-known square **even when arriving there would restore sight and the chaser has budget to
+    keep closing**. Observed: on the open map, `a`(5,10) chasing `e` that ran to (12,10) stops at
+    (9,10) — three short of catchable, `seen:false` — because (12,10) is 7 from a's origin and vision
+    is 6; from (9,10) the target is 3 away and plainly visible, but the chase never re-checks. That is
+    the opposite of "follow all the way," and it is why the CHASE1 case *"follows a target that ran"*
+    asserts (9,10) while its own comment says the chaser "ends up adjacent" — the assertion was fitted
+    to the bug. **The rule:** resolve the chase as an iterative walk on the frozen post-Move snapshot,
+    re-deriving the goal from the chaser's **live** square after each step — while the team can see the
+    target, step toward its true (snapshot) square; while it cannot, step toward the last-known square.
+    **Stop only** when the chaser is adjacent to / cannot get closer to its current goal (caught /
+    arrived), when it stands on the last-known square and the target is *still* unseen from there
+    (sight genuinely lost), or when movement is exhausted. **Golden rule #5 is preserved** — every
+    step is taken toward a square the team can see *from where the chaser actually stands*, or toward
+    its own last-known memory; no step is ever taken toward a fogged true position, so nothing leaks.
+    This generalizes the existing *"regaining sight re-points the chase"* case to happen **within a
+    single chase**: a chaser that closes into vision keeps going; a chaser that closes and still cannot
+    see (target in brush, non-adjacent) stops at last-known exactly as the fog cases require.
+    **Deterministic** — only the chaser advances (the target and all teammates are frozen), team
+    vision changes solely because the chaser moved, and steps follow the fixed reachability order; no
+    float, no RNG, no clock. **Ships with tests (behavior change → same commit, golden rule #3):** the
+    open-map *"follows a target that ran"* case flips to assert the chaser ends **adjacent** to the
+    target with `seen:true`; the brush fog cases (*"goes to the last-known square and STOPS"*,
+    *"…short of even that budget"*) stay green unchanged (from last-known the target is still
+    brush-hidden → stop); a new case where the chaser starts fogged, advances into vision mid-chase,
+    and finishes adjacent. `chaseResolved` reports the **resolved** pursuit (`seen` = target in view
+    at the end, `to` = the goal finally pursued).
 - **RULED — Plan-time reachability must NOT use a fogged enemy's position (MOVE-FOG; owner Dev Note
   2026-09-06, "Move command is blocked if an enemy is out of line of sight but on the tile that you
   are trying to move. This is giving unintentional information"; backlog MOVE-FOG — client).** The
