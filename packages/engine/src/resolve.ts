@@ -1280,15 +1280,73 @@ function teleport(
   contested?: ReadonlySet<string>,
 ): boolean {
   if (dest === undefined) return false;
-  if (contested?.has(vecKey(dest)) === true) return false;
-  const t = terrainAt(board, dest);
-  if (t === 'wall' || t === 'cover' || t === 'oob') return false;
-  if (draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, dest))) return false;
+  const landing = blinkLanding(draft, board, unit, dest, contested);
+  if (landing === undefined) return false; // boxed in on every side — nowhere to go
+  if (vecEq(landing, unit.pos)) return false; // already there; no step to emit
   const from = unit.pos;
-  unit.pos = { x: dest.x, y: dest.y };
+  unit.pos = { x: landing.x, y: landing.y };
   events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
   triggerTrapsOnEntry(draft, board, unit, events);
   return true;
+}
+
+/** Can this unit come to rest here? Terrain, bodies and the contested set. */
+function blinkSquareFree(
+  draft: GameState, board: Board, unit: UnitState, p: Vec2, contested?: ReadonlySet<string>,
+): boolean {
+  if (contested?.has(vecKey(p)) === true) return false;
+  const t = terrainAt(board, p);
+  if (t === 'wall' || t === 'cover' || t === 'oob') return false;
+  return !draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
+}
+
+/**
+ * BLINK-ADJ — where a blink actually arrives.
+ *
+ * Owner Dev Note: *"Blocked blink should land adjacent instead of not at all."*
+ *
+ * A blink's destination can be unavailable three ways — **blocked terrain**
+ * (wall, cover, edge), **occupied** by a unit resting there, or **contested** by
+ * another blink aimed at the same square (the case PR #64 resolved as "neither
+ * lands"). The owner rules all three the same: land on the nearest legal square
+ * rather than failing. It is AR's "stop on the square immediately before the
+ * destination", made precise for a movement that has no squares in between —
+ * *nearest* is the well-defined version of *before* when there is no path to
+ * walk back along.
+ *
+ * Nearest is **Manhattan** (MET1, the movement metric), scanned in expanding
+ * rings so the first ring searched is the adjacent one — which is what makes a
+ * blink onto a body land beside it. Within a ring the scan is row-major, so ties
+ * break the same way on every machine.
+ *
+ * **Contested blinks both land.** The shared square is refused to everyone, so
+ * each falls to its own nearest ring; and because teleports resolve in the
+ * plans' fixed order, whoever goes first takes the square and is *standing*
+ * there when the next one scans — so the second sees it occupied and moves on to
+ * its next-nearest. The ordering rule the ruling asks for falls out of the
+ * sequence rather than needing a tiebreak of its own, and Collisions holds.
+ */
+function blinkLanding(
+  draft: GameState, board: Board, unit: UnitState, dest: Vec2, contested?: ReadonlySet<string>,
+): Vec2 | undefined {
+  if (blinkSquareFree(draft, board, unit, dest, contested)) return dest;
+  // Rings of constant Manhattan distance, nearest first. The cap is the board's
+  // own span: beyond it every square is out of bounds, so the search is finite
+  // and a genuinely boxed-in blink returns nothing rather than looping.
+  const span = board.width + board.height;
+  for (let r = 1; r <= span; r++) {
+    let best: Vec2 | undefined;
+    for (let y = dest.y - r; y <= dest.y + r; y++) {
+      for (let x = dest.x - r; x <= dest.x + r; x++) {
+        if (Math.abs(x - dest.x) + Math.abs(y - dest.y) !== r) continue; // this ring only
+        const p: Vec2 = { x, y };
+        if (!blinkSquareFree(draft, board, unit, p, contested)) continue;
+        best ??= p; // row-major: the first one found in this ring wins the tie
+      }
+    }
+    if (best !== undefined) return best;
+  }
+  return undefined;
 }
 
 // ── Blast ───────────────────────────────────────────────────────────────────

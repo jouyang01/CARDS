@@ -48,11 +48,17 @@ describe('dash movement', () => {
     expect(unit(state, 'u').energy).toBe(9); // 4 utility on use + 5 passive
   });
 
-  it('a blink into an occupied square fizzles (no move)', () => {
+  it('a blink into an occupied square lands beside it (BLINK-ADJ)', () => {
+    // Flipped by BLINK-ADJ, owner-directed: *"Blocked blink should land adjacent
+    // instead of not at all."* It used to fizzle and leave the unit at home,
+    // which reads as the ability being broken rather than the square being taken.
     const u = makeUnit('u', 0, { x: 1, y: 1 });
     const e = makeUnit('e', 1, { x: 2, y: 1 });
     const { state } = run(makeState([u, e]), [{ unitId: 'u', ability: { abilityId: 'blink', target: [{ x: 2, y: 1 }] } }], []);
-    expect(unit(state, 'u').pos).toEqual({ x: 1, y: 1 });
+    const landed = unit(state, 'u').pos;
+    expect(landed, 'it moved').not.toEqual({ x: 1, y: 1 });
+    expect(Math.abs(landed.x - 2) + Math.abs(landed.y - 1), 'adjacent to the square it aimed at').toBe(1);
+    expect(unit(state, 'e').pos, 'and the occupant was not disturbed').toEqual({ x: 2, y: 1 });
   });
 });
 

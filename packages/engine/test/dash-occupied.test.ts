@@ -10,11 +10,17 @@ import type { AbilityDef, CharacterDef, GameState, UnitOrders } from '../src/typ
  * DASH-OCCUPIED — "you should not be able to dash onto the same square as
  * another character unless there's a knockback associated with the skill."
  *
- * The prohibition already held in three separate places, none of which said so
- * out loud: `teleport` refuses a living occupant, `walkCharge` rests on the
- * furthest free square, and a Shift catalyst goes through the same `teleport`.
- * Three implementations of one rule with no test between them is how a refactor
- * quietly turns a fizzle into two units on one square, so this pins all three.
+ * The prohibition holds in three separate places, none of which said so out
+ * loud: `teleport`, `walkCharge` resting on the furthest free square, and a
+ * Shift catalyst going through the same `teleport`. Three implementations of one
+ * rule with no test between them is how a refactor quietly turns a refusal into
+ * two units on one square, so this pins all three.
+ *
+ * **BLINK-ADJ changed what "refused" means for a teleport** (owner, 2026-09-10):
+ * the square is still forbidden, but the blink no longer stays home over it — it
+ * lands on the nearest legal square instead. The invariant these tests exist for
+ * is untouched and is what they now assert: **nobody ends up standing on
+ * anybody**. A charge is unaffected; it has a path and still rests short.
  *
  * The exception is new and, for now, unreachable from the roster — every shipped
  * teleport is knockback-free — so it is driven here by a synthetic ability.
@@ -52,19 +58,21 @@ const ROW = 7;
 const START = { x: 2, y: ROW };
 
 describe('DASH-OCCUPIED: a dash may not end on a living character', () => {
-  it('a TELEPORT aimed at an occupied square fizzles — the dasher holds', () => {
+  it('a TELEPORT aimed at an occupied square lands beside it (BLINK-ADJ)', () => {
+    // Flipped by BLINK-ADJ. The square is still refused — what changed is that
+    // the blink takes the nearest one instead of nothing at all.
     const s = makeState([at('a', 0, START.x, ROW), at('e', 1, 6, ROW)]);
     const { state } = run(s, [{ unitId: 'a', ability: { abilityId: 'blink', target: [{ x: 6, y: ROW }] } }]);
-    expect(unit(state, 'a').pos).toEqual(START);
-    expect(unit(state, 'e').pos).toEqual({ x: 6, y: ROW }); // and nobody was moved
+    expect(unit(state, 'a').pos, 'not on the occupant').not.toEqual({ x: 6, y: ROW });
+    expect(unit(state, 'a').pos, 'and not still at home').not.toEqual(START);
+    expect(unit(state, 'e').pos, 'the occupant was not disturbed').toEqual({ x: 6, y: ROW });
   });
 
-  it('…and is refused for an ALLY too — the rule is "another character"', () => {
-    // Friendly fire is on, but bodies are still bodies: an ally's square is no
-    // more standable than an enemy's.
+  it('…and an ALLY is no more standable than an enemy — the rule is "another character"', () => {
     const s = makeState([at('a', 0, START.x, ROW), at('b', 0, 6, ROW), at('e', 1, 12, ROW)]);
     const { state } = run(s, [{ unitId: 'a', ability: { abilityId: 'blink', target: [{ x: 6, y: ROW }] } }]);
-    expect(unit(state, 'a').pos).toEqual(START);
+    expect(unit(state, 'a').pos).not.toEqual({ x: 6, y: ROW });
+    expect(unit(state, 'b').pos, 'the teammate stayed put').toEqual({ x: 6, y: ROW });
   });
 
   it('a teleport onto a FREE square still works — the guard is not blanket', () => {
@@ -93,8 +101,8 @@ describe('DASH-OCCUPIED: a dash may not end on a living character', () => {
   it('the SHIFT catalyst obeys the same rule — it is a teleport like any other', () => {
     const s = makeState([at('a', 0, START.x, ROW), at('e', 1, 4, ROW)]);
     const { state } = run(s, [{ unitId: 'a', catalyst: { abilityId: 'shift', target: [{ x: 4, y: ROW }] } }]);
-    expect(unit(state, 'a').pos).toEqual(START);
-    // Spent regardless: the catalyst resolved, it just could not put you there.
+    expect(unit(state, 'a').pos, 'refused the square, landed beside it').not.toEqual({ x: 4, y: ROW });
+    // Spent regardless: the catalyst resolved, it just could not put you *there*.
     expect(unit(state, 'a').catalystsUsed).toEqual(['shift']);
   });
 
@@ -144,20 +152,30 @@ describe('DASH-OCCUPIED: the knockback exception', () => {
     expect(unit(state, 'e').pos).toEqual({ x: 8, y: ROW }); // where the shove left it
   });
 
-  it('the dash still fizzles when the shove cannot clear the square', () => {
+  it('an unclearable shove still does not license stacking — it lands beside instead', () => {
     // Backed against the board edge with nowhere to go: the exception is
-    // "knockback clears it", not "knockback licenses stacking".
+    // "knockback clears it", not "knockback licenses stacking". Since BLINK-ADJ
+    // the dasher takes the nearest square rather than staying home, but the
+    // thing being guarded is the same — it does not land *on* the occupant.
     const s = makeState([at('a', 0, 11, ROW), at('e', 1, 14, ROW)]);
     const { state } = run(s, [{ unitId: 'a', ability: { abilityId: 'bodycheck', target: [{ x: 14, y: ROW }] } }]);
     expect(unit(state, 'e').pos).toEqual({ x: 14, y: ROW }); // wall at its back
-    expect(unit(state, 'a').pos).toEqual({ x: 11, y: ROW }); // so nobody lands
+    expect(unit(state, 'a').pos).not.toEqual({ x: 14, y: ROW });
   });
 
-  it('a knockback-free teleport onto the same square still fizzles', () => {
-    // The control for the case above: it is the knockback that buys the landing.
+  it('the knockback still buys the exact square — the control for the case above', () => {
+    // With room behind it the occupant is shoved and the dasher lands where it
+    // aimed, which is what distinguishes the exception from the nearest-legal
+    // fallback every other blocked blink takes.
     const s = makeState([at('a', 0, START.x, ROW), at('e', 1, 6, ROW)]);
-    const { state } = run(s, [{ unitId: 'a', ability: { abilityId: 'blink', target: [{ x: 6, y: ROW }] } }]);
-    expect(unit(state, 'a').pos).toEqual(START);
+    const shoved = run(s, [{ unitId: 'a', ability: { abilityId: 'bodycheck', target: [{ x: 6, y: ROW }] } }]);
+    expect(unit(shoved.state, 'a').pos, 'exactly on target').toEqual({ x: 6, y: ROW });
+
+    const plain = run(
+      makeState([at('a', 0, START.x, ROW), at('e', 1, 6, ROW)]),
+      [{ unitId: 'a', ability: { abilityId: 'blink', target: [{ x: 6, y: ROW }] } }],
+    );
+    expect(unit(plain.state, 'a').pos, 'the knockback-free one settles for nearby').not.toEqual({ x: 6, y: ROW });
   });
 
   it('resolves identically twice — the new ordering is deterministic', () => {

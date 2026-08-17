@@ -258,32 +258,52 @@ describe('DASH-CAT-ROUTE: Shift draws a route, not a patch of tiles', () => {
 });
 
 /**
- * DASH-OCCUPIED, client half. Two more reasons `commitAim` says no, both of the
- * same species as the range refusal: an order the engine will silently discard
- * is worse than a click that visibly does not take.
+ * DASH-OCCUPIED, client half — **and what BLINK-ADJ did to it.**
+ *
+ * The client used to refuse a teleport aimed at an occupied square, on the
+ * grounds that the engine would fizzle it and an order that silently does
+ * nothing is worse than a click that visibly does not take. BLINK-ADJ removed
+ * the premise: the engine now lands the blink on the nearest legal square, so
+ * refusing the click would block an order that works — the same bug in the other
+ * direction.
+ *
+ * The refusal these tests were written for is therefore gone, and what they pin
+ * now is that it is gone *and that the reasoning did not leak into the other
+ * gates*: an out-of-range click is still refused, because that one really does
+ * describe an order the engine will drop.
  */
-describe('DASH-OCCUPIED: the client refuses a dash that would fizzle', () => {
+describe('DASH-OCCUPIED: an occupied square is no longer a reason to refuse', () => {
   const occupiedBy = (s: GameState, u: UnitState) => {
     const other = s.units.find((x) => x.unitId !== u.unitId)!;
     other.pos = { x: u.pos.x + 2, y: u.pos.y };
     return other.pos;
   };
 
-  it('refuses a teleport aimed at a square somebody is standing on', () => {
+  it('accepts a teleport aimed at a square somebody is standing on (BLINK-ADJ)', () => {
+    // Flipped: the engine lands it beside them, so the click is a real order.
     const s = match(WISP);
     const u = actor(s, 'wisp');
     const taken = occupiedBy(s, u);
-    expect(commitAim(OPEN, s, u, ability(WISP, 'blink'), taken)).toBeUndefined();
+    expect(commitAim(OPEN, s, u, ability(WISP, 'blink'), taken)).toBeDefined();
   });
 
-  it('…including an ALLY\'s square — the rule is "another character"', () => {
-    // Friendly fire is on, but bodies are still bodies.
+  it('…including an ALLY\'s square', () => {
     const pair: MapDef = { ...OPEN, spawns: [[{ x: 2, y: 10 }, { x: 2, y: 8 }], [{ x: 18, y: 10 }, { x: 18, y: 8 }]] };
     const s = createMatch(pair, '2v2', [[WISP, VEX], [AEGIS, VEX]]);
     const u = actor(s, 'wisp');
     const ally = s.units.find((x) => x.owner === u.owner && x.unitId !== u.unitId)!;
     ally.pos = { x: u.pos.x + 2, y: u.pos.y };
-    expect(commitAim(pair, s, u, ability(WISP, 'blink'), { ...ally.pos })).toBeUndefined();
+    expect(commitAim(pair, s, u, ability(WISP, 'blink'), { ...ally.pos })).toBeDefined();
+  });
+
+  it('but an OUT-OF-RANGE blink is still refused — that order really is dropped', () => {
+    // The distinction the flip must not blur. An occupied square is somewhere
+    // the engine will put you *near*; a square past the range is somewhere it
+    // will not put you at all.
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const blink = ability(WISP, 'blink');
+    expect(commitAim(OPEN, s, u, blink, { x: u.pos.x + blink.range + 3, y: u.pos.y })).toBeUndefined();
   });
 
   it('still accepts the neighbouring free square, so the gate is not blanket', () => {

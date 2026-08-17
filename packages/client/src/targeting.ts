@@ -501,15 +501,12 @@ export function commitAim(
   const directional = ability.shape === 'line' || ability.shape === 'cone';
   if (directional && vecEq(target, unit.pos)) return undefined;
 
-  // DASH-OCCUPIED (3): a teleporting dash aimed at a square somebody is standing
-  // on will fizzle at resolution (`teleport` refuses a living occupant), and a
-  // committed order that silently does nothing is the same class of bug
-  // AIM-RANGE fixed — it reads as the ability being broken rather than as the
-  // square being taken. Refuse the commit instead, so the slot stays armed.
-  //
-  // Unless the dash's own knockback would clear the square: the engine lands it
-  // in that case, so the client must not veto what the engine will allow.
-  if (isBlockedDashLanding(state, unit, ability, target)) return undefined;
+  // BLINK-ADJ removed the veto that used to sit here. A teleporting dash aimed
+  // at an occupied square no longer fizzles at resolution — it lands on the
+  // nearest legal square — so refusing the click would now block an order the
+  // engine will happily carry out, which is the same bug in the other
+  // direction. `isBlockedDashLanding` survives as the *tell* the preview draws
+  // (the landing will not be exactly here), not as a gate.
 
   const resolved = aimFor(map, state, unit, ability, target);
   return aimLegal(unit, ability, resolved.aim, resolved.aimStep) ? resolved : undefined;
@@ -519,10 +516,13 @@ export function commitAim(
  * Would this dash be aimed at a square a living character already holds, with no
  * knockback of its own to clear it?
  *
+ * Since BLINK-ADJ this is **not** a reason to refuse the order — the engine
+ * lands the blink on the nearest legal square instead of fizzling. It is kept
+ * because it is exactly the condition under which the drawn landing marker and
+ * the real one differ, which is a thing worth telling the player.
+ *
  * Teleporting dashes only. A `path` charge is *allowed* to be drawn through and
- * at bodies — it rests on the furthest free square rather than fizzling — so
- * refusing that click would break a legal order (edge-cases: charges pass
- * through, rest short).
+ * at bodies — it rests on the furthest free square — so it was never in scope.
  */
 export function isBlockedDashLanding(
   state: GameState,
