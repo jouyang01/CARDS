@@ -3030,3 +3030,44 @@ directive resolves to a confirmation, recorded so nobody fixes it into divergenc
    shrinking the icons until eleven fit, which gives back STATUS-ICONS-SIZE, or wrapping to a second
    line, which is the thing NAMEPLATE-LAYOUT replaced. `+N` is my call and the least bad of the
    three, but it is a call.
+
+## 2026-08-15 — CLASH-AR, the unique-basics pass, and three Builder-OQ rulings (Designer)
+
+The owner supplied AR's clash rules verbatim and asked for a basics-uniqueness pass; the
+Builder left three Designer items. Full spec in `docs/design/clashes-and-basics.md`.
+
+**(1) The clash audit found we were two-thirds right, and the deltas are surgical.** AR's
+rule 2 (both ending on a square → all bounced to their previous square, pad denied) is
+exactly the shipped contested-square behaviour. The deltas: passers-through now continue
+instead of gridlocking (rule 1 — promotes CL1, whose deferral is superseded by the owner's
+primary source), an ender outranks a passer for the pad even against an earlier step-clock
+claim (rule 3 — resting is the stronger commitment), and a same-step simultaneous entry
+claims nothing (today the tie falls to event-emission order — deterministic but arbitrary,
+the kind of tiebreak nobody can predict at the planning screen). The swap block stands; AR
+is silent on swaps. Happy consequence: crossing paths mid-board gets safer, which livens the
+Might-room geometry rather than gridlocking it.
+
+**(2) The uniqueness pass proved the owner's complaint with arithmetic: nine autos were four
+lines and five cones differing only in numbers.** The parity table maps AR's nine signature
+basics onto the engine: three are expressible today and shipped (Lumen's Aurora line —
+damage enemies + heal allies in one path, which FF1 polarity gives us for free; Thorn's
+Zuki lob — a circle auto that detonates over walls; Ravok's Asuna whirl — a self-circle
+melee spin), four need small knobs (axis bonus, constant-width beam, inner-ring damage,
+aim-time modes — each reusing the existing integer lattice, each shipping with its one data
+edit), and two are rejected as not worth their geometry cost yet (Lockwood's wall bounce,
+Helios's chain). Uniqueness also comes from exclusivity: with the others migrated, Vex owns
+the only vanilla line and Wisp the only pure melee cone. Pricing: Lumen pays 4 damage for
+the heal rider, Thorn pays 2 for the lob — a no-cooldown wall-ignoring poke is positional
+power and is priced as such, with range the first nerf lever.
+
+**(3) The Builder's pad-visibility OQ becomes a placement rule, not a render patch.** A pad
+may not sit on a square whose south (y+1) neighbour is wall or cover — the shadow-row rule,
+enforced alongside PADS-SPREAD. Both maps' Might and Health pads moved accordingly; the
+centre-prize ruling survives (the Might pair is still inside the strongpoint, near pad 5 /
+far pad 10 from each spawn). The renderer lever was rejected on principle: a pad drawn over
+a wall lies about occlusion. **(4) Body clicks select the unit.** Raycast unit meshes before
+the ground plane; a player who clicks a character means the character. Visible units only —
+fog leaks nothing. **(5) The melee pass makes MELEE-COVER real** — the four contact strikers
+plus Shockwave; Seismic Rupture deliberately excluded (bracing behind cover against a quake
+is a fair read), dashes deliberately deferred. **(6) Thorn's snare gets lifetime 3** — the
+same cap logic as Vex's Overwatch; an immortal minefield is the stall the caps exist to stop.

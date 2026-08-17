@@ -12,8 +12,14 @@
       "range": 2,
       "cooldown": 0,
       "energyGain": 8,
-      "effects": [{ "kind": "damage", "amount": 20 }],
-      "description": "A short crushing arc with the tower shield. Melee — ignores cover."
+      "effects": [
+        {
+          "kind": "damage",
+          "amount": 20
+        }
+      ],
+      "description": "A short crushing arc with the tower shield. Melee \u2014 ignores cover.",
+      "melee": true
     },
     {
       "id": "barrier_pulse",
@@ -24,7 +30,13 @@
       "radius": 1,
       "cooldown": 2,
       "energyGain": 6,
-      "effects": [{ "kind": "shield", "amount": 20, "duration": 1 }],
+      "effects": [
+        {
+          "kind": "shield",
+          "amount": 20,
+          "duration": 1
+        }
+      ],
       "description": "Allies in the aimed area gain a 20-point shield for the turn. Aim it at yourself or the teammate about to be dived."
     },
     {
@@ -35,12 +47,20 @@
       "range": 4,
       "cooldown": 3,
       "energyGain": 5,
-      "impact": { "destination": 1 },
+      "impact": {
+        "destination": 1
+      },
       "effects": [
-        { "kind": "teleport" },
-        { "kind": "shield", "amount": 12, "duration": 1 }
+        {
+          "kind": "teleport"
+        },
+        {
+          "kind": "shield",
+          "amount": 12,
+          "duration": 1
+        }
       ],
-      "description": "Dash to a square within 4; Aegis and every ally within 1 square of the landing gain a 12-point shield. Resolves before Blast — arrive at the ally being dived and cover them, or leave the trap you're standing in."
+      "description": "Dash to a square within 4; Aegis and every ally within 1 square of the landing gain a 12-point shield. Resolves before Blast \u2014 arrive at the ally being dived and cover them, or leave the trap you're standing in."
     },
     {
       "id": "grounding_strike",
@@ -51,10 +71,16 @@
       "cooldown": 2,
       "energyGain": 8,
       "effects": [
-        { "kind": "damage", "amount": 14 },
-        { "kind": "slow", "duration": 1 }
+        {
+          "kind": "damage",
+          "amount": 14
+        },
+        {
+          "kind": "slow",
+          "duration": 1
+        }
       ],
-      "description": "A grounding blow: 14 damage and Slow for a turn. Peel — a slowed diver never finishes the walk."
+      "description": "A grounding blow: 14 damage and Slow for a turn. Peel \u2014 a slowed diver never finishes the walk."
     }
   ],
   "ultimate": {
@@ -67,8 +93,15 @@
     "cooldown": 0,
     "energyGain": 0,
     "effects": [
-      { "kind": "shield", "amount": 40, "duration": 2 },
-      { "kind": "weaken", "duration": 1 }
+      {
+        "kind": "shield",
+        "amount": 40,
+        "duration": 2
+      },
+      {
+        "kind": "weaken",
+        "duration": 1
+      }
     ],
     "description": "A halo of force centered on Aegis: allies within 2 squares gain a 40-point shield for 2 turns; enemies within it are Weakened. Stand between your carry and their team. (100 energy)"
   }

@@ -12,8 +12,14 @@
       "range": 2,
       "cooldown": 0,
       "energyGain": 8,
-      "effects": [{ "kind": "damage", "amount": 24 }],
-      "description": "Short cone smash. Melee range — ignores cover."
+      "effects": [
+        {
+          "kind": "damage",
+          "amount": 24
+        }
+      ],
+      "description": "Short cone smash. Melee range \u2014 ignores cover.",
+      "melee": true
     },
     {
       "id": "bulwark",
@@ -23,7 +29,13 @@
       "range": 0,
       "cooldown": 3,
       "energyGain": 6,
-      "effects": [{ "kind": "shield", "amount": 30, "duration": 1 }],
+      "effects": [
+        {
+          "kind": "shield",
+          "amount": 30,
+          "duration": 1
+        }
+      ],
       "description": "Raise a 30-point shield for this turn. The classic answer to a predicted burst."
     },
     {
@@ -35,8 +47,14 @@
       "cooldown": 3,
       "energyGain": 8,
       "effects": [
-        { "kind": "damage", "amount": 15 },
-        { "kind": "knockback", "amount": 1 }
+        {
+          "kind": "damage",
+          "amount": 15
+        },
+        {
+          "kind": "knockback",
+          "amount": 1
+        }
       ],
       "description": "Charge in a straight line; the first enemy hit takes 15 damage and is knocked back 1 square (losing their Move)."
     },
@@ -49,8 +67,14 @@
       "cooldown": 3,
       "energyGain": 10,
       "effects": [
-        { "kind": "damage", "amount": 10 },
-        { "kind": "pull", "amount": 2 }
+        {
+          "kind": "damage",
+          "amount": 10
+        },
+        {
+          "kind": "pull",
+          "amount": 2
+        }
       ],
       "description": "Hook the first enemy in a line: 10 damage, dragged 2 squares toward Bastion, Move cancelled. Sets up next turn's Slam."
     }
@@ -64,9 +88,19 @@
     "cooldown": 0,
     "energyGain": 0,
     "effects": [
-      { "kind": "shield", "amount": 50, "duration": 2 },
-      { "kind": "unstoppable", "duration": 2 },
-      { "kind": "might", "duration": 2 }
+      {
+        "kind": "shield",
+        "amount": 50,
+        "duration": 2
+      },
+      {
+        "kind": "unstoppable",
+        "duration": 2
+      },
+      {
+        "kind": "might",
+        "duration": 2
+      }
     ],
     "description": "For 2 turns: 50 shield, Unstoppable, and Might. Walk at them. (100 energy)"
   }

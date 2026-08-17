@@ -12,8 +12,17 @@
       "range": 6,
       "cooldown": 0,
       "energyGain": 8,
-      "effects": [{ "kind": "damage", "amount": 18 }],
-      "description": "A whip of light. Real damage — Lumen is a combatant, not a battery."
+      "effects": [
+        {
+          "kind": "damage",
+          "amount": 14
+        },
+        {
+          "kind": "heal",
+          "amount": 12
+        }
+      ],
+      "description": "A whip of light down a line: enemies in it take 14, allies in it heal 12. Fire it through your frontliner at the enemy behind them \u2014 the Mender's auto does Mender work."
     },
     {
       "id": "mending_light",
@@ -24,8 +33,13 @@
       "radius": 1,
       "cooldown": 2,
       "energyGain": 6,
-      "effects": [{ "kind": "heal", "amount": 25 }],
-      "description": "Heal allies in the aimed area for 25. Aim it at your own square when fighting alone. Prep phase — lands before this turn's damage."
+      "effects": [
+        {
+          "kind": "heal",
+          "amount": 25
+        }
+      ],
+      "description": "Heal allies in the aimed area for 25. Aim it at your own square when fighting alone. Prep phase \u2014 lands before this turn's damage."
     },
     {
       "id": "glimmer_step",
@@ -36,8 +50,14 @@
       "cooldown": 3,
       "energyGain": 5,
       "effects": [
-        { "kind": "teleport" },
-        { "kind": "shield", "amount": 15, "duration": 1 }
+        {
+          "kind": "teleport"
+        },
+        {
+          "kind": "shield",
+          "amount": 15,
+          "duration": 1
+        }
       ],
       "description": "Flash to a square within 3 and gain a 15-point shield for the turn. The escape that keeps a healer alive in a duel."
     },
@@ -50,10 +70,16 @@
       "cooldown": 2,
       "energyGain": 8,
       "effects": [
-        { "kind": "damage", "amount": 12 },
-        { "kind": "weaken", "duration": 1 }
+        {
+          "kind": "damage",
+          "amount": 12
+        },
+        {
+          "kind": "weaken",
+          "duration": 1
+        }
       ],
-      "description": "12 damage and Weaken for a turn. Lumen's real defensive stat — make them hit like a Support."
+      "description": "12 damage and Weaken for a turn. Lumen's real defensive stat \u2014 make them hit like a Support."
     }
   ],
   "ultimate": {
@@ -66,9 +92,15 @@
     "cooldown": 0,
     "energyGain": 0,
     "effects": [
-      { "kind": "heal", "amount": 40 },
-      { "kind": "might", "duration": 1 }
+      {
+        "kind": "heal",
+        "amount": 40
+      },
+      {
+        "kind": "might",
+        "duration": 1
+      }
     ],
-    "description": "Consecrate the aimed area: allies within it heal 40 and gain Might for a turn. Prep phase — it lands before the burst that was supposed to kill them. (100 energy)"
+    "description": "Consecrate the aimed area: allies within it heal 40 and gain Might for a turn. Prep phase \u2014 it lands before the burst that was supposed to kill them. (100 energy)"
   }
 }
