@@ -58,9 +58,14 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 >
 > Still open, nothing depends on it: whether AR had an incoming-damage modifier (§1.3).
 
-> **⚠ NOT YET FOLDED IN — CLASH-AR, the basics pass, and three Builder-OQ rulings,
-> 2026-08-15 (Designer; the clash text is the owner's verbatim AR source).** Full spec:
-> `docs/design/clashes-and-basics.md`. The Analyzer should fold and schedule:
+> **Folded in 2026-09-08 (Analyzer) — CLASH-AR, the basics pass, and three Builder-OQ rulings
+> from PR #60 (Designer; the clash text is the owner's verbatim AR source).** Full spec:
+> `docs/design/clashes-and-basics.md`. **CLASH-AR is now RULED in the Movement section** (adopt
+> AR's clash rules exactly — passer continues, only an ender stops; the owner attributes the
+> "first sprint doesn't move" report to this). All items are scheduled in BACKLOG: **CLASH-AR**
+> (engine, IMPORTANT), **BODY-CLICK** (client), the **BASIC-\*** engine knobs, the **shadow-row
+> content-test guard** (Builder), and the data records (below) confirmed shipped. Original
+> Designer notes retained for reference:
 > 1. **`CLASH-AR` (engine — the owner marked it IMPORTANT).** Adopt AR's clash rules exactly.
 >    Rule 2 (both ending → all forced back to their previous square; pad denied) is **already
 >    shipped behaviour**. The deltas: rule 1 — two units *passing through* the same square on
@@ -198,13 +203,30 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   *path*; this makes it transparent to the *landing*. Fixes the visible Ram Charge net-zero.
   (Rejected alternative: swap — moves the victim backwards vs the knockback vector and
   contends badly with simultaneous displacement.)
-- **PROPOSED — AR "Clashes" are more permissive than our resolver (refinement, lower
-  priority).** AR: two units *both passing through* the same square (neither ending there)
-  **both continue**; if one *ends* on it and another passes through, the ender stays and
-  the other continues; only *both ending* on it forces both back. Our `stepMovers` is
-  stricter — any same-step co-target stops all of them. This is a deterministic v1
-  simplification; align with AR's pass-through-co-occupancy only if playtests want it
-  (backlog item CL1). The 2-cycle no-edge-swap rule still stands regardless.
+- **RULED — CLASH-AR: adopt AR's clash rules exactly; a passer-through CONTINUES, only an ENDER is
+  stopped (owner directive 2026-08-15, verbatim AR source; Designer `clashes-and-basics.md` §1;
+  PROMOTES the former PROPOSED-CL1 from deferred to scheduled; backlog CLASH-AR — engine, IMPORTANT;
+  addresses the owner's "sprint bug is clashing movement patterns").** The shipped `stepMovers`
+  stops **all** same-step co-targets; AR (and now we) stop a unit **only if it is *ending* its
+  movement on the contested square**. Two-thirds already matched — the deltas are surgical:
+  - **Movement (`stepMovers`):** on a same-step collision, stop a unit only if it is **ending** on
+    the contested square (AR rule 2 — the shipped contested behaviour, which stands: both enders
+    bounce to their last-held square). Units merely **passing through** continue (AR rules 1 and 3).
+    The **2-cycle direct-swap block is UNCHANGED** (AR is silent on swaps; our ruling stands). This
+    is the likely cause of the "first sprint doesn't move" report: a sprint path that co-targeted a
+    square with another mover was halted whole under the stops-all rule; now it passes through.
+  - **Pads (`claimsBySquare`), two amendments to the earliest-entrant model (otherwise correct):**
+    **(a)** a **same-step simultaneous entry claims nothing** — the pad is denied to all who enter
+    it on the same step of the same phase (today the tie falls to arbitrary event-emission order);
+    **(b)** an **ender outranks a passer** — a unit that *rests* on the pad takes it even if a
+    passer crossed it at an earlier step (resting is the stronger commitment, AR rule 3).
+  - **Scope:** clashes are **per-phase** (Dash movers among themselves, Move movers among
+    themselves — phases never cross). **Displacement (end of Blast) is not movement** and keeps its
+    own rules. **Ships with tests:** the three AR cases verbatim, each with and without a pad on the
+    contested square; the swap-block regression; and a rule-3 case where the passer crossed *earlier*
+    and still loses the pad. **Consequence (named):** crossing paths get *safer* (both continue
+    instead of gridlocking), a small mobility buff to through-the-middle routes that livens the
+    Might-room geometry. Deterministic (integer step clock, fixed order).
 - **RULED — Displacement ignores the displacing attacker's own body (fixes MV1
   regression, 2026-08-17).** Since a charge now passes through and can land *beyond* its
   target, the victim's knockback path must **not** treat the charger's landing square as an
@@ -750,6 +772,29 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   reveal. (Supersedes the earlier "1 turn" parenthetical, which under-counted the tick.)
   **REFINED 2026-08-30 by the owner's vision rules — reveal is a CAMOUFLAGE penalty, and it
   fires on more than a damaging attack (see the two rulings below).**
+- **RULED — Reveal-on-attack fires ONLY when the attacker was CONCEALED; hitting an enemy from
+  open ground or from positional fog grants NO reveal (REVEAL-FIX; owner Dev Note 2026-09-08, "Why
+  are characters being debuffed with 'revealed' when they hit an enemy. This is incorrect … when a
+  character attacks from an area where enemies lack line of sight or vision, attack and movement
+  remain completely hidden"; backlog REVEAL-FIX — engine).** The shipped engine applies `reveal`
+  **unconditionally when a hit lands** (`resolve.ts:1138-1141` Blast, and the dash `hitEnemy`
+  branch) — so a unit shooting from the open, or from behind a wall the enemy can't see past, still
+  picks up a `reveal` debuff. It is a **no-op** for a positionally-hidden attacker (`canSee` tests
+  range/LoS before `reveal`), and pointless for an already-visible one — but with NAMEPLATE-LAYOUT
+  it now **shows** as a red debuff, which reads as "I was punished for attacking", and the owner
+  has ruled it wrong. **This REVERSES the 2026-08-31 "dealing damage reveals you whether hidden or
+  not" correction:** reveal-on-attack now goes through the **same `revealIfConcealed` gate as
+  CAMO-REVEAL** — a unit is revealed by attacking **iff it was concealed by brush or Stealth at the
+  moment of the attack**. Consequences, all correct: an **open** attacker gains no reveal (already
+  visible — no phantom debuff); a **positional-fog** attacker (out of range / behind a wall) gains
+  no reveal and **stays completely hidden**, attack and movement both (the owner's rule); a
+  **brush/Stealth** attacker is revealed this turn + next (the camouflage tell — CAMO-REVEAL,
+  unchanged). Unify: replace the two unconditional `hitEnemy` reveal blocks with
+  `revealIfConcealed(board, attacker, attackerPos, abilityId, events)` (breakStealth stays — losing
+  Stealth on damage is GAME_SPEC §6, separate from the reveal debuff). **Engine behaviour change →
+  ships with tests, and the `attribution.test.ts` case asserting an open unit gains `reveal` on
+  attack FLIPS to assert it does not; a brush/Stealth attacker still gains it.** Out of scope: the
+  `reveal` status mechanics (unchanged); breakStealth-on-damage (unchanged).
 - **RULED — Positional concealment (fog: out of range / behind walls) is NOT broken by
   attacking (owner vision rule 2026-08-30, "Attacking from the Fog of War"; backlog LAST-KNOWN
   — client).** A unit standing **outside the enemy's vision radius or behind cover/walls** may
@@ -992,6 +1037,23 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   degenerate stall case). Both teams **may** field the same character (blind-pick mirrors
   are legal). Lives in **M3 lobby validation**, not the engine (which already mints unique
   unit ids and is indifferent).
+- **RULED — M3-LOBBY pick model: a seat picks N characters, catalysts are PER-CHARACTER, R3 spans
+  the whole team (Builder OQ 2026-09-08 #4; backlog CAT-SELECT + M3-LOBBY).** The AC's "each player's
+  character + catalyst triad" is underspecified against the engine, so ruling it:
+  - **A seat is not a character.** In a 2-player 2v2 each player controls **two** characters, so a
+    seat makes **N picks** (N = its character count). **R3 (unique within a team) is enforced across
+    the team's WHOLE complement**, not per seat — two players on one team cannot bring the same
+    character between them.
+  - **The catalyst triad is per CHARACTER, not per player** (AR: a loadout belongs to a character).
+    Each picked character carries its own Prep/Dash/Blast triad. The engine models catalysts
+    **per unit** already (`spawnUnit` seeds `DEFAULT_CATALYSTS`), but **`createMatch` takes no
+    catalyst argument** — so this is an **ENGINE ASK (CAT-SELECT):** a match-creation path that
+    **seeds each unit's `catalysts` from the lobby's per-character picks** (an optional per-unit
+    catalyst map on `createMatch`, or a post-create setup that sets `unit.catalysts` before turn 1),
+    validated to three-distinct-phases (one Prep/Dash/Blast). Absent picks fall back to
+    `DEFAULT_CATALYSTS` (Second Wind / Shift / Adrenaline). **CAT-SELECT is the prerequisite that
+    unblocks M3-LOBBY's data model** — build it first so `room.ts` stores the right shape (the
+    Builder correctly stopped rather than guess a wrong model into `room.ts`).
 - **OPEN — Partial-team disconnect (matters at M3).** If one player on a multi-player
   team disconnects, does a teammate gain control of the abandoned characters? Current
   lean: yes, after one fully missed turn. Decide when building the server.
