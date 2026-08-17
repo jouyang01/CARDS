@@ -14,128 +14,178 @@ them. **`@cards/server` imports `@cards/engine` only, never the client.** **Move
 
 ## ✅ COMPLETE
 
-- The full local hot-seat game + AR parity + the screenshot UI batch.
-- **M3 so far:** M3-ROOM, M3-PROTOCOL, M3-HIDDEN, M3-JOIN-GUARD, M3-START, M3-LOCKLIST.
-- **PR #56 (this review):** **LOS-OCCLUSION** (a wall shadows the whole cone/line via
-  `hasLineOfSight`), **MELEE-COVER** (a `melee` flag skips cover — *inert until the Designer marks
-  abilities*), **CHASE-SPRINT** (a chase runs at sprint budget when no ability is spent), **MOVE-FOG**
-  (plan-time reachability filters unseen units — leak closed), **STATUS-ICONS-SIZE**, **ANIM-SLOW**
-  (460→760 ms/beat), **PADS-LIGHTS**, **PADS-SCHEDULE** (Might turn 2 / regular turn 4),
-  **RENDERER-SPLIT** (`textures.ts`), **RENDER-DRIVE-FIX** (drives reach contact; LAST-KNOWN green).
-- **PR #57 (Designer):** **PADS-PLACEMENT** (Might → central strongpoint (7,7)/(10,7) & (9,9)/(12,9),
-  Health/Energy → flanks) — resolves Might-contestability; **health-pad parity** confirmed;
-  **NAMEPLATE-LAYOUT** specced (§4.8 — scheduled below).
+- The full local hot-seat game + AR parity + the screenshot UI batch + M3-ROOM…M3-LOCKLIST.
+- **PR #59 (this review):** **NAMEPLATE-LAYOUT** (name left, status row beside it, polarity tint
+  from the FF1 table, `+N` overflow), **MOVE-SPRINT-FIRST** (not reproducible — guarded at both
+  layers; see CLASH-AR), **RENDER-CHECKS-GREEN** (the red render checks were the tests, not the
+  renderer — surfaced the pad-shadow problem, fixed in PR #60).
+- **PR #60 (Designer):** **CLASH-AR** ruled (scheduled below); **BASICS-UNIQUE** data — three autos
+  redesigned (Lumen damage+heal line, Thorn lobbed circle, Ravok self-circle whirl), the **melee
+  pass** (Dagger Flurry, Crushing Slam, Whirling Cleave, Shield Bash, Shockwave — **MELEE-COVER is
+  no longer inert**), **Thorn snare `lifetime: 3`**, and the **shadow-row pad moves**; **BODY-CLICK**
+  ruled; the **BASIC-\*** engine knobs specced.
 
-Current suite: **1420 unit tests** (engine 669 + client 627 + server 124), typecheck + build clean.
-**Verify the chase RENDER-COVERAGE e2e is green** (Builder added `largestCluster` — OQ #5).
+Current suite: **1435 tests** (engine 669 + client 642 + server 124), typecheck + build clean.
 
-> **This batch: a HIGH-priority movement bug, the Designer's nameplate revision, then M3-LOBBY.**
-> **Do not touch vision** (per-format `visionRange` superseded by ar-parity §3).
+> **This batch: engine correctness bugs first, then the M3-LOBBY unblocker, then the roster uplift.**
+> Two owner-directed engine fixes (REVEAL-FIX, CLASH-AR), a client targeting fix (BODY-CLICK), a
+> content guard (SHADOW-ROW-TEST), and CAT-SELECT (the engine ASK that unblocks M3-LOBBY). **Do not
+> touch vision** (per-format `visionRange` superseded by ar-parity §3).
 
 ### Build order and dependencies
 
-**MOVE-SPRINT-FIRST** (bug, HIGH) → **NAMEPLATE-LAYOUT** (client, PR #57) → verify the **chase e2e**
-→ **M3-LOBBY** (large, multi-session). The **melee-ability data pass** routes to the Designer.
+**REVEAL-FIX → CLASH-AR → BODY-CLICK → SHADOW-ROW-TEST → CAT-SELECT** (bugs + the M3 unblocker),
+then **BASIC-AXIS → BASIC-BEAM → BASIC-INNER** (small engine knobs, each with its data edit) →
+**M3-LOBBY** (large, unblocked by CAT-SELECT) → **BASIC-MODES** + the M3 roadmap. Realistic
+one-session cut: the four bug/fix items + CAT-SELECT; the rest carries.
 
 ---
 
-## Bug (do first)
+## Engine — correctness bugs (do first)
 
-### MOVE-SPRINT-FIRST. Vex's first sprint does not move the character (CLIENT) — UNBLOCKED (first, HIGH)
-**Addresses Dev Note: "BUG: Vex's first sprint action does not move the character."** *AC: a unit's
-first Sprint order of the match produces a non-empty `movePath` and the unit **moves at resolution**;
-a client regression test drives select-Sprint → board-click on turn 1 and asserts the committed path
-is non-empty (budget 8) and the unit's resolved position changed.*
-**Spec Notes.** **REPRODUCE EMPIRICALLY BEFORE TOUCHING CODE.** I traced the path statically and it
-reads correct at every step — `selectSprint` sets `sprint:true` + clears the ability
-(`targeting.ts:887`), `sprintAllowed` is true for a fresh unit, `onBoardClick` commits
-`pathTo(map, planningState(...), unit, sq, movementBudget(unit, draft.sprint))` with budget 8
-(`app.ts:1352-1360`) — so either it is a **subtle state/timing interaction**, a **pre-existing** bug,
-or a **stale build** (the UI1 "still broken" report was a cached bundle, not a defect — reviews
-2026-08-24/25). **First establish code-vs-environment in the running hot-seat.** **Prime suspect:
-MOVE-FOG** (the newest movement change): the committed path is planned against
-`planningState(state, currentFog(...).units)` — check the object identity of the acting unit in that
-filtered set, the `currentFog` memo on the first frame, and whether the turn-1 opening frame produces
-an empty/short reachable set for the first sprint specifically. Files: `packages/client/src/app.ts`
-(`onBoardClick` move branch, `selectMove`), `fog.ts` (`planningState`), `targeting.ts`
-(`pathTo`/`reachableSquares`, `sprintAllowed`). **Required test:** the regression above, plus — if
-MOVE-FOG is the cause — a test that a first sprint against a fog-filtered planning state still yields
-the full-budget path. **Out of scope:** the engine (resolution walks the true board — unchanged
-unless repro proves otherwise).
+### REVEAL-FIX. Reveal-on-attack fires only when the attacker was concealed (ENGINE) — UNBLOCKED (first, HIGH)
+**Addresses Dev Note: "Why are characters being debuffed with 'revealed' when they hit an enemy.
+This is incorrect … when a character attacks from an area where enemies lack line of sight or
+vision, attack and movement remain completely hidden."** *AC: a unit that deals damage gains
+`reveal` **iff it was concealed by brush or Stealth** at the moment of the attack (the
+`revealIfConcealed` gate); an attacker on **open ground** gains no `reveal`; an attacker from
+**positional fog** (out of range / behind a wall) gains no `reveal` and stays fully hidden; a
+**brush/Stealth** attacker is still revealed this turn + next (CAMO-REVEAL, unchanged); `breakStealth`
+on taking/dealing damage is unchanged (GAME_SPEC §6). The `attribution.test.ts` case asserting an
+open unit gains `reveal` on attack **flips** to assert it does not; a new test asserts a brush
+attacker does.*
+**Spec Notes.** Files: `packages/engine/src/resolve.ts` — replace the two unconditional `hitEnemy`
+reveal blocks (`~:1138-1141` Blast + the dash branch) with
+`revealIfConcealed(board, attacker, attackerPos, abilityId, events)` (the helper already exists —
+`~:240`). Keep `breakStealth` where it is. **Reverses the 2026-08-31 unconditional-reveal
+correction** (owner-directed). Ruled in edge-cases (REVEAL-FIX). **Out of scope:** the `reveal`
+status mechanics; `breakStealth`-on-damage; the positional-fog *client* render (already correct —
+LAST-KNOWN).
 
-## Client — the Designer's nameplate revision (PR #57)
+### CLASH-AR. Adopt AR's clash rules: a passer continues, only an ender stops (ENGINE) — UNBLOCKED (IMPORTANT)
+**Addresses Dev Note: "the sprint bug happened because of clashing movement patterns which the
+designer spec should fix."** *AC: on a same-step collision `stepMovers` stops a unit **only if it
+is ending** on the contested square (both enders bounce to their last-held square — the shipped
+rule); units **passing through continue**; the **2-cycle direct-swap block is unchanged**; pads —
+a **same-step simultaneous entry claims nothing**, and an **ender outranks a passer** (takes the pad
+even if the passer crossed at an earlier step); clashes are **per-phase** (Dash movers among
+themselves, Move among themselves); displacement (end of Blast) is unchanged. Tests: the three AR
+cases verbatim, each with and without a pad on the square; the swap-block regression; a rule-3 case
+where the passer crossed earlier and still loses the pad. **Re-verify the MOVE-SPRINT-FIRST report is
+gone.***
+**Spec Notes.** Files: `packages/engine/src/resolve.ts` (`stepMovers`, `claimsBySquare`),
+`movement`/`resolve` tests. Deterministic (integer step clock, fixed order). Ruled in edge-cases
+(CLASH-AR — supersedes the PROPOSED CL1). **Out of scope:** the swap block (unchanged); displacement
+rules; cross-phase clashes (phases never cross).
 
-### NAMEPLATE-LAYOUT. Revise the shipped nameplate; polarity-tint the status row (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "Make sure to address pull #57 from the designer."** (ar-parity §4.8.) *AC:
-the nameplate is revised — **name left-justified above the HP bar; the status icon row sits beside
-the name** (not below the bar); **buffs tinted BLUE, debuffs RED** per the **FF1 polarity table
-verbatim** (`healOverTime` blue, `damageOverTime` red) — glyph carries identity, tint carries
-polarity; `PIP_ORDER` (debuffs-first) survives, now reading as **red-nearest-the-name**;
-STATUS-ICONS-SIZE's sizing/wrap folds into this **one repaint**; all still vision-gated (own team
-always, enemies on `canSee`); the decoy's fake nameplate follows the same layout. A client test
-asserts a buff glyph tints blue and a debuff red, and the row sits beside the name.*
-**Spec Notes.** Files: `packages/client/src/renderer3d.ts`/`textures.ts` (the nameplate plate raster
-— now including the icon row beside the name), `status-pips.ts` (polarity tint from the **existing
-FF1 polarity table** — do NOT introduce a second colour table to drift). Supersedes STATUS-ICONS-SIZE
-+ the wrap-at-six decision (Builder OQ 2026-09-07 #6) — one layout, not two. Ruled in edge-cases
-(banner, folded 2026-09-07). Out of scope: the icon vocabulary (STATUS-ICONS shipped it); UI-INSPECT
-/ UI-TOPBAR (unchanged).
+## Client — targeting
 
-## M3 — the lobby (the remaining unblocked M3 work)
+### BODY-CLICK. Clicking a unit's body selects that unit's square (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "BUG: When moving to a location that another character occupies … the
+character does not move at all."** `squareFromPoint` raycasts the ground plane only, so a click on a
+lifted body resolves to the tile behind it. *AC: `squareFromPoint` raycasts the **unit meshes
+first** and prefers a **visible** unit hit over the ground plane — clicking a character selects that
+character's square (and, for a chase, that unit); a fogged unit has no mesh to hit (fog leaks
+nothing); MOVE1's nearest-legal routing then applies to the (occupied) selected tile so the mover
+steps to the closest legal square and **moves**; a client test asserts a click on a unit's body
+resolves to its square, and that a move toward an occupied tile yields a non-empty path to the
+nearest legal stop.*
+**Spec Notes.** Files: `packages/client/src/renderer3d.ts` (`squareFromPoint` — raycast the unit
+group before the ground plane), `targeting.ts`/`app.ts` (the chase/move consumers). **Verify MOVE1's
+`pathTo` still routes to nearest-legal** for a directly-clicked occupied tile — if it returns `[]`,
+that is a separate MOVE1 regression to fix here. Ruled by the Designer (clashes-and-basics §4.3).
+Out of scope: touch input; last-known-ghost clicks (no mesh).
 
-### M3-LOBBY. Map/format/catalyst/character selection + team-seat + R3 + the network client (SERVER + CLIENT) — UNBLOCKED (large, multi-session)
-*AC: a lobby picks map + format + each player's catalyst triad + character, seats players, enforces
-**R3 duplicate-pick**; its start button calls `RoomHub.start()` and **deletes the temporary `POST
+### SHADOW-ROW-TEST. Content guard: no pad in the camera's occlusion shadow (ENGINE TEST) — UNBLOCKED
+**Addresses Builder OQ 2026-09-08 #1 / Designer §4.2.** The pads were moved off the shadow rows in
+data; the guard is owed. *AC: `content.test.ts` fails a map with a pad on a square whose **south
+neighbour (y+1) is wall or cover** (the shadow-row rule); both shipped maps pass; the guard sits
+next to PADS-SPREAD.*
+**Spec Notes.** File: `packages/engine/test/content.test.ts`. Small. Out of scope: the renderer
+lever (rejected — a pad drawn over a wall lies about occlusion); pad placement (Designer's).
+
+## Engine — the M3-LOBBY unblocker
+
+### CAT-SELECT. Seed per-unit catalyst triads at match creation (ENGINE ASK) — UNBLOCKED (unblocks M3-LOBBY)
+**Addresses Builder OQ 2026-09-08 #4.** The engine seeds every unit `DEFAULT_CATALYSTS` and
+`createMatch` takes no catalyst argument, so a lobby's per-character picks have nowhere to land.
+*AC: a match-creation path seeds each unit's `catalysts` from a **per-character** triad (an optional
+per-unit catalyst map on `createMatch`, or a post-create setup that sets `unit.catalysts` before
+turn 1); each triad is validated to **three distinct phases** (one Prep/Dash/Blast); an absent pick
+falls back to `DEFAULT_CATALYSTS`; a test seeds a non-default triad and asserts the unit carries it
+and the validation rejects a two-Dash triad.*
+**Spec Notes.** Files: `packages/engine/src/setup.ts` (`createMatch`/`spawnUnit`), `validate.ts`.
+Keep it plain-JSON/deterministic (arrays, not Maps). **This is the prerequisite that lets M3-LOBBY
+store the right pick model in `room.ts`** — build it before M3-LOBBY. Ruled in edge-cases (M3-LOBBY
+pick model: a seat picks N characters, catalysts per-character, R3 spans the team). Out of scope:
+the lobby UI/wire format (M3-LOBBY); character selection (M3-LOBBY).
+
+## Engine — the unique-basics uplift (Designer §3; each ships with its one data edit)
+
+### BASIC-AXIS. `axisBonus` on a cone (ENGINE + data) — UNBLOCKED
+*AC: a `cone` may carry `axisBonus: amount`; tiles on the central axis take `amount` extra damage
+(the axis is already computed — CONE-B measures perpendicular distance from it); integer, no new
+geometry; ships with **Bastion's Crushing Slam** carrying it (+8 proposed). Tests: an axis tile
+takes base+bonus, an off-axis tile base.* **Spec Notes.** `shapes.ts`/the damage path; `validate.ts`.
+Reuse the CONE-B axis test. Out of scope: other kits.
+
+### BASIC-BEAM. `beamWidth` constant half-width on a cone (ENGINE + data) — UNBLOCKED
+*AC: a `cone` may carry `beamWidth: n`; the half-width becomes the constant `n` instead of CONE-B's
+`halfWidth(d)=d` ramp (same integer test, one substitution) — a constant-width wedge; ships with
+**Aegis's Shield Bash** as a 1×2 beam. Tests: coverage is constant-width, rotation-invariant.*
+**Spec Notes.** `shapes.ts` (`coneSquares`). Out of scope: other kits.
+
+### BASIC-INNER. `innerRadius`/`innerAmount` on a circle (ENGINE + data) — UNBLOCKED
+*AC: a `circle` may carry `innerRadius`/`innerAmount`; tiles within the inner radius take
+`innerAmount`, the ring the base; ships with **Cinder's Ember Bolt** (→ circle r1, 22 centre / 14
+ring). Tests: centre vs ring damage.* **Spec Notes.** `shapes.ts`/damage path; squared-distance
+integer test. Out of scope: other kits.
+
+### BASIC-MODES. Two aim-time profiles on one ability (ENGINE + CLIENT) — UNBLOCKED (large)
+*AC: an ability may carry `modes: [AbilityProfile, AbilityProfile]` chosen at aim time (order
+carries the index); ships with **Kestrel's Twin Bolts** (wide cone 2 ↔ thin line 6); the client
+offers the toggle (AIM2 UI). Tests: each mode resolves its own profile.* **Spec Notes.** The largest
+BASIC-\* ask (real UI work). Build after the smaller knobs. Out of scope: the other kits.
+
+## M3 — the lobby (unblocked once CAT-SELECT lands)
+
+### M3-LOBBY. Map/format/catalyst/character selection + team-seat + R3 + the network client (SERVER + CLIENT) — BLOCKED on CAT-SELECT
+*AC: a lobby picks map + format + **each seat's N characters and each character's catalyst triad**
+(per the ruled pick model — R3 spans the whole team, catalysts per-character, seeded via
+CAT-SELECT); its start button calls `RoomHub.start()` and **deletes the temporary `POST
 /rooms/:code/start` route**; the **client consumes a `decision` and a filtered `turnResolved`** over
-the socket (proving M3-HIDDEN end-to-end) — written against M3-LOCKLIST's shape (`locked.length/of`
-own team, `enemyLocked/enemyOf` the other half); supersedes MAPTOGGLE and M3-START's interim.*
-**Spec Notes.** The first item to build the **network client** (socket layer) — the client is
-hot-seat only today and has never consumed M3-HIDDEN's payloads (chosen to be a `GameState` with
-things missing, so the existing renderer reads it). Large; explicitly multi-session. Out of scope:
-reconnect (M3-RECONNECT), server-authoritative timing (M3-TIMER).
-
-### CAMO-E2E-FINISH. Composited proof of the camo red tile (CLIENT e2e) — UNBLOCKED (low)
-Before/after-delta at fixed coords. A real multi-turn browser drive; low priority; the *rule* is
-unit-covered (`camo-reveal.test.ts`). Fold with any e2e-harness work (it can reuse `largestCluster`).
+the socket (proving M3-HIDDEN end-to-end), written against M3-LOCKLIST's shape; supersedes MAPTOGGLE
+and M3-START's interim.* **Spec Notes.** The first item to build the **network client** (socket
+layer). Large; explicitly multi-session; now unblocked by CAT-SELECT + the pick-model ruling. Out of
+scope: reconnect (M3-RECONNECT), server-authoritative timing (M3-TIMER).
 
 ## M3 — the rest of the roadmap (blocked in sequence)
 
-### M3-TIMER. Server-authoritative per-player timer + Time Bank (SERVER + CLIENT) — BLOCKED on M3-LOBBY
-*AC: the DO enforces each player's `DECISION_SECONDS` (40) deadline; a missed submission resolves as
-**hold-position** (settle the OPEN partial-disconnect ruling at build); **Time Bank scope matches
-the hot-seat** (per-seat per decision window, `TIMEBANK_CHARGES = 1` — Builder OQ 2026-09-06 #2); the
-client shows UI-TIMER's countdown driven by the server clock — this is where a real deadline actually
-fires (hot-seat UI-TIMER intentionally does nothing at zero).*
+### M3-TIMER / M3-RECONNECT / M3-DEPLOY — BLOCKED on M3-LOBBY
+- **M3-TIMER:** the DO enforces `DECISION_SECONDS` (40); missed submission → hold-position; Time
+  Bank per-seat per window (`TIMEBANK_CHARGES = 1`); UI-TIMER driven by the server clock.
+- **M3-RECONNECT:** rejoin by code, reclaim the held seat (M3-JOIN-GUARD reserved it), re-sync to
+  current state.
+- **M3-DEPLOY:** `wrangler deploy` + Pages; a `wrangler dev`/miniflare smoke check (first real
+  runtime); the `POST …/start` route gone or gated. **Needs owner infra decisions — coordinate.**
 
-### M3-RECONNECT. Rejoin by code + reclaim a held seat + replay to current (SERVER + CLIENT) — BLOCKED on M3-LOBBY
-*AC: a dropped browser rejoins by room code, reclaims its original seat (identity-matched — the seat
-M3-JOIN-GUARD reserves), and the DO re-syncs it to the current turn from stored state.*
+## CAMO-E2E-FINISH — UNBLOCKED (low)
+Before/after-delta at fixed coords (reuse `largestCluster`). Low; the rule is unit-covered.
 
-### M3-DEPLOY. Wrangler deploy + Pages + first real-runtime smoke (CI) — BLOCKED on M3-LOBBY
-*AC: a `wrangler deploy` path; the client points at the deployed Worker; core-CI/Pages gates hold; a
-`wrangler dev`/miniflare **smoke check** proves the Worker boots (Builder OQ #8); the `POST …/start`
-route is gone or gated.* **Needs owner infra decisions — coordinate before building.**
+## Routed to Designer / flags
 
-## Routed to Designer (data / balance — not Builder build items)
-
-- **Melee ability list (data, MELEE-COVER):** mark which abilities are `melee: true` — the
-  short-range strikers. **Until it lands the MELEE-COVER rule is inert** (every ability still eats
-  cover — Builder OQ 2026-09-07 #3). This is the one that makes the shipped engine flag do anything.
-- **Pad tuning (data):** the shipped placement/schedule is owner-directed and verified; the flagged
-  4v4 lever is **`everyTurns` 4 → 5 on iron-basin**, *not* moving Might pads out of the centre.
-- **Pad colours** stay coupled to the render e2e (`isPadTeal`/`isTeamBlue`).
-
-## Flags / deferred (not scheduled)
-
-- **UI-TIMER hot-seat auto-lock** (only if the owner wants a deadline before M3-TIMER), **touch
-  input** for UI-INSPECT (desktop-only v1), **UI composited e2e** (unit-covered), **PREVIEW-MODIFIERS
-  shields**, **AIM-SMOOTH angle-uniform table**, `killerUnitId`/`gameEnd`, **A4**, **spectators**,
-  **CL1/CL2/E2**, **`vulnerable`**, the four un-adopted catalysts — unchanged, not scheduled.
+- **Dash melee-cover** (contact damage in the Dash phase ignoring cover) — deliberately deferred by
+  the Designer (§4.1); a playtest question, not folded into the `melee` flag. **Thorn's lobbed auto**
+  (range 5, wall-ignoring) — the Designer's playtest flag; range 5→4 is the first nerf lever.
+- **Pad tuning** — shipped placement/schedule verified; 4v4 over-dominance lever is `everyTurns` 4→5
+  on iron-basin, not moving Might out of the centre. **Pad colours** stay coupled to the render e2e.
+- **UI-TIMER hot-seat auto-lock**, **touch input** (UI-INSPECT desktop-only v1), **PREVIEW-MODIFIERS
+  shields**, **AIM-SMOOTH table**, `killerUnitId`/`gameEnd`, **A4**, **spectators**, **Lockwood/Helios
+  basics** (not adopted), **`vulnerable`** — unchanged, not scheduled.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **Might centre-room contest** (new — playtest the central strongpoint; 4v4 over-dominance lever is
-  `everyTurns`), **pad Dash-beats-Move**, **DoT/HoT vs Might/Weaken** (ruled off), **chase prediction
-  tell**, **ANIM-SLOW at 760 ms/beat** (confirm it reads without dragging), **8-tile melee cones**,
-  **Fade full-action**, **Kestrel** untested via MAPTOGGLE, **turn-1 spawn margin one tile**,
-  **vision Manhattan diamond**.
+- **CLASH-AR mobility** (crossing paths now safer — playtest the Might-room liveliness), **new autos**
+  (Lumen heal-line, Thorn lob, Ravok whirl — feel + Thorn's blind-corner poke), **melee vs cover**
+  now live, **Might centre contest**, **chase prediction tell**, **Fade full-action**, **Kestrel**
+  untested via MAPTOGGLE, **turn-1 spawn margin one tile**, **vision Manhattan diamond**.
