@@ -3071,3 +3071,88 @@ fog leaks nothing. **(5) The melee pass makes MELEE-COVER real** — the four co
 plus Shockwave; Seismic Rupture deliberately excluded (bracing behind cover against a quake
 is a fair read), dashes deliberately deferred. **(6) Thorn's snare gets lifetime 3** — the
 same cap logic as Vex's Overwatch; an immortal minefield is the stall the caps exist to stop.
+
+## 2026-09-09 — Builder: two owner-directed engine reversals, a targeting fix, and the lobby unblocker
+
+1. **REVEAL-FIX kept `breakStealth` without keeping a second branch.** The AC asks for the two
+   unconditional reveal blocks to become `revealIfConcealed` *and* for breakStealth-on-damage to be
+   unchanged, which looks like a conflict — `revealIfConcealed` only breaks Stealth when concealed.
+   It is not one: Stealth alone satisfies `isConcealed` whatever the tile, so every stealthed
+   attacker still goes through the gate and the only units it now skips have no Stealth to break.
+   Pinned as its own test rather than argued in a comment.
+
+2. **Three existing tests were flipped rather than deleted**, each with the reasoning it used to
+   carry written out beside it: `attribution.test.ts`'s open-attacker reveal (now the negative, plus
+   a brush counterpart so the suite still owns the attribution), CAMO-REVEAL's "an open unit that
+   DEALS damage is still revealed" regression guard, and the client's reveal-spam log case (which
+   now shoots from brush, since that is the only way left to emit the event it filters). A reader who
+   finds the old argument in `git log` should find its rebuttal in the file.
+
+3. **CLASH-AR: "stop only an ender" means "stop only an ender that another ender is contesting".**
+   Read literally, the ruled sentence would stop the lone ender in AR rule 3 — but rule 3's own row
+   says that ender *rests there and takes the pad*, and it cannot take a pad it was blocked off. So
+   the implemented test is "this step ends my path AND somebody else is also ending here". Flagging
+   the reading because the sentence and the table pull in different directions.
+
+4. **CLASH-AR's fixtures cross at right angles, not head-on.** MV2 rejects a path that *ends* on an
+   occupied square at validation, so two units walking at each other never reach a clash rule at all
+   — the orders are dropped first. Crossing routes are also what the ruling is actually about
+   ("through-the-middle routes"), so this is the honest fixture rather than a workaround.
+
+5. **Chase-vs-chase now crosses and swaps sides** instead of gridlocking mid-board (`chase.test.ts`
+   moved from (6,10)/(8,10) to (9,10)/(5,10)). That is the mobility consequence the ruling names,
+   arriving in a test that was written about something else (snapshot symmetry, unchanged).
+
+6. **`validateCatalystTriad` lives in `catalysts.ts`, not `validate.ts`** where the backlog put it:
+   the check needs the pool to know an id's phase, and `catalysts.ts` already imports `validate.ts`,
+   so the other direction is an import cycle. Same shape, one file across.
+
+7. **CAT-SELECT's picks are positional, not keyed by character id.** `picks[team][i]` pairs with
+   `teams[team][i]`. Keyed would collide on a cross-team mirror, which R3 explicitly allows, and the
+   ruled pick model is per *character* rather than per player. Holes mean "has not chosen" — the
+   normal state of a lobby, which should not need an invented triad to describe.
+
+8. **`axisBonus` is added to raw damage before Might/Weaken/cover.** The ruling does not say which
+   side of the multipliers it lands on. Before is the reading that needs no second code path: the
+   bonus behaves exactly as a larger authored number would, which is also how a player will read
+   "+8 on the centre line".
+
+9. **VALIDATE-KEYS' "every legal key at once" object became two.** `axisBonus` is the second
+   shape-exclusive key (after `chargeHits`), so one object can no longer carry every key and still
+   validate. Split into a `path` and a `cone`, with the coverage assertion over their union — the
+   guard is exactly as strong and the exclusivity is now stated rather than accidental.
+
+## Open Questions for the Analyzer — 2026-09-09
+
+1. **BASIC-BEAM is blocked on one number, and it is a data number.** The knob is specced as
+   *"`beamWidth: n` … the half-width becomes the constant `n`"*, but the same item ships it as
+   *"Aegis's Shield Bash as a **1×2** beam"*. Under the stated formula a 1-wide beam is half-width
+   **0** (only the axis survives the half-tile test), and `beamWidth: 0` reads like "no beam" — while
+   `beamWidth: 1` gives a **3**-wide lane, not 1. So either the field means full width, or Shield
+   Bash wants 0, or "1×2" means something else. I did not pick: it changes shipped data and it is
+   the Designer's number. Everything else about the knob is ready — `axisSquares`/`onConeAxis`
+   already prove the wedge's perpendicular offset is exposed as an integer, and the constant-width
+   substitution is one comparison in `wedgeCovers` (`4b² ≤ (2n+1)²·|dir|²`, cap `4a² ≤
+   (2·range+1)²·|dir|²`). **BASIC-INNER and BASIC-MODES are untouched and unambiguous** — they
+   simply did not fit the session.
+
+2. **CLASH-AR leaves one reachable corner unruled.** With rule 3, an ender and a passer can occupy
+   the same square at the end of a step. Normally the passer walks on. If its *next* step is blocked
+   (a stationary unit in the way), it halts there — and two units are then resting on one square,
+   which Collisions forbids. AR presumably has the same corner; I did not invent a resolution.
+   Options: the passer bounces to its last-held square instead of halting on an occupied one, or
+   the ender is displaced, or it is accepted as a transient the renderer will show honestly. Needs a
+   ruling before somebody hits it in a playtest and files it as a stacking bug.
+
+3. **Is `axisBonus` before or after the damage modifiers?** Decision 8 says before, which is my call,
+   not a ruling. If the Designer intended "+8 flat, unmodified", it wants a separate field on `Hit`
+   rather than a bigger `raw`, and Bastion's slam under Might would land differently.
+
+4. **REVEAL-FIX: is the dash branch's `origin` measurement what you want?** A dasher that starts in
+   brush, charges out and lands in the open is revealed; one that starts in the open and ends in
+   brush is not. That is the tile-that-hid-you reading and it matches the adjacent CAMO-REVEAL line,
+   but it is now the rule for *damaging* dashes too, which it was not before.
+
+5. **`data/characters/bastion.json` was rewritten by a JSON round-trip** (2-space indent, unicode
+   preserved) when `axisBonus` was added. The diff is 3 lines, so nothing moved — but if the repo
+   wants a specific formatter for `data/`, now is the time to say so.
