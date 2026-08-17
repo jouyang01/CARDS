@@ -263,3 +263,43 @@ export const isCamoRed = (px: Rgb): boolean =>
  * where the only orange that can appear is the chase.
  */
 export const isChaseOrange = isAimOrange;
+
+/**
+ * The largest connected blob among matched pixels, by proximity.
+ *
+ * `findPixels` returns every matching pixel on the frame, and taking the median
+ * of that is only meaningful when there is **one** thing on screen. Once a
+ * second enemy came into view, the median of "all red pixels" landed in the gap
+ * *between* the two bodies — empty ground — and a click there armed nothing.
+ *
+ * So: group by proximity and answer with the biggest group. `gap` is how far
+ * apart two samples can be and still count as the same blob; it should be a
+ * small multiple of the sampling step, since neighbouring samples of one body
+ * are exactly `step` apart.
+ */
+export function largestCluster(
+  points: readonly { x: number; y: number }[],
+  gap: number,
+): { x: number; y: number }[] {
+  const unvisited = new Set(points.map((_, i) => i));
+  let best: { x: number; y: number }[] = [];
+  while (unvisited.size > 0) {
+    const seed = unvisited.values().next().value as number;
+    unvisited.delete(seed);
+    const blob = [points[seed]!];
+    // Breadth-first over the remaining points; small frames, so the quadratic
+    // scan is cheaper than building an index.
+    for (let head = 0; head < blob.length; head++) {
+      const p = blob[head]!;
+      for (const i of [...unvisited]) {
+        const q = points[i]!;
+        if (Math.abs(q.x - p.x) <= gap && Math.abs(q.y - p.y) <= gap) {
+          unvisited.delete(i);
+          blob.push(q);
+        }
+      }
+    }
+    if (blob.length > best.length) best = blob;
+  }
+  return best;
+}
