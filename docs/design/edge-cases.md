@@ -35,9 +35,12 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > Manhattan; MET1 stands for walking). The three `impact` fields in
 > `data/characters/{aegis,ravok,wisp}.json` are already written and inert until DASH-IMPACT.
 
-> **⚠ NOT YET FOLDED IN — nameplate layout revision + pad placement, 2026-08-15 (Designer,
-> owner directives + Builder handoff).** The screenshot UI batch has since **shipped** (PR #54);
-> this pointer now covers the follow-ups, specced in `ar-parity-v1.md` §4.8, §4.9 and §7.6:
+> **Folded in 2026-09-07 (Analyzer) — nameplate layout revision + pad placement, from PR #57
+> (Designer, owner directives + Builder handoff).** The screenshot UI batch shipped (PR #54);
+> these follow-ups (`ar-parity-v1.md` §4.8, §4.9, §7.6) are now scheduled/recorded: **(1)
+> NAMEPLATE-LAYOUT is a backlog item** (client); **(2) PADS-PLACEMENT shipped in data** — verified
+> below (resolves the Builder's Might-contestability handoff, Builder OQ 2026-09-07 #2); **(3)
+> health-pad parity CONFIRMED — nothing to build.**
 > 1. **`NAMEPLATE-LAYOUT` (client)** — revise the shipped nameplate: **name left-justified
 >    above the HP bar; the status icon row moves to sit beside the name; buffs tinted BLUE,
 >    debuffs RED** (glyph = identity, tint = polarity, mapping = the FF1 table verbatim;
@@ -316,6 +319,18 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     engine change. **Client (PADS-LIGHTS):** the respawn countdown renders as **four coloured lights
     on the pad tile**, one per remaining turn (owner: "tracked visually by four colored lights"),
     extending PADS-INDICATOR's marker. Out of scope: RNG spawns; pad types beyond the three.
+  - **PADS-PLACEMENT — Might is the CENTRE prize (Designer PR #57, 2026-09-07; done in data;
+    resolves Builder OQ 2026-09-07 #2 / owner Dev Note "Might should be contestable — a rush").**
+    The turn-2 schedule alone was not enough — two mirror-fair Might pads each *nearer one team*
+    are "two safe pickups", punctual not contested. **The Might pair moved into the central
+    strongpoint** (duel-arena **(7,7)/(10,7)**, iron-basin **(9,9)/(12,9)** — the centre-most
+    non-adjacent mirrored pairs PADS-SPREAD allows), within turn-2 reach of **both** teams (near
+    pad Manhattan 6, far 9), so holding "your" Might means standing where the enemy contests it;
+    **Health/Energy took the vacated flank rows** (`firstTurn: 4`). Schedules stayed with the
+    *type*, not the position. This closes maps-v1's "is the central room worth taking?" question —
+    the damage buff now lives there. **Playtest lever if the room over-dominates at 4v4:
+    `everyTurns` 4 → 5 on iron-basin, NOT moving the pads back out.** Verified in data (both maps
+    pass the PADS1 mirror + PADS-SPREAD + content guards).
 - **RULED — Walked dash vs teleport; `shape` is the authority (R4, updated 2026-08-19).**
   Two dash models, distinguished by `shape` — and `shape` alone decides *how* a reposition
   happens; a `teleport` **effect** only says *that* the caster repositions (which makes it a
