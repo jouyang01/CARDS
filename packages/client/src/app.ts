@@ -44,6 +44,7 @@ import {
   previewCatalystAim,
   previewFreeAim,
   previewMovePath,
+  refusedAim,
   type Interaction,
 } from './order-mode.js';
 import {
@@ -151,6 +152,8 @@ const CHASE_LINE = 0xff8a3d;
  * the same family, brighter, because it *is* the aim with more behind it.
  */
 const BAND = 0xffe9a8;
+/** AIM-RANGE-TELL's refusal marker — the one red on the planning overlays. */
+const REFUSED = 0xff5a4e;
 
 /**
  * Title + status line, overlaid on the top-left of the canvas (UI-VIEWPORT).
@@ -856,7 +859,6 @@ export function startHotSeat(
     // a player choosing between two landing squares is reading the second.
     // Plan-time only — the engine detonates from wherever the dash really stops.
     const impact = impactPreview(map, unit, chosen, preview.aim, preview.aimStep);
-    renderer.highlight('impact', [...impact.origin, ...impact.destination], IMPACT, 0.4);
 
     // ── UI2 Layer 1: the continuous shape over Layer 2's tiles ───────────────
     // The tiles are the truth (centre-in binary, AIM2); the wedge/beam/disk is

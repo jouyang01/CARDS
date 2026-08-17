@@ -12,7 +12,8 @@ import {
   type MapDef,
   type UnitState,
 } from '@cards/engine';
-import { aimFor, aimLegal, commitAim, dashRoute, isBlockedDashLanding, rangeEnvelope } from '../src/targeting.js';
+import { aimFor, aimLegal, commitAim, dashRoute, emptyDraft, isBlockedDashLanding, rangeEnvelope } from '../src/targeting.js';
+import { IDLE, arm, hoverBoard, previewAim, refusedAim, type Interaction } from '../src/order-mode.js';
 import vex from '../../../data/characters/vex.json';
 import wisp from '../../../data/characters/wisp.json';
 import aegis from '../../../data/characters/aegis.json';
@@ -380,5 +381,59 @@ describe('DASH-OCCUPIED: a line or cone aimed at yourself is a no-op', () => {
     const s = match(VEX);
     const u = actor(s, 'vex');
     expect(commitAim(OPEN, s, u, ability(VEX, 'rail_shot'), { x: u.pos.x + 1, y: u.pos.y })).toBeDefined();
+  });
+});
+
+/**
+ * AIM-RANGE-TELL — an out-of-range hover says "no" out loud (Builder OQ
+ * 2026-09-10 #4).
+ *
+ * AIM-PREVIEW-RANGE stopped the overlay promising a reach the ability does not
+ * have, by painting nothing. Correct, and silent — and silence is
+ * indistinguishable from a broken preview, especially for a blink, where the
+ * complaint that started this file was an ability that looked like it had no
+ * range at all.
+ */
+describe('AIM-RANGE-TELL: the refused square is marked, not merely blank', () => {
+  const hovering = (square: { x: number; y: number }): Interaction =>
+    hoverBoard(arm('aim'), square)!;
+
+  it('marks the hovered square when the click would be refused', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const blink = ability(WISP, 'blink'); // square, range 4
+    const far = { x: u.pos.x + blink.range + 3, y: u.pos.y };
+    expect(refusedAim(OPEN, s, u, blink, hovering(far))).toEqual([far]);
+  });
+
+  it('marks nothing when the click would take', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    expect(refusedAim(OPEN, s, u, ability(WISP, 'blink'), hovering({ x: u.pos.x + 2, y: u.pos.y })))
+      .toEqual([]);
+  });
+
+  it('the marker appears exactly where the aim disappears', () => {
+    // Both read the same gate, so the boundary is one boundary. A tile that
+    // painted neither would be a hole; one that painted both would be a
+    // contradiction.
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    const blink = ability(WISP, 'blink');
+    for (let x = 0; x < OPEN.width; x += 3) {
+      for (let y = 0; y < OPEN.height; y += 3) {
+        const it0 = hovering({ x, y });
+        const painted = previewAim(OPEN, s, u, blink, emptyDraft(u.unitId), it0).aim.length > 0;
+        const marked = refusedAim(OPEN, s, u, blink, it0).length > 0;
+        expect(painted, `square ${x},${y}`).toBe(!marked);
+      }
+    }
+  });
+
+  it('says nothing at all when no ability is armed', () => {
+    const s = match(WISP);
+    const u = actor(s, 'wisp');
+    expect(refusedAim(OPEN, s, u, undefined, hovering({ x: 0, y: 0 }))).toEqual([]);
+    expect(refusedAim(OPEN, s, u, ability(WISP, 'blink'), IDLE)).toEqual([]);
   });
 });
