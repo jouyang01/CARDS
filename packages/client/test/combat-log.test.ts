@@ -35,8 +35,8 @@ const mkUnit = (unitId: string, characterId: string, owner: 0 | 1, x: number, y:
   ({ unitId, characterId, owner, pos: { x, y }, hp: 100, maxHp: 100, energy: 0, alive: true, respawnIn: 0, cooldowns: {}, statuses: [], catalysts: [], catalystsUsed: [], ...over });
 const mkState = (units: GameState['units']): GameState =>
   ({ turn: 1, units, traps: [], delayed: [], decoys: [], powerups: [], lastKnown: [], kills: [0, 0], format: '2v2', status: 'active', suddenDeath: false });
-const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
-  resolveTurn(s, OPEN, [{ team: 0, units: u0 }, { team: 1, units: u1 }], roster);
+const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[], map: MapDef = OPEN) =>
+  resolveTurn(s, map, [{ team: 0, units: u0 }, { team: 1, units: u1 }], roster);
 
 const names = (state: GameState): LogNames => ({
   unit: (unitId) => {
@@ -127,10 +127,13 @@ describe('UI6: it is a pure consumer — it states, never derives', () => {
   });
 
   it('drops the reveal spam an attack inflicts on its own attacker', () => {
-    // Every damaging attack applies `reveal` to the attacker. A line for it each
-    // turn would drown the log, and the damage line already says they attacked.
+    // Attacking out of concealment applies `reveal` to the attacker (REVEAL-FIX
+    // narrowed it to that case). A line for it every time would drown the log,
+    // and the damage line already says they attacked — so the shooter is put in
+    // brush here, which is now the only way to get one of these events at all.
+    const BRUSHY: MapDef = { ...OPEN, brush: [{ x: 2, y: 6 }] };
     const s = mkState([mkUnit('a', 'gunner', 0, 2, 6), mkUnit('e', 'gunner', 1, 6, 6)]);
-    const { events } = run(s, [{ unitId: 'a', ability: { abilityId: 'shoot', target: [{ x: 12, y: 6 }] } }], []);
+    const { events } = run(s, [{ unitId: 'a', ability: { abilityId: 'shoot', target: [{ x: 12, y: 6 }] } }], [], BRUSHY);
     expect(events.some((e) => e.type === 'statusApplied' && e.status === 'reveal')).toBe(true);
     expect(logEntriesForTurn(1, events, names(s)).some((l) => l.text.includes('reveal'))).toBe(false);
   });

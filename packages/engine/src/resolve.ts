@@ -1450,13 +1450,16 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
     if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false });
   }
 
-  runSteps(draft, board, movers, events);
+  // CLASH-AR (a): one collector for the whole Move phase — normal movers and
+  // chasers run on two clocks, and a tie only ever happens inside one of them.
+  const coEntries: VoidedClaims = new Set();
+  runSteps(draft, board, movers, events, coEntries);
 
   // CHASE1 — chasers go after the normal movers, against the board they leave
   // behind, so a chase closes on where its target actually finished rather than
   // on a square guessed when orders were written.
   const chasers = planChases(draft, board, plans, displaced, events);
-  runSteps(draft, board, chasers, events);
+  runSteps(draft, board, chasers, events, coEntries);
 
   // A decoy is destroyed by an enemy that *ends a move* on its square (R2) —
   // and a chaser ends a move like anyone else.
@@ -1469,14 +1472,16 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
   // much claim to it as one that walked there. Since PADS-PASS the claim is
   // "was on the square at any point this turn", read off the turn's own events,
   // so the settlement point is unchanged and only the eligibility widened.
-  resolvePowerups(draft, board, events);
+  resolvePowerups(draft, board, events, coEntries);
 }
 
 /** Advance a set of movers on one shared clock until every path is spent. */
-function runSteps(draft: GameState, board: Board, movers: Mover[], events: TurnEvent[]): void {
+function runSteps(
+  draft: GameState, board: Board, movers: Mover[], events: TurnEvent[], coEntries?: VoidedClaims,
+): void {
   if (movers.length === 0) return;
   const maxLen = Math.max(...movers.map((m) => m.path.length));
-  for (let step = 0; step < maxLen; step++) stepMovers(draft, board, movers, step, events);
+  for (let step = 0; step < maxLen; step++) stepMovers(draft, board, movers, step, events, coEntries);
 }
 
 /**
@@ -1579,18 +1584,44 @@ function pathToward(board: Board, draft: GameState, unit: UnitState, goal: Vec2,
  * Only units alive at settlement claim. A charger that crossed a Health pad in
  * Dash and died in Blast takes nothing — pads still settle at one fixed point
  * at the end of Move, and that point is after the dying.
+ *
+ * **CLASH-AR amends the earliest-entrant rule twice**, leaving the rest of it
+ * (entry-based pickup, Dash-beats-Move by phase order, the dead claiming
+ * nothing) exactly as it was:
+ *
+ * (a) **A simultaneous entry claims nothing.** Two units that set foot on the
+ *     square on the same step of the same clock are tied, and the tie used to
+ *     fall to event-emission order — deterministic, but arbitrary in the way a
+ *     player cannot predict from the planning screen. `voided` carries those
+ *     (unit, square) pairs out of `stepMovers`, which is the only place that
+ *     knows the step clock.
+ *
+ * (b) **An ender outranks a passer.** A unit that *rests* on the square takes
+ *     the pad even if somebody crossed it earlier in the turn: resting is the
+ *     stronger commitment, and AR rewards it. "Rests" needs no bookkeeping — it
+ *     is simply where the unit is standing when pads settle.
+ *
+ * The two compose in the one corner where they meet: a unit whose only claim was
+ * voided by (a) has no claim to promote, so a tie it was part of is not undone
+ * by then getting stuck on the square.
  */
 function claimsBySquare(
   draft: GameState,
   events: readonly TurnEvent[],
+  voided: ReadonlySet<string> = new Set(),
 ): Map<string, { unitId: string; seq: number }> {
   const alive = new Set(draft.units.filter((u) => u.alive).map((u) => u.unitId));
-  const best = new Map<string, { unitId: string; seq: number }>();
+  // Every claimant per square, not just the best — (b) has to be able to promote
+  // a resting unit over an earlier passer, which means knowing it claimed at all.
+  const claimants = new Map<string, Map<string, number>>();
   const claim = (p: Vec2, unitId: string, seq: number): void => {
     if (!alive.has(unitId)) return;
     const k = `${p.x},${p.y}`;
-    const cur = best.get(k);
-    if (cur === undefined || seq < cur.seq) best.set(k, { unitId, seq });
+    if (voided.has(`${unitId}|${k}`)) return; // (a) tied on the same step
+    const perSquare = claimants.get(k) ?? new Map<string, number>();
+    const cur = perSquare.get(unitId);
+    if (cur === undefined || seq < cur) perSquare.set(unitId, seq);
+    claimants.set(k, perSquare);
   };
 
   // Where everybody stood before anything moved: the `from` of a unit's first
@@ -1624,8 +1655,34 @@ function claimsBySquare(
       }
     }
   }
+
+  // Reduce each square to its one winner: the unit resting there if it has a
+  // surviving claim (b), otherwise the earliest claimant.
+  const restingAt = new Map<string, string>();
+  for (const u of draft.units) if (u.alive) restingAt.set(`${u.pos.x},${u.pos.y}`, u.unitId);
+
+  const best = new Map<string, { unitId: string; seq: number }>();
+  for (const [k, perSquare] of claimants) {
+    const resting = restingAt.get(k);
+    if (resting !== undefined && perSquare.has(resting)) {
+      best.set(k, { unitId: resting, seq: perSquare.get(resting)! });
+      continue;
+    }
+    let winner: { unitId: string; seq: number } | undefined;
+    for (const [unitId, seq] of perSquare) {
+      if (winner === undefined || seq < winner.seq) winner = { unitId, seq };
+    }
+    if (winner !== undefined) best.set(k, winner);
+  }
   return best;
 }
+
+/**
+ * CLASH-AR (a) — `unitId|x,y` pairs whose claim a simultaneous entry voided.
+ * A plain `Set` of strings so the whole thing stays JSON-shaped and ordered by
+ * insertion, which is to say deterministic.
+ */
+type VoidedClaims = Set<string>;
 
 /**
  * The longest slide `claimsBySquare` will walk before giving up. A displacement
@@ -1643,10 +1700,12 @@ const MAX_DISPLACEMENT_STEPS = 64;
  * there was nothing to break. Now two units can cross the same pad in one turn,
  * and the earlier one takes it — see {@link claimsBySquare}.
  */
-function resolvePowerups(draft: GameState, board: Board, events: TurnEvent[]): void {
+function resolvePowerups(
+  draft: GameState, board: Board, events: TurnEvent[], voided: ReadonlySet<string> = new Set(),
+): void {
   const pads = board.map.powerups ?? [];
   if (pads.length === 0) return;
-  const claims = claimsBySquare(draft, events);
+  const claims = claimsBySquare(draft, events, voided);
   for (const pad of pads) {
     const pos = { x: pad.x, y: pad.y };
     const record = draft.powerups.find((p) => vecEq(p.pos, pos));
@@ -1682,8 +1741,41 @@ function destroyDecoysUnderEnemies(draft: GameState, units: readonly UnitState[]
   });
 }
 
-/** Resolve one simultaneous step across all still-moving units. */
-function stepMovers(draft: GameState, board: Board, movers: Mover[], step: number, events: TurnEvent[]): void {
+/**
+ * Resolve one simultaneous step across all still-moving units.
+ *
+ * **CLASH-AR — only an ender is stopped.** The rule used to be "a contested
+ * square admits nobody", which gridlocked two units whose paths merely crossed
+ * in the middle. AR's, which the owner supplied verbatim and has ruled we adopt:
+ *
+ * 1. both **passing through** → both continue to their destinations;
+ * 2. both **ending** there → all are forced back to the square they last held
+ *    (already the shipped behaviour, and unchanged);
+ * 3. one ending, one passing → the ender **rests** there, the passer continues.
+ *
+ * So the test is not "is this square contested" but "is somebody else *also*
+ * ending here" — a passer never blocks anyone, including itself. Rule 3 makes
+ * this load-bearing rather than cosmetic: the ender has to actually arrive, or
+ * it could not take the pad the pad half of CLASH-AR hands it.
+ *
+ * The **2-cycle swap block is untouched** — AR's text is silent on direct swaps
+ * and our own ruling stands. Two units trading squares are each *entering* a
+ * square the other is standing on, which is a different thing from two units
+ * arriving at one square.
+ *
+ * `coEntries` collects the squares two or more units entered on this same step,
+ * which is exactly the "simultaneous entry claims no pad" case the pad half
+ * needs; it is recorded here because this is the only place the step clock and
+ * the successful entrants are both in scope.
+ */
+function stepMovers(
+  draft: GameState,
+  board: Board,
+  movers: Mover[],
+  step: number,
+  events: TurnEvent[],
+  coEntries?: VoidedClaims,
+): void {
   const active = movers.filter((m) => !m.halted && m.unit.alive && step < m.path.length);
   if (active.length === 0) return;
 
@@ -1692,14 +1784,19 @@ function stepMovers(draft: GameState, board: Board, movers: Mover[], step: numbe
 
   // Static conflicts, computed once from the step-start positions.
   const success = new Map<Mover, boolean>();
-  const targetCount = new Map<string, number>();
+  // CLASH-AR: count **enders** per square, not arrivals. A square two passers
+  // cross is not contested at all; a square two units settle on is.
+  const enderCount = new Map<string, number>();
   for (const m of active) {
+    if (step !== m.path.length - 1) continue; // passing through
     const k = vecKey(target.get(m)!);
-    targetCount.set(k, (targetCount.get(k) ?? 0) + 1);
+    enderCount.set(k, (enderCount.get(k) ?? 0) + 1);
   }
   for (const m of active) {
     const t = target.get(m)!;
-    let ok = targetCount.get(vecKey(t))! === 1; // contested square → nobody enters
+    // Stopped only if this step is the end of *this* unit's path and somebody
+    // else is ending on the same square (rule 2). Rules 1 and 3 both continue.
+    let ok = !(step === m.path.length - 1 && enderCount.get(vecKey(t))! > 1);
     if (ok) {
       // Swap: two units trading squares may not pass through each other (3a).
       for (const other of active) {
@@ -1732,16 +1829,29 @@ function stepMovers(draft: GameState, board: Board, movers: Mover[], step: numbe
     if (!changed) break;
   }
 
+  const entered = new Map<string, Mover[]>();
   for (const m of active) {
     if (success.get(m)) {
       const from = m.unit.pos;
       const to = target.get(m)!;
       m.unit.pos = { x: to.x, y: to.y };
+      const k = vecKey(to);
+      entered.set(k, [...(entered.get(k) ?? []), m]);
       events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
       if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died → path discarded
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
     }
+  }
+
+  // CLASH-AR pad amendment (a): a square two or more units entered on this very
+  // step is claimed by none of them. Recorded per (unit, square) rather than per
+  // square, so a *later* arrival that rests there is still eligible — the pad is
+  // denied to the units that tied for it, not retired for the turn.
+  if (coEntries === undefined) return;
+  for (const [k, ms] of entered) {
+    if (ms.length < 2) continue;
+    for (const m of ms) coEntries.add(`${m.unit.unitId}|${k}`);
   }
 }
 
