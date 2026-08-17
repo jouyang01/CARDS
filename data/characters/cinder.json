@@ -8,12 +8,15 @@
       "id": "ember_bolt",
       "name": "Ember Bolt",
       "phase": "blast",
-      "shape": "line",
+      "shape": "circle",
       "range": 7,
+      "radius": 1,
       "cooldown": 0,
       "energyGain": 8,
-      "effects": [{ "kind": "damage", "amount": 22 }],
-      "description": "A searing bolt along a line. Slightly under a pure Firepower's auto — the buffs make up the difference."
+      "innerRadius": 0,
+      "innerAmount": 22,
+      "effects": [{ "kind": "damage", "amount": 14 }],
+      "description": "A lobbed ember that bursts on impact: 22 at the heart of the blast, 14 to everything around it. Aim it at a body and the falloff is a reward for hitting; aim it between two and it still catches both."
     },
     {
       "id": "flare_burst",

@@ -50,7 +50,7 @@ import {
 import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
-import { aimInRange, axisSquares, circleSquares, direction8, expandShape, isAimStep } from './shapes.js';
+import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import { buildVision, teamCanSee, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
@@ -107,6 +107,12 @@ interface PlannedAbility {
    * later from a post-Dash position would name tiles the area does not contain.
    */
   axis: Vec2[];
+  /**
+   * BASIC-INNER — the covered tiles inside a circle's inner disc, empty for
+   * every other shape and for a circle without the knob. Computed here beside
+   * the area for the same anchoring reason the axis is.
+   */
+  inner: Vec2[];
   isUlt: boolean;
 }
 
@@ -471,6 +477,7 @@ function planCatalyst(
     def, aim, isUlt: false,
     area: expandShape(board, def, unit.pos, aim, aimStep),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
+    inner: innerSquares(board, def, aim),
   };
 }
 
@@ -562,6 +569,7 @@ function planAbility(
     def, aim, isUlt,
     area: expandShape(board, def, unit.pos, aim, aimStep),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
+    inner: innerSquares(board, def, aim),
   };
 }
 
@@ -1293,6 +1301,12 @@ function runBlast(
     // number would be — the bonus is part of the blow, not a second one.
     const axis = new Set(a.axis.map(vecKey));
     const axisBonus = a.def.axisBonus ?? 0;
+    // BASIC-INNER: a tile inside the disc takes `innerAmount` **instead of** the
+    // ability's own number — a replacement, because "22 in the centre, 14 in the
+    // ring" is how the falloff is authored. Still before Might, Weaken and
+    // cover: it is which blow landed, not a second one.
+    const inner = new Set(a.inner.map(vecKey));
+    const innerAmount = a.def.innerAmount;
     let hitEnemy = false;
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
@@ -1304,7 +1318,9 @@ function runBlast(
           // Energy stays enemy-only, so splashing an ally pays nothing.
           if (enemy) hitEnemy = true;
           if (e.kind === 'damage') {
-            const raw = (e.amount ?? 0) + (axis.has(vecKey(target.pos)) ? axisBonus : 0);
+            const key = vecKey(target.pos);
+            const base = innerAmount !== undefined && inner.has(key) ? innerAmount : (e.amount ?? 0);
+            const raw = base + (axis.has(key) ? axisBonus : 0);
             hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw, range: a.def.range, melee: a.def.melee === true });
           }
           else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });

@@ -108,6 +108,23 @@ export interface AbilityDef {
    */
   axisBonus?: number;
   /**
+   * BASIC-INNER — a circle that hits harder at its heart.
+   *
+   * `innerRadius` is the radius of the inner disc, measured the same way the
+   * circle itself is (`dx² + dy² ≤ r²`, CIRCLE-FIX), and `innerAmount` is what a
+   * tile inside it takes **instead of** the ability's own `amount` — a
+   * replacement, not a bonus, because "22 in the centre, 14 in the ring" is how
+   * the falloff is authored and read.
+   *
+   * `innerRadius: 0` is the common case and means the centre tile alone.
+   *
+   * Not new geometry: the disc is the same integer comparison the area already
+   * makes, against a smaller number.
+   */
+  innerRadius?: number;
+  /** The damage a tile inside `innerRadius` takes instead of `amount`. */
+  innerAmount?: number;
+  /**
    * A **melee** strike (MELEE-COVER): cover does not reduce it, whatever its
    * range.
    *
