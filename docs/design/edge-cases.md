@@ -436,6 +436,49 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     target sprints 8 in the open — now ends **adjacent** with `seen:true`; a wall between chaser and a
     close target still drops it to last-known; the brush/Stealth fog cases stay green unchanged; a
     long open-sightline pursuit closes by its full movement budget.
+    - **SHIPPED PR #66 (loop only); admissibility gate RATIFIED as-is (Builder OQ 2026-09-11 #1).**
+      `walkChase` now asks `teamHasSightline` (range-less LoS + concealment) — the reported bug is
+      fixed (verified: chaser one tile behind, target sprints 8 → ends adjacent, `seen:true`). The
+      Builder flags that `planUnit` still *admits* a chase order only when `teamCanSee` (range-capped)
+      or a last-known square exists, so a **never-seen** enemy visible only down a long open lane is
+      refused at plan time. **Ruled: the range-capped admissibility gate is INTENTIONAL — do not
+      widen it.** You may *order* a chase only on a target your team currently sees (normal range+LoS
+      vision) or remembers (last-known); CHASE-LOS deliberately widened the **pursuit loop** (once
+      locked on, follow a fleeing target by sightline past range), not what you are allowed to lock
+      onto. The two layers are meant to differ: the gate mirrors **player/client targeting** (you
+      cannot click a fogged enemy — normal vision is range-capped, so a range-10 enemy is not
+      rendered to target), while the loop is the resolution mechanic. Widening the gate to
+      `teamHasSightline` would be dead code — never reachable through the UI — unless the owner ALSO
+      extends what a player can see/target to "anything down a clear sightline," which is a separate,
+      larger vision-model change, not part of CHASE-LOS. The reported scenarios (a target seen, then
+      fleeing) all carry a last-known and are admitted. **No code change; ratified.** If the owner
+      later wants sightline-based targeting, flag a new item (ENGINE + client vision widening).
+- **RULED — WAYPOINTS: a player may compose a move square-by-square instead of taking the auto-routed
+  direct line; the engine already accepts it, so this is a CLIENT input mode (owner Dev Note
+  2026-09-11, "You should be able to manually set different waypoints to move your unit around an
+  enemy, a trap, or any obstacle … Hold down the Shift key while executing a movement command on each
+  tile you want to step on sequentially … Every time you click on a tile, your effective movement
+  range should change (decrease typically), as you move on sequential tiles"; backlog WAYPOINTS —
+  client).** The engine imposes **nothing new**: `validateMovePath` already walks an arbitrary ordered
+  list of steps and checks each for adjacency (orthogonal or diagonal), the MET1 cost (1 / 2), terrain,
+  the diagonal-corner rule, and the running budget; `runMove` walks the given `movePath` verbatim
+  rather than re-pathfinding. So a hand-built path is a first-class `movePath` — the whole feature is
+  the client letting the player build one. **The rule (client):** while **Shift** is held, each click
+  **appends the clicked tile as the next step** of `draft.movePath`; a tile must be a legal step from
+  the previous one (adjacent, not a wall, not the diagonal-corner-cut, within remaining budget) or it
+  is refused/marked, exactly as the engine would reject it; the displayed **remaining movement
+  decrements by that step's cost** (1 orthogonal, 2 diagonal) on each accepted click, so the player
+  watches the budget draw down; releasing Shift and clicking normally keeps today's forgiving
+  direct-line auto-route (`pathTo`, MOVE1 nearest-legal). The composed path submits as the ordinary
+  `movePath` — no engine change, no new order field. **Determinism/hidden-info:** unchanged — the
+  client already computes paths and the engine re-validates on resolve; a waypoint over a **fogged**
+  enemy's tile must still obey MOVE-FOG (the invisible enemy is not treated as an obstacle at plan
+  time, so the leak that ruling closes stays closed). **Ships with client tests:** a Shift-click
+  sequence builds the exact tile list; an illegal next tile is refused and the budget is unchanged; the
+  running-budget readout equals `movementBudget − Σ step costs`; a diagonal leg costs 2; the submitted
+  order carries the hand-built path and the engine accepts it. **Out of scope:** any engine change
+  (none needed); auto-connecting non-adjacent waypoints (v1 is one adjacent step per click — a clicked
+  non-adjacent tile is simply refused, keeping "tile-by-tile" literal); touch input.
 - **RULED — Plan-time reachability must NOT use a fogged enemy's position (MOVE-FOG; owner Dev Note
   2026-09-06, "Move command is blocked if an enemy is out of line of sight but on the tile that you
   are trying to move. This is giving unintentional information"; backlog MOVE-FOG — client).** The
@@ -1200,6 +1243,43 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   a minimal **"start now" protocol message** (backlog M3-START) lets such a room begin over the
   network before M3-LOBBY exists. Until M3-START/M3-LOBBY, the networked game is effectively
   full-room-only; M3-LOBBY's start button calls the same `start()`.
+  - **RULED — LOBBY-START: a room WITH a lobby starts on the START BUTTON, not on being full;
+    the full-room auto-start retires when the lobby screen lands (Builder OQ 2026-09-11 #2/#10;
+    backlog M3-LOBBY-UI; SUPERSEDES the full-room auto-start above for lobby-capable rooms).** The
+    "start when FULL" trigger predates there being anything to pick. With picking in the protocol, a
+    4-player 2v2 fills on the fourth join **before anyone has chosen a character**, so an auto-start
+    would fire straight over the empty lobby — unreachable in exactly the room that most wants it.
+    The ruling: once a room presents a lobby, **being full is not a start trigger** — the room starts
+    only when a seat presses start (the socket `start`, which calls `RoomHub.start()`), and start is
+    gated on `lobbyReady` (every seat's picks complete, per Decision 7's ⌈N/2⌉-seat coverage). The
+    Builder's interim guard (hold while a pick is outstanding) is correct but partial; **retire the
+    full-room auto-start entirely, together with the lobby screen** — they must land in the same slice
+    so a networked match always has a reachable start. Until then the interim guard stays. Short rooms
+    are unaffected (they never filled; they already start on the button). This also settles **OQ #4**:
+    the temporary `POST /rooms/:code/start` route is deleted **in the same M3-LOBBY-UI slice** that
+    adds the button and retires the auto-start — not before, or the networked match is left with no
+    reachable start at all.
+- **RULED — BLIND-PICK: lobby picks are hidden across teams — a team sees its own picks in full and
+  the enemy only as a count of finished seats (Builder OQ 2026-09-11 #3; golden rule #5; ratifies the
+  shipped `LobbyView` split, Decision 9).** The R3 ruling's "blind-pick mirrors are legal" only means
+  anything if neither side watches the other choose: a broadcast pick list would make every pick after
+  the first a **counter-pick**, and hidden information is team-vs-team (golden rule #5). So picks are
+  **stripped from the broadcast `RoomView`** and delivered by a **per-seat `lobby` message** — own
+  team in full (teammates coordinate), the enemy as a **bare count of seats that have finished
+  picking**, never enemy character ids. This is M3-HIDDEN's own split (own-team per-seat, enemy
+  count-only) applied to picks instead of locks — the same rule, one layer earlier. Written down
+  because it is a hidden-information rule and was only *implied* before. (If the owner ever wants a
+  public draft / counter-pick phase, that is a deliberate design reversal, not a bug — flag it; the
+  default is blind.)
+- **RULED — SEAT-ZERO: a would-be seat owed zero characters is refused the join (Builder OQ
+  2026-09-11 #6; backlog SEAT-ZERO-GUARD — server, small, low).** `deriveSeats` can hand a seat an
+  empty character list — reachable only in **1v1**, where a second player on a one-character team gets
+  `?? []` and would face a pick screen that asks for nothing. Ruling: **refuse the join that would
+  create a zero-character seat** (the room admits at most one player per character on a team); the
+  socket is told the team is full. 1v1 is the dev format, so this is the cheap, honest answer;
+  spectators (a seat that watches without controlling) remain the future option (see the started-room
+  ruling) but are out of scope for v1. Deterministic guard in the room's `join`, beside the
+  started-room refusal.
 - **RULED — the Decision payload shares WHO has locked in, but as a COUNT for the enemy team, not
   seat ids (M3-HIDDEN; Builder OQ 2026-08-16 third #4, refined).** A client must know what it is
   waiting for, so a Decision payload names the lock state — but the resolution splits by team:
