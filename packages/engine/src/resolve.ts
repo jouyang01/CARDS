@@ -52,7 +52,7 @@ import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, st
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
-import { buildVision, teamCanSee, type Vision } from './vision.js';
+import { buildVision, teamCanSee, teamHasSightline, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
@@ -1700,8 +1700,13 @@ function walkChase(
   target: UnitState,
   budget: number,
 ): { path: Vec2[]; goal: Vec2; seen: boolean } | undefined {
-  /** Team vision with the chaser standing at `at` — everyone else frozen. */
-  const seenFrom = (at: Vec2): boolean => teamCanSee(
+  /**
+   * CHASE-LOS: a **sightline** from the chaser standing at `at`, everyone else
+   * frozen — line of sight and concealment, no range cap. A pursuer does not
+   * stop looking at something in the open because it got seven tiles away; it
+   * loses it when the quarry breaks the line, behind a wall or into brush.
+   */
+  const seenFrom = (at: Vec2): boolean => teamHasSightline(
     vision,
     { ...draft, units: draft.units.map((u) => (u.unitId === chaser.unitId ? { ...u, pos: at } : u)) },
     chaser.owner,

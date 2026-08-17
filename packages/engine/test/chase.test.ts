@@ -224,15 +224,16 @@ describe('CHASE1: you cannot chase a target you cannot see', () => {
     expect(events.find((e) => e.type === 'chaseResolved')).toMatchObject({ seen: true, to: { x: 14, y: 10 } });
   });
 
-  it('CHASE-FOLLOW: sight regained MID-chase re-points it and it keeps going', () => {
-    // The case the old code could not express, and the reason the fix exists.
-    // Fog by **distance** rather than brush, because that is the kind a chaser
-    // can walk out of: the target is beyond vision range from where the chaser
-    // stands, so the chase legitimately sets off for the remembered square —
-    // and a few steps east it comes back into range and the goal updates.
+  it('CHASE-LOS: distance alone never fogs a chase — it follows the true square', () => {
+    // This case used to be *about* distance fog: the target ran past vision
+    // range and the chase re-acquired it partway. **CHASE-LOS removed the
+    // premise.** A chase's sight is line of sight and concealment, with no range
+    // cap, so an unobstructed target eight tiles away was never lost — the chase
+    // heads for its real square from the first step.
     //
-    // Asking once meant that never happened: the chase committed to the memory
-    // at (8,10) and stopped there holding four squares of unspent budget.
+    // The outcome is the same and the reason is different, which is worth
+    // keeping: it is the difference between "re-acquired it on the way" and
+    // "never lost it".
     const s = makeState([
       makeUnit('a', 0, { x: 4, y: 10 }, { characterId: 'test-char' }),
       makeUnit('e', 1, { x: 8, y: 10 }, { characterId: 'test-char' }),
@@ -240,16 +241,17 @@ describe('CHASE1: you cannot chase a target you cannot see', () => {
     const seen = run(s, idle, idle); // turn 1: four apart, in plain sight
     expect(known(seen.state, 0, 'e')?.pos).toEqual({ x: 8, y: 10 });
 
-    // Turn 2: the target runs four east, to eight away — past vision range.
+    // Turn 2: the target runs four east, to eight away — well past vision range.
     const ran = run(seen.state, chase('a', 'e'), [{
       unitId: 'e', movePath: [9, 10, 11, 12].map((x) => ({ x, y: 10 })),
     }]);
     expect(at(ran.state, 'e')).toEqual({ x: 12, y: 10 });
-    expect(VISION_RANGE, 'the premise: it really was out of sight at the start').toBeLessThan(8);
+    expect(VISION_RANGE, 'the premise: further than a render would light').toBeLessThan(8);
 
-    expect(at(ran.state, 'a'), 'ends adjacent to the target it re-acquired').toEqual({ x: 11, y: 10 });
+    expect(at(ran.state, 'a'), 'ends adjacent to the target it never lost').toEqual({ x: 11, y: 10 });
     expect(ran.events.find((e) => e.type === 'chaseResolved')).toMatchObject({ to: { x: 12, y: 10 }, seen: true });
   });
+
 
   it('…and sight that never comes back still stops the chase dead on the memory', () => {
     // The line the re-evaluation must not cross. Brush conceals from every
@@ -262,6 +264,89 @@ describe('CHASE1: you cannot chase a target you cannot see', () => {
     const { state, events } = run(s, chase('a', 'e'), idle, BRUSHY);
     expect(at(state, 'a')).toEqual({ x: 9, y: 10 });
     expect(events.find((e) => e.type === 'chaseResolved')).toMatchObject({ to: { x: 9, y: 10 }, seen: false });
+  });
+
+  it('CHASE-LOS: the report — one tile behind, target sprints eight, chase closes', () => {
+    // The owner's case verbatim: *"If a character is one tile away, it will only
+    // chase 1 tile even if the target sprints 8 tiles away."* It did, and the
+    // reason was that `teamCanSee` asks about **range** first: from every square
+    // the chaser could reach, the target was still past 6, so the per-step
+    // re-check of CHASE-FOLLOW could never rescue it. It moved one tile — to the
+    // last-known square — and stopped.
+    //
+    // A chase now sees by sightline. Nothing is in the way, so nothing is lost.
+    const s = makeState([
+      makeUnit('a', 0, { x: 3, y: 10 }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: 4, y: 10 }, { characterId: 'test-char' }),
+    ]);
+    const { state, events } = run(s, chase('a', 'e'), [{
+      unitId: 'e', sprint: true, movePath: [5, 6, 7, 8, 9, 10, 11, 12].map((x) => ({ x, y: 10 })),
+    }]);
+    expect(at(state, 'e'), 'the target really did sprint eight').toEqual({ x: 12, y: 10 });
+    expect(at(state, 'a'), 'and the chase closed to adjacent instead of moving one').toEqual({ x: 11, y: 10 });
+    expect(events.find((e) => e.type === 'chaseResolved')).toMatchObject({ to: { x: 12, y: 10 }, seen: true });
+  });
+
+  it('…and it spends its whole budget doing it, not a tile more', () => {
+    // The other half of the note — *"AS CLOSE to the target as possible based on
+    // remaining movement"*. Out of reach even sprinting, so the answer is the
+    // full budget spent straight at it rather than a stop at some remembered
+    // square along the way.
+    // A memory has to exist for the order to be *admissible* — `planUnit` still
+    // gates a chase on normal vision or a prior sighting, which CHASE-LOS
+    // deliberately did not touch (Open Questions 2026-09-11 #1). So they start
+    // in each other's sight and the target then runs out to eighteen.
+    const s = makeState([
+      makeUnit('a', 0, { x: 1, y: 10 }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: 5, y: 10 }, { characterId: 'test-char' }),
+    ]);
+    const seen = run(s, idle, idle);
+    expect(known(seen.state, 0, 'e')?.pos).toEqual({ x: 5, y: 10 });
+
+    const { state, events } = run(seen.state, chase('a', 'e'), [{
+      unitId: 'e', sprint: true, movePath: [6, 7, 8, 9, 10, 11, 12, 13].map((x) => ({ x, y: 10 })),
+    }]);
+    expect(at(state, 'e')).toEqual({ x: 13, y: 10 });
+    expect(at(state, 'a'), 'eight squares of sprint, all of them forward')
+      .toEqual({ x: 1 + SPRINT_RANGE, y: 10 });
+    expect(events.find((e) => e.type === 'chaseResolved')).toMatchObject({ to: { x: 13, y: 10 }, seen: true });
+  });
+
+  it('CHASE-LOS: a WALL still breaks it, even at one tile', () => {
+    // The line the rule keeps. Dropping the range gate must not drop the other
+    // two: a target directly behind a wall is not seen at any distance, so the
+    // chase falls back to the memory and stops there — the owner's *"if they
+    // lose vision … as close to the last place the chase target was seen"*.
+    const WALLED = makeMap(rows(21, 21).map((row, y) =>
+      (y === 10 ? `${row.slice(0, 8)}#${row.slice(9)}` : row)));
+    const s = makeState([
+      makeUnit('a', 0, { x: 5, y: 10 }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: 7, y: 10 }, { characterId: 'test-char' }),
+    ]);
+    const seen = run(s, idle, idle, WALLED);
+    expect(known(seen.state, 0, 'e')?.pos, 'seen before it ducked away').toEqual({ x: 7, y: 10 });
+
+    // It steps behind the wall column at x=8 — one tile from where it was.
+    const hidden = run(seen.state, chase('a', 'e'), [{
+      unitId: 'e', movePath: [{ x: 7, y: 9 }, { x: 8, y: 9 }, { x: 9, y: 9 }, { x: 9, y: 10 }],
+    }], WALLED);
+    expect(hidden.events.find((e) => e.type === 'chaseResolved')).toMatchObject({ seen: false, to: { x: 7, y: 10 } });
+    // The memory square itself, which the target has since vacated — the chase
+    // arrives there and stops rather than carrying on to (9,10) where it is.
+    expect(at(hidden.state, 'a'), 'stopped on the memory, not on the truth').toEqual({ x: 7, y: 10 });
+  });
+
+  it('CHASE-LOS: normal vision keeps its range cap — only the chase widened', () => {
+    // The scope of the change, asserted rather than promised. The team's
+    // persistent memory is written by `recordLastKnown`, which still uses
+    // `canSee` — so a target the chase can follow at eight tiles is still one
+    // the team does **not** record a fresh sighting of.
+    const s = makeState([
+      makeUnit('a', 0, { x: 1, y: 10 }, { characterId: 'test-char' }),
+      makeUnit('e', 1, { x: 19, y: 10 }, { characterId: 'test-char' }),
+    ]);
+    const { state } = run(s, idle, idle);
+    expect(known(state, 0, 'e'), 'eighteen tiles of clear sightline, still no memory').toBeUndefined();
   });
 
   it('the memory is per team — one side seeing does not brief the other', () => {
