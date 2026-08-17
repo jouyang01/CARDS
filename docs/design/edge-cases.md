@@ -248,6 +248,39 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   passer wedged against a stationary unit ends on its last-held square (not the occupied one); a
   chain of two blocked passers each fall back one; the two-units-on-one-square assertion that the bug
   would trip. The renderer shows the honest final rest — no transient stack is emitted.
+  - **SHIPPED PR #64.** `bounceOffOccupied` walks the passer back off an occupied square; suite green.
+  - **RULED — CLASH-CORNER conga residual: the last resort is to CANCEL the move, returning the unit
+    to its phase-start origin (Builder OQ 2026-09-10 #2).** The shipped bounce can still strand a unit
+    when every square on its own path *and* its origin are occupied by other units' rests (a conga
+    line). The terminating rule: when no free fallback exists, **cancel the stuck unit's move entirely
+    — it returns to the square it stood on when the phase began.** Phase-start origins are **pairwise
+    distinct** (no two units began the phase on one square), so a full cancel is always collision-free;
+    if the cancel still lands on another unit's rest, that other unit's move is cancelled in turn, in
+    **fixed unit order**, each cancel monotonically reducing the count of non-cancelled moves — so the
+    cascade terminates. Deterministic, N-unit-safe, and the STEP-STACK-INVARIANT property is the guard.
+    Low priority (needs a conga line to reach); ships with a conga regression that would otherwise trip
+    the stack assertion.
+- **RULED — BLINK-ADJ: a blink whose destination is unavailable lands on the nearest legal square to
+  it, never nowhere (owner Dev Note 2026-09-10, "BLINK-CLASH — should a blocked blink land adjacent
+  instead of not at all? Blocked blink should land adjacent instead of not at all"; Builder OQ
+  2026-09-10 #1; backlog BLINK-ADJ — engine; SUPERSEDES the shipped "neither lands").** A blink (a
+  dash-phase teleport) can find its destination illegal for three reasons: **blocked terrain**
+  (wall/cover/edge), **occupied** by a unit that rests there, or **contested** by another simultaneous
+  blink aimed at the same square (the case PR #64 resolved as "neither lands"). The owner rules all
+  three the same way — **land on the nearest legal square to the intended destination rather than
+  failing.** Definition of "nearest legal square" (the AR "square immediately before the destination",
+  made precise for a path-less teleport): the in-bounds, non-blocked, unoccupied square minimising
+  **Manhattan distance** to the destination; ties break by the fixed `direction8`/row-major order the
+  engine already uses, so it is deterministic. A blink to an occupied square therefore lands adjacent
+  (distance 1) as the owner asks; a blink into a wall lands on the closest open square outside it.
+  **Contested blinks:** each blinker resolves to its own nearest legal square to the shared
+  destination; if two would pick the **same** square, the **earlier-ordered** unit takes it and the
+  other falls to its next-nearest — no coin flip, no "both vanish". This restores both blinks landing
+  (the owner's intent) while keeping Collisions (no two rest on one square). **Golden rule / phase
+  order:** unchanged — blinks resolve in Dash, before Blast; a blink that lands adjacent is still a
+  Dash-phase teleport for immunity and pad purposes. **Ships with tests:** a blink onto a resting unit
+  lands adjacent; a blink into a wall lands on the nearest open square; two blinks at one square both
+  land, on distinct nearest squares, deterministically; the former "neither lands" assertion flips.
 - **RULED — Displacement ignores the displacing attacker's own body (fixes MV1
   regression, 2026-08-17).** Since a charge now passes through and can land *beyond* its
   target, the victim's knockback path must **not** treat the charger's landing square as an
@@ -368,6 +401,41 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     brush-hidden → stop); a new case where the chaser starts fogged, advances into vision mid-chase,
     and finishes adjacent. `chaseResolved` reports the **resolved** pursuit (`seen` = target in view
     at the end, `to` = the goal finally pursued).
+  - **RULED — CHASE-LOS: a chase's sight is LINE OF SIGHT + concealment, NOT the vision-range cap —
+    a chaser locked onto its quarry follows it as far as terrain sightlines and its own movement
+    allow (owner Dev Note 2026-09-10, "Chasing is still not working. If a character is one tile away,
+    it will only chase 1 tile even if the target sprints 8 tiles away … The chase should get the
+    chasing character AS CLOSE to the target as possible based on remaining movement and assuming they
+    have vision of the character. If they lose vision of the chase target, it should get the chasing
+    character as close to the last place the chase target was seen"; backlog CHASE-LOS — engine, HIGH;
+    SUPERSEDES the range portion of CHASE-FOLLOW's visibility test).** CHASE-FOLLOW shipped (PR #64)
+    but still calls `teamCanSee`, whose first test is `distance > VISION_RANGE → false`
+    (`vision.ts:253`). So a target that outruns **range 6** is treated as fogged **even while the
+    chaser is right behind it in the open** — the per-step re-check cannot rescue it, because from
+    every square the chaser is allowed to reach the target is still beyond 6. Reproduced against the
+    engine: a chaser one tile behind a target that sprints 8 tiles east moves **exactly one tile** and
+    stops with `seen:false` — the owner's report verbatim. **Root cause:** the engine conflates *"line
+    of sight"* (what the owner keeps writing) with *"vision range"* (the arbitrary 6-tile radius).
+    `canSee` composes three independent gates — **range** (`distance ≤ VISION_RANGE`), **line of
+    sight** (`hasLineOfSight`, walls), and **concealment** (`isConcealedFrom`, brush/stealth/reveal).
+    **The rule:** the chase's visibility predicate keeps line-of-sight and concealment but **drops the
+    range gate** — a chase sees its target whenever an unobstructed, unconcealed sightline exists,
+    at any distance. Everything else in CHASE-FOLLOW stands (per-step re-derivation on the frozen
+    snapshot; true-square goal while seen, last-known while not; stop on caught / genuinely-lost /
+    budget). **"Lose vision" now means what the owner means:** the target ducks behind a **wall**
+    (`hasLineOfSight` false) or into **brush/Stealth** (`isConcealedFrom` true) — a terrain/status
+    break, not merely running far. Then, and only then, the chase falls to the last-known square and
+    stops, exactly as the fog cases require. **Golden rule #5 holds where it bites:** a target hidden
+    by terrain, brush, or stealth is never pursued to its true square (last-known only); the sole
+    behaviour that widens is pursuit along a *clear open sightline* past 6 tiles, which is the chase
+    the owner is asking for and reveals only what an open sightline already would. **Note (playtest):**
+    a chase can now travel toward a target far down an open corridor that normal (range-capped) vision
+    would not light — accepted by owner directive; flag for feel. Only the CHASE predicate changes;
+    **last-known *recording* (`recordLastKnown`) keeps the range cap**, so the team's persistent memory
+    is unchanged. **Ships with tests (golden rule #3):** the reported case — chaser one tile behind,
+    target sprints 8 in the open — now ends **adjacent** with `seen:true`; a wall between chaser and a
+    close target still drops it to last-known; the brush/Stealth fog cases stay green unchanged; a
+    long open-sightline pursuit closes by its full movement budget.
 - **RULED — Plan-time reachability must NOT use a fogged enemy's position (MOVE-FOG; owner Dev Note
   2026-09-06, "Move command is blocked if an enemy is out of line of sight but on the tile that you
   are trying to move. This is giving unintentional information"; backlog MOVE-FOG — client).** The
