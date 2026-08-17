@@ -3156,3 +3156,87 @@ same cap logic as Vex's Overwatch; an immortal minefield is the stall the caps e
 5. **`data/characters/bastion.json` was rewritten by a JSON round-trip** (2-space indent, unicode
    preserved) when `axisBonus` was added. The diff is 3 lines, so nothing moved — but if the repo
    wants a specific formatter for `data/`, now is the time to say so.
+
+## 2026-09-10 — Builder: the chase follows, the corners close, and blinks stop flipping a coin
+
+1. **CHASE-FOLLOW is a re-derivation per step, not a longer leash.** The chase's goal is recomputed
+   from the chaser's live square on each step of a walk over the same frozen post-Move snapshot the
+   old code used once. Nothing else moves while it runs, so team vision changes for exactly one
+   reason — the chaser moved — which is what makes stepping and re-asking meaningful rather than
+   circular. Each iteration re-routes with the full reachability search and takes one step of it, so
+   the chase is no worse at pathfinding than a plain Move; a greedy one-square hop would have walked
+   into walls the search routes around. Termination is the budget, which strictly decreases, so even
+   flickering sight cannot loop it.
+
+2. **The flipped chase test was never a budget assertion.** The old expectation read
+   `5 + MOVE_RANGE`, which looks like a movement cap and is not: 9 was the *last-known square*. The
+   comment has been rewritten to say so, because the number coinciding with a budget is exactly how
+   this bug survived a rewrite of the budget rule (CHASE-SPRINT) without anybody noticing.
+
+3. **CLASH-CORNER: only a body can wedge a passer.** The ruling names "a stationary unit, a wall, or
+   the map edge". The latter two are unreachable for walked movement — a path through a wall or off
+   the board is refused at validation long before any step clock, so there is no passer left to
+   wedge. Pinned as a test so nobody later "fixes" the unreachable half.
+
+4. **CLASH-CORNER's residual, left alone deliberately.** If every square a bounced unit covered is
+   somebody else's rest, it stays put rather than stacking. Reaching that needs a conga line that
+   also blocks the origin; the ruling asserts the origin is always available, and this is the case
+   where it might not be. Flagged below rather than resolved by inventing a rule.
+
+5. **BASIC-INNER replaces, BASIC-AXIS adds.** A cone's axis bonus is genuinely additive on top of
+   the wedge's damage; a circle's centre is a *different number*, because "22 in the centre, 14 in
+   the ring" is how a falloff is authored and read. Both fold into `raw` before Might, Weaken and
+   cover, so there is still one multiplier path — and the AXIS-MODIFIERS-CHECK question applies to
+   both identically.
+
+6. **Cinder's range stayed at 7.** The AC gave the shape and the two damage numbers and not the
+   reach, so the authored range is untouched: the shape change is the item, and re-pricing the range
+   would be a rebalance I was not asked for. Its old top-end number survives — a player who lands
+   the centre still gets 22, and what changed is that missing by one now costs 8 rather than
+   everything.
+
+7. **BLINK-CLASH is narrower than the Dev Note, on purpose.** The note asks for AR's rule: two units
+   ending on one square both "stop on the square immediately before their intended final
+   destination". A blink has no squares in between to stop on — which is what makes it a blink, and
+   what the note itself says ("blinks typically bypass obstacles mid-journey"). Inventing a
+   traversal for it would be inventing geometry *and* an unlisted ruling, so I fixed the half that
+   is unambiguously wrong — the coin flip, where iteration order decided which of two identical
+   orders landed — by refusing the contested square to both, which is CLASH-AR rule 2's shape for a
+   movement whose last-held square is its origin. The "land adjacent along the line" half is the
+   Designer's and is flagged below.
+
+8. **AIM-PREVIEW-RANGE routed the preview through `commitAim` rather than adding a range check.**
+   The preview and the click now share one resolver, so they cannot disagree about whether an order
+   exists — a stronger property than "the preview also checks range", and it picked up the
+   occupied-landing and own-square refusals for free. One existing UI1 test had been passing only
+   because the preview did not check: it hovered 8.25 squares away with a range-6 grenade.
+
+## Open Questions for the Analyzer — 2026-09-10
+
+1. **BLINK-CLASH — should a blocked blink land adjacent instead of not at all?** (Dev Note 3;
+   `blink-clash.test.ts`, `contestedBlinks` in `resolve.ts`.) I shipped "neither lands", which fixes
+   the reported coin flip and matches CLASH-AR rule 2. The owner's AR text wants both stopped "on
+   the square immediately before their intended final destination", which for a teleport needs a
+   ruled definition of "before" — nearest legal square along the origin→destination line? nearest
+   legal square to the destination? — and that is new geometry plus a tie-break. **Designer/Analyzer
+   call**; the engine change is small once the definition exists.
+
+2. **CLASH-CORNER residual: a bounced passer with nowhere behind it.** (`bounceOffOccupied`.) If
+   every square on its own path *and* its origin are occupied by other units' rests, it stays on the
+   shared square. Needs a conga line to reach. Options: displace the ender, allow the transient, or
+   rule the origin permanently reserved. Low priority, but the invariant test would catch it as a stack.
+
+3. **Dev Note 1 — PR #60's character changes are all in `data/` and all supported.** Verified: the
+   melee flags, Thorn's `lifetime: 3`, the three redesigned autos and Bastion's `axisBonus` are on
+   `main`, and every key the roster uses is in `ABILITY_KEYS`. The one piece that was still owed was
+   **Cinder's Ember Bolt**, which is BASIC-INNER's own data edit and shipped this session. Nothing
+   outstanding — recorded so the question does not need asking twice. (**Kestrel** remains out of
+   the client's default eight-character `CATALOG` by the Designer's own note; reachable only via
+   MAPTOGGLE. Confirm that is still intended.)
+
+4. **Does AIM-PREVIEW-RANGE want a "you cannot go there" tell?** Today an out-of-range hover paints
+   *nothing*, which reads as "no", but silently. A greyed marker or a red tint would say it out
+   loud. Not specced, so not built.
+
+5. **M3-LOBBY was not started this session** — the three scheduled items plus three Dev Notes filled
+   it. It is unblocked and unambiguous; it is simply large.
