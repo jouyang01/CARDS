@@ -1424,6 +1424,44 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   actual rejoin-and-resync is **M3-RECONNECT's** (larger, still blocked). Split them: M3-CONN-STATE
   (small, client — show the state) now; M3-RECONNECT (rejoin by code, reclaim the held seat, re-sync)
   later. Recorded in both items.
+  - **SHIPPED PR #73 (M3-WAIT-STATE + M3-CONN-STATE).** `WaitView` carries own-team as a **seat-id
+    list** and the enemy as a **number** — M3-HIDDEN's count-only rule held **by the type**, no enemy
+    id in scope to leak; a closed socket **outranks** the waiting line (the resolution it waits for is
+    never coming); the board **disarms before the submit is sent**, not after the reply (a live aim
+    while the packet is in flight is a turn the player thinks they can still change). All ratified.
+- **RULED — M3-TIMER's countdown sits BESIDE the wait banner, not over it (Builder OQ 2026-09-14 #3;
+  backlog M3-TIMER).** The banner answers *what* the client is waiting for ("waiting for 1 opponent");
+  the server clock answers *how long*. These are two facts, not one — overwriting the banner text with
+  a number loses the first, which is the one that says the game is still alive. Ruling: the countdown
+  renders in the **existing `UI-TIMER` slot beside the banner**; the banner string is left to the
+  status it already carries. The server clock has one place to land (`hud.setBanner`'s sibling slot);
+  the banner does not become a structure for this. On timeout the ruled behaviour is unchanged —
+  **missed submission → hold position** (the seat's orders are whatever it had locked, empty if none).
+- **RULED — M3-END-SCREEN: a resolved match shows an end screen; it is the next thing a player hits
+  (Builder OQ 2026-09-14 #4; backlog M3-END-SCREEN — client).** The networked loop now closes
+  (create → pick → play → resolve) but a decided match leaves the player on the final board with
+  nothing — no winner, no way out. Ruling: on a terminal match `status` (`won`/`lost`/`draw`, already
+  on the resolved state) the client shows an **end-of-match screen** — the outcome for *this* seat and
+  a way back (to the create/hot-seat front door; a rematch is a later nicety, not required). Reads the
+  engine's own terminal status (`resolveOutcome`), recomputes nothing. Applies to the **hot-seat game
+  too** — it has the same missing ending. Out of scope: rematch wiring, stats, spectator end views.
+- **RULED — a `beamWidth` cone MAY also carry `axisBonus`; the two compose and are not forbidden
+  (Builder OQ 2026-09-14 #5; ratifies the shipped geometry).** A beam's axis is its centre file, which
+  is exactly where `axisBonus` already adds — so a constant-width lane with a hotter centre line is a
+  coherent, fully-defined ability. Aegis ships neither combined (no axis bonus on Shield Bash), but the
+  composition is **allowed**, not an accident to be validated away: no validator line is owed. If a
+  future kit wants a beam with a hot centre, it works today. Recorded so nobody "fixes" the legality.
+- **RULED — WAYPOINT-DASH-CLEAR: committing a DASH clears a composed waypoint route and its marks; a
+  non-dash ability leaves them (Builder OQ 2026-09-14 #2; backlog WAYPOINT-DASH-CLEAR — client,
+  small).** A composed move route correctly **survives** arming/committing a **non-dash** ability — the
+  move is still part of the turn. But a **dash IS the movement** and the engine already drops the
+  `movePath`/chase when a dash is armed (`planUnit`), so a dash that supersedes the move must also
+  **clear the route and its waypoint marks** on screen, or the board draws a path that will not
+  execute (a preview/resolution disagreement — the class of bug this file keeps closing). Ruling: on
+  committing a dash ability (or a Dash catalyst), clear `movePath` **and** `waypointMarks`; a non-dash
+  commit leaves both. Client-only (the order is already correct at resolve); ships with a test that a
+  dash after a composed waypoint route leaves no move marks and the resolved order carries no
+  `movePath`. Low risk, but the marks are player-facing.
 
 ## Economy & timing
 
