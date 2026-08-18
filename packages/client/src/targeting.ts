@@ -27,6 +27,7 @@ import {
   movementBudget,
   reachableSquares,
   reconstructPath,
+  stepCost,
   validateMovePath,
   vecEq,
   vectorToStep,
@@ -457,6 +458,77 @@ export function pathTo(map: MapDef, state: GameState, unit: UnitState, target: V
   const destination = exact?.canStop === true ? target : nearestLegalStop(squares, target)?.pos;
   if (destination === undefined) return []; // boxed in — there is nowhere legal to go
   return reconstructPath(squares, unit.pos, destination) ?? [];
+}
+
+/**
+ * WAYPOINTS — what a hand-built path has cost so far (MET1: 1 orthogonal, 2
+ * diagonal).
+ *
+ * `stepCost` is the engine's own, not a copy: the budget a player watches draw
+ * down has to be the budget `validateMovePath` will charge them, or the readout
+ * is a lie that only shows up when the order is refused.
+ */
+export function pathSpend(origin: Vec2, path: readonly Vec2[]): number {
+  let spent = 0;
+  let prev = origin;
+  for (const p of path) {
+    spent += stepCost(p.x - prev.x, p.y - prev.y);
+    prev = p;
+  }
+  return spent;
+}
+
+/** Movement left after walking `path` — the number the Move button shows. */
+export function remainingMove(unit: UnitState, sprint: boolean, path: readonly Vec2[]): number {
+  return Math.max(0, movementBudget(unit, sprint) - pathSpend(unit.pos, path));
+}
+
+/**
+ * WAYPOINTS — append one clicked square to a hand-built path, or refuse it.
+ *
+ * Owner Dev Note: *"You should be able to manually set different waypoints to
+ * move your unit around an enemy, a trap, or any obstacle … Hold down the Shift
+ * key while executing a movement command on each tile you want to step on
+ * sequentially … Every time you click on a tile, your effective movement range
+ * should change."*
+ *
+ * **The engine imposes nothing new** (ruled): `validateMovePath` already walks
+ * an arbitrary ordered step list and `runMove` walks a given `movePath`
+ * verbatim, so a hand-built path is an ordinary `movePath`. This function is the
+ * whole feature, and it delegates the legality question straight back to the
+ * engine rather than re-implementing adjacency, terrain, the diagonal-corner
+ * rule or the budget — a second copy of those is a second copy to keep in step.
+ *
+ * One click is **one adjacent step** (ruled, v1): a non-adjacent click is
+ * refused rather than auto-connected, which is what keeps "tile-by-tile"
+ * literal. Refusal is `undefined`, so a caller cannot mistake it for a path.
+ *
+ * The one engine verdict deliberately **not** treated as a refusal is
+ * `occupied`, which is about where a path *ends* rather than whether a step is
+ * legal. A player routing around a body naturally clicks past it; refusing the
+ * intermediate click would make the exact manoeuvre the note asks for
+ * impossible. Whether the finished path ends somewhere legal is settled when the
+ * order is submitted — by the engine, as it always was.
+ *
+ * MOVE-FOG still holds, and holds *here* by not being this function's business:
+ * callers pass the `planningState` they already use for `pathTo`, so a fogged
+ * enemy is not on the board this validates against and cannot be felt as an
+ * obstacle.
+ */
+export function appendWaypoint(
+  map: MapDef,
+  state: GameState,
+  unit: UnitState,
+  path: readonly Vec2[],
+  square: Vec2,
+  sprint: boolean,
+): Vec2[] | undefined {
+  const previous = path.at(-1) ?? unit.pos;
+  if (vecEq(previous, square)) return undefined; // clicking where you already are
+  const candidate = [...path.map((p) => ({ x: p.x, y: p.y })), { x: square.x, y: square.y }];
+  const check = validateMovePath(buildBoard(map), state, unit, candidate, sprint);
+  if (!check.valid && check.error.code !== 'occupied') return undefined;
+  return candidate;
 }
 
 /**
