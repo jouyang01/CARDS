@@ -1391,6 +1391,39 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   with a room code can start that room). It is not access control. **M3-LOBBY deletes the route**
   when its start button lands; if it somehow outlives the lobby, **M3-DEPLOY must gate or remove
   it** before any deploy. Recorded in both items' ACs.
+- **RULED — NET-FOG-SINGLE-SOURCE: the networked board renders the server's already-filtered state;
+  `fogView` over it is the seat's own vision, and there is NO second `visibleSquares`-driven path
+  (Builder OQ 2026-09-13 #2; ratifies the M3-NET-BOARD shipping choice).** The state the server sends
+  a seat **is** its team-filtered view — an enemy outside vision is **absent from the data**, not
+  present-and-hidden — so `fogView` over that state computes exactly this seat's fog and nothing
+  wider, with **no local unfiltered board a bug could widen** (the strongest form of golden rule #5:
+  the leak is structurally impossible, not merely gated). The AC's phrasing "show `visibleSquares`"
+  described *one* way to reach that; the shipped way (filter the state, derive fog from it) reaches
+  the same answer with **one source of truth**. Ruling: **keep the filter-the-state approach; do not
+  add a parallel `visibleSquares` render path** (a second source of the same fact is a desync waiting
+  to happen). If `visibleSquares` is genuinely unread by the board, **drop it from that payload** as
+  dead weight (small cleanup); if a future client genuinely needs the server's own lit-set (e.g. to
+  paint fog the server computed under a rule the client cannot), that is when it gets wired — as the
+  single source for *that* view, not a duplicate of this one.
+- **RULED — NET-WAIT-STATE: after a networked submit the client shows a LOCKED / waiting-for-opponent
+  state; the board disarms (Builder OQ 2026-09-13 #3; backlog M3-WAIT-STATE — client).** Today a
+  networked client that has submitted sits on the last frame with the HUD **still armed** — nothing
+  says the turn is locked or that anyone is being waited for, so the player cannot tell a submitted
+  turn from an un-submitted one. Ruling: on submit, the client enters a **locked** state — the order
+  HUD **disarms** (no re-aiming a turn already sent) and a **waiting indicator** shows what it is
+  waiting for, driven by the Decision payload's lock state (own-team **per-seat**, enemy **count-only**
+  — the M3-HIDDEN split already ruled, so no new information crosses). The lock clears when the
+  `turnResolved` for the turn arrives and the next turn's collection opens. **This is the client seam
+  M3-TIMER (server clock) renders onto** — build the wait state first. Client-only; no protocol
+  change (the lock state is already in the Decision payload).
+- **RULED — NET-CONN-STATE: a closed socket is SHOWN, not silent (Builder OQ 2026-09-13 #4; backlog
+  M3-CONN-STATE — client).** A dropped connection sets `phase: 'closed'` and the board simply stops
+  responding — indistinguishable, to the player, from the game having frozen. Ruling: the client
+  **surfaces** a closed/disconnected state (a banner or overlay: "disconnected — reconnecting…" or
+  "connection lost"), so the stall is legible. This is **only the client saying it happened**; the
+  actual rejoin-and-resync is **M3-RECONNECT's** (larger, still blocked). Split them: M3-CONN-STATE
+  (small, client — show the state) now; M3-RECONNECT (rejoin by code, reclaim the held seat, re-sync)
+  later. Recorded in both items.
 
 ## Economy & timing
 
