@@ -220,8 +220,41 @@ export function seatRows(net: NetState, catalog: readonly CharacterDef[]): SeatR
  * careless `.map` away from rendering an enemy pick that the payload does not
  * even contain.
  */
-export function enemyProgress(net: NetState): { ready: number; of: number } {
-  return { ready: net.lobby?.enemyReady ?? 0, of: net.lobby?.enemyOf ?? 0 };
+export function enemyProgress(net: NetState): EnemyProgress {
+  const of = net.lobby?.enemyOf ?? 0;
+  return { ready: net.lobby?.enemyReady ?? 0, of, present: enemyPresent(net, of) };
+}
+
+export interface EnemyProgress {
+  /** How many of them have finished picking. */
+  ready: number;
+  /** How many seats they have. */
+  of: number;
+  /**
+   * NET-PRESENCE-ENEMY — how many of those seats have a socket attached.
+   *
+   * A **count and nothing else**, exactly like `ready`: the ruled shape for
+   * anything crossing the team line (M3-LOCKLIST, BLIND-PICK). Which of them
+   * dropped is a durable handle on one specific opponent and stays out; how many
+   * of them are there is the same kind of coarse status the lock count already
+   * is, and a lobby that hid it would leave you waiting on somebody who has gone.
+   */
+  present: number;
+}
+
+/**
+ * Count the other side's live seats off `RoomView`, which has carried
+ * `connected` since M3-RECONNECT.
+ *
+ * Falls back to "all of them" whenever this client cannot tell — before it has a
+ * seat of its own, or before the room has arrived. The safe direction is
+ * silence: claiming somebody is missing when you do not know is worse than not
+ * mentioning presence at all, because the UI only speaks up on an absence.
+ */
+function enemyPresent(net: NetState, of: number): number {
+  if (net.room === undefined || net.seat === undefined) return of;
+  const mine = net.seat.team;
+  return net.room.seats.filter((s) => s.team !== mine && s.connected).length;
 }
 
 /**

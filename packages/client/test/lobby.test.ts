@@ -158,7 +158,9 @@ describe('what the screen is allowed to know', () => {
     const rows = seatRows(net, CATALOG);
     expect(rows.map((r) => r.seatId), 'own team only').toEqual(['a', 'c']);
     expect(rows.find((r) => r.seatId === 'c')!.picked, 'resolved to a name').toEqual(['Wisp']);
-    expect(enemyProgress(net)).toEqual({ ready: 2, of: 2 });
+    // NET-PRESENCE-ENEMY added `present` to the same shape, and it belongs to
+    // the same rule: three counts, no lists — nothing that names an opponent.
+    expect(enemyProgress(net)).toEqual({ ready: 2, of: 2, present: 2 });
   });
 
   it('R3 greys a character a teammate already took', () => {
@@ -208,7 +210,7 @@ describe('what the screen is allowed to know', () => {
 
   it('and it degrades rather than throwing before anything has arrived', () => {
     expect(seatRows(initialNet(), CATALOG)).toEqual([]);
-    expect(enemyProgress(initialNet())).toEqual({ ready: 0, of: 0 });
+    expect(enemyProgress(initialNet())).toEqual({ ready: 0, of: 0, present: 0 });
     expect(lobbyStatus(initialNet())).toMatch(/connect/i);
     expect(lobbyStatus({ ...initialNet(), phase: 'closed' })).toMatch(/disconnect/i);
   });

@@ -124,6 +124,15 @@ export function createLobbyScreen(
     const other = el('section', 'lobby-enemy');
     other.append(el('h2', undefined, 'The other side'));
     other.append(el('p', 'lobby-enemy-count', `${enemy.ready} of ${enemy.of} ready`));
+    // NET-PRESENCE-ENEMY: only when somebody is actually missing. "2 of 2
+    // present" on a healthy lobby is reassurance nobody asked for, and it would
+    // train the eye to skip the line that matters. Still a bare count — which of
+    // them dropped stays on their side of the table (BLIND-PICK).
+    if (enemy.present < enemy.of) {
+      const line = el('p', 'lobby-enemy-present', `${enemy.present} of ${enemy.of} present`);
+      line.dataset['present'] = String(enemy.present);
+      other.append(line);
+    }
     ui.root.append(other);
 
     // ── your slots ─────────────────────────────────────────────────────────

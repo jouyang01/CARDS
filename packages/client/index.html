@@ -355,6 +355,9 @@
          listed because M3-RECONNECT is keeping it for its owner. */
       .lobby-seat.is-away { opacity: 0.55; border-left: 3px solid #ffd76a; }
       .lobby-seat.is-away .lobby-seat-picks { font-style: italic; }
+      /* NET-PRESENCE-ENEMY: shown only when somebody is missing, so it is
+         allowed to read as a warning rather than as a status line. */
+      .lobby-enemy-present { color: #ffd76a; }
       .lobby-seat-picks { opacity: 0.7; }
       /* The enemy is a count and never a name (BLIND-PICK) — there is nothing
          here to style because there is nothing here to show. */
