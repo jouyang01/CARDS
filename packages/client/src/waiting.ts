@@ -55,14 +55,22 @@ export function waitingLabel(view: WaitView | undefined): string | undefined {
 export const isWaiting = (view: WaitView | undefined): boolean => waitingLabel(view) !== undefined;
 
 /**
- * M3-CONN-STATE — the banner for a socket that has gone away.
+ * M3-CONN-STATE / M3-RECONNECT — the banner for a socket that has gone away.
  *
  * A dropped connection used to set `phase: 'closed'` and nothing else, so the
  * board simply stopped responding — indistinguishable, to a player, from the
- * game having frozen. Ruled: **say it happened.** Rejoining is M3-RECONNECT's
- * and deliberately not attempted here; this is the sentence that stops a stall
- * being a mystery.
+ * game having frozen. Ruled: **say it happened.**
+ *
+ * Two sentences now, because there are two situations and telling them apart is
+ * the whole value of saying anything. `reconnecting` means a reclaim is in
+ * flight and the right thing to do is nothing; `closed` means it is not coming
+ * back on its own. A single "connection lost" for both would leave a player
+ * reloading over a rejoin that was about to succeed — and, worse, sitting
+ * patiently through one that never will.
  */
-export function connectionLabel(phase: 'connecting' | 'lobby' | 'match' | 'closed'): string | undefined {
+export function connectionLabel(
+  phase: 'connecting' | 'lobby' | 'match' | 'reconnecting' | 'closed',
+): string | undefined {
+  if (phase === 'reconnecting') return 'Connection lost — reconnecting…';
   return phase === 'closed' ? 'Connection lost — the match is paused. Reload to rejoin.' : undefined;
 }

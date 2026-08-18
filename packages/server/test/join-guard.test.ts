@@ -76,8 +76,8 @@ describe('M3-JOIN-GUARD: the rule, at the record', () => {
     expect(first.ok, 'joinable before the start').toBe(true);
 
     const dealt = startMatch({ ...room, seats: [
-      { seatId: 's0', team: 0, name: 's0', unitIds: [], picks: [] },
-      { seatId: 's1', team: 1, name: 's1', unitIds: [], picks: [] },
+      { seatId: 's0', team: 0, name: 's0', unitIds: [], picks: [], connected: true, missedTurns: 0 },
+      { seatId: 's1', team: 1, name: 's1', unitIds: [], picks: [], connected: true, missedTurns: 0 },
     ] }, OPEN, TEAMS);
     expect(dealt.ok).toBe(true);
     if (!dealt.ok) return;
@@ -176,19 +176,23 @@ describe('M3-JOIN-GUARD: the lock total is unaffected', () => {
 
 describe('M3-JOIN-GUARD: a freed seat is held, not reopened', () => {
   it('a disconnect does not let a stranger take the characters', () => {
-    // `leave` frees the slot in the record, but the room is still in progress —
-    // so the guard keeps it shut. Getting back in is M3-RECONNECT's
-    // identity-matched reclaim, not a race between whoever connects next.
+    // M3-RECONNECT made the reserve literal: the seat is no longer removed from
+    // a started room at all, only marked disconnected, so its team, name and
+    // control map survive for its owner to come back to. The guard is what keeps
+    // anybody else out in the meantime — getting back in needs the seat id, and
+    // a stranger has never been given one.
     const hub = started();
     hub.close('s3');
-    expect(hub.room.seats).toHaveLength(3);
+    expect(hub.room.seats, 'the seat is held, not deleted').toHaveLength(4);
+    expect(hub.room.seats.find((s) => s.seatId === 's3')?.connected).toBe(false);
 
     const stranger = new FakeSocket();
     hub.open('stranger', stranger);
     hub.receive('stranger', joinFrame('Stranger'));
 
     expect(stranger.of('error')[0]?.code).toBe('inProgress');
-    expect(hub.room.seats, 'the slot stays empty for its owner').toHaveLength(3);
+    expect(hub.room.seats, 'and nobody was seated by trying').toHaveLength(4);
+    expect(hub.room.seats.find((s) => s.seatId === 's3')?.connected, 'still waiting for its owner').toBe(false);
   });
 
   it('but a room that never started is still open', () => {

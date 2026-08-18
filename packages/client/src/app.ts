@@ -163,6 +163,17 @@ export interface NetPlay {
    */
   onTimer(handler: (remainingMs: number | undefined, charges: number) => void): void;
   /**
+   * M3-RECONNECT — register the handler for "which characters am I ordering
+   * now". Fired whenever the server's control map changes: a teammate who
+   * disconnects and misses a whole turn hands theirs over, and takes them back
+   * when they return.
+   *
+   * A handler rather than a re-read of `unitIds`, because the control map is no
+   * longer a fact about the start of the match — it is a fact about the turn,
+   * and the server is the only thing that knows it.
+   */
+  onControl(handler: (unitIds: string[]) => void): void;
+  /**
    * Spend a Time Bank charge. Asks; does not apply. The server owns the window,
    * and an optimistic +10 s it then refused would be the one lie a clock must
    * never tell — so the extension appears when `onTimer` next fires.
@@ -2011,6 +2022,16 @@ export function startHotSeat(
   // the clock are two different sentences about the same wait, and a single
   // handler would sooner or later let one overwrite the other.
   net?.onTimer((remaining, charges) => { adoptWindow(remaining, charges); });
+  // M3-RECONNECT: the control map is the server's and can change mid-match.
+  // Replaced in place rather than rebuilt, because `seatRoster` and
+  // `collectOrders` both read `seat.unitIds` fresh — so the next turn opens
+  // drafts for whatever this seat now holds, and drafts for characters it has
+  // handed back simply stop being collected.
+  net?.onControl((unitIds) => {
+    const seat = seats[0];
+    if (seat === undefined) return;
+    seats[0] = { ...seat, unitIds: [...unitIds] };
+  });
   net?.onStatus((text) => {
     banner = text;
     hud.setBanner(text);

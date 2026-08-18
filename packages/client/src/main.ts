@@ -30,6 +30,7 @@ import { createLobbyScreen, type CatalystOption } from './lobby-screen.js';
 import { parseRoomLink, roomSocketUrl, type RoomLink } from './room-url.js';
 import { createCreateScreen } from './create-screen.js';
 import { connectionLabel, waitingLabel } from './waiting.js';
+import { reconnectDelayMs, shouldReconnect, ticketsIn } from './reconnect.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
@@ -115,11 +116,50 @@ function joinRoom(link: RoomLink): void {
   const status = document.getElementById('status')!;
   status.textContent = `Connecting to room ${link.code}…`;
 
-  const socket = new WebSocket(roomSocketUrl(window.location, link.code));
-  const client = new RoomClient({
-    send: (data) => { socket.send(data); },
-    close: () => { socket.close(); },
-  });
+  // M3-RECONNECT: the ticket is a seat id remembered per room code. Read before
+  // the first connection, because the first connection may *be* the reconnect —
+  // a reload after a drop is exactly the case this exists for.
+  const tickets = ticketsIn(window.localStorage);
+  let attempt = 0;
+  let client!: RoomClient;
+
+  /**
+   * Open a socket and hand it to the client.
+   *
+   * One function for the first connection and every reclaim after it: the only
+   * difference between them is whether a ticket goes out with the handshake,
+   * and letting them diverge is how a reconnect ends up on a code path the
+   * first connect never exercises.
+   */
+  const connect = (): void => {
+    const socket = new WebSocket(roomSocketUrl(window.location, link.code));
+    const sink = {
+      send: (data: string) => { socket.send(data); },
+      close: () => { socket.close(); },
+    };
+    if (client === undefined) client = new RoomClient(sink);
+    else client.attach(sink);
+
+    socket.addEventListener('open', () => {
+      attempt = 0; // a socket that opened is a fresh budget for the next drop
+      client.join(link.name, tickets.get(link.code));
+    });
+    socket.addEventListener('message', (event: MessageEvent<string>) => { client.receive(event.data); });
+    socket.addEventListener('close', () => {
+      client.closed();
+      // A refusal closes the socket too, and retrying one is an endless loop of
+      // the same refusal — so the ticket is what decides, and the server clears
+      // it by refusing the reclaim (see the subscription below).
+      attempt += 1;
+      const delay = shouldReconnect(client.net.phase, tickets.get(link.code), attempt)
+        ? reconnectDelayMs(attempt)
+        : undefined;
+      if (delay === undefined) return;
+      client.attach(sink); // says "reconnecting" now, so the banner does not read as dead
+      window.setTimeout(connect, delay);
+    });
+  };
+  connect();
   const catalystOptions: CatalystOption[] = Object.values(buildCatalystPool(CATALYSTS))
     .map((c) => ({ id: c.id, name: c.name, phase: c.phase, description: c.description }));
 
@@ -131,16 +171,17 @@ function joinRoom(link: RoomLink): void {
   let inMatch = false;
   client.subscribe((net) => {
     status.textContent = net.error?.message ?? lobbyStatus(net);
+    // M3-RECONNECT: remember the seat the moment the server names it, and forget
+    // it the moment the server refuses to honour it. A ticket the room will not
+    // take is worse than none — it is what a retry loop would spin on.
+    if (net.seat !== undefined) tickets.put(link.code, net.seat.seatId);
+    if (net.error?.code === 'unknownSeat' || net.error?.code === 'seatTaken') tickets.clear(link.code);
     if (net.phase !== 'match' || inMatch) return;
     inMatch = true;
     screen.destroy();
     board.replaceChildren();
     startNetworkedMatch(client, net);
   });
-
-  socket.addEventListener('open', () => { client.join(link.name); });
-  socket.addEventListener('message', (event: MessageEvent<string>) => { client.receive(event.data); });
-  socket.addEventListener('close', () => { client.closed(); });
 }
 
 /**
@@ -172,6 +213,12 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
   // re-sending it on (say) a `pong` would silently rewind the countdown to
   // whatever it was when the last `decision` arrived.
   let clock: { remainingMs: number | undefined; bank: number } | undefined;
+  let onControl: ((unitIds: string[]) => void) | undefined;
+  // M3-RECONNECT: the control map, forwarded only when it actually moved. It
+  // changes rarely (a teammate dropping, a teammate returning) and rebuilding a
+  // seat on every frame would throw away the drafts the player is mid-way
+  // through composing.
+  let control = started.unitIds.join(',');
   // Only *this* turn's resolution counts: the reducer keeps the last one, so a
   // repaint for some other reason must not replay a turn already animated.
   let played = opening.turn;
@@ -191,6 +238,10 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
     if (next !== shown) {
       shown = next;
       onStatus?.(next);
+    }
+    if (now.unitIds.join(',') !== control) {
+      control = now.unitIds.join(',');
+      onControl?.([...now.unitIds]);
     }
     if (clock === undefined || clock.remainingMs !== now.remainingMs || clock.bank !== now.bank) {
       clock = { remainingMs: now.remainingMs, bank: now.bank };
@@ -220,6 +271,7 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
       onResolved: (handler) => { onResolved = handler; },
       onStatus: (handler) => { onStatus = handler; },
       onTimer: (handler) => { onTimer = handler; },
+      onControl: (handler) => { onControl = handler; },
       extend: () => { client.extend(); },
     },
     opening,

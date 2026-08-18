@@ -204,14 +204,14 @@ describe('the reducer, on the frames that mean "forget something"', () => {
     // cleared would leave the Lock In button dead for the rest of the turn.
     const joined = applyServerMessage(initialNet(), {
       type: 'joined',
-      seat: { seatId: 'a', team: 0, name: 'a', unitIds: [], picks: [] },
+      seat: { seatId: 'a', team: 0, name: 'a', unitIds: [], picks: [], connected: true, missedTurns: 0 },
       room: { code: 'WXYZ', format: '2v2', seats: [], turn: 0, canStart: false, started: false, locked: [] },
     });
     expect(seatOf(joined)).toBe('a');
     const optimistic: NetState = { ...joined, submitted: true };
     const decision = applyServerMessage(optimistic, {
       type: 'decision', turn: 1, state: { turn: 1, units: [] } as never, visibleSquares: [],
-      orders: {}, locked: [], of: 1, enemyLocked: 0, enemyOf: 1, bank: 1,
+      orders: {}, locked: [], of: 1, enemyLocked: 0, enemyOf: 1, bank: 1, unitIds: [],
     });
     expect(decision.submitted, 'the server did not list us').toBe(false);
   });

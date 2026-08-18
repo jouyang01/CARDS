@@ -18,7 +18,7 @@
  */
 
 import type { FormatId, GameState, TurnEvent, UnitOrders, Vec2 } from '@cards/engine';
-import type { JoinRejection, Pick, PickRejection, Room, Seat } from './room.js';
+import type { JoinRejection, Pick, PickRejection, ReclaimRejection, Room, Seat } from './room.js';
 
 /** Bumped whenever a message's meaning changes. Clients send it on connect. */
 export const PROTOCOL_VERSION = 1;
@@ -83,7 +83,17 @@ export interface LobbyView {
 
 /** Client → server. */
 export type ClientMessage =
-  | { type: 'join'; version: number; name?: string }
+  /**
+   * The handshake. `seatId` is a **reclaim ticket** (M3-RECONNECT): the id of a
+   * seat this client held in this room before its socket went away.
+   *
+   * Optional, and only meaningful for a started match — a fresh joiner sends
+   * none and is seated normally. Presenting one is the *only* way back into a
+   * running room, which is what keeps the ruled reserve honest: `join` turns
+   * away every fresh socket to a started match, so a stranger who guessed the
+   * room code has no seat id to present and nothing to take.
+   */
+  | { type: 'join'; version: number; name?: string; seatId?: string }
   /**
    * Submit this seat's orders and lock in (M3-PROTOCOL). One message, not two:
    * a separate "lock" would let a seat lock with orders the server had not
@@ -123,6 +133,7 @@ export type ClientMessage =
 export type ErrorCode =
   | JoinRejection
   | PickRejection
+  | ReclaimRejection
   | 'badVersion'
   | 'badMessage'
   | 'notJoined'
@@ -154,10 +165,15 @@ export type ServerMessage =
    */
   | { type: 'lobby'; room: RoomView; lobby: LobbyView }
   /**
-   * The match began: the board **as this seat's team may see it**, and who this
-   * seat is ordering. Per-seat, never broadcast (M3-HIDDEN).
+   * The match began: the board **as this seat's team may see it**, who this
+   * seat is, and what it is ordering. Per-seat, never broadcast (M3-HIDDEN).
+   *
+   * Also the **resync a reclaimed seat gets** (M3-RECONNECT) — the same message,
+   * deliberately, because a rejoining client needs exactly what a starting one
+   * needs. `seat` is here for that: a reconnect never sees a `joined`, so this
+   * has to be able to say who you are on its own.
    */
-  | { type: 'matchStarted'; room: RoomView; state: GameState; visibleSquares: Vec2[]; unitIds: string[] }
+  | { type: 'matchStarted'; room: RoomView; seat: Seat; state: GameState; visibleSquares: Vec2[]; unitIds: string[] }
   /**
    * The Decision phase, as this seat may see it (M3-HIDDEN).
    *
@@ -202,6 +218,17 @@ export type ServerMessage =
       remainingMs?: number;
       /** Time Bank charges this seat has left (`TIMEBANK_CHARGES` per match). */
       bank: number;
+      /**
+       * The characters this seat may order **this turn** (M3-RECONNECT).
+       *
+       * `matchStarted` used to be the only place the control map appeared, which
+       * was fine while it never changed. It changes now: a teammate who
+       * disconnects and misses a whole turn hands their characters over
+       * (`controlledUnits`), and hands them back on reclaim. A control map sent
+       * once at the start would leave a stand-in unable to order the characters
+       * the server has already given them.
+       */
+      unitIds: string[];
     }
   /** This seat's submission was accepted; `locked` is the count so far. */
   | { type: 'submitted'; locked: number; of: number }
@@ -277,9 +304,13 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   }
   if (msg['type'] === 'join' && typeof msg['version'] === 'number') {
     const name = typeof msg['name'] === 'string' ? msg['name'] : undefined;
-    return name === undefined
-      ? { type: 'join', version: msg['version'] }
-      : { type: 'join', version: msg['version'], name };
+    const seatId = typeof msg['seatId'] === 'string' ? msg['seatId'] : undefined;
+    return {
+      type: 'join',
+      version: msg['version'],
+      ...(name === undefined ? {} : { name }),
+      ...(seatId === undefined ? {} : { seatId }),
+    };
   }
   return undefined;
 }
@@ -322,6 +353,7 @@ export const ERROR_TEXT: Record<ErrorCode, string> = {
   inProgress: 'this match has already started',
   cannotStart: 'this room cannot start yet',
   noBank: 'no Time Bank charge left',
+  seatTaken: 'somebody is already sitting in that seat',
   unknownSeat: 'no such seat in this room',
   wrongCount: 'that is not the number of characters this seat plays',
   unknownCharacter: 'no such character',

@@ -39,10 +39,13 @@ export const CLIENT_PROTOCOL_VERSION = 1;
  * `lobby` and `match` are different screens rather than different degrees of the
  * same one — the lobby has no board and the match has no picking — so the phase
  * is explicit instead of being inferred from whether `state` happens to be set.
+ * `reconnecting` is a socket that dropped and is being replaced
+ * (M3-RECONNECT) — distinct from `closed` because the two are different
+ * sentences to the player: one is "hold on", the other is "that is that".
  * `closed` is terminal: the server closes a socket it refused, and a client that
  * kept showing a lobby after that would be showing a room it is not in.
  */
-export type NetPhase = 'connecting' | 'lobby' | 'match' | 'closed';
+export type NetPhase = 'connecting' | 'lobby' | 'match' | 'reconnecting' | 'closed';
 
 /** Everything a connected client knows. One object, folded by one function. */
 export interface NetState {
@@ -120,12 +123,20 @@ export function applyServerMessage(net: NetState, msg: ServerMessage): NetState 
         ...clean,
         phase: 'match',
         room: msg.room,
+        // The seat comes from this message rather than being kept from
+        // `joined`, because a **reclaimed** seat never saw a `joined`: the
+        // resync is the first thing it hears, and it has to say who you are.
+        seat: msg.seat,
         lobby: undefined,
         state: msg.state,
         visibleSquares: msg.visibleSquares,
         unitIds: msg.unitIds,
         submitted: false,
       };
+    // (`matchStarted` is also the **resync** a reclaimed seat gets — same
+    // message, deliberately, because a rejoining client needs exactly what a
+    // starting one needs. Folding it the same way is what makes a reconnect
+    // land the client on a board rather than on a fifth code path.)
     case 'decision':
       return {
         ...clean,
@@ -147,6 +158,11 @@ export function applyServerMessage(net: NetState, msg: ServerMessage): NetState 
         // window" have to stay the same thing under `exactOptionalPropertyTypes`.
         ...(msg.remainingMs === undefined ? { remainingMs: undefined } : { remainingMs: msg.remainingMs }),
         bank: msg.bank,
+        // M3-RECONNECT: the control map can change mid-match now — a teammate
+        // who misses a whole turn hands their characters over, and takes them
+        // back on return — so it is re-read from every Decision phase rather
+        // than kept from `matchStarted`.
+        unitIds: msg.unitIds,
       };
     case 'submitted':
       return { ...clean, submitted: true };
@@ -172,10 +188,16 @@ export function applyServerMessage(net: NetState, msg: ServerMessage): NetState 
 
 /** The frames a client sends. Serialised in one place, so no caller improvises. */
 export const frames = {
-  join: (name?: string): ClientMessage =>
-    (name === undefined
-      ? { type: 'join', version: CLIENT_PROTOCOL_VERSION }
-      : { type: 'join', version: CLIENT_PROTOCOL_VERSION, name }),
+  /**
+   * The handshake. `seatId` is M3-RECONNECT's **reclaim ticket** — the seat this
+   * client held here before its socket went away. Omitted by a fresh joiner.
+   */
+  join: (name?: string, seatId?: string): ClientMessage => ({
+    type: 'join',
+    version: CLIENT_PROTOCOL_VERSION,
+    ...(name === undefined ? {} : { name }),
+    ...(seatId === undefined ? {} : { seatId }),
+  }),
   pick: (picks: Pick[]): ClientMessage => ({ type: 'pick', picks }),
   start: (): ClientMessage => ({ type: 'start' }),
   submit: (orders: UnitOrders[]): ClientMessage => ({ type: 'submit', orders }),
@@ -199,8 +221,25 @@ export interface ClientSocket {
 export class RoomClient {
   #net = initialNet();
   #listeners: ((net: NetState) => void)[] = [];
+  #socket: ClientSocket;
 
-  constructor(private readonly socket: ClientSocket) {}
+  constructor(socket: ClientSocket) {
+    this.#socket = socket;
+  }
+
+  /**
+   * Swap in a fresh socket after a drop (M3-RECONNECT).
+   *
+   * The **client survives the connection**, which is the whole shape of a
+   * reconnect: the seat, the board and the room it holds are what the reclaim is
+   * for, and throwing them away to build a new client would mean re-deriving
+   * everything the server is about to re-send anyway. Only the transport is
+   * replaced, and the phase says so.
+   */
+  attach(socket: ClientSocket): void {
+    this.#socket = socket;
+    this.#set({ ...this.#net, phase: 'reconnecting' });
+  }
 
   get net(): NetState {
     return this.#net;
@@ -229,10 +268,10 @@ export class RoomClient {
   }
 
   send(message: ClientMessage): void {
-    this.socket.send(JSON.stringify(message));
+    this.#socket.send(JSON.stringify(message));
   }
 
-  join(name?: string): void { this.send(frames.join(name)); }
+  join(name?: string, seatId?: string): void { this.send(frames.join(name, seatId)); }
   pick(picks: Pick[]): void { this.send(frames.pick(picks)); }
   start(): void { this.send(frames.start()); }
   submit(orders: UnitOrders[]): void { this.send(frames.submit(orders)); }
@@ -244,7 +283,15 @@ export class RoomClient {
    */
   extend(): void { this.send(frames.extend()); }
 
-  /** The socket went away. Terminal — a closed client shows no room. */
+  /**
+   * The socket went away.
+   *
+   * Terminal *as a connection*: nothing else will arrive on it. Whether that is
+   * terminal for the **client** is the caller's call — `attach` puts it into
+   * `reconnecting` and the reclaim carries on from there (M3-RECONNECT). What
+   * survives either way is everything the reducer holds, because a dropped
+   * socket did not change the room.
+   */
   closed(): void {
     this.#set({ ...this.#net, phase: 'closed' });
   }

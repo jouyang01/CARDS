@@ -87,7 +87,7 @@ describe('M3-TIMER: the client holds the server\'s window, and derives none of i
   it('a finished match leaves no window to draw', () => {
     const folded = applyServerMessage(initialNet(), {
       type: 'decision', turn: 9, state: { turn: 9, units: [] } as never, visibleSquares: [],
-      orders: {}, locked: [], of: 1, enemyLocked: 0, enemyOf: 1, bank: 0,
+      orders: {}, locked: [], of: 1, enemyLocked: 0, enemyOf: 1, bank: 0, unitIds: [],
     });
     expect(folded.remainingMs, 'no countdown rather than a zero').toBeUndefined();
   });

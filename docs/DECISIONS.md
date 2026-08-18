@@ -3682,3 +3682,148 @@ engine does not need.
    no axis bonus so nothing ships in that combination, and the geometry composes fine (the axis of a
    3-wide lane is its centre file). Recorded rather than forbidden — if a beam is never meant to
    carry an axis bonus, that is a validator line, not a bug.
+
+## 2026-09-15 — Builder: a dash takes its route, a match ends properly, the clock is the server's, and a seat can be reclaimed
+
+1. **A dash's route follows the dash, and it is derived rather than cleared.** `nextDraft` already
+   drops `movePath` for both a dash ability and a Dash catalyst, so the order was always right; the
+   *marks* were the only thing left drawing a path that would not execute. Rather than adding a
+   second place that has to remember to clear them, `liveWaypointMarks(marks, movePath)` keeps only
+   the marks still on the live route. A mark can then never outlive the path it annotates, which is
+   the class of bug rather than the instance.
+
+2. **The end screen's verdict is per seat, so it only exists where a seat does.** "Team 2 wins on
+   kills, 4–2" is exactly right for a hot-seat, where one screen holds both sides, and useless to a
+   networked player who does not know whether they *are* Team 2. So `outcomeFor(state, viewer)`
+   turns the engine's own `status`/`winner` into a point of view, the headline is drawn only for a
+   networked seat, and nothing anywhere recomputes who won.
+
+3. **The way out is the front door, not a rematch.** Re-entering a room is a protocol conversation
+   nobody has specced; the create form is one click from a new match and already exists. A hot-seat
+   goes to a fresh hot-seat, a networked match to the create screen, and the label says which.
+
+4. **The decision clock is injected, exactly like `mintCode`'s randomness.** `RoomHub` takes
+   `now: () => number`; the Durable Object passes `Date.now` and every test passes a counter. A hub
+   that read a wall clock could only be tested by sleeping, and a sleeping test is a flaky test.
+
+5. **One deadline per turn, for the whole room — and the Time Bank extends *that*.** A per-seat
+   deadline would give a simultaneous turn four different moments at which it resolved, which is not
+   a thing a simultaneous turn can have. So a charge is per seat (you may only spend your own) and
+   the ten seconds it buys are everybody's. It is *added* to what is left rather than resetting the
+   window: banking at 8 seconds leaves 18, not 40.
+
+6. **Expiry is the same resolve the last lock-in would have triggered.** "Missed → hold" needed no
+   code of its own: `mergeSeatOrders` already contributes nothing for a seat with no submission, and
+   a unit with no orders holds. `expire()` re-checks the clock itself and clears the deadline at the
+   resolve, so an alarm that fires early or late is harmless — which is what lets the DO's alarm be
+   best-effort.
+
+7. **The window goes over the wire as a duration, not an instant.** An absolute deadline is in the
+   *server's* epoch, and a browser five seconds fast would draw it five seconds short. `remainingMs`
+   is measured at send time and is the same number on both machines. The clock is still the
+   server's: it is the thing that acts when the number reaches zero.
+
+8. **The Time Bank asks; it does not apply.** The client sends `extend` and changes nothing locally.
+   An optimistic +10 s that the server then refused would be the one lie a clock must never tell —
+   time on screen the server does not believe in, and a turn that resolves while the readout still
+   reads 9. The extension flash fires off the charge count *falling*, so it can only ever celebrate
+   a charge that was actually spent.
+
+9. **The countdown does not stop when a networked seat locks in.** The hot-seat's clock does — its
+   window is that seat's — but a networked window is the room's and is still running: it is now what
+   bounds the opponent. That is the pairing M3-TIMER asks for, with the banner saying what you are
+   waiting for and the countdown saying how long it can last.
+
+10. **A disconnect in a match holds the seat; a disconnect in a lobby deletes it.** `leave` owns the
+    split. A lobby seat is nothing but a socket, and freeing it re-prices everybody's picks. A match
+    seat is a team, a name and a control map the match still needs — deleting it would strand its
+    characters and make the ruled reclaim impossible, because there would be nothing left to
+    reclaim.
+
+11. **A dropped seat keeps the submission it already made.** This used to be binned. Wrong direction
+    once a seat can come back: a player who locked in and *then* dropped had already taken their
+    turn, and throwing the orders away punishes them for a socket closing after the decision.
+
+12. **The turn is not owed an answer by an empty chair.** A disconnected seat with no submission
+    stops counting toward the lock total, so the three players still there resolve between them
+    instead of waiting out the full 40 seconds every turn after a permanent drop. The absent seat
+    contributes nothing to the merge either way; the only thing that changed is how long everybody
+    else waits to find out.
+
+13. **The reclaim is a socket→seat binding, not a rename.** The Durable Object hands the hub the
+    socket id *it* minted on every frame and has no idea a reclaim happened, so `#bound` maps one to
+    the other and everything downstream stays keyed by seat. A fresh socket binds to itself, which
+    is why nothing but a reconnect can tell the difference.
+
+14. **The resync is `matchStarted`, not a message of its own** — and `matchStarted` now carries the
+    seat. A rejoining client needs precisely what a starting one needs (the board as its team may see
+    it, and what it controls), and a second message saying the same thing is a second one to keep in
+    step. It carries `seat` because a reclaimed seat never sees a `joined`: the resync is the first
+    thing it hears and has to be able to say who you are.
+
+15. **The partial-team handoff is DERIVED, which is what makes the return free.** M3-RECONNECT's AC
+    says to decide the last OPEN in "Teams & control" — *"if one player on a multi-player team
+    disconnects, does a teammate gain control of the abandoned characters? Current lean: yes, after
+    one fully missed turn"* — so the standing lean is taken as the ruling and implemented as
+    written. **`docs/design/edge-cases.md` is not the Builder's to edit**; this is the record, and
+    the ruling wants promoting into the edge-cases file by whoever owns it. `controlledUnits`
+    computes the answer
+    from `connected` and `missedTurns` rather than moving `unitIds` between seats, so reclaiming —
+    which clears both — un-does the loan by making it no longer derivable. There is no hand-back step
+    to get wrong. The stand-in is the **first connected seat on that team in join order**, so every
+    client and the server agree on who is holding what without anybody being told.
+
+16. **The control map now rides every Decision phase.** It used to appear once, in `matchStarted`,
+    which was fine while it could not change. It can now — a teammate drops, a teammate returns — and
+    a map sent once at the start would leave a stand-in unable to order characters the server has
+    already given them.
+
+17. **A ticket is tried *instead of* an ordinary join, never after one.** A ticket that failed must
+    not quietly seat the client somewhere else: the whole point of a reclaim is *which* seat it is,
+    and being put in a stranger's chair is worse than a refusal. The client clears a ticket the room
+    refuses, which is also what stops the retry loop spinning on the same refusal.
+
+18. **"Reconnecting…" and "reload to rejoin" are two different sentences.** One is "hold on", the
+    other is "that is that", and a single "connection lost" for both leaves a player reloading over a
+    rejoin that was about to land — and sitting patiently through one that never will. Hence a
+    `reconnecting` phase distinct from `closed`, and a finite retry budget so the first sentence
+    always eventually becomes the second.
+
+19. **Storage that throws is expected, not exceptional.** `localStorage` throws in private browsing
+    and with cookies disabled. A reconnect that is not offered is a worse outcome than one that is
+    not remembered — but a match that dies on `localStorage` throwing is worse than both, so every
+    ticket call is wrapped.
+
+## Open Questions for the Analyzer — 2026-09-15
+
+1. **The DO's deadline does not survive hibernation.** `#deadline` is in-memory; the room record on
+   disk carries seats and state but not the open window. A Durable Object evicted mid-decision comes
+   back with no deadline, so `expire()` finds no window and the turn waits for players instead of
+   for the clock. **No regression** — that is exactly the pre-M3-TIMER behaviour — and the alarm
+   re-arms on the next frame. Persisting it is one field on `Room` plus a line in `#arm`; I did not
+   add it because the AC does not ask and it changes the record's shape. **Worth a backlog line.**
+
+2. **`missedTurns` counts absence, not slowness, and only for a disconnected seat.** A *connected*
+   seat that silently never locks in is timed out by M3-TIMER every turn and never loses its
+   characters. That is deliberate — the ruling is about a disconnect — but "connected and idle
+   forever" is a real griefing shape, and the two rules now sit next to each other. Flagging rather
+   than deciding: an idle-player rule is a different item.
+
+3. **A reclaimed seat gets the room's Time Bank charge count, which it never lost.** Charges live in
+   the hub keyed by seat id, so a player who spends a charge, drops and comes back correctly has
+   none. But the charges are **not** in the persisted record either (see #1), so a DO eviction hands
+   everybody a fresh charge. Same fix, same reason it is not done here.
+
+4. **The handoff is server-side and the *client* has no UI for it.** The stand-in's control map
+   updates and the characters become orderable, but nothing on screen says "you are covering for
+   Bo". The board just grows two more characters. Correct and playable; not explained. **A small
+   client item** — a line in the wait banner, or a mark on the borrowed nameplates.
+
+5. **`RoomView.seats` now carries `connected`, and no screen draws it.** The lobby and the topbar
+   both have the data to mark a disconnected player and neither does. Same shape of gap as #4 and
+   probably the same item.
+
+6. **A rematch is still the missing half of the end screen.** M3-END-SCREEN sends a decided match to
+   the create form, which is honest but throws the room away. A rematch needs a protocol
+   conversation (both players agreeing to re-enter) that nobody has specced. Not urgent; the loop
+   closes without it.
