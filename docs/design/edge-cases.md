@@ -453,6 +453,30 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
       larger vision-model change, not part of CHASE-LOS. The reported scenarios (a target seen, then
       fleeing) all carry a last-known and are admitted. **No code change; ratified.** If the owner
       later wants sightline-based targeting, flag a new item (ENGINE + client vision widening).
+  - **RULED — CHASE-COLLIDE: the chase router treats other units and ENEMY decoys as solid (routes
+    around, never through); a deliberate `movePath` is unchanged (SHIPPED PR #68; confirms Builder OQ
+    2026-09-12 #2).** `reachableSquares` marks an occupied square `canStop:false` but still *expands
+    through* it — right for a path a **player draws** (the ally pass-through affordance, validated
+    later) and wrong for a route **computed and walked in one step**. So the reported chase "phasing"
+    was really a chaser that *planned* to phase, got stopped by `stepMovers` on step one, and moved
+    **nothing** (reproduced: chaser (5,10), enemy (6,10), target (8,10) → chaser holds). Fix (shipped):
+    an opt-in `impassable` set on `reachableSquares`, passed **only by the chase**, containing other
+    living units and **enemy** decoys. **The lines drawn, all confirmed:**
+    - **Allies are solid to the chase too** — not a reversal of ally-pass-through (which is about a
+      *drawn, later-validated* path); at chase time every unit has finished moving, so an ally is as
+      immovable as an enemy, and a sealed corridor honestly stops a chase.
+    - **An enemy decoy is solid to the chase ONLY** — Wisp veils, the chaser loses the sightline, the
+      goal falls to the decoy's (last-known) square, and every such chase used to pop the decoy for
+      free. Now the chase routes around it. **R2 is intact:** a deliberate `movePath` onto a decoy
+      still destroys it (walking onto one is how a player tests it — a test pins this). **No fog leak:**
+      an enemy decoy is *shown* to this team, so routing around it uses only what the team sees.
+    - **Own-team decoys stay transparent** — matching R2's asymmetry (a team is not fooled by its own
+      illusion); blocking on one would be a tell the enemy could read off the pathing.
+    **Ratified as the minimal correct line.** If the owner ever wants a decoy solid to **all** movement
+    (a universal obstacle), that **reverses R2's destruction-by-entry** mechanic and is a **Designer**
+    call, not this fix. **Note (OQ #3, deferred):** the client's chase tell is a destination marker,
+    not a drawn route, so the router's ally/decoy-solidity is invisible at plan time — cosmetic today;
+    the moment a drawn chase path is added it must use `chaseObstacles`. Low; not scheduled.
 - **RULED — WAYPOINTS: a player may compose a move square-by-square instead of taking the auto-routed
   direct line; the engine already accepts it, so this is a CLIENT input mode (owner Dev Note
   2026-09-11, "You should be able to manually set different waypoints to move your unit around an
@@ -479,6 +503,41 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   order carries the hand-built path and the engine accepts it. **Out of scope:** any engine change
   (none needed); auto-connecting non-adjacent waypoints (v1 is one adjacent step per click — a clicked
   non-adjacent tile is simply refused, keeping "tile-by-tile" literal); touch input.
+  - **RULED — WAYPOINTS-FIX: a Shift-click drops a waypoint at ANY reachable tile and the client
+    routes the segment to it; the adjacent-only, silent-refusal v1 is superseded (owner Dev Note
+    2026-09-12, "WAYPOINTS is not working. I cannot hold shift + click to move to a waypoint"; backlog
+    WAYPOINTS-FIX — client, HIGH).** The shipped `appendWaypoint` accepts **one adjacent step per
+    click** and **silently refuses** anything else (`resolve`/`targeting.ts:518`, refusal is a bare
+    `undefined`), and the click only runs while **move mode is already armed** (`app.ts:1377,1382`).
+    So a player doing the natural gesture — select a unit, Shift-click a tile a few squares away to
+    "move to a waypoint" — gets **nothing**: the click is non-adjacent (refused) or move was never
+    armed (the branch never runs), with no feedback either way. That is the reported "not working."
+    My own v1 ruling ("non-adjacent is refused, keeping tile-by-tile literal") is the cause and is
+    **reversed here.** **The rule:**
+    - **A Shift-click drops a waypoint at the clicked tile, which need NOT be adjacent.** The client
+      routes the **segment** from the previous waypoint (or the unit's square) to it with the
+      **remaining** budget, using the same obstacle-aware pathfinder as a normal move (`pathTo` /
+      `reachableSquares`, nearest-legal within budget, MOVE-FOG-filtered), and **appends that segment**
+      to `draft.movePath`. Clicking an **adjacent** tile is just a one-step segment, so exact
+      tile-by-tile control is preserved (drop a waypoint on each corner to thread an obstacle
+      precisely); clicking further routes there — both the note's "tile-by-tile path" and its "move to
+      a waypoint" are served, the second being the one that was missing.
+    - **Shift-click arms move by itself.** When a movable unit is selected and no ability/aim/chase is
+      mid-commit, a Shift-click **auto-arms move** and drops the first waypoint — the player does not
+      have to find and press "Move" first. A Shift-click while an ability is mid-aim is ignored by
+      waypoints (aiming wins).
+    - **Every click gives feedback.** The **remaining-movement readout draws down** by the segment's
+      cost on each accepted click; a click that **cannot be routed** (nothing legal within remaining
+      budget) shows a **tell** (reuse AIM-RANGE-TELL's refused-square marker) rather than doing
+      nothing silently. An `occupied` end-tile stays non-fatal mid-route (the shipped choice — you may
+      route *past* a body), settled at submit.
+    **No engine change** (the composed path is still an ordinary `movePath` the engine re-validates);
+    determinism/MOVE-FOG unchanged (segments route against the team-visible board). **Ships with client
+    tests:** a Shift-click three tiles away builds a routed three-step path (not a refusal); a
+    Shift-click with no prior arm still starts a move; the budget readout equals `movementBudget − Σ
+    segment costs`; an unroutable Shift-click shows the tell and leaves the path unchanged; adjacent
+    clicks still give exact tile-by-tile control. **Out of scope:** engine changes; touch input;
+    drawing the route for a *chase* (separate — CHASE-COLLIDE's `chaseObstacles`, deferred).
 - **RULED — Plan-time reachability must NOT use a fogged enemy's position (MOVE-FOG; owner Dev Note
   2026-09-06, "Move command is blocked if an enemy is out of line of sight but on the tile that you
   are trying to move. This is giving unintentional information"; backlog MOVE-FOG — client).** The
@@ -1280,6 +1339,25 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   spectators (a seat that watches without controlling) remain the future option (see the started-room
   ruling) but are out of scope for v1. Deterministic guard in the room's `join`, beside the
   started-room refusal.
+  - **SHIPPED PR #68; `wouldSeatNobody` KEPT as an exported predicate (confirms Builder OQ 2026-09-12
+    #4).** With `nextTeam` filling the emptier side and `roomFull` capping at 2×charactersPerTeam, no
+    join sequence can lopside a team, so the guard is unreachable *today* — but **keep it.** The next
+    lobby feature the owner is likely to want is **letting a player choose a team**, which produces
+    exactly the lopsided room the guard refuses; carrying a tested, exported predicate + its property
+    test costs nothing and documents the rule. **Flagged as a future item: LOBBY-TEAM-CHOICE** (let a
+    seat pick its team; `wouldSeatNobody` becomes live) — not scheduled until the owner asks.
+- **RULED — MAP/FORMAT are ROOM-level, chosen at room creation, NOT per-seat (Builder OQ 2026-09-12
+  #5; corrects the M3-LOBBY-UI AC "each seat picks map + format").** The seat pick screen picks
+  **characters + catalysts** only. Map and format are a property of the **room**: the Worker already
+  takes `format` when it mints the code and the DO fixes the map, and letting one seat change the map
+  under another mid-pick needs a conflict rule nobody wants to write (who wins? does it reset picks?).
+  So the AC's "each seat picks map + format" was wrong — **map/format belong to the room-creation flow
+  (the host's choice as the code is minted), not the seat screen.** This is where they already live;
+  the missing piece is the **client UI to create a room** with those choices (backlog M3-ROOM-CREATE),
+  not a per-seat picker. If the owner later wants a host-only in-lobby map control, that is a small
+  addition to the room record with the host as the single writer — flag it; the default is
+  set-at-creation. Amends the M3-LOBBY-UI AC (character/catalyst picks are the seat's; map/format are
+  the room's).
 - **RULED — the Decision payload shares WHO has locked in, but as a COUNT for the enemy team, not
   seat ids (M3-HIDDEN; Builder OQ 2026-08-16 third #4, refined).** A client must know what it is
   waiting for, so a Decision payload names the lock state — but the resolution splits by team:

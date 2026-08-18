@@ -16,129 +16,129 @@ server protocol **types only**, `import type`). **Movement is Manhattan (MET1); 
 ## ✅ COMPLETE
 
 - The full local hot-seat game + AR parity + the screenshot UI batch + M3-ROOM…M3-LOCKLIST.
-- **PR #64:** CHASE-FOLLOW, CLASH-CORNER, BASIC-INNER, BLINK-CLASH, AIM-PREVIEW-RANGE.
-- **PR #66 (this review):** **CHASE-LOS** (chase sees by line of sight, not vision range — reported
-  bug verified fixed), **BLINK-ADJ** (blocked/contested blink lands nearest-legal), **CLASH-CONGA**
-  (nowhere to bounce → cancel to origin), **AUTO-PREVIEW** (reworked autos show footprint + numbers),
-  **AIM-RANGE-TELL** (refused square marked), **M3-LOBBY** three halves — **server** (pick model in
-  the room record), **protocol** (blind-across-teams picks over the socket), **client** (the network
-  client as a pure reducer).
+- **PR #66:** CHASE-LOS, BLINK-ADJ, CLASH-CONGA, AUTO-PREVIEW, AIM-RANGE-TELL, M3-LOBBY (three halves).
+- **PR #68 (this review):** **CHASE-COLLIDE** (chase routes around bodies + enemy decoys, never
+  through — fixes the "phasing"; deliberate `movePath` unchanged), **SEAT-ZERO-GUARD** (`wouldSeatNobody`,
+  unreachable today but kept for team-choice), **LOBBY-START** (full-room auto-start retired, temp
+  start route deleted), **M3-LOBBY-UI** (the pick screen over the socket, `?room=CODE` boot,
+  `lobbyReady`-gated start button), **WAYPOINTS** (*shipped but not usable — see WAYPOINTS-FIX*).
 
-Current suite: **1618 tests** (engine 762 + client 687 + server 169), typecheck + build clean.
+Current suite: **1684 tests** (engine 773 + client 732 + server 179), typecheck + build clean.
 
-> **This batch: finish the lobby (the pick SCREEN), add manual move waypoints, and the small guards.**
-> M3-LOBBY-UI is the spine — the pick screen over `RoomClient`, wiring `app.ts` to the socket,
-> retiring the full-room auto-start, and deleting the temporary start route. Then WAYPOINTS (Dev Note
-> #1) and SEAT-ZERO-GUARD.
+> **This batch: make WAYPOINTS actually usable, then make the networked match playable.** The lobby
+> can pick and start but cannot render a networked board, and rooms can't be created from the UI.
 
 ### Build order and dependencies
 
-**M3-LOBBY-UI → WAYPOINTS → SEAT-ZERO-GUARD.** M3-LOBBY-UI is large (likely a full session);
-WAYPOINTS and SEAT-ZERO-GUARD are independent and can land in either order after (or before, if the
-Builder wants a warm-up). **BASIC-BEAM stays blocked** on a Designer number.
+**WAYPOINTS-FIX → M3-ROOM-CREATE → M3-NET-BOARD.** WAYPOINTS-FIX and M3-ROOM-CREATE are independent
+and small-ish; M3-NET-BOARD is the large controller rewrite and can span sessions. **BASIC-BEAM stays
+blocked** on a Designer number. Realistic one-session cut: WAYPOINTS-FIX + M3-ROOM-CREATE, then begin
+M3-NET-BOARD.
 
 ---
 
-## M3 — the lobby screen (owner: "continue building out the lobby" — Dev Note #2)
+## Client — the waypoint fix (do first)
 
-### M3-LOBBY-UI. The pick screen + socket wiring + start button (SERVER + CLIENT) — UNBLOCKED (large; the spine)
-**Addresses Dev Note: "Continue building out the lobby."** The data model, protocol, and network
-client (`RoomClient`) all landed in PR #66; what remains is the client UI and the start-trigger
-cutover. *AC:*
-- *A **lobby screen** renders over `RoomClient`: each seat picks **map + format**, then its **N
-  characters** and **each character's catalyst triad** (per the ruled pick model — a seat picks N,
-  catalysts per-character, R3 unique across the whole team); the screen shows **own-team picks in
-  full** and the **enemy only as a finished-seat count** (BLIND-PICK).*
-- *`app.ts` is wired to the socket: it consumes the per-seat **`lobby`** message and the **`decision`
-  + filtered `turnResolved`** stream (proving M3-HIDDEN end-to-end from the real client).*
-- *A **start button** calls `RoomHub.start()`, **gated on `lobbyReady`** (every seat's picks
-  complete, ⌈N/2⌉-seat coverage); the **full-room auto-start is retired** for lobby rooms (a full
-  room mid-pick does not start itself); the temporary **`POST /rooms/:code/start` route is deleted**
-  in this same slice (so a networked match always has a reachable start — never before).*
-- *Tests: the pick screen composes a valid per-seat pick set the server accepts; an enemy seat shows
-  as a count, never character ids (BLIND-PICK); start is refused until `lobbyReady`; a full un-picked
-  room does not auto-start; an end-to-end path picks → starts → resolves one turn over the socket.*
-**Spec Notes.** Files: `packages/client/src/` (a new lobby view + `app.ts` socket wiring, over the
-existing `RoomClient` reducer), `packages/server/src/` (`hub.ts` `#startIfReady` — retire the
-full-room trigger for lobby rooms, keep it for short/legacy; `worker.ts` — delete the `POST …/start`
-route). Reuse `lobbyReady`/`teamCovered` (Decision 7) and the `LobbyView` split already shipped —
-**do not recompute** the pick/coverage logic client-side; render what the protocol sends. Ruled in
-edge-cases (LOBBY-START, BLIND-PICK, and the route-deletion ruling). **Out of scope:** reconnect
-(M3-RECONNECT), server-authoritative timing (M3-TIMER), spectators. **Cross-item:** SEAT-ZERO-GUARD
-(below) closes the empty-seat corner this screen would otherwise surface — land it in the same
-session if time allows, but it is independent.
+### WAYPOINTS-FIX. Shift-click drops a routed waypoint anywhere, auto-arms move, shows a tell (CLIENT) — UNBLOCKED (first, HIGH)
+**Addresses Dev Note: "WAYPOINTS is not working. I cannot hold shift + click to move to a waypoint."**
+The shipped `appendWaypoint` accepts only **one adjacent step per click** and **silently refuses**
+anything else, and the Shift branch runs **only while move mode is already armed** — so the natural
+gesture (select a unit, Shift-click a tile a few squares away) produces nothing, with no feedback.
+*AC:*
+- *A **Shift-click drops a waypoint at the clicked tile** (need NOT be adjacent); the client **routes
+  the segment** from the previous waypoint (or the unit's square) to it with the **remaining** budget,
+  obstacle-aware and MOVE-FOG-filtered (reuse `pathTo`/`reachableSquares`), and appends it to
+  `draft.movePath`. An adjacent click is a one-step segment (exact tile-by-tile control preserved).*
+- *A **Shift-click auto-arms move** when a movable unit is selected and nothing is mid-aim
+  (aim/free/catalyst/chase win if armed); the player need not press "Move" first.*
+- *The **remaining-movement readout draws down** by each accepted segment's cost; a click that
+  **cannot be routed** within the remaining budget shows the **AIM-RANGE-TELL refused-square marker**,
+  never nothing; the path is left unchanged on a refusal.*
+- *The composed path submits as an ordinary `movePath` the engine accepts; releasing Shift + clicking
+  keeps today's direct-line auto-route.*
+- *Tests: a Shift-click three tiles away builds a routed three-step path (not a refusal); a Shift-click
+  with no prior arm starts a move; the budget readout equals `movementBudget − Σ segment costs`; an
+  unroutable Shift-click shows the tell and leaves the path unchanged; adjacent clicks still give exact
+  tile-by-tile control. **Drive the real click handler (`onBoardClick`), not only `appendWaypoint`** —
+  the shipped bug was in the wiring/gating, which the unit tests missed.*
+**Spec Notes.** Files: `packages/client/src/targeting.ts` (`appendWaypoint` → segment-routing variant,
+or a new `appendWaypointRouted` that composes `pathTo` per segment; keep `occupied` non-fatal
+mid-route), `app.ts` (`onBoardClick:1377-1394` — auto-arm move on Shift-click; call the routed append;
+show the tell on refusal), the move preview/readout. **No engine change** (the path is still a
+`movePath`, re-validated on resolve). Ruled in edge-cases (WAYPOINTS-FIX — supersedes the adjacent-only
+v1). Reuse `movementBudget` + the MET1 cost model; do not re-derive. **Out of scope:** engine changes;
+touch input; drawing a *chase* route (`chaseObstacles`, deferred).
 
-## Client — manual move waypoints (Dev Note #1)
+## Client — the room-creation entry (unblocks reaching a room)
 
-### WAYPOINTS. Shift-click a tile-by-tile move path with a live budget readout (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "You should be able to manually set different waypoints to move your unit around
-an enemy, a trap, or any obstacle … Hold down the Shift key while executing a movement command on each
-tile you want to step on sequentially … Every time you click on a tile, your effective movement range
-should change (decrease typically), as you move on sequential tiles."** **The engine already accepts
-this** — `validateMovePath` walks an arbitrary ordered step list and `runMove` walks a given
-`movePath` verbatim, so this is a pure client input mode. *AC: while **Shift** is held, each click
-**appends the clicked tile as the next step** of `draft.movePath`; a tile that is not a legal step
-from the previous one (not adjacent, a wall, a diagonal-corner cut, or over the remaining budget) is
-**refused/marked**, exactly as the engine would reject it; the displayed **remaining movement
-decrements by that step's cost** (1 orthogonal, 2 diagonal) on each accepted click; releasing Shift
-and clicking normally keeps today's forgiving direct-line route (`pathTo`); the composed path submits
-as the ordinary `movePath`. Tests: a Shift-click sequence builds the exact tile list; an illegal next
-tile is refused and the budget is unchanged; the running readout equals `movementBudget − Σ step
-costs`; a diagonal leg costs 2; the engine accepts the submitted hand-built path.*
-**Spec Notes.** Files: `packages/client/src/` (`targeting.ts` — a waypoint-append path builder beside
-`pathTo`; `order-mode.ts`/`intent.ts`/`app.ts` — the Shift-held click handler and the budget readout;
-the move preview render). **No engine change** (already validated). Reuse `validateMovePath`'s cost
-model (MET1: 1/2) and `movementBudget` for the readout — do not re-derive. **MOVE-FOG still holds:** a
-waypoint must not treat a **fogged** enemy's tile as an obstacle at plan time (the invisible-enemy
-leak stays closed). Ruled in edge-cases (WAYPOINTS). **Out of scope:** any engine change;
-auto-connecting non-adjacent waypoints (v1 is one adjacent step per click — a non-adjacent click is
-refused, keeping "tile-by-tile" literal); touch input.
+### M3-ROOM-CREATE. A Create-room button + host map/format at creation (CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Continue to build out lobby."** `?room=CODE` boots into a room but nothing in
+the UI calls `POST /rooms`, so a player needs a `curl`-made link. *AC: a **Create-room** control
+`POST`s `/rooms` with the **host's chosen map + format** (map/format are room-level — RULED), receives
+the code, and **redirects to `?room=CODE`** (into the existing lobby boot); the format/map choice is
+the host's at creation, not a per-seat picker; a test asserts the button posts the chosen config and
+navigates to the returned code.* **Spec Notes.** Files: `packages/client/src/main.ts` (the boot path
+beside `joinRoom`), a small create form; `packages/server/src/worker.ts` (`POST /rooms` already mints
+the code — confirm it accepts map + format). Ruled in edge-cases (MAP/FORMAT room-level). **Out of
+scope:** a host-only in-lobby map control (flag if wanted); matchmaking; the networked board render
+(M3-NET-BOARD). **Cross-item:** pairs with M3-NET-BOARD (creating a room is only useful once the match
+renders), but ships independently (a created room reaches the pick screen today).
 
-## Server — the empty-seat guard
+## Client — render the networked match (the large piece)
 
-### SEAT-ZERO-GUARD. Refuse a join that would create a zero-character seat (SERVER, small) — UNBLOCKED (low)
-**Addresses Builder OQ 2026-09-11 #6.** `deriveSeats` can hand a second player on a one-character
-team an empty list (`?? []`) — reachable only in 1v1, a pick screen that asks for nothing. *AC: the
-room refuses a join that would create a seat owed **zero** characters (at most one player per
-character on a team); the socket is told the team is full; a test asserts the second join to a
-one-character team in 1v1 is refused, and a normal 2v2 fourth join still succeeds.*
-**Spec Notes.** File: `packages/server/src/room.ts` (the `join` guard, beside the started-room
-refusal). Deterministic; N-safe (derive from `deriveSeats`, do not special-case 1v1 by number). Ruled
-in edge-cases (SEAT-ZERO). **Out of scope:** spectators (post-v1); reconnect.
+### M3-NET-BOARD. Render a server-authoritative match on the 3D board (CLIENT) — UNBLOCKED (large; the spine)
+**Addresses Dev Note: "Continue to build out lobby" / Builder OQ 2026-09-12 #1.** M3-LOBBY-UI stops at
+match start: `app.ts` merges seat orders and calls `resolveTurn` itself (hot-seat), and a networked
+start currently shows "not built." *AC: a networked match **renders on the 3D board**: lock-in becomes
+a **`submit`** over the socket (not a local `resolveTurn`); the board shows **only this seat's fog**
+(server-filtered `visibleSquares`/the `turnResolved` the server sends, not the local `fogView`); the
+**hot-seat handover is gone** for a networked match (each client is one seat); the `decision` +
+filtered `turnResolved` stream drives the turn loop; the render e2e suite stays green. Tests: a
+networked turn round-trips submit → resolve → render for one seat without ever calling `resolveTurn`
+locally; the fog shown is the seat's, not the union.* **Spec Notes.** Files: `packages/client/src/app.ts`
+(the `resolveAndPlay` controller — split the hot-seat and networked paths; this is the 1750-line
+rewrite the Builder flagged), `main.ts` (route a started networked room here). Consume the engine's/
+server's derived queries — **never recompute fog or resolution client-side**. Large and explicitly
+multi-session; land the submit/stream loop first, then the fog, then retire the handover. **Out of
+scope:** reconnect (M3-RECONNECT), server timing (M3-TIMER), spectators. **Cross-item:** M3-ROOM-CREATE
+gives it a room to render; WAYPOINTS-FIX is independent (works on the hot-seat board today).
 
-## Engine — the unique-basics uplift (each ships with its one data edit)
+## Server — flagged future (not scheduled)
 
-### BASIC-MODES. Two aim-time profiles on one ability (ENGINE + CLIENT) — UNBLOCKED (large; returns Kestrel to the roster)
-*AC: an ability may carry `modes: [AbilityProfile, AbilityProfile]` chosen at aim time (order carries
-the index); ships with **Kestrel's Twin Bolts** (wide cone 2 ↔ thin line 6) and **returns Kestrel to
-the client's default `CATALOG`**; the client offers the toggle (AIM2 UI). Tests: each mode resolves
-its own profile.* **Spec Notes.** The largest BASIC-\* ask (real UI work). A separate session from the
-lobby. Out of scope: other kits.
+### LOBBY-TEAM-CHOICE. Let a seat choose its team (SERVER + CLIENT) — UNBLOCKED (future, flag)
+The likely next lobby feature; makes `wouldSeatNobody` (kept in PR #68) live. Not scheduled until the
+owner asks. *AC (when wanted): a seat may pick its team; the room refuses a choice that would seat a
+player with no characters (SEAT-ZERO); team balance is the player's, not `nextTeam`'s.* **Spec Notes.**
+Server room record + the lobby screen. Flag only.
+
+## Engine — the unique-basics uplift
+
+### BASIC-MODES. Two aim-time profiles on one ability (ENGINE + CLIENT) — UNBLOCKED (large; returns Kestrel)
+*AC: `modes: [AbilityProfile, AbilityProfile]` chosen at aim time; ships with **Kestrel's Twin Bolts**
+(wide cone 2 ↔ thin line 6) and **returns Kestrel to the default `CATALOG`**; the client offers the
+toggle (AIM2 UI). Tests: each mode resolves its own profile.* **Spec Notes.** The largest BASIC-\* ask;
+a separate session from the lobby. Out of scope: other kits.
 
 ### BASIC-BEAM. `beamWidth` constant half-width on a cone (ENGINE + data) — BLOCKED on a Designer number
-The engine substitution is ready; blocked on the Designer stating the field's meaning (`beamWidth: 1`
-gives a **3**-wide lane while "Shield Bash as a 1×2 beam" wants width **1**) and Aegis's footprint. Do
-**not** guess. *AC (once answered): a `cone` may carry `beamWidth: n` giving a constant-width wedge;
-ships with Aegis's Shield Bash at the ruled footprint; coverage constant-width, rotation-invariant.*
-**Spec Notes.** `shapes.ts` (`coneSquares`). Out of scope: other kits.
+Engine substitution ready; blocked on the Designer stating the field's meaning (`beamWidth: 1` gives a
+**3**-wide lane while "Shield Bash as a 1×2 beam" wants width **1**) and Aegis's footprint. Do **not**
+guess. **Spec Notes.** `shapes.ts` (`coneSquares`). Out of scope: other kits.
 
 ## Engine — flag to the Designer
 
 ### AXIS-MODIFIERS-CHECK. Confirm `axisBonus` scales with Might/Weaken/cover (DESIGNER decision)
-BASIC-AXIS folded the axis bonus into raw damage (Decision 8), so modifiers scale it. If the Designer
-meant "+8 flat, unmodified," that is a separate field on `Hit`. *AC: the Designer confirms "scales"
-(no change) or requests "flat" (a one-line Builder follow-up).* Non-blocking.
+BASIC-AXIS folded the axis bonus into raw damage (Decision 8), so modifiers scale it. *AC: the Designer
+confirms "scales" (no change) or requests "flat" (a one-line follow-up).* Non-blocking.
 
 ## M3 — the rest of the roadmap (blocked in sequence)
 
-### M3-TIMER / M3-RECONNECT / M3-DEPLOY — BLOCKED on M3-LOBBY-UI
-- **M3-TIMER:** the DO enforces `DECISION_SECONDS` (40); missed submission → hold-position; Time
-  Bank per-seat per window (`TIMEBANK_CHARGES = 1`); UI-TIMER driven by the server clock.
-- **M3-RECONNECT:** rejoin by code, reclaim the held seat (M3-JOIN-GUARD reserved it), re-sync;
-  partial-team disconnect control-handoff (edge-cases OPEN — decide here).
+### M3-TIMER / M3-RECONNECT / M3-DEPLOY — BLOCKED on M3-NET-BOARD
+- **M3-TIMER:** the DO enforces `DECISION_SECONDS` (40); missed submission → hold-position; Time Bank
+  per-seat (`TIMEBANK_CHARGES = 1`); UI-TIMER on the server clock.
+- **M3-RECONNECT:** rejoin by code, reclaim the held seat, re-sync; partial-team disconnect handoff
+  (edge-cases OPEN — decide here).
 - **M3-DEPLOY:** `wrangler deploy` + Pages; a `wrangler dev`/miniflare smoke check; confirm the `POST
-  …/start` route is gone (deleted in M3-LOBBY-UI); **make the Pages deploy gate legible** (the
-  post-merge publish X is not a missed merge — surface pass/fail clearly). **Needs owner infra
+  …/start` route is gone (done in PR #68); **make the Pages deploy gate legible**. **Needs owner infra
   decisions.**
 
 ## CAMO-E2E-FINISH — UNBLOCKED (low)
@@ -147,19 +147,21 @@ Before/after-delta at fixed coords (reuse `largestCluster`). Low; the rule is un
 ## Routed to Designer / flags
 
 - **BASIC-BEAM number** and **axisBonus scaling** (→ AXIS-MODIFIERS-CHECK) — await Designer decisions.
-- **Chase admissibility gate** — **ratified range-capped** (OQ 2026-09-11 #1); if the owner later
-  wants sightline-based *targeting* (order a chase on anything down a clear lane), that is a new
-  ENGINE + client vision-widening item, not a bug.
-- **Public draft / counter-pick** — the default is BLIND-PICK (blind across teams); a public draft
-  phase would be a deliberate design reversal, flag if wanted.
-- **Dash melee-cover** (Designer-deferred, §4.1). **Thorn's lobbed auto** (range 5, wall-ignoring) —
-  playtest flag; 5→4 is the first nerf lever. **Pad tuning** — 4v4 lever is `everyTurns` 4→5 on
-  iron-basin. **Kestrel out of the default `CATALOG`** — intended until BASIC-MODES.
+- **Decoy as a universal obstacle** — the CHASE-COLLIDE line is minimal (enemy decoy solid to the
+  chase router only; deliberate `movePath` still destroys it, R2 intact). Making a decoy solid to ALL
+  movement reverses R2 — Designer call if wanted.
+- **Chase admissibility gate** — ratified range-capped (2026-09-11 #1); sightline-based *targeting*
+  would be a separate ENGINE + client vision-widening item.
+- **Public draft / counter-pick** — default is BLIND-PICK; a public draft is a design reversal, flag
+  if wanted. **Host-only in-lobby map control** — default is set-at-creation; flag if wanted.
+- **Dash melee-cover** (Designer-deferred). **Thorn's lobbed auto** (5→4 first nerf lever). **Pad
+  tuning** (`everyTurns` 4→5 on iron-basin). **Kestrel out of default `CATALOG`** until BASIC-MODES.
 - **UI-TIMER hot-seat auto-lock**, **touch input**, **PREVIEW-MODIFIERS shields**, **AIM-SMOOTH**,
   `killerUnitId`/`gameEnd`, **A4**, **spectators**, **`vulnerable`** — unchanged, not scheduled.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **CHASE-LOS feel** (a chase now follows down open corridors past normal vision — watch the tell),
-  **BLINK-ADJ** landings, **new autos** (Lumen heal-line, Thorn lob, Ravok whirl, Cinder core/ring),
-  **melee vs cover**, **Might centre contest**, **turn-1 spawn margin**, **vision Manhattan diamond**.
+- **WAYPOINTS-FIX feel** (routed waypoints vs exact tile-by-tile — watch the drawn route reads
+  clearly), **CHASE-COLLIDE** (chases now stop at sealed corridors — honest, verify the tell),
+  **new autos** (Lumen/Thorn/Ravok/Cinder feel), **melee vs cover**, **Might centre contest**,
+  **turn-1 spawn margin**, **vision Manhattan diamond**.
