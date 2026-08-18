@@ -125,6 +125,25 @@ export interface AbilityDef {
   /** The damage a tile inside `innerRadius` takes instead of `amount`. */
   innerAmount?: number;
   /**
+   * BASIC-BEAM — a `cone` that keeps one width instead of fanning out.
+   *
+   * **`beamWidth` is the TOTAL width of the lane in tiles, and must be odd**
+   * (Designer, `clashes-and-basics.md` §3.4). `beamWidth: 3` is a lane three
+   * tiles across, centred on the aim axis, at every depth — CONE-B's
+   * `halfWidth(d) = d` ramp replaced by a constant `halfWidth = (n − 1) / 2`.
+   *
+   * Total width rather than half, because a number in `data/` means the
+   * footprint you get: a designer writing `3` should get a 3-wide beam, not a
+   * 7-wide one. **Even is a validation error** — an even lane has no centre
+   * axis to rotate around — as are values below 1 and the field on any shape
+   * but `cone`.
+   *
+   * Not new geometry: the wedge already measures every tile's perpendicular
+   * offset to decide coverage, and this compares that same integer against a
+   * constant instead of against the depth.
+   */
+  beamWidth?: number;
+  /**
    * A **melee** strike (MELEE-COVER): cover does not reduce it, whatever its
    * range.
    *

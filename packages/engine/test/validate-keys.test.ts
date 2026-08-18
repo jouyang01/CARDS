@@ -56,8 +56,9 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     // list fails here rather than in someone's content.
     //
     // Three objects rather than one, because some keys are **shape-exclusive**:
-    // `chargeHits` is only valid on a `path`, `axisBonus` only on a `cone`, and
-    // `innerRadius`/`innerAmount` only on a `circle` — each for the same reason,
+    // `chargeHits` is only valid on a `path`, `axisBonus`/`beamWidth` only on a
+    // `cone`, and `innerRadius`/`innerAmount` only on a `circle` — each for the
+    // same reason,
     // that a balance field the engine cannot read on that shape is a number
     // nobody can find. The coverage assertion is over the union, so the guard is
     // exactly as strong as it was.
@@ -69,7 +70,8 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     };
     const wedge: AbilityDef = {
       id: 'y', name: 'Y', phase: 'blast', shape: 'cone', range: 3, cooldown: 0, energyGain: 4,
-      melee: true, axisBonus: 8, effects: [{ kind: 'damage', amount: 10 }], description: 'test',
+      melee: true, axisBonus: 8, beamWidth: 3,
+      effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
     const bomb: AbilityDef = {
       id: 'z', name: 'Z', phase: 'blast', shape: 'circle', range: 6, radius: 2, cooldown: 0,
