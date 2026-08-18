@@ -15,7 +15,7 @@
 
 import type { AbilityDef, GameState, MapDef, UnitState, Vec2 } from '@cards/engine';
 import { movementBudget } from '@cards/engine';
-import { commitAim, pathTo, type OrderDraft } from './targeting.js';
+import { appendWaypointRouted, commitAim, pathTo, type OrderDraft } from './targeting.js';
 
 /**
  * What a board click will do. `idle` means the click does nothing to the board —
@@ -37,6 +37,17 @@ export interface Hover {
   move?: 'move' | 'sprint';
   /** The board square under the pointer, while a mode is armed. */
   square?: Vec2;
+  /**
+   * WAYPOINT-TELL — whether Shift is down over that square.
+   *
+   * Presentational like the rest of `Hover`, and load-bearing for one reason:
+   * with Shift the next click **extends** the drawn route and without it the
+   * click **replaces** it, so a preview that ignored the modifier would be
+   * showing one of the two outcomes while the player was about to get the
+   * other. AIM-PREVIEW-RANGE's rule, applied to the move: what you see is what
+   * the click commits.
+   */
+  shift?: boolean;
 }
 
 export interface Interaction {
@@ -74,12 +85,21 @@ export const afterCommit = (): Interaction => ({ mode: 'idle', hover: {} });
  * hypothetical order to show, and — after a commit — nothing that should
  * disturb what is already on screen.
  */
-export function hoverBoard(current: Interaction, square: Vec2 | undefined): Interaction | undefined {
+export function hoverBoard(
+  current: Interaction,
+  square: Vec2 | undefined,
+  shift = false,
+): Interaction | undefined {
   if (current.mode === 'idle') return undefined;
   const at = current.hover.square;
   if (square === undefined) return at === undefined ? undefined : { ...current, hover: {} };
-  if (at !== undefined && at.x === square.x && at.y === square.y) return undefined;
-  return { ...current, hover: { square: { x: square.x, y: square.y } } };
+  // WAYPOINT-TELL: the modifier changes what the drawn route means, so a Shift
+  // pressed or released without the pointer moving is a change worth repainting
+  // for — the old early-out only compared squares and would have frozen the
+  // preview mid-gesture.
+  const same = at !== undefined && at.x === square.x && at.y === square.y;
+  if (same && (current.hover.shift ?? false) === shift) return undefined;
+  return { ...current, hover: { square: { x: square.x, y: square.y }, shift } };
 }
 
 /** The state while an ability control is hovered — the range envelope (UI1). */
@@ -199,10 +219,26 @@ export function previewMovePath(
   draft: OrderDraft,
   interaction: Interaction,
 ): Vec2[] {
-  if (interaction.mode === 'move' && interaction.hover.square !== undefined) {
-    return pathTo(map, state, unit, interaction.hover.square, movementBudget(unit, draft.sprint));
+  const square = interaction.hover.square;
+  if (interaction.mode !== 'move' || square === undefined) return draft.movePath;
+  // WAYPOINT-TELL — owner Dev Note: *"Waypoints should track where you are
+  // moving via the line and marker, right now it's just invisible and hard to
+  // tell where you are waypointing around to."*
+  //
+  // The reported bug, exactly: a Shift-click leaves move armed and the pointer
+  // over the board, and this function answered `pathTo(hover)` **from the
+  // unit** — so the composed route was replaced, on screen, by a fresh direct
+  // line the moment the mouse moved. The waypoints were still in the draft and
+  // still resolved; nothing drew them.
+  //
+  // With Shift the drawn route is therefore the committed path **plus** the
+  // segment the next click would append, routed from the last waypoint on
+  // what is left of the budget — which is `appendWaypointRouted`'s own answer,
+  // so the preview and the click cannot disagree.
+  if (interaction.hover.shift === true && draft.movePath.length > 0) {
+    return appendWaypointRouted(map, state, unit, draft.movePath, square, draft.sprint) ?? draft.movePath;
   }
-  return draft.movePath;
+  return pathTo(map, state, unit, square, movementBudget(unit, draft.sprint));
 }
 
 /**

@@ -297,6 +297,21 @@
         box-shadow: 0 4px 16px rgb(0 0 0 / 0.5); pointer-events: none; }
       footer { font-size: 12px; opacity: 0.5; }
 
+      /* ── CREATE-LINK: the way out of the hot-seat ─────────────────────────
+         `#app` is pointer-events:none so the board can be clicked through it,
+         so the one interactive thing in it has to opt back in. */
+      #create-link { pointer-events: auto; display: inline-block; margin: 2px 0 4px;
+        font-size: 12px; color: var(--aim); text-decoration: none;
+        border-bottom: 1px solid currentColor; }
+      #create-link:hover { opacity: 0.8; }
+
+      /* ── M3-WAIT-STATE / M3-CONN-STATE: why the board is not taking orders ─
+         Beside Lock In, where a player is already looking when they finish a
+         turn. Amber rather than red: a locked turn is the normal state of a
+         simultaneous game, not an error. */
+      .hud-banner { font-size: 11px; line-height: 1.3; max-width: 190px; text-align: right;
+        color: var(--aim); opacity: 0.9; }
+
       /* ── M3-LOBBY-UI: the pick screen ─────────────────────────────────────
          Mounted into #board, which is the full-viewport layer, so it scrolls on
          its own rather than fighting the fixed HUD chrome around it. Plain
@@ -380,6 +395,10 @@
     <aside id="log" class="log"></aside>
     <div id="app">
       <h1>CARDS — Duel Arena</h1>
+      <!-- CREATE-LINK: `?create` has existed since M3-ROOM-CREATE and nothing
+           pointed at it, so a host had to know to type it. This is the whole
+           end-to-end loop's front door: hot-seat → create → share the code. -->
+      <a id="create-link" href="?create">Play online — create a room ▸</a>
       <div id="status"></div>
       <div id="controls" class="hud"></div>
       <footer>M2 hot-seat · order entry, resolution & playback driven entirely by the engine</footer>

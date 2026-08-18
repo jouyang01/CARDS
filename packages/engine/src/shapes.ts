@@ -267,9 +267,16 @@ export function lineSquares(board: Board, from: Vec2, dir: Vec2, range: number):
  * Cover is deliberately *not* a sight blocker (GAME_SPEC §3), so a cone fired
  * past a cover block still reaches behind it and is merely reduced.
  */
-export function coneSquares(board: Board, from: Vec2, dir: Vec2, range: number): Vec2[] {
+export function coneSquares(
+  board: Board, from: Vec2, dir: Vec2, range: number, beamWidth?: number,
+): Vec2[] {
   const d2 = dir.x * dir.x + dir.y * dir.y;
   if (d2 === 0 || range < 1) return [];
+  // BASIC-BEAM: an odd total width becomes a constant half-width, and the
+  // wedge's depth-dependent comparison becomes a depth-independent one. The
+  // scan, the wall test and the line of sight are untouched — this is one
+  // substitution into the coverage test, which is all the item ever needed.
+  const halfWidth = beamWidth === undefined ? undefined : (beamWidth - 1) / 2;
   // The far corners sit `range` tiles out and as far again to the side, so no
   // covered tile is more than range·√2 away; +2 for the hitbox and headroom.
   const reach = 2 * range + 2;
@@ -280,7 +287,12 @@ export function coneSquares(board: Board, from: Vec2, dir: Vec2, range: number):
       const p: Vec2 = { x: from.x + dx, y: from.y + dy };
       if (!inBounds(board, p)) continue;
       if (terrainAt(board, p) === 'wall') continue;
-      if (!wedgeCovers(dir.x * dx + dir.y * dy, dir.x * dy - dir.y * dx, d2, range)) continue;
+      const a = dir.x * dx + dir.y * dy;
+      const b = dir.x * dy - dir.y * dx;
+      const covers = halfWidth === undefined
+        ? wedgeCovers(a, b, d2, range)
+        : beamCovers(a, b, d2, range, halfWidth);
+      if (!covers) continue;
       // LOS-OCCLUSION. Asked last because it is the most expensive test and the
       // wedge has already thrown away most of the box.
       if (!hasLineOfSight(board, from, p)) continue;
@@ -332,7 +344,7 @@ function aimDirection(
  */
 export function axisSquares(
   board: Board,
-  ability: Pick<AbilityDef, 'shape' | 'range' | 'axisBonus'>,
+  ability: Pick<AbilityDef, 'shape' | 'range' | 'axisBonus' | 'beamWidth'>,
   casterPos: Vec2,
   aim: readonly Vec2[],
   aimStep?: number,
@@ -340,7 +352,7 @@ export function axisSquares(
   if (ability.shape !== 'cone' || ability.axisBonus === undefined) return [];
   const dir = aimDirection(casterPos, aim[0], aimStep, dominantCardinal);
   if (dir === undefined) return [];
-  return coneSquares(board, casterPos, dir, ability.range)
+  return coneSquares(board, casterPos, dir, ability.range, ability.beamWidth)
     .filter((p) => onConeAxis(dir, p.x - casterPos.x, p.y - casterPos.y));
 }
 
@@ -368,6 +380,30 @@ export function innerSquares(
 /** Sum of two squares — the one place this module spells out |v|². */
 function sqLen(x: number, y: number): number {
   return x * x + y * y;
+}
+
+/**
+ * BASIC-BEAM — is the tile at `(a, b)` inside a **constant-width** lane?
+ *
+ * Two comparisons, both exact integer arithmetic:
+ *
+ * - **Depth.** `0 < a ≤ range·|V|`, the wedge's own cap, so a beam reaches
+ *   exactly as far as the cone it replaces. `a > 0` keeps the caster's own row
+ *   and everything behind it out, as always.
+ * - **Width.** A tile is in the lane when its centre lies within
+ *   `halfWidth + ½` of the axis: `|b| / |V| ≤ h + ½`. Squared and
+ *   cross-multiplied that is `4b² ≤ (2h + 1)²·|V|²` — no division, no trig, and
+ *   the half-tile tolerance is *in* the comparison rather than bolted on as the
+ *   wedge's separate edge skirt.
+ *
+ * So `beamWidth: 3` (h = 1) at range 2, fired along a cardinal, covers exactly
+ * the 3 × 2 = 6 tiles the Designer priced.
+ */
+function beamCovers(a: number, b: number, d2: number, range: number, halfWidth: number): boolean {
+  if (a <= 0) return false;
+  if (a * a > range * range * d2) return false;
+  const w = 2 * halfWidth + 1;
+  return 4 * b * b <= w * w * d2;
 }
 
 /**
@@ -486,7 +522,7 @@ export function expandShape(
     }
     case 'cone': {
       const dir = aimVector(dominantCardinal);
-      return dir === undefined ? [] : coneSquares(board, casterPos, dir, ability.range);
+      return dir === undefined ? [] : coneSquares(board, casterPos, dir, ability.range, ability.beamWidth);
     }
     case 'path': {
       // The aim is the traversed path; only in-bounds squares survive. Dash

@@ -664,6 +664,27 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
 
 
 /**
+ * CREATE-LINK — the front door of the networked loop.
+ *
+ * `?create` shipped with M3-ROOM-CREATE and nothing pointed at it, so a host had
+ * to know to type it. The link is trivial; what makes it worth a browser test is
+ * that `#app` is `pointer-events: none` so the board can be clicked through it —
+ * a link inside that layer is invisible to the mouse unless it opts back in, and
+ * a link nobody can click is the bug this item was opened for.
+ */
+test('the hot-seat page links to the create-room form (CREATE-LINK)', async ({ page }) => {
+  const link = page.locator('#create-link');
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute('href', '?create');
+
+  // Clickable, not merely present: `pointer-events` is the trap here.
+  await link.click();
+  await expect(page).toHaveURL(/\?create/);
+  await expect(page.locator('[data-action="create"]'), 'and it lands on the form').toBeVisible();
+  await expect(page.locator('#create-link'), 'which does not offer itself again').toBeHidden();
+});
+
+/**
  * WAYPOINTS-FIX — the reported gesture, in a real browser, through the real
  * click handler.
  *
@@ -692,6 +713,22 @@ test('Shift-click draws a move route without arming Move first (WAYPOINTS-FIX)',
   await page.keyboard.up('Shift');
 
   expect(painted, 'a Shift-click with nothing armed drew no route — the reported bug')
+    .toBeGreaterThan(before);
+
+  // WAYPOINT-TELL — owner Dev Note: *"Waypoints should track where you are
+  // moving via the line and marker, right now it's just invisible and hard to
+  // tell where you are waypointing around to."* The route must survive the
+  // pointer moving on: it used to be replaced by a fresh direct line on the very
+  // next `mousemove`, so a composed path was invisible the instant you looked
+  // away from it.
+  await page.keyboard.down('Shift');
+  await pointAt(page, 0.60, 0.30);
+  const stillDrawn = countPixels(await pixels(page), isMoveLine);
+  await page.keyboard.up('Shift');
+  // Compared against the empty baseline, not against `painted`: the extended
+  // route runs to wherever the pointer now is, so it is legitimately shorter
+  // when that is nearer. What must not happen is the line going away.
+  expect(stillDrawn, 'the composed route vanished when the pointer moved')
     .toBeGreaterThan(before);
 
   // And it armed Move rather than committing and disarming: the readout has to

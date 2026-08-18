@@ -10,6 +10,7 @@
       "phase": "blast",
       "shape": "cone",
       "range": 2,
+      "beamWidth": 3,
       "cooldown": 0,
       "energyGain": 8,
       "effects": [
@@ -18,7 +19,7 @@
           "amount": 20
         }
       ],
-      "description": "A short crushing arc with the tower shield. Melee \u2014 ignores cover.",
+      "description": "A 3-wide wall of force, two tiles deep \u2014 the whole face of the shield. Melee \u2014 ignores cover.",
       "melee": true
     },
     {

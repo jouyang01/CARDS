@@ -14,7 +14,7 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { appendWaypointRouted, emptyDraft, remainingMove } from '../src/targeting.js';
-import { IDLE, arm, impactLayer, waypointClick } from '../src/order-mode.js';
+import { IDLE, arm, hoverBoard, impactLayer, previewMovePath, waypointClick, type Interaction } from '../src/order-mode.js';
 import { planningState } from '../src/fog.js';
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
@@ -274,5 +274,92 @@ describe('the impact layer: the regression that shipped green', () => {
     const layer = impactLayer([disc], [], undefined);
     disc.x = 99;
     expect(layer.squares[0]).toEqual({ x: 3, y: 3 });
+  });
+});
+
+describe('WAYPOINT-TELL: the composed route is visible while you build it', () => {
+  /**
+   * Owner Dev Note: *"Waypoints should track where you are moving via the line
+   * and marker, right now it's just invisible and hard to tell where you are
+   * waypointing around to."*
+   *
+   * The cause was in the *preview*, not the order. A Shift-click leaves move
+   * armed and the pointer over the board, and `previewMovePath` answered
+   * `pathTo(hover)` **from the unit** — so the drawn line snapped back to a
+   * fresh direct route the instant the mouse moved, while the waypoints sat in
+   * the draft, invisible, and resolved perfectly.
+   */
+  const hovering = (square: Vec2, shift: boolean): Interaction =>
+    ({ mode: 'move', hover: { square, shift } });
+
+  it('the reported bug: a composed route is no longer replaced by the hover line', () => {
+    const { state, unit } = board();
+    const composed = appendWaypointRouted(OPEN, state, unit, [], { x: 5, y: 5 }, false)!;
+    const draft = { ...emptyDraft(unit.unitId), movePath: composed };
+
+    const drawn = previewMovePath(OPEN, state, unit, draft, hovering({ x: 7, y: 5 }, true));
+    expect(drawn.slice(0, composed.length).map(key), 'the waypoints are still on screen')
+      .toEqual(composed.map(key));
+    expect(drawn.length, 'and the pointer extends them').toBeGreaterThan(composed.length);
+    expect(drawn.at(-1)).toEqual({ x: 7, y: 5 });
+  });
+
+  it('the extension is exactly what the click would append — one resolver', () => {
+    // AIM-PREVIEW-RANGE's rule applied to the move: the preview and the commit
+    // come from the same function, so they cannot describe different routes.
+    const { state, unit } = board();
+    const composed = appendWaypointRouted(OPEN, state, unit, [], { x: 5, y: 5 }, false)!;
+    const draft = { ...emptyDraft(unit.unitId), movePath: composed };
+
+    const previewed = previewMovePath(OPEN, state, unit, draft, hovering({ x: 7, y: 5 }, true));
+    const committed = appendWaypointRouted(OPEN, state, unit, composed, { x: 7, y: 5 }, false)!;
+    expect(previewed.map(key)).toEqual(committed.map(key));
+  });
+
+  it('WITHOUT Shift it previews the replacement, because that is what the click does', () => {
+    // The other half of honesty: a plain click throws the composed route away
+    // and auto-routes, so previewing the extension would show the wrong future.
+    const { state, unit } = board();
+    const composed = appendWaypointRouted(OPEN, state, unit, [], { x: 5, y: 5 }, false)!;
+    const draft = { ...emptyDraft(unit.unitId), movePath: composed };
+
+    const drawn = previewMovePath(OPEN, state, unit, draft, hovering({ x: 7, y: 7 }, false));
+    expect(drawn.map(key), 'a direct line from the unit').toEqual(['6,7', '7,7']);
+  });
+
+  it('an unroutable extension leaves the drawn route where it is', () => {
+    // A refusal must not blank the line — the player would read "my route is
+    // gone" from what is only "that square is out of reach".
+    const { state, unit } = board();
+    const spent = appendWaypointRouted(OPEN, state, unit, [], { x: 14, y: 7 }, false)!;
+    const draft = { ...emptyDraft(unit.unitId), movePath: spent };
+    const drawn = previewMovePath(OPEN, state, unit, draft, hovering({ x: 14, y: 14 }, true));
+    expect(drawn.map(key)).toEqual(spent.map(key));
+  });
+
+  it('with no route yet, Shift previews the first segment like any other hover', () => {
+    const { state, unit } = board();
+    const draft = emptyDraft(unit.unitId);
+    expect(previewMovePath(OPEN, state, unit, draft, hovering({ x: 7, y: 7 }, true)).map(key))
+      .toEqual(['6,7', '7,7']);
+  });
+
+  it('off the board, the committed route is what stays drawn', () => {
+    const { state, unit } = board();
+    const composed = appendWaypointRouted(OPEN, state, unit, [], { x: 5, y: 5 }, false)!;
+    const draft = { ...emptyDraft(unit.unitId), movePath: composed };
+    expect(previewMovePath(OPEN, state, unit, draft, { mode: 'move', hover: {} }).map(key))
+      .toEqual(composed.map(key));
+  });
+
+  it('pressing Shift without moving the mouse repaints — the modifier IS a change', () => {
+    // The old early-out compared squares only, so a Shift pressed over a tile
+    // the pointer was already on would have frozen the preview mid-gesture.
+    const at = { x: 7, y: 7 };
+    const hovered = hoverBoard(arm('move'), at, false)!;
+    const shifted = hoverBoard(hovered, at, true);
+    expect(shifted, 'a repaint is required').toBeDefined();
+    expect(shifted!.hover.shift).toBe(true);
+    expect(hoverBoard(shifted!, at, true), 'and nothing changed is still nothing').toBeUndefined();
   });
 });

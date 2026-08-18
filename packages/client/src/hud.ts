@@ -132,6 +132,16 @@ export interface Hud {
    * game over) — a clock still ticking over a resolved turn is a lie.
    */
   setTimer(view: TimerView | undefined): void;
+  /**
+   * M3-WAIT-STATE / M3-CONN-STATE — a banner over the HUD saying why the board
+   * is not taking orders: the turn is sent and the opponent is still deciding,
+   * or the socket has gone. `undefined` hides it.
+   *
+   * A banner rather than a disabled button alone, because "nothing happens when
+   * I click" needs a reason attached or it reads as a freeze — which is exactly
+   * the complaint both items were opened for.
+   */
+  setBanner(text: string | undefined): void;
   /** Swap to the resolution HUD: one Skip control, no ordering. */
   showPlayback(onSkip: () => void): void;
   /** Hide everything (game over). */
@@ -228,6 +238,10 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const bankBtn = el('button', 'hud-bank');
   bankBtn.onclick = () => handlers.extendTime();
   timerRow.append(timerText, bankBtn);
+  // Built once and hidden, like every other node here (UI3): a banner created
+  // on demand would be a new element under the pointer on the frame it appears.
+  const banner = el('div', 'hud-banner');
+  banner.style.display = 'none';
   const lockBtn = el('button', 'hud-lock');
   lockBtn.onclick = () => handlers.lock();
   const viewRow = el('div', 'hud-view');
@@ -236,7 +250,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const orbitBtn = el('button', 'hud-small');
   orbitBtn.onclick = () => handlers.toggleOrbit();
   viewRow.append(projBtn, orbitBtn);
-  right.append(viewRow, timerRow, lockBtn);
+  right.append(viewRow, timerRow, banner, lockBtn);
 
   // ── playback: one Skip, replacing the ordering controls ───────────────────
   const playback = el('div', 'hud-playback');
@@ -268,6 +282,11 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   document.body.appendChild(inspectPanel);
 
   return {
+    setBanner(text) {
+      banner.textContent = text ?? '';
+      banner.style.display = text === undefined ? 'none' : '';
+    },
+
     setTimer(view) {
       timerRow.style.display = view === undefined ? 'none' : '';
       if (view === undefined) return;

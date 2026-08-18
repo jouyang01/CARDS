@@ -3598,3 +3598,87 @@ engine does not need.
    chase now routes around bodies but the drawn chase route does not, so a player can be shown a
    pursuit that will detour. Unchanged this session; re-flagged because it is the last known
    preview/resolution disagreement.
+
+## 2026-09-14 — Builder: the waypoint line, the two networked banners, a front door, and Aegis's beam
+
+1. **The waypoint Dev Note was a preview bug, not an order bug.** `previewMovePath` answered
+   `pathTo(hover)` **from the unit** whenever move was armed and the pointer was over the board —
+   which is precisely the state a Shift-click leaves you in. So the composed route was replaced on
+   screen by a fresh direct line at the next `mousemove`, while the waypoints sat in the draft,
+   invisible, and resolved perfectly. The order was always right; only the drawing was wrong, which
+   is why it read as "invisible" rather than "broken".
+
+2. **The drawn route now depends on the modifier, and `Hover` carries it.** With Shift the line is
+   the committed path plus the segment the next click would append; without it, the direct route a
+   plain click would produce. Both come from the functions the click itself uses
+   (`appendWaypointRouted` / `pathTo`), so preview and commit cannot describe different moves —
+   AIM-PREVIEW-RANGE's rule applied to the move. `hoverBoard` also had to stop comparing squares
+   alone: pressing Shift without moving the mouse changes what the line means, so it is a repaint.
+
+3. **Waypoint marks are the clicked squares, not every step.** A segment is routed, so most of the
+   path is the router's choice; the marks record the player's. Kept beside the draft rather than in
+   it, because the *order* carries a `movePath` and which of those squares were chosen is a fact
+   about the gesture that only the board needs.
+
+4. **The wait/connection banner is one string, and it is the one string that mentions the other
+   team.** So `WaitView` carries own-team as a **list of seat ids** and the enemy as a **number** —
+   M3-HIDDEN's count-only rule held by the type rather than by remembering. There is no enemy id in
+   scope to leak even by accident.
+
+5. **A closed socket outranks the waiting line**, and that ordering is a decision rather than a
+   fall-through: once the socket is gone the resolution this client claims to be waiting for is
+   never coming, so "waiting for 1 opponent" would be the more misleading of the two true things.
+
+6. **The board disarms *before* the submit is sent, not after the reply.** A live aim on screen
+   while the packet is in flight is a turn the player thinks they can still change. Board clicks and
+   Lock In are refused while a banner is up, rather than accepted-and-ignored.
+
+7. **`CREATE-LINK` had to opt back into pointer events.** `#app` is `pointer-events: none` so the
+   board can be clicked through the chrome, which means a link inside it is invisible to the mouse
+   by default — a link nobody can click would have been the same bug one layer down, so the browser
+   test clicks it rather than merely finding it. Hidden on the create form and inside a room, where
+   it is noise and a way to walk out of a match by accident.
+
+8. **BASIC-BEAM is one substitution, as scoped.** The wedge already measures each tile's
+   perpendicular offset; `beamCovers` compares that same integer against a constant instead of
+   against the depth. Both tests stay exact — the half-tile tolerance lives *inside* the width
+   comparison as `4b² ≤ (2h+1)²·|V|²` rather than being bolted on as the cone's separate edge skirt,
+   which is why a beam needs no `nearEdge`/`nearCap` of its own.
+
+9. **Even `beamWidth` is refused rather than rounded.** An even lane has no centre axis to rotate
+   around, so `beamWidth: 2` is not a wider beam but an ill-defined one. Refused as data for the
+   reason every validator here exists: a number the engine quietly reinterprets is a number the
+   designer cannot reason about.
+
+10. **Aegis's data edit is two lines, and the description changed with the shape.** `beamWidth: 3`
+    plus the text — "a short crushing arc" described a fan and this is a wall. Range, damage and
+    `melee: true` are untouched, as the ruling requires. The engine change is separately covered, so
+    the data edit is the only thing that had to be got right by hand.
+
+## Open Questions for the Analyzer — 2026-09-14
+
+1. **`AXIS-MODIFIERS-CHECK` is answered and the backlog has not caught up.** The Designer closed it
+   in the same section that unblocked BASIC-BEAM (`clashes-and-basics.md` §3.4, last paragraph):
+   *"AXIS-MODIFIERS-CHECK is answered: scales, confirmed, no change."* BACKLOG.md still lists it as
+   an open Designer decision. **No work needed — please close it.**
+
+2. **The waypoint marks are cleared on a plain move click but not on an ability commit.**
+   (`app.ts`, `waypointMarks`.) Arming and committing an ability leaves a composed route and its
+   marks on screen, which is correct — the move is still part of the turn — but I have not tested
+   the interaction of a *dash* replacing the move. Low risk, and I would rather flag it than assert
+   a behaviour nobody has ruled.
+
+3. **M3-TIMER's seam is ready, and it is narrower than it looks.** (`waiting.ts`, `hud.setBanner`.)
+   The banner is a single string the controller re-renders on every status change, so the server
+   clock has one place to land. What is *not* decided: whether the countdown replaces the banner
+   text, sits beside it in the existing `UI-TIMER` slot, or turns the banner into a structure.
+   **Worth one line in the M3-TIMER spec** before it is built.
+
+4. **A networked match still has no end-of-match screen.** Out of scope everywhere so far and not a
+   bug, but with the loop now closed (create → pick → play → resolve) it is the next thing a player
+   hits and there is nothing there. Not scheduled; flagging because the loop is otherwise finished.
+
+5. **`beamWidth` is on the ability, so a `beamWidth` cone with an `axisBonus` is legal.** Aegis has
+   no axis bonus so nothing ships in that combination, and the geometry composes fine (the axis of a
+   3-wide lane is its centre file). Recorded rather than forbidden — if a beam is never meant to
+   carry an axis bonus, that is a validator line, not a bug.

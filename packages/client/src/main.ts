@@ -29,6 +29,7 @@ import { lobbyStatus } from './lobby.js';
 import { createLobbyScreen, type CatalystOption } from './lobby-screen.js';
 import { parseRoomLink, roomSocketUrl, type RoomLink } from './room-url.js';
 import { createCreateScreen } from './create-screen.js';
+import { connectionLabel, waitingLabel } from './waiting.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
@@ -77,8 +78,19 @@ if (roomLink !== undefined) {
   bootHotSeat();
 }
 
+/**
+ * CREATE-LINK is the hot-seat's front door and nothing else's: on the create
+ * form it points at the page you are already on, and in a room it is a way to
+ * walk out of a match by accident.
+ */
+function hideCreateLink(): void {
+  const link = document.getElementById('create-link');
+  if (link !== null) link.style.display = 'none';
+}
+
 /** The create form: choose a map and a format, get a code, follow it in. */
 function bootCreateRoom(): void {
+  hideCreateLink();
   const board = document.getElementById('board')!;
   const status = document.getElementById('status')!;
   status.textContent = 'Create a room';
@@ -98,6 +110,7 @@ function bootCreateRoom(): void {
  * over a running board is a pick screen you can still click.
  */
 function joinRoom(link: RoomLink): void {
+  hideCreateLink();
   const board = document.getElementById('board')!;
   const status = document.getElementById('status')!;
   status.textContent = `Connecting to room ${link.code}…`;
@@ -152,10 +165,27 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
   };
 
   let onResolved: ((state: GameState, events: TurnEvent[]) => void) | undefined;
+  let onStatus: ((banner: string | undefined) => void) | undefined;
   // Only *this* turn's resolution counts: the reducer keeps the last one, so a
   // repaint for some other reason must not replay a turn already animated.
   let played = opening.turn;
+  let shown: string | undefined;
   client.subscribe((now) => {
+    // M3-CONN-STATE first: a dead socket outranks whose turn it is, and the
+    // reason it outranks it is that nothing else is going to arrive.
+    const next = connectionLabel(now.phase) ?? waitingLabel(
+      now.seat === undefined ? undefined : {
+        seatId: now.seat.seatId,
+        own: now.locked,
+        ownOf: now.of,
+        enemyReady: now.enemyLocked,
+        enemyOf: now.enemyOf,
+      },
+    );
+    if (next !== shown) {
+      shown = next;
+      onStatus?.(next);
+    }
     if (now.state === undefined || now.state.turn <= played) return;
     played = now.state.turn;
     onResolved?.(now.state, now.events);
@@ -178,6 +208,7 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
       unitIds: started.unitIds,
       submit: (orders) => { client.submit(orders); },
       onResolved: (handler) => { onResolved = handler; },
+      onStatus: (handler) => { onStatus = handler; },
     },
     opening,
   );

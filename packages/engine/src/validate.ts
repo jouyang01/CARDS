@@ -33,7 +33,7 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
  */
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
-  'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'innerRadius', 'innerAmount',
+  'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
   'oncePerMatch', 'impact',
   'effects', 'description',
 ] as const;
@@ -83,6 +83,19 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   if (a.axisBonus !== undefined) {
     if (a.shape !== 'cone') errs.push(`${path}: axisBonus is only meaningful on a cone (shape is "${a.shape}")`);
     if (!isInt(a.axisBonus) || a.axisBonus < 1) errs.push(`${path}: axisBonus must be an integer >= 1 when present`);
+  }
+  // BASIC-BEAM: cone-only, and **odd** — an even lane has no centre axis to
+  // rotate around, so `beamWidth: 2` is not a wider beam but an ill-defined one.
+  // Refused as data rather than rounded, for the reason every other validator
+  // here exists: a number the engine quietly reinterprets is a number the
+  // designer cannot reason about (Designer, clashes-and-basics.md §3.4).
+  if (a.beamWidth !== undefined) {
+    if (a.shape !== 'cone') errs.push(`${path}: beamWidth is only meaningful on a cone (shape is "${a.shape}")`);
+    if (!isInt(a.beamWidth) || a.beamWidth < 1) {
+      errs.push(`${path}: beamWidth must be an integer >= 1 when present`);
+    } else if (a.beamWidth % 2 === 0) {
+      errs.push(`${path}: beamWidth must be ODD (got ${a.beamWidth}) — an even lane has no centre axis`);
+    }
   }
   // BASIC-INNER: a circle-only pair, and a pair — an inner radius with nothing
   // to deal there, or an inner amount with no disc to deal it in, is a number
