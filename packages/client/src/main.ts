@@ -26,6 +26,7 @@ import { RoomClient } from './net.js';
 import { lobbyStatus } from './lobby.js';
 import { createLobbyScreen, type CatalystOption } from './lobby-screen.js';
 import { parseRoomLink, roomSocketUrl, type RoomLink } from './room-url.js';
+import { createCreateScreen } from './create-screen.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
@@ -65,8 +66,27 @@ if (roomLink !== undefined) {
     throw new Error('invalid room link');
   }
   joinRoom(roomLink.link);
+} else if (new URLSearchParams(window.location.search).has('create')) {
+  // M3-ROOM-CREATE: `?create` is the host's entry. Its own query rather than a
+  // control on the hot-seat board, because creating a room replaces the screen
+  // — and because the hot-seat is still the default with no query at all.
+  bootCreateRoom();
 } else {
   bootHotSeat();
+}
+
+/** The create form: choose a map and a format, get a code, follow it in. */
+function bootCreateRoom(): void {
+  const board = document.getElementById('board')!;
+  const status = document.getElementById('status')!;
+  status.textContent = 'Create a room';
+  const root = document.createElement('div');
+  root.className = 'lobby';
+  board.replaceChildren(root);
+  createCreateScreen({ root }, MAPS, {
+    post: (path) => fetch(path, { method: 'POST' }),
+    navigate: (href) => { window.location.search = href; },
+  });
 }
 
 /**
