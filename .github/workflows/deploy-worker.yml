@@ -1,0 +1,77 @@
+name: Deploy Worker
+# M3-DEPLOY-LIVE — publish the room server to Cloudflare.
+#
+# Gated exactly like the Pages deploy next door, and for the same reason: a red
+# build (failing tests, typecheck, or the determinism guard) must never reach the
+# internet. CI is the core checks only; RENDER-VERIFY is deliberately not in the
+# gate, because a browser download failing must not stop an urgent fix shipping.
+#
+# The credential is a repository secret (`CLOUDFLARE_API_TOKEN`, an "Edit
+# Cloudflare Workers" token). Nothing here can read it and nothing prints it —
+# it goes to wrangler through the environment and no further.
+#
+# Two things this deliberately does NOT do:
+#   * pick a route or a custom domain — the owner chose the free `workers.dev`
+#     subdomain (`lockstepcards`), so the Worker publishes to
+#     `<name>.lockstepcards.workers.dev` and `wrangler.toml`'s `name` decides it;
+#   * set the client's `WORKER_ORIGIN`. That is a repository *variable* a human
+#     sets once (see deploy-pages.yml). The summary below prints the URL to copy.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one in flight: a half-applied Durable
+# Object migration is a worse outcome than a queued job.
+concurrency:
+  group: worker-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Proceed only when CI passed (workflow_run) or a human triggered it.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # The one check that can only fail here: whether this is a Worker at all.
+      # A missing binding, a Durable Object without its migration or an import
+      # the bare runtime cannot resolve all pass `npm test` and fail a deploy —
+      # so the runtime boot runs *before* the publish, not after it.
+      - name: Smoke check on the real runtime
+        run: npm run smoke
+
+      - name: Deploy
+        id: deploy
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Only needed when the token can see more than one account; an empty
+          # value is the same as unset, so this is safe to leave unconfigured.
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # The gate, made legible (M3-DEPLOY-LIVE's AC). A deploy whose result you
+      # have to read a log to learn is a deploy nobody checks.
+      - name: Say what shipped
+        if: always()
+        run: |
+          {
+            echo "## Worker deploy: ${{ steps.deploy.outcome == 'success' && 'shipped ✅' || 'FAILED ❌' }}"
+            echo
+            echo "- commit: \`${{ github.sha }}\`"
+            echo "- worker: \`$(grep '^name' packages/server/wrangler.toml | cut -d'"' -f2)\`"
+            echo
+            echo "If this is the first deploy, copy the \`*.workers.dev\` host wrangler printed"
+            echo "into the repository variable \`WORKER_ORIGIN\` so the Pages client talks to it."
+          } >> "$GITHUB_STEP_SUMMARY"

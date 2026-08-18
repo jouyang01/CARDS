@@ -3915,6 +3915,16 @@ engine does not need.
     hostname that ships in the bundle, and a variable can be changed without a commit. Empty until the
     owner sets it, and empty is same-origin, so the Pages build keeps working meanwhile.
 
+17. **M3-DEPLOY-LIVE took path A: the owner confirmed the API token is already a repository secret.**
+    So the workflow landed this session rather than waiting. Two choices inside it worth arguing with.
+    **The smoke check gates the publish** — it is the one check that can only fail at deploy time
+    (binding, migration, an import the bare runtime cannot resolve), so running it *before* the push
+    rather than discovering it after is the whole reason it exists. And **`cancel-in-progress: false`**,
+    unlike the Pages deploy: a half-applied Durable Object migration is a worse outcome than a queued
+    job. The client's `WORKER_ORIGIN` is still a human step — the workflow prints the host to copy
+    rather than writing a repository variable, because a deploy that edits the repo's own settings is
+    a surprise nobody asked for.
+
 ## Open Questions for the Analyzer — 2026-09-16
 
 1. **I made a call inside M3-RECONNECT's territory: a restored room detaches every seat.** (Decision
@@ -3933,16 +3943,20 @@ engine does not need.
    deliberately **not** done here because it was not in scope. **Worth a backlog line** — it is the
    remaining gap between "the clock survives" and "the turn survives".
 
-3. **M3-DEPLOY-LIVE needs the owner to pick A or B, and I did not build either.** (Backlog says to
-   flag before building.) A = a `CLOUDFLARE_API_TOKEN` repo secret plus a deploy workflow; B = the
-   owner runs `npm run deploy` on their Mac. Everything else is done — wrangler, the scripts, the
-   configurable origin, the smoke check, the Pages variable. **Under B the item is finished as it
-   stands**; under A it needs one workflow file, which I can add the moment the owner says so.
+3. **M3-DEPLOY-LIVE is built but UNVERIFIED, and two things need a human.** The owner picked path A
+   and confirmed the `CLOUDFLARE_API_TOKEN` secret is already in the repo, so
+   `.github/workflows/deploy-worker.yml` shipped this session. **I cannot check either half from
+   here:** secrets are unreadable to a workflow author, so if the secret is named anything other than
+   `CLOUDFLARE_API_TOKEN` the deploy fails on the first run and one line changes. And the deploy
+   itself has never run — **merging this makes a push to `main` publish to the internet**, which is
+   the first time that has been true of this repository. Worth saying out loud in the review.
 
-4. **The `workers.dev` host is a guess until the deploy happens.** `wrangler.toml`'s `name` is
-   `cards-rooms` and the subdomain is `lockstepcards`, so the origin should be
-   `cards-rooms.lockstepcards.workers.dev` — but that is derived, not observed. Whoever runs the first
-   deploy should set the `WORKER_ORIGIN` repository variable to whatever wrangler actually prints.
+4. **The `workers.dev` host is a guess until the deploy happens, and the client is not pointed at it
+   yet.** `wrangler.toml`'s `name` is `cards-rooms` and the subdomain is `lockstepcards`, so the origin
+   should be `cards-rooms.lockstepcards.workers.dev` — derived, not observed. The workflow prints the
+   real host in its job summary; somebody has to paste it into the `WORKER_ORIGIN` repository variable
+   before the Pages client talks to anything. **Until that happens the deployed client is same-origin
+   and the networked path does not reach a server** — it will look broken, and it is one setting.
 
 5. **The presence marks are not in the Playwright suite.** The e2e harness drives the hot-seat, which
    has no sockets and therefore no absence; exercising a marked seat in a browser needs two clients
