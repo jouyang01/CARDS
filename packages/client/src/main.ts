@@ -31,6 +31,7 @@ import { parseRoomLink, roomSocketUrl, type RoomLink } from './room-url.js';
 import { createCreateScreen } from './create-screen.js';
 import { connectionLabel, waitingLabel } from './waiting.js';
 import { reconnectDelayMs, shouldReconnect, ticketsIn } from './reconnect.js';
+import { NO_PRESENCE, coverNotice, presenceOf, type Presence } from './presence.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
@@ -223,9 +224,25 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
   // repaint for some other reason must not replay a turn already animated.
   let played = opening.turn;
   let shown: string | undefined;
+  let onPresence: ((presence: Presence) => void) | undefined;
+  // NET-PRESENCE-UI: forwarded on change, like the control map and for the same
+  // reason — it moves only when somebody drops or returns, and the topbar is
+  // rebuilt wholesale when it does.
+  let presence = NO_PRESENCE;
+  const key = (p: Presence): string => `${p.awaySeatIds.join(',')}|${p.borrowedUnitIds.join(',')}`;
   client.subscribe((now) => {
+    const seen = now.seat === undefined || now.room === undefined
+      ? NO_PRESENCE
+      : presenceOf({ seats: now.room.seats, mySeatId: now.seat.seatId, controls: now.unitIds });
+    if (key(seen) !== key(presence)) {
+      presence = seen;
+      onPresence?.(seen);
+    }
     // M3-CONN-STATE first: a dead socket outranks whose turn it is, and the
-    // reason it outranks it is that nothing else is going to arrive.
+    // reason it outranks it is that nothing else is going to arrive. The cover
+    // notice is last of the three: it explains a *standing* situation, so it is
+    // the one worth saying while nothing more urgent is happening — and the
+    // portrait marks say it too, and they are always on screen.
     const next = connectionLabel(now.phase) ?? waitingLabel(
       now.seat === undefined ? undefined : {
         seatId: now.seat.seatId,
@@ -234,7 +251,7 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
         enemyReady: now.enemyLocked,
         enemyOf: now.enemyOf,
       },
-    );
+    ) ?? coverNotice(seen);
     if (next !== shown) {
       shown = next;
       onStatus?.(next);
@@ -272,6 +289,7 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
       onStatus: (handler) => { onStatus = handler; },
       onTimer: (handler) => { onTimer = handler; },
       onControl: (handler) => { onControl = handler; },
+      onPresence: (handler) => { onPresence = handler; },
       extend: () => { client.extend(); },
     },
     opening,

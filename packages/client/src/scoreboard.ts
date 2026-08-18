@@ -185,6 +185,21 @@ export interface TopbarPortrait {
   respawnIn: number;
   /** Charged, so a portrait can warn about an ult the same way a plate does. */
   ultReady: boolean;
+  /**
+   * NET-PRESENCE-UI — this character's player has no socket attached.
+   *
+   * A fact about the *player*, not the unit, which is why it comes in from the
+   * outside rather than off the `ScoreRow`: the score readout is a view of the
+   * engine's state and the engine has never heard of a socket.
+   */
+  away: boolean;
+  /**
+   * On loan to the viewer (HANDOFF): a disconnected teammate's character that
+   * this seat is now ordering. Always `false` for an enemy portrait — a client
+   * does not have the other side's control map, and inventing one would be
+   * exactly the recomputation this item is supposed to avoid.
+   */
+  borrowed: boolean;
 }
 
 export interface TopbarModel {
@@ -200,7 +215,23 @@ export interface TopbarModel {
   suddenDeath: boolean;
 }
 
-const portrait = (row: ScoreRow): TopbarPortrait => ({
+/**
+ * NET-PRESENCE-UI's two marks, as the strip needs them.
+ *
+ * An interface of two id lists rather than the `Presence` object itself, so
+ * `scoreboard.ts` keeps knowing nothing about seats, sockets or the room — it is
+ * handed which unit ids to mark and marks them. A hot-seat passes nothing.
+ */
+export interface PresenceMarks {
+  awayUnitIds: readonly string[];
+  borrowedUnitIds: readonly string[];
+}
+
+const NO_MARKS: PresenceMarks = { awayUnitIds: [], borrowedUnitIds: [] };
+
+const portrait = (row: ScoreRow, marks: PresenceMarks): TopbarPortrait => ({
+  away: marks.awayUnitIds.includes(row.unitId),
+  borrowed: marks.borrowedUnitIds.includes(row.unitId),
   unitId: row.unitId,
   name: row.name,
   initial: (row.name[0] ?? '?').toUpperCase(),
@@ -215,12 +246,21 @@ const portrait = (row: ScoreRow): TopbarPortrait => ({
   ultReady: row.ultPct >= 100,
 });
 
-/** The strip, from the viewing team's point of view. */
-export function topbar(readout: ScoreReadout, viewer: 0 | 1): TopbarModel {
+/**
+ * The strip, from the viewing team's point of view.
+ *
+ * `marks` is NET-PRESENCE-UI's, and optional: a hot-seat has no sockets to be
+ * absent from, so it passes none and every portrait is present and owned.
+ */
+export function topbar(
+  readout: ScoreReadout,
+  viewer: 0 | 1,
+  marks: PresenceMarks = NO_MARKS,
+): TopbarModel {
   const enemyTeam: 0 | 1 = viewer === 0 ? 1 : 0;
   return {
-    friendly: readout.rows.filter((r) => r.owner === viewer).map(portrait),
-    enemy: readout.rows.filter((r) => r.owner === enemyTeam).map(portrait),
+    friendly: readout.rows.filter((r) => r.owner === viewer).map((r) => portrait(r, marks)),
+    enemy: readout.rows.filter((r) => r.owner === enemyTeam).map((r) => portrait(r, marks)),
     friendlyTeam: viewer,
     enemyTeam,
     friendlyKills: readout.kills[viewer],
