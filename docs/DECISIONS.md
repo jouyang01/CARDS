@@ -3827,3 +3827,130 @@ engine does not need.
    the create form, which is honest but throws the room away. A rematch needs a protocol
    conversation (both players agreeing to re-enter) that nobody has specced. Not urgent; the loop
    closes without it.
+
+## 2026-09-16 — Builder: the clock survives eviction, absence is visible, and the deploy is one credential away
+
+1. **TIMER-PERSIST is a location, not a save step.** The deadline and the Time Bank charges moved onto
+   the `Room` record, which the Durable Object already writes after every frame. So "persisted" is done
+   by code that was already there, and a hub reconstructed from storage is rehydrated by its
+   constructor with nothing to remember. Keeping a private field *beside* the record would have made
+   two copies of one fact, and one of two copies is always the stale one.
+
+2. **The stored deadline is an absolute instant; the wire still carries a duration.** They are
+   different problems with opposite answers. Storage needs an absolute — a remaining duration would
+   have to be re-anchored to a wake time nobody recorded — and it is already the number `setAlarm`
+   takes, so it rehydrates unchanged. The *wire* needs a duration, because the alternative is asking
+   every browser to model its skew against the server's clock.
+
+3. **A closed window is the absence of the key.** `withDeadline(room, undefined)` deletes it rather
+   than setting `undefined`. Under `exactOptionalPropertyTypes` the two are different types, and after
+   a JSON round-trip they are the same value — so the bug would be invisible in storage and loud
+   everywhere else. Pinned by a test rather than left to a convention.
+
+4. **A judgment call beyond the AC: the restore also detaches every seat.** `Seat.connected` means "a
+   socket is attached to this seat", and a room rebuilt from storage has none — the instance holding
+   them stopped existing without anything running `close`. Left alone, the record came back claiming
+   everybody was present and refused each returning player's own ticket as `seatTaken`: **reconnect
+   after an eviction was broken by the very restore meant to survive it.** This is the existing rule
+   made true again after a restart, not a new one, and it is self-correcting in the other direction
+   too (a reclaim clears `missedTurns`, so a room that woke empty and filled again leaves nobody's
+   characters on loan). Flagged to the Analyzer as #1 below because it touches M3-RECONNECT's ruling.
+
+5. **What eviction is, in a test, is doing what the runtime does.** `new RoomHub(detachAll(JSON.parse(
+   JSON.stringify(hub.room))))`. The JSON round-trip is load-bearing rather than decorative: it is what
+   catches a field that is a `Map`, which looks fine in memory and comes back as `{}`.
+
+6. **NET-PRESENCE-UI reads; it never re-derives the handoff.** The client computes exactly one thing —
+   "which of the characters I am ordering are not on my own seat" — which is set arithmetic on ids the
+   server sent. It never asks *whether* the handoff should have happened; that is `controlledUnits`,
+   and a second implementation of a rule that exists to be agreed on is worse than no display at all.
+   The test that holds this is the turn of the drop: `connected` false, `missedTurns` still 0, control
+   map unchanged, and the client says nothing — which a client that had guessed the rule could not do.
+
+7. **`away` and `borrowed` are two marks because they are two facts.** One says this character's
+   *player* is gone; the other says the handoff has put them in your hands. A character is usually
+   both, and that is the point — the second is the explanation for the first. Collapsing them into one
+   "absent" state would lose the sentence the item exists to say.
+
+8. **A disconnected opponent is shown.** How many people are in the room has always been public
+   (the lobby has always counted them), and a match that quietly continued against an empty chair is
+   the most confusing version available. What stays own-team is *who is covering*, and only because
+   the enemy's control map is not something this client is sent.
+
+9. **The cover notice is third in the banner, behind the connection state and the wait line.** It
+   explains a standing situation rather than announcing an event, so it is the one worth saying while
+   nothing more urgent is happening — and the portrait marks say it too, and they are on screen
+   regardless.
+
+10. **The deployed client and the deployed Worker are different origins, so the server is
+    configuration.** `VITE_WORKER_ORIGIN`, read once in `main.ts`; everything that uses it takes it as
+    an argument, which is what keeps `room-url.ts` testable without a bundler.
+
+11. **Absent means unchanged, and that is the load-bearing half.** With no origin configured the
+    socket stays same-origin and the API path stays **relative** — relative specifically because
+    Vite's proxy matches on the request path, and absolutising it would send the request back to the
+    dev server instead of through it. So local play does not move because a deploy exists.
+
+12. **A bare configured host is https, not the page's scheme.** The only value ever put here is a
+    TLS-only `workers.dev` name; guessing `http` would build a URL an https page is not permitted to
+    open at all, which is a silent failure rather than a working default. `ws://`/`wss://` are
+    accepted and normalised, because the socket URL is the shape somebody will paste.
+
+13. **The dev proxy is what makes "same origin" true locally.** `/rooms` (with `ws: true`, or the
+    lobby connects forever) goes to a local `wrangler dev`. That is deliberate: a dev setup that also
+    had to configure an origin would be a second way to get the same thing wrong, and the local path
+    would stop resembling the deployed one in the way that matters.
+
+14. **The smoke check answers the one question no unit test can: is this a Worker at all.** A missing
+    binding, a Durable Object without its migration, an import the bare runtime cannot resolve — all
+    of them pass `npm test` and fail a deploy. So it is deliberately shallow and deliberately real:
+    boot workerd, mint a room, read it back from its DO, confirm the removed start route is still
+    gone. Out of `npm test` because it boots a runtime.
+
+15. **It kills wrangler's process group, not the process.** `wrangler dev` is a supervisor over
+    `workerd`, so the first run passed every check and left a Worker holding the port. Recorded
+    because the failure was invisible from inside the script — everything it asserted was true.
+
+16. **The Pages workflow takes the origin as a repository VARIABLE, not a secret.** It is a public
+    hostname that ships in the bundle, and a variable can be changed without a commit. Empty until the
+    owner sets it, and empty is same-origin, so the Pages build keeps working meanwhile.
+
+## Open Questions for the Analyzer — 2026-09-16
+
+1. **I made a call inside M3-RECONNECT's territory: a restored room detaches every seat.** (Decision
+   4 above; `room.ts` `detachAll`, `durable-object.ts`.) Without it, reconnect-after-eviction is
+   broken — the record claims everyone is present and refuses each returning player's own ticket as
+   `seatTaken`. I believe this is the existing `connected` rule made true again rather than a new
+   ruling, but it interacts with HANDOFF (a room that wakes and sits empty for a turn accrues
+   `missedTurns` for everybody, harmlessly, since a disconnected seat controls nothing and a reclaim
+   clears it). **Please confirm or re-spec** — and if it stands, it wants a line in edge-cases beside
+   the started-room reserve.
+
+2. **Submissions still do not survive an eviction.** (`hub.ts` `#submissions`.) TIMER-PERSIST's AC
+   named the deadline and the charges, and both are done; the third in-memory thing is this turn's
+   locked-in orders. A DO evicted mid-turn resumes the right window but everybody reads as unlocked
+   and has to lock in again. Cheap to persist (a plain object on the record, same shape as `bank`) and
+   deliberately **not** done here because it was not in scope. **Worth a backlog line** — it is the
+   remaining gap between "the clock survives" and "the turn survives".
+
+3. **M3-DEPLOY-LIVE needs the owner to pick A or B, and I did not build either.** (Backlog says to
+   flag before building.) A = a `CLOUDFLARE_API_TOKEN` repo secret plus a deploy workflow; B = the
+   owner runs `npm run deploy` on their Mac. Everything else is done — wrangler, the scripts, the
+   configurable origin, the smoke check, the Pages variable. **Under B the item is finished as it
+   stands**; under A it needs one workflow file, which I can add the moment the owner says so.
+
+4. **The `workers.dev` host is a guess until the deploy happens.** `wrangler.toml`'s `name` is
+   `cards-rooms` and the subdomain is `lockstepcards`, so the origin should be
+   `cards-rooms.lockstepcards.workers.dev` — but that is derived, not observed. Whoever runs the first
+   deploy should set the `WORKER_ORIGIN` repository variable to whatever wrangler actually prints.
+
+5. **The presence marks are not in the Playwright suite.** The e2e harness drives the hot-seat, which
+   has no sockets and therefore no absence; exercising a marked seat in a browser needs two clients
+   against a running Worker, which is a shape the render suite does not have. Unit- and
+   integration-covered (15 tests, including an end-to-end drop against a real hub). Flagging the
+   coverage boundary rather than proposing a harness.
+
+6. **`connected` is on `RoomView` and the *enemy* side of the lobby still shows only a count.**
+   BLIND-PICK keeps enemy picks hidden, and I did not extend the enemy block to say "1 of 2 present" —
+   it is arguably useful and arguably an information change, so I left it. **A one-line ruling** would
+   settle it either way.
