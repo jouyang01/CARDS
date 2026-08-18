@@ -694,6 +694,22 @@ test('Shift-click draws a move route without arming Move first (WAYPOINTS-FIX)',
   expect(painted, 'a Shift-click with nothing armed drew no route — the reported bug')
     .toBeGreaterThan(before);
 
+  // WAYPOINT-TELL — owner Dev Note: *"Waypoints should track where you are
+  // moving via the line and marker, right now it's just invisible and hard to
+  // tell where you are waypointing around to."* The route must survive the
+  // pointer moving on: it used to be replaced by a fresh direct line on the very
+  // next `mousemove`, so a composed path was invisible the instant you looked
+  // away from it.
+  await page.keyboard.down('Shift');
+  await pointAt(page, 0.60, 0.30);
+  const stillDrawn = countPixels(await pixels(page), isMoveLine);
+  await page.keyboard.up('Shift');
+  // Compared against the empty baseline, not against `painted`: the extended
+  // route runs to wherever the pointer now is, so it is legitimately shorter
+  // when that is nearer. What must not happen is the line going away.
+  expect(stillDrawn, 'the composed route vanished when the pointer moved')
+    .toBeGreaterThan(before);
+
   // And it armed Move rather than committing and disarming: the readout has to
   // have been spent by the segment, which is the "budget draws down" half.
   const move = page.locator('.hud-moves .hud-move').nth(0);

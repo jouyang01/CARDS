@@ -113,7 +113,7 @@ const PAD_SIZE = 0.62;
  */
 export type HighlightLayer =
   | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'band' | 'impact' | 'free' | 'catalyst'
-  | 'chase' | 'select';
+  | 'waypoint' | 'chase' | 'select';
 
 /**
  * Route lines get their own layers for the same reason the aim overlays do: a
@@ -160,6 +160,11 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
   // CHASE1's quarry ring sits just under the selection ring: it marks a unit
   // rather than a target area, so it must read above every aim overlay and
   // still yield to "this is the character you are ordering".
+  // WAYPOINT-TELL: the squares a player deliberately clicked while composing a
+  // move. Above every aim overlay because it is a record of decisions rather
+  // than an area, and below `chase`/`select` for the same reason those two lead:
+  // marking a unit outranks marking a square.
+  waypoint: OVERLAY_BASE + 0.021,
   chase: OVERLAY_BASE + 0.022,
   select: OVERLAY_BASE + 0.024,
 };
@@ -169,7 +174,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, band: 0.62, impact: 0.86, free: 0.8, catalyst: 0.72, chase: 0.98, select: 0.92,
+  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, band: 0.62, impact: 0.86, free: 0.8, catalyst: 0.72, waypoint: 0.5, chase: 0.98, select: 0.92,
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;

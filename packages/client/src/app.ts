@@ -192,6 +192,11 @@ const CHASE_LINE = 0xff8a3d;
 const BAND = 0xffe9a8;
 /** AIM-RANGE-TELL's refusal marker — the one red on the planning overlays. */
 const REFUSED = 0xff5a4e;
+/**
+ * WAYPOINT-TELL's marker — the move line's own blue, brightened, because a
+ * waypoint is a point *on* that route rather than a different kind of thing.
+ */
+const WAYPOINT = 0xd6e6ff;
 
 /**
  * Title + status line, overlaid on the top-left of the canvas (UI-VIEWPORT).
@@ -290,6 +295,15 @@ export function startHotSeat(
    * survive the pointer moving off the square or it would flash and vanish.
    */
   let refusedSquare: Vec2 | undefined;
+  /**
+   * WAYPOINT-TELL — the squares the player actually **clicked** while composing
+   * a move, as opposed to every step the router filled in between them.
+   *
+   * Kept beside the draft rather than in it because the order carries a
+   * `movePath` and nothing else: which of those squares were chosen and which
+   * were routed is a fact about the *gesture*, and only the board needs it.
+   */
+  let waypointMarks: Vec2[] = [];
   let projection: ProjectionName = 'isometric';
 
   /** The shield pool `initView` sums, so board and HUD never disagree. */
@@ -702,6 +716,7 @@ export function startHotSeat(
   function beginTurn(): void {
     drafts = new Map();
     locked = new Set();
+    waypointMarks = [];
     seatIdx = 0;
     openSeat();
   }
@@ -1029,6 +1044,15 @@ export function startHotSeat(
     );
     // …and the quarry is ringed, so the order reads as "that one" rather than
     // as a line that happens to end near somebody.
+    // WAYPOINT-TELL: the clicked squares, so a composed route says which corners
+    // were the player's and which the router's. Only while that unit's route is
+    // still the one on screen — a mark over somebody else's turn is a lie.
+    renderer.highlight(
+      'waypoint',
+      draft.movePath.length > 0 ? waypointMarks : [],
+      WAYPOINT,
+      0.85,
+    );
     renderer.highlight('chase', chaseTarget === undefined ? [] : [chaseTarget.pos], CHASE_LINE, 0.45);
 
     // ── DASH-CAT-ROUTE: a Dash catalyst is a reposition, so it draws like one ─
@@ -1418,7 +1442,13 @@ export function startHotSeat(
       // Every click answers: the route grows, or the square is marked. Silence
       // is what made the shipped version look broken.
       if (extended === undefined) refusedSquare = { x: sq.x, y: sq.y };
-      else { live.movePath = extended; refusedSquare = undefined; }
+      else {
+        live.movePath = extended;
+        refusedSquare = undefined;
+        // WAYPOINT-TELL: mark the square that was clicked, not the whole
+        // segment — the marks are the decisions, the line is the route.
+        waypointMarks = [...waypointMarks, { x: sq.x, y: sq.y }];
+      }
       render();
       return;
     }
@@ -1478,6 +1508,9 @@ export function startHotSeat(
       // unchanged: it replaces the drawn path rather than extending it.
       const planned = planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units);
       draft.movePath = pathTo(map, planned, unit, sq, movementBudget(unit, draft.sprint));
+      // A plain click **replaces** the route, so the marks from a composed one
+      // go with it — leaving them would label squares this path never visits.
+      waypointMarks = [];
       interaction = afterCommit();
       render();
     }
@@ -1499,7 +1532,7 @@ export function startHotSeat(
     // with nothing selected is exactly the player asking "what is that".
     showInspect(square, evt.clientX, evt.clientY);
     if (selectedUnit() === undefined) return;
-    const next = hoverBoard(interaction, square);
+    const next = hoverBoard(interaction, square, evt.shiftKey);
     if (next === undefined) return; // same tile, or nothing armed: no repaint
     interaction = next;
     renderPreviews();
