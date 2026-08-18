@@ -12,8 +12,13 @@
       "range": 8,
       "cooldown": 0,
       "energyGain": 8,
-      "effects": [{ "kind": "damage", "amount": 26 }],
-      "description": "Piercing shot along a line. Vex's bread and butter — punishes anyone standing still."
+      "effects": [
+        {
+          "kind": "damage",
+          "amount": 26
+        }
+      ],
+      "description": "Piercing shot along a line. Vex's bread and butter \u2014 punishes anyone standing still."
     },
     {
       "id": "frag_grenade",
@@ -25,19 +30,28 @@
       "cooldown": 3,
       "energyGain": 10,
       "delayTurns": 1,
-      "effects": [{ "kind": "damage", "amount": 34 }],
-      "description": "Lobbed grenade that detonates at the aimed area NEXT turn. Zone denial — forces the opponent to move where you want."
+      "effects": [
+        {
+          "kind": "damage",
+          "amount": 34
+        }
+      ],
+      "description": "Lobbed grenade that detonates at the aimed area NEXT turn. Zone denial \u2014 forces the opponent to move where you want."
     },
     {
       "id": "combat_roll",
       "name": "Combat Roll",
       "phase": "dash",
       "shape": "path",
-      "range": 3,
+      "range": 4,
       "cooldown": 2,
       "energyGain": 4,
-      "effects": [{ "kind": "teleport" }],
-      "description": "Quick roll up to 3 squares. Dodges Blast-phase attacks aimed at your old position."
+      "effects": [
+        {
+          "kind": "teleport"
+        }
+      ],
+      "description": "Quick roll up to 4 squares. Dodges Blast-phase attacks aimed at your old position."
     },
     {
       "id": "overwatch_trap",
@@ -49,10 +63,17 @@
       "energyGain": 0,
       "free": true,
       "effects": [
-        { "kind": "trap", "amount": 20, "lifetime": 3 },
-        { "kind": "reveal", "duration": 2 }
+        {
+          "kind": "trap",
+          "amount": 20,
+          "lifetime": 3
+        },
+        {
+          "kind": "reveal",
+          "duration": 2
+        }
       ],
-      "description": "FREE ACTION — costs no ability, so Vex still shoots this turn. Plants a hidden trap: 20 damage on entry and Reveals the victim for 2 turns."
+      "description": "FREE ACTION \u2014 costs no ability, so Vex still shoots this turn. Plants a hidden trap: 20 damage on entry and Reveals the victim for 2 turns."
     }
   ],
   "ultimate": {
@@ -63,7 +84,12 @@
     "range": 99,
     "cooldown": 0,
     "energyGain": 0,
-    "effects": [{ "kind": "damage", "amount": 45 }],
+    "effects": [
+      {
+        "kind": "damage",
+        "amount": 45
+      }
+    ],
     "description": "Map-length beam along a chosen lane. The lane is telegraphed to the opponent during their decision phase NEXT-turn pressure; landing it is a read. (100 energy)"
   }
 }

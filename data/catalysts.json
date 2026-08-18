@@ -1,5 +1,5 @@
 {
-  "_comment": "The catalyst pool (CAT1). Numbers transcribed verbatim from docs/design/free-actions-and-catalysts.md — the Designer owns any change. A character carries one catalyst per phase; all are free actions (energyGain 0, no cooldown) consumed once per match. Atlas Reactor's pool is FOUR per phase and this is it: four prep, four dash, four blast. Every effect here is one the engine already implements.",
+  "_comment": "The catalyst pool (CAT1). Numbers transcribed verbatim from docs/design/free-actions-and-catalysts.md \u2014 the Designer owns any change. A character carries one catalyst per phase; all are free actions (energyGain 0, no cooldown) consumed once per match. Atlas Reactor's pool is FOUR per phase and this is it: four prep, four dash, four blast. Every effect here is one the engine already implements.",
   "prep": [
     {
       "id": "second_wind",
@@ -12,7 +12,10 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "heal", "amount": 30 }
+        {
+          "kind": "heal",
+          "amount": 30
+        }
       ],
       "description": "Heal 30. The emergency button: read their burst, survive it, and still act."
     },
@@ -27,10 +30,13 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "shield", "amount": 35,
-          "duration": 1 }
+        {
+          "kind": "shield",
+          "amount": 35,
+          "duration": 1
+        }
       ],
-      "description": "Shield 35 for a turn. Pre-empt a predicted burst — bigger than any kit shield, but once."
+      "description": "Shield 35 for a turn. Pre-empt a predicted burst \u2014 bigger than any kit shield, but once."
     },
     {
       "id": "brainwave",
@@ -43,7 +49,10 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "energized", "duration": 3 }
+        {
+          "kind": "energized",
+          "duration": 3
+        }
       ],
       "description": "Energized for 3 turns. Buy your ultimate about two turns early."
     },
@@ -58,7 +67,11 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "healOverTime", "amount": 12, "duration": 3 }
+        {
+          "kind": "healOverTime",
+          "amount": 12,
+          "duration": 3
+        }
       ],
       "description": "Heal 12 at the end of each of the next 3 turns. Second Wind's opposite: no answer to burst, but 36 HP if you can stay out of it."
     }
@@ -69,15 +82,17 @@
       "name": "Shift",
       "phase": "dash",
       "shape": "square",
-      "range": 3,
+      "range": 4,
       "cooldown": 0,
       "energyGain": 0,
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "teleport" }
+        {
+          "kind": "teleport"
+        }
       ],
-      "description": "Blink up to 3 squares, through walls. Does not consume your Move."
+      "description": "Blink up to 4 squares, through walls. Does not consume your Move."
     },
     {
       "id": "fade",
@@ -90,9 +105,12 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "untargetable", "duration": 1 }
+        {
+          "kind": "untargetable",
+          "duration": 1
+        }
       ],
-      "description": "Untargetable for a turn. Dodge without moving — keep your position and your attack."
+      "description": "Untargetable for a turn. Dodge without moving \u2014 keep your position and your attack."
     },
     {
       "id": "unshackle",
@@ -105,7 +123,10 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "unstoppable", "duration": 2 }
+        {
+          "kind": "unstoppable",
+          "duration": 2
+        }
       ],
       "description": "Unstoppable for 2 turns. Walk out of Root and Slow, ignore knockback and pull."
     },
@@ -121,9 +142,12 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "root", "duration": 1 }
+        {
+          "kind": "root",
+          "duration": 1
+        }
       ],
-      "description": "Root every enemy within 2 for a turn. The fourth way out of a collapse: don't move — stop them following."
+      "description": "Root every enemy within 2 for a turn. The fourth way out of a collapse: don't move \u2014 stop them following."
     }
   ],
   "blast": [
@@ -138,9 +162,12 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "might", "duration": 2 }
+        {
+          "kind": "might",
+          "duration": 2
+        }
       ],
-      "description": "Might for 2 turns — and it boosts this turn's attack."
+      "description": "Might for 2 turns \u2014 and it boosts this turn's attack."
     },
     {
       "id": "suppression",
@@ -154,7 +181,10 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "weaken", "duration": 2 }
+        {
+          "kind": "weaken",
+          "duration": 2
+        }
       ],
       "description": "Weaken every enemy within 2 for 2 turns. Blunt the counter-swing instead of raising your own."
     },
@@ -169,8 +199,14 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "might", "duration": 1 },
-        { "kind": "haste", "duration": 1 }
+        {
+          "kind": "might",
+          "duration": 1
+        },
+        {
+          "kind": "haste",
+          "duration": 1
+        }
       ],
       "description": "Might 1 and Haste 1. The Might lands on this turn's Blast, the Haste on the Move after it."
     },
@@ -186,7 +222,10 @@
       "free": true,
       "oncePerMatch": true,
       "effects": [
-        { "kind": "reveal", "duration": 2 }
+        {
+          "kind": "reveal",
+          "duration": 2
+        }
       ],
       "description": "Reveal every enemy in the aimed area for 2 turns, brush included. Answers the ambush you know is coming."
     }

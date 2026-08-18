@@ -15,7 +15,12 @@
       "energyGain": 8,
       "innerRadius": 0,
       "innerAmount": 22,
-      "effects": [{ "kind": "damage", "amount": 14 }],
+      "effects": [
+        {
+          "kind": "damage",
+          "amount": 14
+        }
+      ],
       "description": "A lobbed ember that bursts on impact: 22 at the heart of the blast, 14 to everything around it. Aim it at a body and the falloff is a reward for hitting; aim it between two and it still catches both."
     },
     {
@@ -28,10 +33,21 @@
       "cooldown": 2,
       "energyGain": 8,
       "effects": [
-        { "kind": "damage", "amount": 18 },
-        { "kind": "reveal", "duration": 1 }
+        {
+          "kind": "damage",
+          "amount": 10
+        },
+        {
+          "kind": "damageOverTime",
+          "amount": 6,
+          "duration": 2
+        },
+        {
+          "kind": "reveal",
+          "duration": 2
+        }
       ],
-      "description": "A bursting flare: 18 damage and Reveal for a turn. The roster's stealth counter — checks ambushers and brush campers."
+      "description": "A clinging flare: 10 on impact, then 6 burn at the end of each of the next 2 turns, and Revealed for 2 turns. The roster's stealth counter, now with a lit fuse."
     },
     {
       "id": "stoke_the_flame",
@@ -40,24 +56,35 @@
       "shape": "circle",
       "range": 4,
       "radius": 1,
-      "cooldown": 3,
-      "energyGain": 6,
+      "cooldown": 4,
+      "energyGain": 0,
       "effects": [
-        { "kind": "might", "duration": 1 },
-        { "kind": "energized", "duration": 1 }
+        {
+          "kind": "might",
+          "duration": 1
+        },
+        {
+          "kind": "energized",
+          "duration": 1
+        }
       ],
-      "description": "Allies in the aimed area gain Might and Energized for a turn. Cinder makes damage, not HP. Self-cast when fighting alone."
+      "description": "FREE ACTION \u2014 costs no ability, so Cinder buffs and still acts. Allies in the aimed area gain Might and Energized for a turn. Self-cast when fighting alone.",
+      "free": true
     },
     {
       "id": "backdraft",
       "name": "Backdraft",
       "phase": "dash",
       "shape": "path",
-      "range": 3,
+      "range": 4,
       "cooldown": 3,
       "energyGain": 4,
-      "effects": [{ "kind": "teleport" }],
-      "description": "Vanish in a gout of smoke, reappearing up to 3 squares away. Dodges Blast attacks aimed at your old square."
+      "effects": [
+        {
+          "kind": "teleport"
+        }
+      ],
+      "description": "Vanish in a gout of smoke, reappearing up to 4 squares away. Dodges Blast attacks aimed at your old square."
     }
   ],
   "ultimate": {
@@ -70,9 +97,20 @@
     "cooldown": 0,
     "energyGain": 0,
     "effects": [
-      { "kind": "damage", "amount": 35 },
-      { "kind": "weaken", "duration": 1 }
+      {
+        "kind": "damage",
+        "amount": 30
+      },
+      {
+        "kind": "damageOverTime",
+        "amount": 8,
+        "duration": 2
+      },
+      {
+        "kind": "weaken",
+        "duration": 1
+      }
     ],
-    "description": "A miniature sun detonates at the aimed area: 35 damage and Weaken for a turn. Damage now, and a blunted counter-swing after. (100 energy)"
+    "description": "A miniature sun: 30 on detonation, 8 burn at the end of each of the next 2 turns, and Weaken for a turn. Damage now, more damage arriving, and a blunted counter-swing. (100 energy)"
   }
 }

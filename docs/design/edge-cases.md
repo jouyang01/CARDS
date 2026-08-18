@@ -110,6 +110,34 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 >    composes through the ruled order; a flat exception would be the only number outside the
 >    composition rules.
 
+> **⚠ NOT YET FOLDED IN — Dev Notes batch 3 (21 owner notes), 2026-08-16 (Designer).**
+> Triaged and ruled in `docs/design/dev-notes-batch-3.md`. For the Analyzer to schedule:
+> - **Bugs first:** `TIMER-PERSIST` (lock-in timer vanishes after turn 1), `MENDING-RANGE`
+>   (Mending Light heals outside its range — regression test with the observed case).
+> - **Engine, in order:** `CASTER-SAFE` (**verified live: Whirling Cleave self-hits for 22,
+>   Shockwave for 12** — a unit is never a target of its own harmful effects, globally) with
+>   `RECOIL` riding it (`selfDamagePct: 50` — Seismic Rupture deliberately keeps half self-hit,
+>   bypassing cover, consuming shields); `PHASE-STATUS-FIRST` (within each phase, ALL status
+>   applications land simultaneously, THEN all damage computes against post-status state —
+>   same-phase Weaken finally works, simultaneity and mutual kills preserved; ships with the
+>   mutual-Weaken symmetry test); `TRAP-CENTRE` (a trap effect on an area shape places ONE
+>   trap at the aimed centre — then Thorn's auto lays an 8-damage 2-turn mine) and `TRAP-HALT`
+>   (`halt: true` — entering the snare ends your movement on that square; Unstoppable
+>   immune); `ALLY-SAFE` (`noFriendlyFire: true` — Lumen's auto stops damaging allies);
+>   `BRUSH-BREAK` (being hit in brush applies NO Reveal — instead the unit's brush concealment
+>   is suppressed for current + next turn; Stealth unchanged, still broken by damage).
+> - **Client/server:** `TIMER-BAR` (draining bar above the skills flowing into a BIGGER Lock
+>   In), `LOBBY-BOUNDS`, `LOBBY-INSPECT` (character + catalyst hover details), `LOBBY-READY`
+>   (seat 0 starts, others ready up), and the `RESOLVE-PARTIAL` ruling (locked characters
+>   always act; never-locked characters hold — per-character, not per-seat; closes the OPEN
+>   timeout question the same way).
+> - **Shipped in data this PR, fold the records:** Stoke the Flame is a free action (cd 3→4,
+>   e→0 — an owner-designated exception widening the free-action rule; the FREE1 roster test
+>   now asserts four), Cinder's Flare Burst (10 + burn 6×2 + Reveal 2) and Solar Flare
+>   (30 + burn 8×2 + Weaken), Snare Bloom Root → Slow-2 (interim control-light until
+>   TRAP-HALT), and the **range-4 dash floor** (Combat Roll, Backdraft, Glimmer Step, Bramble
+>   Stride, Shift — Builder: add the ≥4 content-test guard).
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
