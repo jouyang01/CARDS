@@ -16,127 +16,120 @@ server protocol **types only**, `import type`). **Movement is Manhattan (MET1); 
 ## ✅ COMPLETE
 
 - The full local hot-seat game + AR parity + the screenshot UI batch + M3-ROOM…M3-LOCKLIST.
-- **PR #68:** CHASE-COLLIDE, SEAT-ZERO-GUARD, LOBBY-START, M3-LOBBY-UI, WAYPOINTS (unusable).
-- **PR #70 (Designer):** **BASIC-BEAM unblocked** — `beamWidth` = total odd width, Aegis Shield Bash
-  `beamWidth: 3` range 2 (scheduled below).
-- **PR #71 (this review):** **WAYPOINTS-FIX** (Shift-click drops a routed waypoint, auto-arms move,
-  shows a tell — with a browser test proven to fail without the fix), **M3-ROOM-CREATE** (a Create-room
-  form that mints a code and follows `?room=CODE`; room record carries `mapId`; unknown map = 400),
-  **M3-NET-BOARD** (a server-authoritative match renders on the 3D board; fog is the seat's by
-  construction). Also fixed a PR #66 render regression (impact layer deleted) via `impactLayer()`.
+- **PR #71:** WAYPOINTS-FIX, M3-ROOM-CREATE, M3-NET-BOARD.
+- **PR #73 (this review):** **WAYPOINT-TELL** (the composed route stays on screen while you build it —
+  the "invisible" waypoint was a preview bug, order was always right), **M3-WAIT-STATE + M3-CONN-STATE**
+  (a networked client says why the board stopped taking orders; `WaitView` holds enemy-as-count by
+  type; board disarms before submit), **CREATE-LINK** (a Play-online link from the hot-seat page),
+  **BASIC-BEAM** (a constant-width odd-only lane on a cone; Aegis Shield Bash `beamWidth: 3`, range 2).
 
-Current suite: **1745 tests** (789 + 773 + 183), typecheck + build clean. Engine source untouched.
+Current suite: **1788 tests** (813 + 792 + 183), typecheck + build clean.
 
-> **Multiplayer status:** the lobby's core loop is BUILT and playable end-to-end locally — create room
-> → share code → both sides pick → start → networked match renders with per-seat fog. What remains is
-> turn-loop **polish** (waiting/disconnect UI, a create link), the **server timer**, and **deploy**.
+> **Multiplayer status:** the loop is create → pick → play → resolve, playable locally. This batch
+> takes it from "playable" to "robust": clear the dash/waypoint marks, add the end screen, the server
+> timer, and reconnect. **M3-DEPLOY** (internet play) still needs owner infra.
 
 ### Build order and dependencies
 
-**M3-WAIT-STATE → M3-CONN-STATE → CREATE-LINK → BASIC-BEAM.** All small and independent; do them in
-any order (listed by user-visible value). **M3-TIMER** is blocked on M3-WAIT-STATE; **M3-RECONNECT**
-and **M3-DEPLOY** follow. Realistic one-session cut: all four of the top items.
+**WAYPOINT-DASH-CLEAR → M3-END-SCREEN → M3-TIMER → M3-RECONNECT.** The first two are small/independent;
+M3-TIMER is unblocked by M3-WAIT-STATE (shipped); M3-RECONNECT is unblocked by M3-CONN-STATE (shipped)
+and is the largest. Realistic one-session cut: WAYPOINT-DASH-CLEAR + M3-END-SCREEN + M3-TIMER, with
+M3-RECONNECT carrying.
 
 ---
 
-## Client — close the networked turn loop
+## Client — the tiny cleanup (do first)
 
-### M3-WAIT-STATE. A locked / waiting-for-opponent state after submit (CLIENT) — UNBLOCKED (first)
-**Addresses Builder OQ 2026-09-13 #3.** A networked client that has submitted sits on the last frame
-with the HUD **still armed** — nothing says the turn is locked or that anyone is being waited for.
-*AC: on a networked submit the client enters a **locked** state — the order HUD **disarms** (no
-re-aiming a sent turn) and a **waiting indicator** shows what it is waiting for, driven by the Decision
-payload's lock state (own-team **per-seat**, enemy **count-only** — the M3-HIDDEN split, so no new
-information crosses); the lock clears when the turn's `turnResolved` arrives and the next collection
-opens. A test asserts the HUD disarms on submit and re-arms on resolve, and that no enemy seat id
-appears in the waiting view.* **Spec Notes.** Files: `packages/client/src/app.ts` (`endTurn` /
-`collectOrders` — the networked branch), the HUD waiting indicator. Client-only; **no protocol change**
-(the lock state is already in the Decision payload). Ruled in edge-cases (NET-WAIT-STATE). **This is
-the seam M3-TIMER renders onto — build it first.** Out of scope: the server clock (M3-TIMER);
-reconnect.
+### WAYPOINT-DASH-CLEAR. A committed dash clears the composed move route + marks (CLIENT, small) — UNBLOCKED
+**Addresses Builder OQ 2026-09-14 #2.** A composed move route correctly survives a *non-dash* ability
+(the move is still part of the turn), but a **dash IS the movement** — the engine already drops the
+`movePath` when a dash is armed — so a dash that supersedes the move must also clear the on-screen
+route or the board draws a path that won't execute. *AC: committing a **dash ability or a Dash
+catalyst** clears both `movePath` **and** `waypointMarks`; a **non-dash** ability commit leaves both;
+a test asserts a dash after a composed waypoint route leaves no move marks and the resolved order
+carries no `movePath`.* **Spec Notes.** Files: `packages/client/src/app.ts` (the dash-commit path;
+`waypointMarks`). Client-only — the order is already correct at resolve; this is the preview catching
+up. Ruled in edge-cases (WAYPOINT-DASH-CLEAR). Out of scope: engine (unchanged); non-dash abilities.
 
-### M3-CONN-STATE. Show a closed/disconnected socket instead of freezing silently (CLIENT) — UNBLOCKED
-**Addresses Builder OQ 2026-09-13 #4.** A dropped connection sets `phase: 'closed'` and the board
-simply stops responding — indistinguishable from a freeze. *AC: the client **surfaces** a
-closed/disconnected state (a banner/overlay — "connection lost" / "reconnecting…") so the stall is
-legible; the board's non-response is explained rather than silent; a test asserts the banner shows on
-a `closed` phase.* **Spec Notes.** Files: `packages/client/src/app.ts`/`main.ts` (the socket phase
-handling). **Client-only, "say it happened" — the actual rejoin/resync is M3-RECONNECT's** (blocked,
-below). Ruled in edge-cases (NET-CONN-STATE). Out of scope: reconnect logic; server-side seat hold
-(already ruled — the seat is reserved for its occupant).
+## Client — close the player-facing loop
 
-### CREATE-LINK. A Create-room link from the hot-seat page (CLIENT) — UNBLOCKED (tiny)
-**Addresses Builder OQ 2026-09-13 #5.** `?create` exists (M3-ROOM-CREATE) but nothing links to it — a
-host has to know to type it. *AC: a visible **Create room / Play online** link on the hot-seat page
-navigates to the create form (`?create`); a test asserts the link is present and points at the create
-route.* **Spec Notes.** File: `packages/client/index.html` / the boot page. Trivial; closes the
-end-to-end loop (hot-seat → create → share code → play). Out of scope: styling polish; matchmaking.
+### M3-END-SCREEN. An end-of-match screen on a resolved match (CLIENT) — UNBLOCKED
+**Addresses Builder OQ 2026-09-14 #4.** The loop closes (create → pick → play → resolve) but a decided
+match leaves the player on the final board — no winner, no way out. *AC: on a terminal match `status`
+(`won`/`lost`/`draw`, already on the resolved state) the client shows an **end-of-match screen** — the
+outcome for **this seat** and a **way back** (to the create / hot-seat front door); it reads the
+engine's terminal status (`resolveOutcome`) and recomputes nothing; it applies to the **hot-seat game
+too** (same missing ending); a test asserts the screen shows on a terminal status with the correct
+per-seat outcome, and does not show mid-match.* **Spec Notes.** Files: `packages/client/src/app.ts`
+(the resolution path — detect terminal status, show the screen), a small end-screen view. Reuse the
+engine's `status`/win queries — do not recompute the winner. Out of scope: rematch wiring, stats,
+spectator end views (later nicety). Ruled in edge-cases (M3-END-SCREEN).
 
-## Engine — the last unblocked roster knob
+## Server + client — the turn clock (unblocked by M3-WAIT-STATE)
 
-### BASIC-BEAM. `beamWidth` constant-width lane on a cone (ENGINE + data) — UNBLOCKED (Designer ruled the number)
-**Unblocked by PR #70.** *AC: a `cone` may carry `beamWidth: n` — **n is the TOTAL width of the lane
-in tiles and must be ODD** (even is a **validation error** — no centre axis); the engine maps it to
-`halfWidth = (beamWidth − 1) / 2`, giving a constant-width lane instead of CONE-B's `halfWidth(d)=d`
-ramp; ships with **Aegis's Shield Bash carrying `beamWidth: 3`, range 2** (a 3-wide, 2-long lane).
-Tests: coverage is constant-width and rotation-invariant; `beamWidth: 2` fails validation; an axis
-tile and an edge tile are both covered at range, a tile outside the half-width is not.*
-**Spec Notes.** Files: `packages/engine/src/shapes.ts` (`coneSquares` — substitute the constant
-half-width when `beamWidth` is present; reuse the existing integer perpendicular-offset test),
-`validate.ts` (odd-only check), `data/characters/aegis.json` (`beamWidth: 3`, range 2 on Shield Bash).
-Deterministic, integer, no new geometry. Designer ruling: `docs/design/clashes-and-basics.md` §3.4.
-Out of scope: other kits; BASIC-MODES (Kestrel).
+### M3-TIMER. The server enforces a per-turn decision clock (SERVER + CLIENT) — UNBLOCKED
+*AC: the DO enforces **`DECISION_SECONDS` (40)** per turn; a seat that has not submitted when the clock
+expires **holds position** (its orders are whatever it had locked, empty if none) and the turn
+resolves; a **Time Bank** grants `TIMEBANK_CHARGES = 1` per seat (one extension per match window); the
+client renders the countdown **in the `UI-TIMER` slot beside the wait banner** (banner = what you wait
+for, timer = how long — do NOT overwrite the banner text); the clock is the **server's**, not the
+client's (the client displays it). Tests: a seat that never submits resolves as hold-position at
+expiry; the countdown renders beside the banner without replacing it; the Time Bank extends once and
+no more.* **Spec Notes.** Files: `packages/server/src/durable-object.ts` / `room.ts` (the DO clock +
+timeout→resolve), `packages/client/src/` (`waiting.ts`/`hud.setBanner`'s sibling `UI-TIMER` slot —
+the seam is ready, one place to land). Deterministic resolution unchanged (the timeout just fixes each
+seat's orders and calls the same resolve). Ruled in edge-cases (M3-TIMER placement; missed → hold).
+**Cross-item:** renders onto M3-WAIT-STATE's banner (shipped). Out of scope: reconnect; per-seat clock
+drift beyond the one server clock.
 
-## M3 — the rest of the roadmap (blocked in sequence)
+## Server + client — reconnect (unblocked by M3-CONN-STATE)
 
-### M3-TIMER — BLOCKED on M3-WAIT-STATE
-The DO enforces `DECISION_SECONDS` (40); missed submission → hold-position; Time Bank per-seat
-(`TIMEBANK_CHARGES = 1`); UI-TIMER driven by the server clock, rendered onto M3-WAIT-STATE's waiting
-indicator.
+### M3-RECONNECT. Rejoin a match by code and reclaim the held seat (SERVER + CLIENT, larger) — UNBLOCKED
+*AC: a client whose socket closed can **rejoin by room code** and **reclaim its held seat** (the room
+already reserves a disconnected seat for its occupant — ruled), then **re-syncs** to the current match
+state (the server sends the seat its filtered view); the reconnect banner (M3-CONN-STATE) clears on
+success; a **partial-team disconnect** control-handoff is decided here (edge-cases OPEN — current lean:
+a teammate gains the abandoned characters after one fully missed turn). Tests: a dropped seat rejoins
+and receives its filtered state; a stranger still cannot take a started seat (M3-JOIN-GUARD holds); the
+lock total counts the reclaimed seat.* **Spec Notes.** Files: `packages/server/src/room.ts` /
+`durable-object.ts` (rejoin + reseat + resync), `packages/client/src/main.ts`/`app.ts` (the rejoin
+flow behind M3-CONN-STATE's banner). Identity-matched reseat, never an arbitrary socket. Larger; may
+span sessions. Ruled in edge-cases (started-room reserve + NET-CONN-STATE). **Decide the partial-team
+handoff** as part of this (it is the last OPEN in Teams & control). Out of scope: spectators; deploy.
 
-### M3-RECONNECT — BLOCKED on M3-CONN-STATE
-Rejoin by code, reclaim the held seat (the room reserves it — ruled), re-sync to current state;
-partial-team disconnect control-handoff (edge-cases OPEN — decide here). The rejoin logic behind
-M3-CONN-STATE's banner.
+## M3 — the deploy gate (blocked on owner infra)
 
 ### M3-DEPLOY — BLOCKED (needs owner infra decisions)
 `wrangler deploy` + Pages; a `wrangler dev`/miniflare smoke check (first real runtime); confirm the
 `POST …/start` route is gone (done PR #68); make the Pages deploy gate legible. **The real-world gate
 for internet multiplayer — needs a Cloudflare account + owner go-ahead. Flag when reached.**
 
-## Engine — the unique-basics uplift (after the lobby)
+## Engine — the last roster knob
 
 ### BASIC-MODES. Two aim-time profiles on one ability (ENGINE + CLIENT) — UNBLOCKED (large; returns Kestrel)
-*AC: `modes: [AbilityProfile, AbilityProfile]` chosen at aim time; ships with **Kestrel's Twin Bolts**
-(wide cone 2 ↔ thin line 6) and **returns Kestrel to the default `CATALOG`**; the client offers the
-toggle (AIM2 UI). Tests: each mode resolves its own profile.* **Spec Notes.** The largest BASIC-\* ask;
-its own session. Out of scope: other kits.
+*AC: an ability may carry `modes: [AbilityProfile, AbilityProfile]` chosen at aim time (order carries
+the index); ships with **Kestrel's Twin Bolts** (wide cone 2 ↔ thin line 6) and **returns Kestrel to
+the client's default `CATALOG`**; the client offers the toggle (AIM2 UI). Tests: each mode resolves its
+own profile.* **Spec Notes.** The largest BASIC-\* ask (real UI work); its own session, after the M3
+polish. Out of scope: other kits.
 
 ## LOBBY-TEAM-CHOICE — UNBLOCKED (future, flag)
 Let a seat choose its team; makes `wouldSeatNobody` (kept in PR #68) live. Not scheduled until asked.
-
-## Engine — flag to the Designer
-
-### AXIS-MODIFIERS-CHECK. Confirm `axisBonus` scales with Might/Weaken/cover (DESIGNER decision)
-BASIC-AXIS folded the axis bonus into raw damage (Decision 8). *AC: the Designer confirms "scales" or
-requests "flat" (a one-line follow-up).* Non-blocking.
 
 ## CAMO-E2E-FINISH — UNBLOCKED (low)
 Before/after-delta at fixed coords (reuse `largestCluster`). Low; the rule is unit-covered.
 
 ## Routed to Designer / flags
 
-- **axisBonus scaling** (→ AXIS-MODIFIERS-CHECK) — awaits a Designer decision.
-- **Chase-preview detour** (OQ 2026-09-13 #6) — deferred; the chase tell is a destination marker, not
-  a drawn route, so nothing visibly disagrees. Wire `chaseObstacles` if a drawn chase route is ever
-  added. Not scheduled.
+- **AXIS-MODIFIERS-CHECK** — **CLOSED** (Designer: "scales, confirmed, no change", `clashes-and-basics`
+  §3.4). No longer open.
+- **Beam + axisBonus** — compose legally (axis = centre file); allowed, no validator owed (ruled).
+- **Chase-preview detour** — deferred; the chase tell is a destination marker, not a drawn route, so
+  nothing visibly disagrees. Wire `chaseObstacles` if a drawn chase route is ever added.
 - **Decoy as a universal obstacle** — CHASE-COLLIDE is minimal (enemy decoy solid to the chase router
-  only; deliberate `movePath` still destroys it, R2 intact). Universal-obstacle reverses R2 — Designer
-  call if wanted.
-- **Host-only in-lobby map control** — default is set-at-creation (MAP/FORMAT room-level, ruled); flag
-  if wanted. **Public draft / counter-pick** — default is BLIND-PICK; a public draft is a reversal.
-- **Render e2e coverage** — the PR #66 impact-layer regression (fixed here) shows pixel e2es should
-  assert *presence* of discs/markers, not just absence of crashes, when a new render layer lands.
+  only; deliberate `movePath` still destroys it). Universal-obstacle reverses R2 — Designer call.
+- **Host-only in-lobby map control** — default set-at-creation (MAP/FORMAT room-level). **Public draft
+  / counter-pick** — default BLIND-PICK. Both are reversals; flag if wanted.
 - **Dash melee-cover** (Designer-deferred). **Thorn's lobbed auto** (5→4 first nerf lever). **Pad
   tuning** (`everyTurns` 4→5 on iron-basin). **Kestrel out of default `CATALOG`** until BASIC-MODES.
 - **UI-TIMER hot-seat auto-lock**, **touch input**, **PREVIEW-MODIFIERS shields**, **AIM-SMOOTH**,
@@ -144,6 +137,6 @@ Before/after-delta at fixed coords (reuse `largestCluster`). Low; the rule is un
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **The networked loop end-to-end** (create → pick → start → play — worth a real two-machine playtest
-  once M3-WAIT-STATE lands), **WAYPOINTS-FIX feel**, **CHASE-COLLIDE** (sealed-corridor stops),
-  **new autos**, **melee vs cover**, **Might centre contest**, **turn-1 spawn margin**.
+- **The networked loop end-to-end** (a real two-machine playtest — worth doing once M3-TIMER lands so
+  a stalled seat can't hang the game), **Aegis's beam feel** (a wall, not a fan), **WAYPOINT feel**,
+  **CHASE-COLLIDE** (sealed-corridor stops), **melee vs cover**, **Might centre contest**.
