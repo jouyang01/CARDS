@@ -297,6 +297,17 @@
         box-shadow: 0 4px 16px rgb(0 0 0 / 0.5); pointer-events: none; }
       footer { font-size: 12px; opacity: 0.5; }
 
+      /* ── M3-END-SCREEN: the verdict and the way out ───────────────────────
+         Inside the score panel, which is already where a finished match puts
+         the player's attention. */
+      .end-headline { margin: 0 0 6px; font-size: 22px; letter-spacing: 0.04em; }
+      .end-headline.is-won { color: var(--hp); }
+      .end-headline.is-lost { color: var(--spawn1); }
+      .end-headline.is-draw { color: var(--aim); }
+      .end-exit { display: inline-block; margin-top: 12px; font-size: 13px;
+        color: var(--aim); text-decoration: none; border-bottom: 1px solid currentColor; }
+      .end-exit:hover { opacity: 0.8; }
+
       /* ── CREATE-LINK: the way out of the hot-seat ─────────────────────────
          `#app` is pointer-events:none so the board can be clicked through it,
          so the one interactive thing in it has to opt back in. */

@@ -100,6 +100,7 @@ import {
   clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally, topbar,
   type MatchTotals, type TopbarModel, type TopbarPortrait,
 } from './scoreboard.js';
+import { FRONT_DOOR, HOT_SEAT_DOOR, endHeadline, exitLabel, outcomeFor } from './end-screen.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -1917,6 +1918,31 @@ export function startHotSeat(
       table.appendChild(tr);
     }
     scoreEl.appendChild(table);
+
+    // M3-END-SCREEN — the two things a decided match was missing.
+    //
+    // The breakdown above already says *what* happened; a networked seat also
+    // needs to know whether it won, because "Team 2 wins on kills" does not tell
+    // a player which team they were. The headline is therefore per-seat and
+    // exists only where a seat does — a hot-seat holds both sides on one screen,
+    // and its neutral team line is already the right sentence.
+    const outcome = outcomeFor(state, net?.team ?? currentSeat()?.team ?? 0);
+    if (outcome !== undefined && net !== undefined) {
+      const headline = document.createElement('h2');
+      headline.className = `end-headline is-${outcome}`;
+      headline.dataset['outcome'] = outcome;
+      headline.textContent = endHeadline(outcome);
+      scoreEl.prepend(headline);
+    }
+    // …and a way out, however it ended. The front door rather than a rematch:
+    // re-entering a room is a protocol conversation nobody has specced, and the
+    // create form is one click from a new match.
+    const exit = document.createElement('a');
+    exit.className = 'end-exit';
+    exit.dataset['action'] = 'exit';
+    exit.href = net === undefined ? HOT_SEAT_DOOR : FRONT_DOOR;
+    exit.textContent = exitLabel(net !== undefined);
+    scoreEl.appendChild(exit);
   }
 
   const teamName = (t: number) => (t === 0 ? 'Team 1' : 'Team 2');
