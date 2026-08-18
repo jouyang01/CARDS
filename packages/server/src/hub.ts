@@ -35,8 +35,9 @@ import {
   type ServerMessage,
 } from './protocol.js';
 import {
-  canStart, charactersPerSeat, chargesFor, controlledUnits, join, leave, lobbyReady, reclaim,
-  resolveRoomTurn, setPicks, spendCharge, startFromPicks, startMatch, withDeadline,
+  canStart, charactersPerSeat, chargesFor, clearSubmissions, controlledUnits, hasSubmitted, join,
+  leave, lobbyReady, reclaim, resolveRoomTurn, setPicks, spendCharge, startFromPicks, startMatch,
+  submissionsOf, withDeadline, withSubmission, withoutSubmission,
   type Pick, type Room,
 } from './room.js';
 import { filterEvents, ordersForTeam, teamView, visibleEnemyIds } from './view.js';
@@ -94,11 +95,6 @@ export class RoomHub {
    * hands us the id it minted on every frame and has no idea a reclaim happened.
    */
   readonly #bound = new Map<string, string>();
-  /**
-   * This turn's submissions, by seat. Cleared the instant a turn resolves, so
-   * "has this seat locked in" and "for which turn" can never disagree.
-   */
-  readonly #submissions = new Map<string, UnitOrders[]>();
   readonly #config: MatchConfig | undefined;
   /**
    * M3-TIMER — the clock, **injected**, exactly like `mintCode`'s randomness.
@@ -157,7 +153,7 @@ export class RoomHub {
 
   /** Seat ids that have locked in this turn, in join order. */
   get locked(): string[] {
-    return this.#room.seats.filter((s) => this.#submissions.has(s.seatId)).map((s) => s.seatId);
+    return this.#room.seats.filter((s) => hasSubmitted(this.#room, s.seatId)).map((s) => s.seatId);
   }
 
   /** The room as it stands. A copy, so a caller cannot edit history. */
@@ -472,15 +468,15 @@ export class RoomHub {
         turn: state.turn,
         state: view.state,
         visibleSquares: view.visibleSquares,
-        orders: ordersForTeam(this.#submissions, mine.map((s) => s.seatId)),
+        orders: ordersForTeam(submissionsOf(this.#room), mine.map((s) => s.seatId)),
         // M3-LOCKLIST. Own team per-seat — UI-INTENT draws a tick over the
         // teammate who is ready, and a count cannot say which one that is.
-        locked: mine.filter((s) => this.#submissions.has(s.seatId)).map((s) => s.seatId),
+        locked: mine.filter((s) => hasSubmitted(this.#room, s.seatId)).map((s) => s.seatId),
         of: mine.length,
         // The enemy's readiness is a number and nothing else. "2/2 enemies
         // locked" is what a waiting UI needs; *which* of them it was is not,
         // and a seat id is a durable handle on one specific opponent.
-        enemyLocked: theirs.filter((s) => this.#submissions.has(s.seatId)).length,
+        enemyLocked: theirs.filter((s) => hasSubmitted(this.#room, s.seatId)).length,
         enemyOf: theirs.length,
         // M3-TIMER. A duration rather than an instant, so no client has to
         // reason about the skew between its clock and the server's; and the
@@ -512,14 +508,14 @@ export class RoomHub {
    */
   #answering(): string[] {
     return this.#room.seats
-      .filter((s) => s.connected || this.#submissions.has(s.seatId))
+      .filter((s) => s.connected || hasSubmitted(this.#room, s.seatId))
       .map((s) => s.seatId);
   }
 
   /** Has every seat that can still answer, answered? */
   #allIn(): boolean {
     const answering = this.#answering();
-    return answering.length > 0 && answering.every((id) => this.#submissions.has(id));
+    return answering.length > 0 && answering.every((id) => hasSubmitted(this.#room, id));
   }
 
   /**
@@ -534,7 +530,7 @@ export class RoomHub {
   #receiveSubmit(seatId: string, orders: UnitOrders[]): void {
     if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
     if (this.#room.state === undefined) return this.#send(seatId, errorMessage('noMatch'));
-    if (this.#submissions.has(seatId)) return this.#send(seatId, errorMessage('alreadyLocked'));
+    if (hasSubmitted(this.#room, seatId)) return this.#send(seatId, errorMessage('alreadyLocked'));
 
     // Checked against what this seat **controls**, not against the characters it
     // was dealt: a stand-in holding an abandoned teammate's units is entitled to
@@ -544,9 +540,9 @@ export class RoomHub {
       return this.#send(seatId, errorMessage('notYours'));
     }
 
-    this.#submissions.set(seatId, orders);
+    this.#room = withSubmission(this.#room, seatId, orders);
     const of = this.#answering().length;
-    this.#broadcast({ type: 'submitted', locked: this.#submissions.size, of });
+    this.#broadcast({ type: 'submitted', locked: this.locked.length, of });
     if (this.#allIn()) return this.resolveNow();
     // A teammate's plan is not hidden information, so the side that just gained
     // one is re-sent its Decision view. The enemy's `decision` message is
@@ -566,7 +562,7 @@ export class RoomHub {
   resolveNow(): void {
     if (this.#config === undefined || this.#room.state === undefined) return;
     const resolved = resolveRoomTurn(
-      this.#room, this.#config.map, this.#config.roster, this.#submissions, this.#config.catalysts,
+      this.#room, this.#config.map, this.#config.roster, submissionsOf(this.#room), this.#config.catalysts,
     );
     if (resolved === undefined) return;
     this.#room = resolved.room;
@@ -575,8 +571,8 @@ export class RoomHub {
     // The reveal: both teams' submissions, which is what locking in buys. Taken
     // before the clear, because the clear is what makes the *next* turn secret.
     const revealed: Record<string, UnitOrders[]> = {};
-    for (const [seatId, o] of this.#submissions) revealed[seatId] = o;
-    this.#submissions.clear();
+    for (const [seatId, o] of submissionsOf(this.#room)) revealed[seatId] = o;
+    this.#room = clearSubmissions(this.#room);
     // M3-TIMER: this window is spent. Cleared here rather than re-set, because
     // `#sendDecision` is what opens one — and it is about to run. Clearing is
     // also what makes `expire()` idempotent: an alarm that fires after the turn
@@ -619,7 +615,7 @@ export class RoomHub {
     if (!this.#joined.delete(seatId)) return; // never joined — no seat to free
     const inMatch = this.#room.state !== undefined;
     this.#room = leave(this.#room, seatId);
-    if (!inMatch) this.#submissions.delete(seatId);
+    if (!inMatch) this.#room = withoutSubmission(this.#room, seatId);
     this.#broadcast({ type: 'seatLeft', seatId, room: this.#view() });
     // A departure re-prices the lobby: the survivors on that team now owe more
     // characters than they picked, so their pick screens have to be told.

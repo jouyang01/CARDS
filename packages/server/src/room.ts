@@ -170,6 +170,21 @@ export interface Room {
    * survives neither.
    */
   bank?: Record<string, number>;
+  /**
+   * This turn's locked-in orders, by seat id (SUBMISSIONS-PERSIST). Absent when
+   * nobody has submitted — which is every turn's opening state.
+   *
+   * The **third** thing that used to live only in memory, after the deadline and
+   * the Time Bank. A Durable Object evicted mid-turn came back with the right
+   * window over a room where every seat read unlocked and had to decide again,
+   * which is the one kind of lost work a player actually notices: the plan is
+   * the turn.
+   *
+   * On the record for the same reason as the other two, and shaped like `bank`
+   * for the same reason again: the record round-trips through storage as JSON,
+   * and a `Map` survives that as `{}`.
+   */
+  submissions?: Record<string, UnitOrders[]>;
 }
 
 /** One resolved turn, as it was ordered. */
@@ -264,6 +279,48 @@ export function spendCharge(room: Room, seatId: string): Room {
   const left = chargesFor(room, seatId);
   if (left <= 0) return room;
   return { ...room, bank: { ...room.bank, [seatId]: left - 1 } };
+}
+
+/**
+ * This turn's submissions as a `Map` (SUBMISSIONS-PERSIST).
+ *
+ * The record holds the truth — it is what storage writes — and the callers that
+ * want lookup semantics (`mergeSeatOrders`, `ordersForTeam`) want a `Map`. Built
+ * on demand rather than cached beside the record, because a cache next to the
+ * authority is two copies of one fact and one of two copies is always the stale
+ * one. A room has at most eight seats; this is not a cost worth a bug.
+ */
+export function submissionsOf(room: Room): Map<string, UnitOrders[]> {
+  return new Map(Object.entries(room.submissions ?? {}));
+}
+
+/** Has this seat locked in this turn? */
+export const hasSubmitted = (room: Room, seatId: string): boolean =>
+  room.submissions?.[seatId] !== undefined;
+
+/** Record a seat's orders. Returns a new room, like every other rule here. */
+export function withSubmission(room: Room, seatId: string, orders: readonly UnitOrders[]): Room {
+  return { ...room, submissions: { ...room.submissions, [seatId]: orders.map((o) => ({ ...o })) } };
+}
+
+/** Drop one seat's submission — a lobby seat leaving, and nothing else. */
+export function withoutSubmission(room: Room, seatId: string): Room {
+  if (!hasSubmitted(room, seatId)) return room;
+  const { [seatId]: _dropped, ...rest } = room.submissions ?? {};
+  return { ...room, submissions: rest };
+}
+
+/**
+ * The turn is over: forget every plan.
+ *
+ * The key is **removed** rather than set to `{}`, matching `withDeadline`'s
+ * closed window: an empty object and an absent one round-trip through JSON the
+ * same way, and only one of them is the shape a fresh room has.
+ */
+export function clearSubmissions(room: Room): Room {
+  if (room.submissions === undefined) return room;
+  const { submissions: _spent, ...rest } = room;
+  return rest;
 }
 
 export type JoinRejection = 'roomFull' | 'duplicateSeat' | 'inProgress' | 'teamFull';
