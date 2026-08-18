@@ -78,8 +78,19 @@ if (roomLink !== undefined) {
   bootHotSeat();
 }
 
+/**
+ * CREATE-LINK is the hot-seat's front door and nothing else's: on the create
+ * form it points at the page you are already on, and in a room it is a way to
+ * walk out of a match by accident.
+ */
+function hideCreateLink(): void {
+  const link = document.getElementById('create-link');
+  if (link !== null) link.style.display = 'none';
+}
+
 /** The create form: choose a map and a format, get a code, follow it in. */
 function bootCreateRoom(): void {
+  hideCreateLink();
   const board = document.getElementById('board')!;
   const status = document.getElementById('status')!;
   status.textContent = 'Create a room';
@@ -99,6 +110,7 @@ function bootCreateRoom(): void {
  * over a running board is a pick screen you can still click.
  */
 function joinRoom(link: RoomLink): void {
+  hideCreateLink();
   const board = document.getElementById('board')!;
   const status = document.getElementById('status')!;
   status.textContent = `Connecting to room ${link.code}…`;
