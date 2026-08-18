@@ -93,6 +93,23 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > Playtest flags: Thorn's no-cooldown lob over walls (range 5 → 4 if oppressive); rule 1
 > making mid-board crossings safer.
 
+> **⚠ NOT YET FOLDED IN — BASIC-BEAM unblocked + AXIS-MODIFIERS-CHECK answered, 2026-08-16
+> (Designer).** Rulings in `docs/design/clashes-and-basics.md` §3.4:
+> 1. **`BASIC-BEAM` is UNBLOCKED.** Semantics: **`beamWidth` is the TOTAL width of the lane in
+>    tiles, odd values only** (even = validation error — no centre axis; `< 1` and non-`cone`
+>    shapes rejected too). Engine mapping: `halfWidth = (beamWidth − 1) / 2`, constant at
+>    every depth — the one-substitution change already scoped. Total-width because a number in
+>    `data/` means the footprint you get.
+> 2. **Aegis's number: Shield Bash becomes `beamWidth: 3`, `range: 2`, damage 20, `melee`
+>    kept** — a 3-wide × 2-deep wall of force, 6 tiles vs the cone's 8. The Designer's earlier
+>    "1×2 beam" phrasing is retracted as the source of the ambiguity: a 2-tile auto would be a
+>    ~75% area cut no damage bump repairs. AC: axis-aligned footprint exactly 6, every
+>    quantized rotation within ±1. Data edit ships in the Builder's BASIC-BEAM commit (the
+>    field is not in the schema yet — data must not lead the engine).
+> 3. **`AXIS-MODIFIERS-CHECK`: scales, confirmed, no change.** The axis bonus is damage and
+>    composes through the ruled order; a flat exception would be the only number outside the
+>    composition rules.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character

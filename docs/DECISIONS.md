@@ -3475,3 +3475,24 @@ same cap logic as Vex's Overwatch; an immortal minefield is the stall the caps e
    a code, but nothing in the UI calls it — a player needs a link somebody else made with `curl`.
    One button and a redirect; not in this item's AC, so not built. Flagging because it is the last
    thing between the lobby and somebody actually playing over the network.
+
+## 2026-08-16 — BASIC-BEAM unblocked; AXIS-MODIFIERS-CHECK answered (Designer)
+
+The Builder blocked BASIC-BEAM rather than guess, and was right to: my "Shield Bash as a 1×2
+beam" phrasing collided with the half-width reading (`beamWidth: 1` → a 3-wide lane), and
+those are different abilities. Two rulings unblock it. **(1) `beamWidth` is the TOTAL width
+in tiles, odd only.** A designer writing `beamWidth: 3` gets a 3-wide beam — the standing
+"a number in data/ means the footprint you get" principle, applied a third time. Even values
+are a validation error (an even lane has no centre axis to rotate around); the engine maps
+to the existing integer comparison as `halfWidth = (beamWidth − 1) / 2`. **(2) Aegis's
+Shield Bash becomes `beamWidth: 3`, range 2, damage 20 — six tiles, not two.** The 1×2 I
+originally wrote is retracted as the error here: a 2-tile footprint is a ~75% area cut on an
+auto attack, which no damage bump repairs, and it reads as a spear when the fantasy is the
+whole shield face hitting the two rows in front of you. 8 → 6 tiles is the honest price of
+the shape's identity (the cone's diagonal splash goes); the lever if Aegis whiffs on brawl
+corners is `beamWidth` 3 → 5, not a return to the cone. The data edit ships in the Builder's
+BASIC-BEAM commit — the field is not in the schema yet, and data must not lead the engine.
+**(3) AXIS-MODIFIERS-CHECK: scales, confirmed.** The axis bonus is damage and damage
+composes through the ruled order; a flat exception would be the only number in the game
+outside the composition rules — invisible to Might and cover alike, and a special case the
+engine does not need.
