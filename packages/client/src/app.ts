@@ -69,6 +69,7 @@ import {
   moveEnvelope,
   nextDraft,
   appendWaypointRouted,
+  liveWaypointMarks,
   pathTo,
   remainingMove,
   rangeEnvelope,
@@ -1063,12 +1064,7 @@ export function startHotSeat(
     // WAYPOINT-TELL: the clicked squares, so a composed route says which corners
     // were the player's and which the router's. Only while that unit's route is
     // still the one on screen — a mark over somebody else's turn is a lie.
-    renderer.highlight(
-      'waypoint',
-      draft.movePath.length > 0 ? waypointMarks : [],
-      WAYPOINT,
-      0.85,
-    );
+    renderer.highlight('waypoint', liveWaypointMarks(waypointMarks, draft.movePath), WAYPOINT, 0.85);
     renderer.highlight('chase', chaseTarget === undefined ? [] : [chaseTarget.pos], CHASE_LINE, 0.45);
 
     // ── DASH-CAT-ROUTE: a Dash catalyst is a reposition, so it draws like one ─
