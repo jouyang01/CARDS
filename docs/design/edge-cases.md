@@ -1296,9 +1296,25 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     `DEFAULT_CATALYSTS` (Second Wind / Shift / Adrenaline). **CAT-SELECT is the prerequisite that
     unblocks M3-LOBBY's data model** — build it first so `room.ts` stores the right shape (the
     Builder correctly stopped rather than guess a wrong model into `room.ts`).
-- **OPEN — Partial-team disconnect (matters at M3).** If one player on a multi-player
-  team disconnects, does a teammate gain control of the abandoned characters? Current
-  lean: yes, after one fully missed turn. Decide when building the server.
+- **RULED — HANDOFF: a teammate covers a disconnected player's characters after ONE fully missed
+  turn; the stand-in is the first CONNECTED seat on that team in join order; control is DERIVED, so
+  reclaiming un-does the loan with no hand-back step (M3-RECONNECT; SHIPPED PR #75; promotes the
+  standing lean to a ruling at the Builder's request — Decision 15, 2026-09-15).** When one player on
+  a multi-player team disconnects, its characters are not stranded: **after one fully missed turn**
+  (`missedTurns ≥ 1`) they become orderable by a teammate. The stand-in is chosen deterministically —
+  **the first connected seat on that team in join order** — so every client and the server agree on
+  who holds what without anyone being told. **The loan is computed, not moved:** `controlledUnits`
+  derives control from each seat's `connected` + `missedTurns` rather than migrating `unitIds` between
+  seats, so when the original player **reclaims** (which clears both), the loan simply stops being
+  derivable — there is no hand-back step to get wrong, and no window where two seats or zero seats own
+  a character. The control map **rides every Decision phase** (not just `matchStarted`), because a
+  drop or a return changes it mid-match. **Determinism/N-safety:** join order is stable and the rule
+  is per-team, so it holds for any team size (2v2, 4v4); no float, no clock in the decision (it reads
+  `missedTurns`, an integer counter). A disconnected seat with **no submission stops counting toward
+  the lock total** (the turn does not wait out the full clock for an empty chair); a seat that locked
+  in **before** dropping keeps its submission (it already took its turn). **Client gap (backlog
+  NET-PRESENCE-UI):** the handoff is server-correct and playable but the client does not yet *say*
+  "you are covering for Bo" or mark a disconnected player — a small display item, not a rule.
 - **RULED — A started room refuses fresh joins; a freed seat is reserved for RECONNECT (M3;
   Builder OQ 2026-08-16 #4).** Once a match has started, a new socket may **not** take an empty or
   freed seat — a fresh joiner would get a seat with an **empty control map** and still **count
@@ -1437,6 +1453,22 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   status it already carries. The server clock has one place to land (`hud.setBanner`'s sibling slot);
   the banner does not become a structure for this. On timeout the ruled behaviour is unchanged —
   **missed submission → hold position** (the seat's orders are whatever it had locked, empty if none).
+  - **SHIPPED PR #75; two robustness gaps ruled.** The clock is **injected** (`RoomHub` takes
+    `now: () => number`; the DO passes `Date.now`, tests pass a counter — the pure engine is untouched
+    and stays clock-free); one deadline per turn for the whole room; the Time Bank charge is per-seat
+    but the ten seconds it buys are everybody's, **added** to what is left (banking at 8s → 18s, not
+    40); expiry re-checks the clock so the DO alarm is best-effort. **(a) RULED — TIMER-PERSIST: the
+    open window and the Time Bank charges must survive DO hibernation (Builder OQ 2026-09-15 #1/#3;
+    backlog TIMER-PERSIST — server, small).** `#deadline` and the charge counts are **in memory only**,
+    so a Durable Object evicted mid-decision comes back with no window (the turn waits for players, not
+    the clock, until the alarm re-arms) and with everyone's charges reset. No regression vs
+    pre-M3-TIMER, but a real gap for **deployed** play (eviction happens in production, rarely locally).
+    Persist both on the `Room` record and rehydrate in `#arm`. **(b) RULED — no idle-forfeit in v1
+    (Builder OQ 2026-09-15 #2).** `missedTurns` deliberately counts **disconnection**, not slowness; a
+    *connected* seat that never locks in is timed out to **hold** every turn (M3-TIMER already prevents
+    it from hanging the game) and simply plays badly — which in a tactics duel is its own punishment.
+    An explicit idle-kick/forfeit for a connected-but-idle player is a **post-v1** griefing-mitigation
+    nicety, **flagged, not scheduled**; do not conflate it with the disconnect handoff.
 - **RULED — M3-END-SCREEN: a resolved match shows an end screen; it is the next thing a player hits
   (Builder OQ 2026-09-14 #4; backlog M3-END-SCREEN — client).** The networked loop now closes
   (create → pick → play → resolve) but a decided match leaves the player on the final board with
@@ -1445,6 +1477,23 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   a way back (to the create/hot-seat front door; a rematch is a later nicety, not required). Reads the
   engine's own terminal status (`resolveOutcome`), recomputes nothing. Applies to the **hot-seat game
   too** — it has the same missing ending. Out of scope: rematch wiring, stats, spectator end views.
+  - **SHIPPED PR #75.** `outcomeFor(state, viewer)` turns the engine's own `status`/`winner` into a
+    point of view (a networked seat sees "you won/lost", not "Team 2 wins" — it does not know which
+    team it is); the way out is the front door (hot-seat → fresh hot-seat, networked → create screen).
+    **M3-REMATCH remains the missing half (Builder OQ 2026-09-15 #6; flagged future).** Re-entering the
+    *same* room needs a protocol conversation — both players agreeing to re-arm the room instead of
+    dropping it — that nobody has specced. The loop closes without it (the create form is one click
+    from a new match), so it is a **nicety, not scheduled**; flag if the owner wants it.
+- **RULED — NET-PRESENCE-UI: the client SHOWS which seats are disconnected and who is covering for
+  whom (Builder OQ 2026-09-15 #4/#5; backlog NET-PRESENCE-UI — client, small).** Two shipped-but-silent
+  facts: a stand-in's board grows the disconnected teammate's characters with nothing saying "you are
+  covering for Bo" (#4), and `RoomView.seats` now carries `connected` that no screen draws (#5). Both
+  are the same gap — the data is present, the display is not — and the same small client item. Ruling:
+  the lobby and the topbar **mark a disconnected seat** (a dimmed/❌ nameplate), and a seat **covering**
+  for a teammate is told so (a line in the wait banner, or a mark on the borrowed nameplates), so the
+  extra characters are explained rather than mysterious. Read `connected` + the derived control map
+  (HANDOFF) the server already sends — recompute nothing. Client-only; no protocol change. Out of
+  scope: the handoff *rule* (server, ruled + shipped); reconnect logic (M3-RECONNECT, shipped).
 - **RULED — a `beamWidth` cone MAY also carry `axisBonus`; the two compose and are not forbidden
   (Builder OQ 2026-09-14 #5; ratifies the shipped geometry).** A beam's axis is its centre file, which
   is exactly where `axisBonus` already adds — so a constant-width lane with a hotter centre line is a
