@@ -19,7 +19,8 @@ import type {
   PlayerOrders, Roster, TeamId, TurnEvent, UnitOrders,
 } from '@cards/engine';
 import {
-  createMatch, deriveSeats, getFormat, mergeSeatOrders, resolveTurn, validateCatalystTriad,
+  TIMEBANK_CHARGES, createMatch, deriveSeats, getFormat, mergeSeatOrders, resolveTurn,
+  validateCatalystTriad,
 } from '@cards/engine';
 
 /** Room codes are four letters — sayable down a phone, and 456 976 of them. */
@@ -143,6 +144,32 @@ export interface Room {
    * having to re-simulate to reach the present.
    */
   history: TurnRecord[];
+  /**
+   * When this turn's decision window closes, in the runtime's clock (M3-TIMER),
+   * or absent when none is open.
+   *
+   * **On the record rather than in the hub** (TIMER-PERSIST): a Durable Object
+   * evicted mid-decision used to come back with no window at all, so the turn
+   * waited for players instead of for the clock. Eviction is a production
+   * event, so the window has to be part of what a room *is* rather than part of
+   * what happens to be in memory.
+   *
+   * An **absolute** instant rather than a remaining duration, because a
+   * duration would have to be re-anchored to a wake time nobody recorded — and
+   * because it is the number the DO's alarm is set in, so it rehydrates into
+   * `setAlarm` unchanged. (The *wire* carries a duration; that is a different
+   * problem — see `remainingMs` in the protocol.)
+   */
+  deadline?: number;
+  /**
+   * Time Bank charges left, by seat id (M3-TIMER). Absent means nobody has
+   * spent one — a seat with no entry has `TIMEBANK_CHARGES`.
+   *
+   * A plain object rather than a `Map` for the same reason `GameState` is plain
+   * JSON: the record is `structuredClone`d into storage and back, and a `Map`
+   * survives neither.
+   */
+  bank?: Record<string, number>;
 }
 
 /** One resolved turn, as it was ordered. */
@@ -198,6 +225,45 @@ export function mintCode(bytes: (n: number) => Uint8Array): string {
 export function isRoomCode(code: string): boolean {
   if (code.length !== ROOM_CODE_LENGTH) return false;
   return [...code].every((ch) => CODE_ALPHABET.includes(ch));
+}
+
+/**
+ * Open, move or close the decision window (TIMER-PERSIST).
+ *
+ * A function rather than a field assignment because the window now lives on the
+ * record, and the record is replaced rather than mutated — the same discipline
+ * `join` and `setPicks` follow, and what makes "persisted" mean "written by the
+ * DO's ordinary `Room` write" instead of "remembered to be saved".
+ *
+ * `undefined` closes it. Under `exactOptionalPropertyTypes` a closed window has
+ * to be the **absence** of the key, not the key set to `undefined`, or it
+ * round-trips through JSON as a room that has a deadline of nothing.
+ */
+export function withDeadline(room: Room, deadline: number | undefined): Room {
+  if (deadline === undefined) {
+    const { deadline: _dropped, ...rest } = room;
+    return rest;
+  }
+  return { ...room, deadline };
+}
+
+/** Time Bank charges left for a seat. Unspent seats are not in the record. */
+export function chargesFor(room: Room, seatId: string): number {
+  return room.bank?.[seatId] ?? TIMEBANK_CHARGES;
+}
+
+/**
+ * Spend one Time Bank charge, or return the room unchanged when there is none.
+ *
+ * Unchanged rather than throwing, and the caller checks `chargesFor` first: a
+ * refusal has to be answered to the player with a reason, and a second click on
+ * a spent bank must not burn anything. This is the belt to that braces — the
+ * rule is written once, here, where the count lives.
+ */
+export function spendCharge(room: Room, seatId: string): Room {
+  const left = chargesFor(room, seatId);
+  if (left <= 0) return room;
+  return { ...room, bank: { ...room.bank, [seatId]: left - 1 } };
 }
 
 export type JoinRejection = 'roomFull' | 'duplicateSeat' | 'inProgress' | 'teamFull';
@@ -305,6 +371,26 @@ export function leave(room: Room, seatId: string): Room {
     ...room,
     seats: room.seats.map((s) => (s.seatId === seatId ? { ...s, connected: false } : s)),
   };
+}
+
+/**
+ * Nobody is attached to this room: mark every seat disconnected.
+ *
+ * `Seat.connected` means "a socket is currently attached to this seat", and a
+ * room **reconstructed from storage** has no sockets at all — the Durable Object
+ * that held them is gone. Without this the record comes back claiming everyone
+ * is present, and the first thing each returning player does (present their
+ * ticket) is refused as `seatTaken`: reconnect after an eviction would be
+ * broken by the very restore that was supposed to survive it.
+ *
+ * Not a new rule — the existing one, made true again after a restart. It is
+ * self-correcting in the other direction too: a reclaim clears `missedTurns`,
+ * so a room that woke up, sat empty for a turn and then filled up again does not
+ * leave anybody's characters on loan.
+ */
+export function detachAll(room: Room): Room {
+  if (room.seats.every((s) => !s.connected)) return room;
+  return { ...room, seats: room.seats.map((s) => (s.connected ? { ...s, connected: false } : s)) };
 }
 
 export type ReclaimRejection =

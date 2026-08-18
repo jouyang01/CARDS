@@ -14,7 +14,7 @@
 
 import { DEFAULT_FORMAT, buildCatalystPool, buildRoster, type CatalystData, type CharacterDef, type FormatId, type MapDef } from '@cards/engine';
 import { RoomHub, type MatchConfig, type Sink } from './hub.js';
-import { createRoom, type Room } from './room.js';
+import { createRoom, detachAll, type Room } from './room.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
@@ -89,7 +89,19 @@ export class RoomDurableObject {
     // because a DO woken by an alarm before any fetch is a real path.
     state.blockConcurrencyWhile(async () => {
       const stored = await state.storage.get<Room>(STORAGE_KEY);
-      if (stored !== undefined) this.#hub = new RoomHub(stored, matchConfig(stored), NOW);
+      if (stored === undefined) return;
+      // The sockets did not survive whatever ended the last instance, so no seat
+      // is attached to anything (M3-RECONNECT's `connected` means exactly that).
+      // Saying so here is what lets each player's ticket be honoured when they
+      // come back — a record that still claimed they were present would refuse
+      // every one of them as `seatTaken`.
+      this.#hub = new RoomHub(detachAll(stored), matchConfig(stored), NOW);
+      // TIMER-PERSIST: re-aim the alarm at the window the record came back with.
+      // The alarm itself survives hibernation, so this is belt-and-braces rather
+      // than the whole fix — but a restore triggered some other way (a fetch, a
+      // fresh socket) would otherwise leave the wake time and the room's own
+      // deadline agreeing only by luck.
+      await this.#arm();
     });
   }
 
