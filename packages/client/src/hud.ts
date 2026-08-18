@@ -20,6 +20,7 @@ import type { CatalystCost } from './targeting.js';
 import type { StatusChip } from './status-pips.js';
 import type { InspectPanel } from './inspect.js';
 import type { TimerView } from './timer.js';
+import type { ModeOption } from './targeting.js';
 
 export interface HudAbility {
   id: string;
@@ -90,6 +91,15 @@ export interface HudModel {
   /** Every character this seat controls, in seat order (the switcher). */
   roster: HudCharacter[];
   abilities: HudAbility[];
+  /**
+   * BASIC-MODES — the armed ability's two aim-time profiles, or empty when it
+   * has none (which is every ability but one).
+   *
+   * A row of its own rather than a second state on the ability button: the
+   * ability and the mode are two decisions, and folding them into one control
+   * would make "switch to Focus" and "re-arm Twin Bolts" the same click.
+   */
+  modes: ModeOption[];
   /** The three catalyst slots, in phase order. Empty if the match has no pool. */
   catalysts: HudCatalyst[];
   move: { budget: number; drawing: boolean; sprinting: boolean; sprintDisabled: boolean };
@@ -113,6 +123,8 @@ export interface HudHandlers {
   hoverMove(kind: 'move' | 'sprint' | undefined): void;
   /** UI-TIMER: the player spent their Time Bank charge. */
   extendTime(): void;
+  /** BASIC-MODES: the player flipped the armed ability's aim-time profile. */
+  selectMode(mode: number): void;
   hold(): void;
   lock(): void;
   toggleProjection(): void;
@@ -208,6 +220,11 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   // The catalyst row sits above the hotbar: three slots, once per match, so they
   // read as a resource rather than as four more abilities.
   const catalystRow = el('div', 'hud-catalysts');
+  // BASIC-MODES: the mode row sits between the hotbar and the move controls —
+  // under the ability it belongs to, above the movement it trades against.
+  // Hidden when the armed ability has no modes, which is almost always.
+  const modeRow = el('div', 'hud-modes');
+  modeRow.style.display = 'none';
   const moveRow = el('div', 'hud-moves');
   const moveBtn = el('button', 'hud-move');
   moveBtn.textContent = 'Move';
@@ -218,7 +235,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const holdBtn = el('button', 'hud-move');
   holdBtn.textContent = 'Clear';
   moveRow.append(moveBtn, sprintBtn, chaseBtn, holdBtn);
-  centre.append(catalystRow, hotbar, moveRow);
+  centre.append(catalystRow, hotbar, modeRow, moveRow);
 
   moveBtn.onclick = () => handlers.selectMove(false);
   sprintBtn.onclick = () => handlers.selectMove(true);
@@ -516,6 +533,21 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
       }
       // Keep the hotbar in model order even as characters change.
       for (const ability of model.abilities) hotbar.appendChild(abilityNodes.get(ability.id)!);
+
+      // BASIC-MODES: rebuilt wholesale rather than keyed like the hotbar. Two
+      // buttons that only exist while one ability is armed have no hover state
+      // worth preserving across a repaint, and keying them would mean reasoning
+      // about a node that belongs to an ability the player has since switched.
+      modeRow.style.display = model.modes.length > 0 ? '' : 'none';
+      modeRow.replaceChildren();
+      for (const mode of model.modes) {
+        const btn = el('button', 'hud-mode');
+        btn.textContent = mode.label;
+        btn.dataset['mode'] = String(mode.index);
+        btn.classList.toggle('sel', mode.selected);
+        btn.onclick = () => handlers.selectMode(mode.index);
+        modeRow.appendChild(btn);
+      }
 
       catalystRow.style.display = model.catalysts.length > 0 ? '' : 'none';
       for (const catalyst of model.catalysts) {

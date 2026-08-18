@@ -35,6 +35,7 @@ const model = (active: HudCharacter): HudModel => ({
     id: 'shot', name: 'Shot', isUlt: false, available: true, cooldown: 0,
     selected: false, free: false, def: def(VEX.abilities[0]!.id),
   }],
+  modes: [],
   catalysts: [],
   move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
   chase: { armed: false, disabled: false },
@@ -46,7 +47,7 @@ const noop = (): void => {};
 const handlers = {
   selectCharacter: noop, selectAbility: noop, selectCatalyst: noop, hoverAbility: noop,
   selectMove: noop, selectChase: noop, hoverMove: noop, hold: noop, lock: noop,
-  toggleProjection: noop, toggleOrbit: noop, extendTime: noop,
+  toggleProjection: noop, toggleOrbit: noop, extendTime: noop, selectMode: noop,
 };
 
 let root: HTMLElement;

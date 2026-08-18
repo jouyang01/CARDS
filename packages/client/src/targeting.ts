@@ -15,6 +15,7 @@ import {
   aimInRange,
   axisSquares,
   buildBoard,
+  abilityProfile,
   circleSquares,
   direction8,
   distance,
@@ -61,6 +62,15 @@ export interface OrderDraft {
    * sees this integer. Absent for click-to-aim and for other shapes.
    */
   aimStep?: number;
+  /**
+   * BASIC-MODES — which profile of a two-mode ability this draft aims with.
+   *
+   * An index, mirroring `AbilityOrder.mode`, and resolved in exactly one place
+   * (`draftAbility`) so every preview, range envelope and legality check below
+   * sees the ability the mode chose. Absent for every ability that has no modes,
+   * which is all of them but one.
+   */
+  mode?: number;
   /**
    * A **catalyst** (CAT2) — a separate slot from `abilityId`, never a
    * replacement for it. Selecting one must not clear the normal ability, which
@@ -216,10 +226,54 @@ export function chaseSprints(draft: OrderDraft, dashCatalystArmed = false): bool
  */
 export const abilitiesAllowed = (dashCatalystArmed: boolean): boolean => !dashCatalystArmed;
 
-/** Resolve a draft's ability id against the character (ult included). */
+/**
+ * Resolve a draft's ability id against the character (ult included).
+ *
+ * **And its mode** (BASIC-MODES): this is the client's mirror of the engine's
+ * single funnel in `planAbility`, and it uses the engine's own `abilityProfile`
+ * rather than a second overlay. That is what makes the preview the truth — a
+ * client that merged the profile its own way could draw a cone the server
+ * resolves as a line, which is the one class of bug a preview must not have.
+ */
 export function draftAbility(character: CharacterDef, draft: OrderDraft): AbilityDef | undefined {
   if (draft.abilityId === undefined) return undefined;
-  return findAbility({ [character.id]: character }, character.id, draft.abilityId)?.def;
+  const found = findAbility({ [character.id]: character }, character.id, draft.abilityId)?.def;
+  return found === undefined ? undefined : abilityProfile(found, draft.mode);
+}
+
+/**
+ * The two profiles of the armed ability, as a toggle would offer them — or an
+ * empty list when the ability has none, which is the signal to draw no toggle.
+ *
+ * Labels fall back to the ability's own name, so a mode that did not bother
+ * naming itself is still a button with words on it.
+ */
+export function modeOptions(ability: AbilityDef | undefined, chosen: number | undefined): ModeOption[] {
+  if (ability?.modes === undefined) return [];
+  return ability.modes.map((profile, index) => ({
+    index,
+    label: profile.name ?? `${ability.name} ${index + 1}`,
+    selected: index === (chosen ?? DEFAULT_MODE),
+  }));
+}
+
+/**
+ * Which mode an ability is aimed with when the draft has not said.
+ *
+ * Zero, and stated as a constant rather than left implicit: the engine treats an
+ * absent mode as the ability's own profile, and the client shows mode 0 as
+ * selected, so the two agree only if the data's first mode *is* the ability's
+ * own profile. That is a rule about content, and `validateCharacter` is where it
+ * would be enforced if it ever needs to be — recorded here because the toggle's
+ * initial highlight depends on it.
+ */
+export const DEFAULT_MODE = 0;
+
+/** One profile of a two-mode ability, as the hotbar offers it. */
+export interface ModeOption {
+  index: number;
+  label: string;
+  selected: boolean;
 }
 
 /** Is an ability's aim geometrically legal (mirrors the engine's `aimIsLegal`)? */
@@ -978,6 +1032,9 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
   }
   if (ability !== undefined) {
     order.ability = { abilityId: ability.id, target: draft.aim.map((p) => ({ x: p.x, y: p.y })) };
+    // BASIC-MODES: sent only when the ability actually has modes, so an ordinary
+    // order stays exactly the bytes it was before this existed.
+    if (draft.mode !== undefined && ability.modes !== undefined) order.ability.mode = draft.mode;
     // Only directional shapes rotate; sending a step for a circle would be noise
     // the engine ignores anyway (AIM2).
     if (isRotatable(ability) && isAimStep(draft.aimStep)) order.ability.aimStep = draft.aimStep;
@@ -1013,6 +1070,8 @@ export type DraftAction =
   // the Move slot can be handed back without clearing the rest of the turn.
   | { type: 'selectChase'; targetUnitId: string }
   | { type: 'selectSprint' }
+  // BASIC-MODES — flip the armed ability's aim-time profile.
+  | { type: 'selectMode'; mode: number }
   | { type: 'clear' };
 
 /** Hand a Dash catalyst's slot back when the player chooses to move instead. */
@@ -1027,6 +1086,17 @@ export function nextDraft(
   currentCatalystIsDash = false,
 ): OrderDraft {
   switch (action.type) {
+    case 'selectMode': {
+      // The aim is **cleared**, and that is the point: the two modes have
+      // different shapes and different ranges, so a square that was a legal
+      // aim for one is very often not one for the other. Keeping it would
+      // leave a preview drawn for a target the order would be refused for —
+      // the worst of the three outcomes, because it looks like it worked.
+      //
+      // The move is kept: a mode is a targeting choice, and the walk beside it
+      // is a separate decision the player already made (MS1).
+      return { ...draft, mode: action.mode, aim: [], aimStep: undefined };
+    }
     case 'selectAbility': {
       // Choosing an ability clears sprint and re-aims; a dash owns the movement
       // so it drops any drawn move, a non-dash ability keeps it (move AND shoot).
@@ -1037,6 +1107,10 @@ export function nextDraft(
       const freed = releaseDashCatalyst(draft, currentCatalystIsDash);
       return {
         ...freed, abilityId: action.abilityId, sprint: false, aim: [],
+        // BASIC-MODES: a new ability starts on its own default profile. Carrying
+        // the last one's mode over would arm mode 1 of an ability the player has
+        // never seen a toggle for.
+        mode: undefined,
         // A dash owns the movement, and a chase is movement (CHASE1) — so it
         // goes with the drawn path rather than surviving as a dead promise.
         movePath: action.isDash ? [] : freed.movePath,

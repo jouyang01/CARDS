@@ -110,7 +110,7 @@ describe('CHASE1: the HUD names the quarry', () => {
     hp: 95, maxHp: 95, energy: 0, shield: 0, locked: false, hasOrder: false, statuses: [],
   });
   const model = (chase: HudModel['chase']): HudModel => ({
-    active: character(), roster: [character()], abilities: [], catalysts: [],
+    active: character(), roster: [character()], abilities: [], modes: [], catalysts: [],
     move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
     chase,
     lock: { label: 'Lock In ▸' },
@@ -120,6 +120,7 @@ describe('CHASE1: the HUD names the quarry', () => {
     selectCharacter: vi.fn(), selectAbility: vi.fn(), selectCatalyst: vi.fn(),
     hoverAbility: vi.fn(), selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(),
     hold: vi.fn(), lock: vi.fn(), toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime: vi.fn(),
+    selectMode: vi.fn(),
   });
   const chaseButton = (root: HTMLElement): HTMLButtonElement =>
     [...root.querySelectorAll('.hud-move')].find((b) => b.textContent?.startsWith('Chase')) as HTMLButtonElement;

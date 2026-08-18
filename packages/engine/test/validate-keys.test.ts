@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { ABILITY_KEYS, EFFECT_KEYS, validateAbility, validateCharacter } from '../src/validate.js';
+import { ABILITY_KEYS, EFFECT_KEYS, PROFILE_KEYS, validateAbility, validateCharacter } from '../src/validate.js';
 import { buildCatalystPool, validateCatalysts, type CatalystData } from '../src/catalysts.js';
-import type { AbilityDef, AbilityEffect, CharacterDef } from '../src/types.js';
+import type { AbilityDef, AbilityEffect, AbilityProfile, CharacterDef } from '../src/types.js';
 
 /**
  * VALIDATE-KEYS — a mistyped field must fail loudly, not disappear.
@@ -33,6 +33,10 @@ type _EveryAbilityKeyIsListed = Assert<Exclude<keyof AbilityDef, (typeof ABILITY
 type _NoStaleAbilityKeys = Assert<Exclude<(typeof ABILITY_KEYS)[number], keyof AbilityDef>>;
 type _EveryEffectKeyIsListed = Assert<Exclude<keyof AbilityEffect, (typeof EFFECT_KEYS)[number]>>;
 type _NoStaleEffectKeys = Assert<Exclude<(typeof EFFECT_KEYS)[number], keyof AbilityEffect>>;
+// BASIC-MODES: the profile's key list gets the same two-way guard, because a
+// mode key the runtime does not know about is the same silent nothing.
+type _EveryProfileKeyIsListed = Assert<Exclude<keyof AbilityProfile, (typeof PROFILE_KEYS)[number]>>;
+type _NoStaleProfileKeys = Assert<Exclude<(typeof PROFILE_KEYS)[number], keyof AbilityProfile>>;
 
 describe('VALIDATE-KEYS: an unknown key is an error', () => {
   it('rejects a typo, and names it', () => {
@@ -55,7 +59,7 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     // The whole surface, so a key that is legal but omitted from the runtime
     // list fails here rather than in someone's content.
     //
-    // Three objects rather than one, because some keys are **shape-exclusive**:
+    // Four objects rather than one, because some keys are **shape-exclusive**:
     // `chargeHits` is only valid on a `path`, `axisBonus`/`beamWidth` only on a
     // `cone`, and `innerRadius`/`innerAmount` only on a `circle` — each for the
     // same reason,
@@ -78,10 +82,21 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
       energyGain: 4, innerRadius: 0, innerAmount: 22,
       effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
+    // BASIC-MODES is a fourth object for the same reason: a mode may change the
+    // shape, so an ability carrying `modes` cannot also be the one carrying the
+    // cone-only or circle-only keys above.
+    const twin: AbilityDef = {
+      id: 'w', name: 'W', phase: 'blast', shape: 'line', range: 6, cooldown: 0, energyGain: 8,
+      modes: [{ name: 'Spread', shape: 'cone', range: 2 }, { name: 'Focus', shape: 'line', range: 6 }],
+      effects: [{ kind: 'damage', amount: 10 }], description: 'test',
+    };
     expect(validateAbility(charge, 'x')).toEqual([]);
     expect(validateAbility(wedge, 'y')).toEqual([]);
     expect(validateAbility(bomb, 'z')).toEqual([]);
-    expect([...new Set([...Object.keys(charge), ...Object.keys(wedge), ...Object.keys(bomb)])].sort())
+    expect(validateAbility(twin, 'w')).toEqual([]);
+    expect([...new Set([
+      ...Object.keys(charge), ...Object.keys(wedge), ...Object.keys(bomb), ...Object.keys(twin),
+    ])].sort())
       .toEqual([...ABILITY_KEYS].sort());
   });
 
