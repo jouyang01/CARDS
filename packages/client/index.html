@@ -92,6 +92,15 @@
       .topbar-portrait.ult .topbar-face { box-shadow: 0 0 0 2px #ffd76a, 0 0 10px rgb(255 215 106 / 0.6); }
       .topbar-portrait.dead { opacity: 0.5; }
       .topbar-portrait.dead .topbar-face { background: rgb(0 0 0 / 0.6); color: #cbd2e0; }
+      /* NET-PRESENCE-UI: two marks, two facts. `away` dims and desaturates —
+         nobody is driving this character. `borrowed` is a bright outline: it is
+         yours to order, and it is the answer to "why do I have four of these". */
+      .topbar-portrait.away { opacity: 0.45; filter: grayscale(0.7); }
+      .topbar-portrait.away .topbar-face::after {
+        content: '⚠'; position: absolute; font-size: 9px; margin: -14px 0 0 14px; }
+      .topbar-portrait.borrowed .topbar-face {
+        outline: 2px dashed #ffd76a; outline-offset: 2px; }
+      .topbar-portrait.borrowed { opacity: 1; }
       .topbar-hp { width: 36px; height: 4px; border-radius: 2px; background: var(--bar-bg); overflow: hidden; }
       .topbar-hp-fill { height: 100%; background: var(--hp); transition: width 140ms ease-out; }
       .topbar-score { display: grid; grid-template-columns: auto auto auto;
@@ -342,6 +351,10 @@
          that has to be findable at a glance. */
       .lobby-seat.is-mine { border-color: var(--team0); }
       .lobby-seat.is-ready { border-left: 3px solid var(--hp); }
+      /* A held seat, not an empty one: dimmed so it reads as absent, still
+         listed because M3-RECONNECT is keeping it for its owner. */
+      .lobby-seat.is-away { opacity: 0.55; border-left: 3px solid #ffd76a; }
+      .lobby-seat.is-away .lobby-seat-picks { font-style: italic; }
       .lobby-seat-picks { opacity: 0.7; }
       /* The enemy is a count and never a name (BLIND-PICK) — there is nothing
          here to style because there is nothing here to show. */

@@ -28,6 +28,7 @@ import {
   seatRows,
   type Draft,
 } from './lobby.js';
+import { AWAY_LABEL, AWAY_MARK } from './presence.js';
 
 /** One catalyst, as the screen offers it. Named so the pool's shape stays out. */
 export interface CatalystOption {
@@ -100,10 +101,19 @@ export function createLobbyScreen(
     const team = el('section', 'lobby-team');
     team.append(el('h2', undefined, 'Your team'));
     for (const row of rows) {
-      const line = el('div', `lobby-seat${row.isMine ? ' is-mine' : ''}${row.ready ? ' is-ready' : ''}`);
+      const away = !row.connected;
+      const line = el('div', `lobby-seat${row.isMine ? ' is-mine' : ''}`
+        + `${row.ready ? ' is-ready' : ''}${away ? ' is-away' : ''}`);
       line.dataset['seat'] = row.seatId;
-      const picked = row.picked.length > 0 ? row.picked.join(', ') : `choosing ${row.owed}…`;
-      line.append(el('span', 'lobby-seat-name', row.isMine ? `${row.name} (you)` : row.name));
+      if (away) line.dataset['away'] = 'true';
+      // NET-PRESENCE-UI: what a held seat is waiting for replaces what a present
+      // one is choosing. "choosing 2…" over a player who is not there is the
+      // sentence that made a dropped connection look like a slow one.
+      const picked = away
+        ? AWAY_LABEL
+        : (row.picked.length > 0 ? row.picked.join(', ') : `choosing ${row.owed}…`);
+      const name = row.isMine ? `${row.name} (you)` : row.name;
+      line.append(el('span', 'lobby-seat-name', away ? `${AWAY_MARK} ${name}` : name));
       line.append(el('span', 'lobby-seat-picks', picked));
       team.append(line);
     }

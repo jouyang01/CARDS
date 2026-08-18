@@ -179,6 +179,15 @@ export interface SeatRow {
   /** Character *names*, resolved through the catalogue; empty until picked. */
   picked: string[];
   ready: boolean;
+  /**
+   * NET-PRESENCE-UI — whether a socket is attached to this seat.
+   *
+   * Read straight off `RoomView.seats`, which has carried it since
+   * M3-RECONNECT and which nothing drew. A seat whose player dropped is **held**
+   * for them, so it stays in the list; without this it stayed in the list
+   * looking exactly like somebody who was still there and simply slow to pick.
+   */
+  connected: boolean;
 }
 
 /**
@@ -198,6 +207,7 @@ export function seatRows(net: NetState, catalog: readonly CharacterDef[]): SeatR
       owed: lobby.owed[s.seatId] ?? 0,
       picked: (lobby.picks[s.seatId] ?? []).map((p) => nameOf.get(p.characterId) ?? p.characterId),
       ready: lobby.ready.includes(s.seatId),
+      connected: s.connected,
     }));
 }
 

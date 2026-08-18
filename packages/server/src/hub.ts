@@ -25,7 +25,7 @@
  */
 
 import type { CatalystPool, CharacterDef, MapDef, Roster, UnitOrders } from '@cards/engine';
-import { DECISION_SECONDS, TIMEBANK_CHARGES, TIMEBANK_SECONDS } from '@cards/engine';
+import { DECISION_SECONDS, TIMEBANK_SECONDS } from '@cards/engine';
 import {
   ERROR_TEXT,
   PROTOCOL_VERSION,
@@ -35,8 +35,9 @@ import {
   type ServerMessage,
 } from './protocol.js';
 import {
-  canStart, charactersPerSeat, controlledUnits, join, leave, lobbyReady, reclaim,
-  resolveRoomTurn, setPicks, startFromPicks, startMatch, type Pick, type Room,
+  canStart, charactersPerSeat, chargesFor, controlledUnits, join, leave, lobbyReady, reclaim,
+  resolveRoomTurn, setPicks, spendCharge, startFromPicks, startMatch, withDeadline,
+  type Pick, type Room,
 } from './room.js';
 import { filterEvents, ordersForTeam, teamView, visibleEnemyIds } from './view.js';
 
@@ -107,14 +108,6 @@ export class RoomHub {
    * counter; the Durable Object passes the real clock.
    */
   readonly #now: () => number;
-  /**
-   * When this turn's decision window closes, in the injected clock's units.
-   * `undefined` before the match starts and between the resolve and the next
-   * window opening — there is no deadline when there is nothing to decide.
-   */
-  #deadline: number | undefined;
-  /** Time Bank charges left, per seat (TIMEBANK_CHARGES each, per match). */
-  readonly #charges = new Map<string, number>();
 
   constructor(room: Room, config?: MatchConfig, now: () => number = () => 0) {
     this.#room = room;
@@ -126,14 +119,21 @@ export class RoomHub {
    * When the current decision window closes, or `undefined` if none is open.
    * The Durable Object reads this to set its alarm — the hub owns *when*, the
    * runtime owns *how it is woken*.
+   *
+   * **Read off the room record** (TIMER-PERSIST), not off a field of this
+   * object. That is the whole of the persistence: the DO already writes the
+   * record after every frame, so a window that lives on it is saved by code
+   * that was already there, and a hub reconstructed from storage is rehydrated
+   * by its constructor with nothing to remember. A private field alongside the
+   * record would be a second copy, and one of two copies is always the stale one.
    */
   get deadline(): number | undefined {
-    return this.#deadline;
+    return this.#room.deadline;
   }
 
-  /** Time Bank charges left for a seat. */
+  /** Time Bank charges left for a seat. Persisted with the window, and why. */
   chargesFor(seatId: string): number {
-    return this.#charges.get(seatId) ?? TIMEBANK_CHARGES;
+    return chargesFor(this.#room, seatId);
   }
 
   /**
@@ -149,8 +149,9 @@ export class RoomHub {
    * resolved finds no open window and does nothing.
    */
   expire(): void {
-    if (this.#deadline === undefined || this.#room.state === undefined) return;
-    if (this.#now() < this.#deadline) return; // woken early; the window is still open
+    const deadline = this.deadline;
+    if (deadline === undefined || this.#room.state === undefined) return;
+    if (this.#now() < deadline) return; // woken early; the window is still open
     this.resolveNow();
   }
 
@@ -338,13 +339,13 @@ export class RoomHub {
   #receiveExtend(seatId: string): void {
     if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
     if (this.#room.state === undefined) return this.#send(seatId, errorMessage('noMatch'));
-    if (this.#deadline === undefined) return this.#send(seatId, errorMessage('noBank'));
-    const left = this.chargesFor(seatId);
-    if (left <= 0) return this.#send(seatId, errorMessage('noBank'));
-    this.#charges.set(seatId, left - 1);
+    const deadline = this.deadline;
+    if (deadline === undefined) return this.#send(seatId, errorMessage('noBank'));
+    if (this.chargesFor(seatId) <= 0) return this.#send(seatId, errorMessage('noBank'));
+    this.#room = spendCharge(this.#room, seatId);
     // Added to what is left rather than resetting the window: the bank *extends*
     // a deadline, so banking at 8 seconds leaves 18, not 40.
-    this.#deadline += TIMEBANK_SECONDS * 1000;
+    this.#room = withDeadline(this.#room, deadline + TIMEBANK_SECONDS * 1000);
     // Everyone is re-sent their Decision view, because everyone's clock moved.
     this.#sendDecision();
   }
@@ -451,11 +452,12 @@ export class RoomHub {
     // runs out. `resolveNow` is the only thing that clears it, so exactly one
     // window exists per turn. A finished match has nothing to decide and so has
     // no window at all.
-    if (state.status !== 'active') this.#deadline = undefined;
-    else this.#deadline ??= this.#now() + DECISION_SECONDS * 1000;
-    const remainingMs = this.#deadline === undefined
-      ? undefined
-      : Math.max(0, this.#deadline - this.#now());
+    if (state.status !== 'active') this.#room = withDeadline(this.#room, undefined);
+    else if (this.deadline === undefined) {
+      this.#room = withDeadline(this.#room, this.#now() + DECISION_SECONDS * 1000);
+    }
+    const open = this.deadline;
+    const remainingMs = open === undefined ? undefined : Math.max(0, open - this.#now());
     // M3-RECONNECT: the readiness counts are over the seats this turn is still
     // owed an answer by, so "1/1 locked" is true on a team whose other player
     // has dropped — a denominator that counted an empty chair would leave the
@@ -579,7 +581,7 @@ export class RoomHub {
     // `#sendDecision` is what opens one — and it is about to run. Clearing is
     // also what makes `expire()` idempotent: an alarm that fires after the turn
     // already resolved finds no window and does nothing.
-    this.#deadline = undefined;
+    this.#room = withDeadline(this.#room, undefined);
 
     const state = resolved.room.state!;
     for (const seat of this.#room.seats) {

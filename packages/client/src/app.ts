@@ -101,6 +101,7 @@ import {
   type MatchTotals, type TopbarModel, type TopbarPortrait,
 } from './scoreboard.js';
 import { FRONT_DOOR, HOT_SEAT_DOOR, endHeadline, exitLabel, outcomeFor } from './end-screen.js';
+import { AWAY_LABEL, NO_PRESENCE, type Presence } from './presence.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -173,6 +174,15 @@ export interface NetPlay {
    * and the server is the only thing that knows it.
    */
   onControl(handler: (unitIds: string[]) => void): void;
+  /**
+   * NET-PRESENCE-UI — register the handler for "who is actually here". Fired
+   * when a seat drops or returns, and when the handoff changes what this seat is
+   * holding for somebody else.
+   *
+   * The board only ever *draws* this: the marks say which player is gone and
+   * which characters are on loan, and every one of those facts came off the wire.
+   */
+  onPresence(handler: (presence: Presence) => void): void;
   /**
    * Spend a Time Bank charge. Asks; does not apply. The server owns the window,
    * and an optimistic +10 s it then refused would be the one lie a clock must
@@ -344,6 +354,15 @@ export function startHotSeat(
    * were routed is a fact about the *gesture*, and only the board needs it.
    */
   let waypointMarks: Vec2[] = [];
+  /**
+   * NET-PRESENCE-UI — who is missing and whose characters this seat is holding.
+   *
+   * Starts empty and stays empty in a hot-seat: there are no sockets on one
+   * machine, so nobody can be absent from it. Networked, it is replaced whole by
+   * `onPresence` — a value from the server rather than a thing this board works
+   * out, which is what keeps the handoff's one implementation on the server.
+   */
+  let presence: Presence = NO_PRESENCE;
   /**
    * M3-WAIT-STATE — why the board is refusing orders, or `undefined` while it
    * is taking them. Networked only: a hot-seat is never waiting for anybody.
@@ -1172,7 +1191,7 @@ export function startHotSeat(
    * it is a handful of nodes with no hover state to preserve.
    */
   function renderScoreboard(): void {
-    const bar = topbar(scoreReadout(state, unitName), currentSeat()?.team ?? 0);
+    const bar = topbar(scoreReadout(state, unitName), currentSeat()?.team ?? 0, presence);
     scoreEl.replaceChildren();
 
     const strip = document.createElement('div');
@@ -1201,6 +1220,20 @@ export function startHotSeat(
       const cell = document.createElement('div');
       cell.className = p.alive ? 'topbar-portrait' : 'topbar-portrait dead';
       cell.title = p.alive ? `${p.name} — ${p.hp}/${p.maxHp}` : `${p.name} — down, back in ${p.respawnIn}`;
+      // NET-PRESENCE-UI: two marks, and they are different facts. `away` says
+      // this character's *player* is gone (the seat is held for them); `borrowed`
+      // says the handoff has put them in your hands. A character can be both,
+      // which is the whole point — the second explains the first.
+      if (p.away) {
+        cell.classList.add('away');
+        cell.dataset['away'] = 'true';
+        cell.title = `${p.name} — ${AWAY_LABEL}`;
+      }
+      if (p.borrowed) {
+        cell.classList.add('borrowed');
+        cell.dataset['borrowed'] = 'true';
+        cell.title = `${cell.title} · you are ordering them`;
+      }
 
       const face = document.createElement('div');
       face.className = 'topbar-face';
@@ -2027,6 +2060,13 @@ export function startHotSeat(
   // `collectOrders` both read `seat.unitIds` fresh — so the next turn opens
   // drafts for whatever this seat now holds, and drafts for characters it has
   // handed back simply stop being collected.
+  // NET-PRESENCE-UI: a repaint, because the marks live on the topbar and the
+  // topbar is rebuilt wholesale. Registered before `onControl` so a frame that
+  // changes both leaves the strip agreeing with the seat.
+  net?.onPresence((next) => {
+    presence = next;
+    renderScoreboard();
+  });
   net?.onControl((unitIds) => {
     const seat = seats[0];
     if (seat === undefined) return;
