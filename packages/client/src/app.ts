@@ -44,7 +44,9 @@ import {
   previewCatalystAim,
   previewFreeAim,
   previewMovePath,
+  impactLayer,
   refusedAim,
+  waypointClick,
   type Interaction,
 } from './order-mode.js';
 import {
@@ -65,7 +67,7 @@ import {
   emptyDraft,
   moveEnvelope,
   nextDraft,
-  appendWaypoint,
+  appendWaypointRouted,
   pathTo,
   remainingMove,
   rangeEnvelope,
@@ -233,6 +235,15 @@ export function startHotSeat(
   let locked = new Set<string>();
   let drafts = new Map<string, OrderDraft>();
   let interaction: Interaction = IDLE;
+  /**
+   * WAYPOINTS-FIX — the square a Shift-click could not route to, marked until
+   * the next click does something.
+   *
+   * Click-driven rather than hover-driven, unlike AIM-RANGE-TELL's marker: a
+   * waypoint refusal is an answer to something the player *did*, and it has to
+   * survive the pointer moving off the square or it would flash and vanish.
+   */
+  let refusedSquare: Vec2 | undefined;
   let projection: ProjectionName = 'isometric';
 
   /** The shield pool `initView` sums, so board and HUD never disagree. */
@@ -861,6 +872,18 @@ export function startHotSeat(
     // a player choosing between two landing squares is reading the second.
     // Plan-time only — the engine detonates from wherever the dash really stops.
     const impact = impactPreview(map, unit, chosen, preview.aim, preview.aimStep);
+    // Three things share this layer, and they can never be wanted at once: a
+    // dash's landing discs, AIM-RANGE-TELL's refused *aim*, and WAYPOINTS-FIX's
+    // refused *waypoint*. A refusal has no landing to preview, and a landing is
+    // not a refusal. (This line was dropped by the AIM-RANGE-TELL commit, which
+    // silently took the dash discs off the board with it — see the regression
+    // test in `dash-preview.test.ts`.)
+    const layer = impactLayer(
+      [...impact.origin, ...impact.destination],
+      refusedAim(map, state, unit, chosen, interaction),
+      refusedSquare,
+    );
+    renderer.highlight('impact', layer.squares, layer.refused ? REFUSED : IMPACT, 0.4);
 
     // ── UI2 Layer 1: the continuous shape over Layer 2's tiles ───────────────
     // The tiles are the truth (centre-in binary, AIM2); the wedge/beam/disk is
@@ -1328,6 +1351,33 @@ export function startHotSeat(
     if (unit === undefined) return;
     const draft = draftFor(unit);
 
+    // WAYPOINTS-FIX: a Shift-click is a waypoint before it is anything else,
+    // and it **arms move by itself** — the shipped version only ran once move
+    // was already armed, which is why the reported gesture did nothing. The
+    // aiming modes still win (`waypointClick` returns 'ignore' for them), so
+    // this cannot steal a click from an aim in progress.
+    const waypoint = waypointClick(interaction, draft, evt.shiftKey, unit.alive);
+    if (waypoint !== 'ignore') {
+      if (waypoint === 'armAndAppend') {
+        drafts.set(unit.unitId, nextDraft(
+          draft, { type: 'selectMove' }, currentIsDash(draft, characterFor(unit)), dashCatalystArmed(draft),
+        ));
+        interaction = arm('move');
+      }
+      // MOVE-FOG: segments route against the team-visible board, like every
+      // other plan-time query — a fogged enemy is not an obstacle you know about.
+      const planned = planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units);
+      const live = draftFor(unit);
+      const extended = appendWaypointRouted(map, planned, unit, live.movePath, sq, live.sprint);
+      // Every click answers: the route grows, or the square is marked. Silence
+      // is what made the shipped version look broken.
+      if (extended === undefined) refusedSquare = { x: sq.x, y: sq.y };
+      else { live.movePath = extended; refusedSquare = undefined; }
+      render();
+      return;
+    }
+    refusedSquare = undefined;
+
     // AIM-RANGE: every slot commits through `commitAim`, which returns nothing
     // for an out-of-range click. The slot then stays armed rather than
     // recording an order the engine will silently drop at resolution — the
@@ -1378,20 +1428,12 @@ export function startHotSeat(
       // MOVE-FOG: the committed path is planned against the visible board too —
       // otherwise the preview and the order would disagree, and the order would
       // be the one that leaked.
+      // Without Shift this is the ordinary direct-line auto-route (MOVE1),
+      // unchanged: it replaces the drawn path rather than extending it.
       const planned = planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units);
-      if (evt.shiftKey) {
-        // WAYPOINTS: Shift builds the route a tile at a time instead of taking
-        // the auto-route, so a player can walk *around* a trap or a body. The
-        // mode stays armed — a waypoint is one step of a path, not a finished
-        // order — and a refused click leaves the path exactly as it was.
-        const extended = appendWaypoint(map, planned, unit, draft.movePath, sq, draft.sprint);
-        if (extended !== undefined) draft.movePath = extended;
-        render();
-      } else {
-        draft.movePath = pathTo(map, planned, unit, sq, movementBudget(unit, draft.sprint));
-        interaction = afterCommit();
-        render();
-      }
+      draft.movePath = pathTo(map, planned, unit, sq, movementBudget(unit, draft.sprint));
+      interaction = afterCommit();
+      render();
     }
   }
 

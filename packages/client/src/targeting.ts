@@ -532,6 +532,55 @@ export function appendWaypoint(
 }
 
 /**
+ * WAYPOINTS-FIX — drop a waypoint at **any** clicked tile and route the segment
+ * to it.
+ *
+ * Owner Dev Note: *"WAYPOINTS is not working. I cannot hold shift + click to
+ * move to a waypoint."*
+ *
+ * The v1 above takes **one adjacent step per click** and answers a bare
+ * `undefined` to anything else, so the natural gesture — select a unit,
+ * Shift-click a tile a few squares away — produced nothing at all. The ruling
+ * reverses that (edge-cases, "WAYPOINTS-FIX"): a click lands a waypoint
+ * wherever it points, and the client **routes** from the previous waypoint (or
+ * the unit's own square) to it.
+ *
+ * The router is `pathTo` — the same one a plain move click uses — so a segment
+ * goes around walls and bodies exactly as the auto-route does, honours MOVE1's
+ * nearest-legal forgiveness, and inherits MOVE-FOG for free (the caller hands in
+ * the `planningState` it already built, so a fogged enemy is not on the board
+ * this walks). What changes per segment is only *where you start* and *how much
+ * budget is left*: the unit is re-based on the last waypoint, and the budget is
+ * what the earlier segments did not spend.
+ *
+ * **An adjacent click is just a one-step segment**, so the tile-by-tile control
+ * v1 offered survives intact — drop a waypoint on each corner and you have
+ * threaded the obstacle by hand.
+ *
+ * `undefined` means "nothing legal to append", which is the caller's cue to show
+ * the refusal tell rather than to do nothing quietly.
+ */
+export function appendWaypointRouted(
+  map: MapDef,
+  state: GameState,
+  unit: UnitState,
+  path: readonly Vec2[],
+  square: Vec2,
+  sprint: boolean,
+): Vec2[] | undefined {
+  const from = path.at(-1) ?? unit.pos;
+  if (vecEq(from, square)) return undefined; // the waypoint you are already on
+  const left = remainingMove(unit, sprint, path);
+  if (left <= 0) return undefined;
+  // Re-based on the last waypoint: the segment starts where the drawn route
+  // has got to, not where the unit is still standing. `pathTo` excludes the
+  // unit itself from the obstacles, which is right — it is vacating anyway.
+  const segment = pathTo(map, state, { ...unit, pos: from }, square, left);
+  if (segment.length === 0) return undefined;
+  return [...path.map((p) => ({ x: p.x, y: p.y })), ...segment];
+}
+
+/**
  * The strict resolver: the clicked square's own path, or nothing.
  *
  * **Dash aims use this, not `pathTo`.** MOVE1's forgiving re-route is a ruling

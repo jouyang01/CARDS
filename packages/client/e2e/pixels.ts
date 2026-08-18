@@ -197,6 +197,18 @@ export const isDashYellow = (px: Rgb): boolean =>
   px.r > 180 && px.g > 150 && Math.abs(px.r - px.g) < 70 && px.b < 110 && px.g - px.b > 60;
 
 /**
+ * The pale blue move route (`#9fc4ff`), drawn as an unlit line like the dash's,
+ * so it too arrives near its literal value.
+ *
+ * Bounded *below* on red, which is what separates it from a team-blue unit: the
+ * move line is 159 in red where `#4f8cff` is 79, and both are blue-dominant with
+ * green in between. Without that bound "the route drew" would pass on any frame
+ * with a blue unit in it, which is every frame.
+ */
+export const isMoveLine = (px: Rgb): boolean =>
+  px.r > 120 && px.g > 160 && px.b > 200 && px.b > px.g && px.g > px.r;
+
+/**
  * The range envelope: `#8fb6ff` at 0.16 over the open floor, which composites to
  * about `44,52,71`. Bounded on both sides deliberately — the bare floor is
  * `32,36,47` and only 15 apart in blue, so a loose "blue-shifted" test matches
