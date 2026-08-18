@@ -85,17 +85,27 @@ not a constant.* **Spec Notes.** Files: `packages/server/package.json` (wrangler
 `POST …/start` route is gone (done PR #68). **Do not deploy** here — that is M3-DEPLOY-LIVE. Out of
 scope: the live push; custom domains.
 
-### M3-DEPLOY-LIVE. Deploy the Worker + client and wire the URLs (SERVER + CLIENT) — BLOCKED on owner Cloudflare login (in progress)
-The actual publish, once the owner confirms `wrangler login`. *AC: `wrangler deploy` publishes the
-Worker (Durable Object with the SQLite migration — free-plan compatible); the client is deployed to
-**Pages** (`wrangler pages deploy` on the build, or the dashboard Git integration); the deployed client
-points at the deployed Worker's `wss://` URL (from M3-DEPLOY-PREP's config); a real two-machine
-create → pick → play → resolve round-trips over the internet; the deploy gate is legible (pass/fail
-surfaced).* **Spec Notes.** Needs the owner's account + `wrangler login` (see the owner's Cloudflare
-setup — free plan suffices; the DO uses `new_sqlite_classes`, which is free-tier). **Owner inputs
-needed:** the workers.dev subdomain name, and custom-domain-or-free-subdomains (default: free
-`*.workers.dev` / `*.pages.dev`). **Flag the owner when this is reached.** Out of scope: CI auto-deploy
-(a later nicety via an API token); custom domains unless the owner asks.
+### M3-DEPLOY-LIVE. Deploy the Worker + client and wire the URLs (SERVER + CLIENT) — BLOCKED on a deploy CREDENTIAL in the build env (owner login done)
+The actual publish. **Owner inputs received (2026-09-15):** the owner ran `wrangler login` **on their
+Mac** and registered the **`lockstepcards`** workers.dev subdomain — so the Worker will publish to
+`cards-server.lockstepcards.workers.dev` (or similar), and free subdomains are the choice (no custom
+domain). *AC: `wrangler deploy` publishes the Worker (Durable Object with the SQLite migration —
+free-plan compatible); the client is deployed to **Pages** (or the repo's existing GitHub Pages
+workflow); the deployed client points at the deployed Worker's `wss://` URL (from M3-DEPLOY-PREP's
+config, e.g. `wss://cards-server.lockstepcards.workers.dev`); a real two-machine create → pick → play →
+resolve round-trips over the internet; the deploy gate is legible (pass/fail surfaced).*
+**Spec Notes — the remaining blocker is WHERE the deploy runs.** The owner's `wrangler login` lives on
+**their Mac only**; the Builder runs in a **cloud container that is not logged in**, so it cannot
+`wrangler deploy` as-is. Two ways to close this, owner to choose:
+- **(A, recommended) A Cloudflare API token in CI.** The owner creates an "Edit Cloudflare Workers"
+  token in the dashboard and adds it as a **GitHub repo secret** `CLOUDFLARE_API_TOKEN` (via the GitHub
+  website — never pasted into chat). Then a GitHub Actions workflow deploys the Worker on push (the repo
+  already has a Pages workflow for the client). Hands-off after setup, tied to no one laptop.
+- **(B) Owner runs it on their Mac.** Requires the repo cloned locally; the owner runs a single
+  `npm run deploy` the Builder provides. Fastest to a first deploy, but repeats on every deploy and
+  needs the repo on the Mac.
+**Flag the owner to pick A or B before building this.** Out of scope: custom domains (owner chose free
+subdomains); a full CI matrix.
 
 ## Engine — the last roster knob
 
