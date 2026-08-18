@@ -84,6 +84,30 @@ export interface Seat {
    * exist yet.
    */
   picks: Pick[];
+  /**
+   * Whether a socket is currently attached to this seat (M3-RECONNECT).
+   *
+   * A seat in a **lobby** is deleted when its socket goes, because a lobby seat
+   * is nothing but a socket. A seat in a **started match** is not: it holds a
+   * team, a name and a control map that the match still needs, and the ruled
+   * behaviour is that the seat is *held for its original occupant to reclaim*
+   * (edge-cases, "started-room reserve"). So a disconnect mid-match flips this
+   * to `false` and changes nothing else.
+   *
+   * Public — it rides `RoomView`. Who is present is not hidden information, and
+   * a teammate's screen going dark is exactly the thing the other players need
+   * to be told about.
+   */
+  connected: boolean;
+  /**
+   * Consecutive whole turns this seat was **absent for** — disconnected and
+   * having submitted nothing (M3-RECONNECT's handoff).
+   *
+   * Reset by a submission and by a reclaim, so it counts *fully* missed turns
+   * rather than slow ones. A seat that dropped after locking in has missed
+   * nothing: its orders were already in.
+   */
+  missedTurns: number;
 }
 
 export interface Room {
@@ -197,7 +221,9 @@ export type JoinRejection = 'roomFull' | 'duplicateSeat' | 'inProgress' | 'teamF
  * than three lines inlined in `join`. See the Builder's open questions.
  */
 export function wouldSeatNobody(room: Room, team: TeamId): boolean {
-  const seats = [...room.seats, { seatId: '', team, name: '', unitIds: [], picks: [] }];
+  const seats = [...room.seats, {
+    seatId: '', team, name: '', unitIds: [], picks: [], connected: true, missedTurns: 0,
+  }];
   return teamSplit({ ...room, seats }, team).at(-1) === 0;
 }
 
@@ -249,14 +275,111 @@ export function join(room: Room, seatId: string, name?: string): JoinResult {
   const team = nextTeam(room);
   if (wouldSeatNobody(room, team)) return { ok: false, reason: 'teamFull' };
 
-  const seat: Seat = { seatId, team, name: name ?? seatId, unitIds: [], picks: [] };
+  const seat: Seat = {
+    seatId, team, name: name ?? seatId, unitIds: [], picks: [], connected: true, missedTurns: 0,
+  };
   return { ok: true, room: { ...room, seats: [...room.seats, seat] }, seat };
 }
 
-/** Remove a seat. Unknown ids are a no-op — a double disconnect is not an error. */
+/**
+ * The socket on `seatId` went away. Unknown ids are a no-op — a double
+ * disconnect is not an error.
+ *
+ * **In a lobby the seat is deleted; in a started match it is held**
+ * (M3-RECONNECT). A lobby seat is nothing but a socket, and leaving one has to
+ * free the slot and re-price everybody's picks. A seat in a running match is a
+ * team, a name and a control map the match still needs — deleting it would
+ * strand its characters and make the reclaim the ruling promises impossible,
+ * because there would be nothing left to reclaim.
+ *
+ * The seat's **submission is not touched here**: a player who locked in and then
+ * dropped has already had their turn, and throwing it away would punish them for
+ * a socket closing after the decision was made.
+ */
 export function leave(room: Room, seatId: string): Room {
   if (!room.seats.some((s) => s.seatId === seatId)) return room;
-  return { ...room, seats: room.seats.filter((s) => s.seatId !== seatId) };
+  if (room.state === undefined) {
+    return { ...room, seats: room.seats.filter((s) => s.seatId !== seatId) };
+  }
+  return {
+    ...room,
+    seats: room.seats.map((s) => (s.seatId === seatId ? { ...s, connected: false } : s)),
+  };
+}
+
+export type ReclaimRejection =
+  /** No seat with that id — a ticket for another room, or a stale one. */
+  | 'unknownSeat'
+  /** The match has not started, so there is no held seat to come back to. */
+  | 'noMatch'
+  /** Somebody is already sitting there. */
+  | 'seatTaken';
+
+export type ReclaimResult =
+  | { ok: true; room: Room; seat: Seat }
+  | { ok: false; reason: ReclaimRejection };
+
+/**
+ * Take back a seat held by a disconnect (M3-RECONNECT).
+ *
+ * **Identity-matched, never an arbitrary socket** (edge-cases, "started-room
+ * reserve"): the caller must name the seat it held, and a seat that somebody is
+ * currently sitting in is refused. That is the whole access rule — a stranger
+ * who guessed a room code still cannot take a running seat, because `join` turns
+ * away any fresh socket to a started match and this path needs a seat id it was
+ * never given.
+ *
+ * Reclaiming clears `missedTurns`, so a returning player's teammate stops
+ * holding their characters the moment they are back (see `controlledUnits`).
+ */
+export function reclaim(room: Room, seatId: string): ReclaimResult {
+  if (room.state === undefined) return { ok: false, reason: 'noMatch' };
+  const seat = room.seats.find((s) => s.seatId === seatId);
+  if (seat === undefined) return { ok: false, reason: 'unknownSeat' };
+  if (seat.connected) return { ok: false, reason: 'seatTaken' };
+  const taken: Seat = { ...seat, connected: true, missedTurns: 0 };
+  return {
+    ok: true,
+    seat: taken,
+    room: { ...room, seats: room.seats.map((s) => (s.seatId === seatId ? taken : s)) },
+  };
+}
+
+/**
+ * The characters `seatId` may order **right now** — its own, plus any a
+ * teammate has abandoned.
+ *
+ * This settles the last OPEN in "Teams & control": **a partial-team disconnect
+ * hands the abandoned characters to a teammate after one fully missed turn**
+ * (the standing lean, taken as the ruling). The alternative is a 2v2 where one
+ * dropped socket leaves half a team standing still for the rest of the match,
+ * which is a worse game than the one the other three are still playing.
+ *
+ * Two properties make it safe to be a **derived** answer rather than a stored
+ * transfer:
+ *
+ * - **It reverses itself.** Reclaiming sets `connected` and clears
+ *   `missedTurns`, so the loan simply stops being derivable and the characters
+ *   are the original seat's again. Nothing has to be handed back, which means
+ *   nothing can be handed back wrongly.
+ * - **It is deterministic.** The stand-in is the **first connected seat on that
+ *   team in join order** — the room's own order, not iteration order — so every
+ *   client and the server agree on who is holding what without being told.
+ *
+ * A seat that is not in the room, or is itself disconnected, controls nothing.
+ */
+export function controlledUnits(room: Room, seatId: string): string[] {
+  const seat = room.seats.find((s) => s.seatId === seatId);
+  if (seat === undefined || !seat.connected) return [];
+  const mine = [...seat.unitIds];
+  const standIn = room.seats.find((s) => s.team === seat.team && s.connected);
+  if (standIn?.seatId !== seatId) return mine;
+  for (const other of room.seats) {
+    if (other.team !== seat.team || other.seatId === seatId) continue;
+    if (other.connected || other.missedTurns < 1) continue;
+    mine.push(...other.unitIds);
+  }
+  return mine;
 }
 
 /**
@@ -551,11 +674,24 @@ export function resolveRoomTurn(
   catalysts: CatalystPool = {},
 ): { room: Room; events: TurnEvent[]; orders: [PlayerOrders, PlayerOrders] } | undefined {
   if (room.state === undefined) return undefined;
-  const orders = mergeSeatOrders(room.seats, ordersBySeat);
+  // The merge is over what each seat **controls**, not over `seat.unitIds`: a
+  // stand-in holding an abandoned teammate's characters submits orders for them,
+  // and `mergeSeatOrders` has to accept those as that seat's to give.
+  const controlling = room.seats.map((s) => ({ ...s, unitIds: controlledUnits(room, s.seatId) }));
+  const orders = mergeSeatOrders(controlling, ordersBySeat);
   const { state, events } = resolveTurn(room.state, map, orders, roster, catalysts);
   return {
     room: {
       ...room,
+      // M3-RECONNECT: a turn that went by with a seat disconnected and silent is
+      // a **fully** missed turn, and one of those is what hands its characters
+      // to a teammate. Counted here because this is the one place a turn ends —
+      // counting it at the disconnect instead would start the clock on a player
+      // who dropped after locking in, whose turn was already played.
+      seats: room.seats.map((s) => {
+        const absent = !s.connected && !ordersBySeat.has(s.seatId);
+        return { ...s, missedTurns: absent ? s.missedTurns + 1 : 0 };
+      }),
       state,
       turn: state.turn,
       // Appended, never replaced: the current state answers "where are we" and

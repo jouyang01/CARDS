@@ -69,6 +69,7 @@ import {
   moveEnvelope,
   nextDraft,
   appendWaypointRouted,
+  liveWaypointMarks,
   pathTo,
   remainingMove,
   rangeEnvelope,
@@ -99,6 +100,7 @@ import {
   clock, endReasonText, foldTurn, initTotals, matchBreakdown, scoreReadout, tally, topbar,
   type MatchTotals, type TopbarModel, type TopbarPortrait,
 } from './scoreboard.js';
+import { FRONT_DOOR, HOT_SEAT_DOOR, endHeadline, exitLabel, outcomeFor } from './end-screen.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -149,6 +151,34 @@ export interface NetPlay {
    * count-only rule has to hold, and that belongs somewhere a test can reach.
    */
   onStatus(handler: (banner: string | undefined) => void): void;
+  /**
+   * M3-TIMER — register the handler for "how long is left", in milliseconds,
+   * plus this seat's Time Bank charges. Called every time the server re-sends a
+   * Decision phase, which is the only thing that moves either number.
+   *
+   * A duration rather than an instant: the deadline is the server's and the
+   * skew between two machines' clocks is not something a countdown should have
+   * to model. `undefined` means no window is open (the match ended) — draw
+   * nothing rather than a zero.
+   */
+  onTimer(handler: (remainingMs: number | undefined, charges: number) => void): void;
+  /**
+   * M3-RECONNECT — register the handler for "which characters am I ordering
+   * now". Fired whenever the server's control map changes: a teammate who
+   * disconnects and misses a whole turn hands theirs over, and takes them back
+   * when they return.
+   *
+   * A handler rather than a re-read of `unitIds`, because the control map is no
+   * longer a fact about the start of the match — it is a fact about the turn,
+   * and the server is the only thing that knows it.
+   */
+  onControl(handler: (unitIds: string[]) => void): void;
+  /**
+   * Spend a Time Bank charge. Asks; does not apply. The server owns the window,
+   * and an optimistic +10 s it then refused would be the one lie a clock must
+   * never tell — so the extension appears when `onTimer` next fires.
+   */
+  extend(): void;
 }
 
 const PALETTE = {
@@ -600,6 +630,11 @@ export function startHotSeat(
       render();
     },
     extendTime: () => {
+      // M3-TIMER: in a networked match the bank is the **server's** — it owns
+      // the one deadline the whole room shares, so this asks and waits. The
+      // flash fires from `adoptWindow` when the charge count actually drops,
+      // which means it can only ever celebrate an extension that happened.
+      if (net !== undefined) return void net.extend();
       // UI-TIMER: the +10 s. Recorded as a moment rather than a boolean so the
       // flash can fade on its own — a charge that vanished silently would read
       // as a miscount, and "did my bank actually fire?" is the one question the
@@ -767,6 +802,11 @@ export function startHotSeat(
    * from under UI1's hover.
    */
   function startTimer(): void {
+    // M3-TIMER: a networked window is opened by the server's `decision`, not by
+    // this client reaching its turn. Starting a local one here would put a
+    // second clock on screen — the wrong one — for however long the frame took
+    // to arrive, and the two would disagree by exactly the round trip.
+    if (net !== undefined) return;
     const fresh = freshTimer();
     deadlineAt = performance.now() + fresh.remainingMs;
     bankCharges = fresh.charges;
@@ -782,6 +822,27 @@ export function startHotSeat(
     if (timerHandle !== undefined) clearInterval(timerHandle);
     timerHandle = undefined;
     hud.setTimer(undefined);
+  }
+
+  /**
+   * M3-TIMER — adopt the server's window as this client's.
+   *
+   * The server sends a *duration*, so the only thing done here is to anchor it
+   * to this machine's clock; nothing re-derives how long a turn is, and the
+   * client never decides that a window has closed. `undefined` means the match
+   * has ended and there is nothing left to count.
+   *
+   * The flash is driven off the charge count **falling**, rather than off the
+   * click that asked for it: that way it marks a charge the server actually
+   * spent, and a refused extension animates nothing.
+   */
+  function adoptWindow(remaining: number | undefined, charges: number): void {
+    if (remaining === undefined) return void stopTimer();
+    if (charges < bankCharges) bankSpentAt = performance.now();
+    deadlineAt = performance.now() + remaining;
+    bankCharges = charges;
+    if (timerHandle === undefined) timerHandle = setInterval(paintTimer, 100);
+    paintTimer();
   }
 
   /** Put the next seat with living characters on the clock, or resolve. */
@@ -1063,12 +1124,7 @@ export function startHotSeat(
     // WAYPOINT-TELL: the clicked squares, so a composed route says which corners
     // were the player's and which the router's. Only while that unit's route is
     // still the one on screen — a mark over somebody else's turn is a lie.
-    renderer.highlight(
-      'waypoint',
-      draft.movePath.length > 0 ? waypointMarks : [],
-      WAYPOINT,
-      0.85,
-    );
+    renderer.highlight('waypoint', liveWaypointMarks(waypointMarks, draft.movePath), WAYPOINT, 0.85);
     renderer.highlight('chase', chaseTarget === undefined ? [] : [chaseTarget.pos], CHASE_LINE, 0.45);
 
     // ── DASH-CAT-ROUTE: a Dash catalyst is a reposition, so it draws like one ─
@@ -1624,7 +1680,12 @@ export function startHotSeat(
   async function endTurn(): Promise<void> {
     const ordersBySeat = collectOrders();
     if (net !== undefined) {
-      stopTimer();
+      // M3-TIMER: the clock is **not** stopped here, unlike the hot-seat's. The
+      // window is the room's, not this seat's, and it is still running — it is
+      // now what bounds the opponent. That is the pairing the item asks for:
+      // the banner says what you are waiting for, the countdown says how long
+      // it can last, and neither is the other.
+      //
       // Disarmed before the send, not after the reply: the click that ends the
       // turn must not leave a live aim on screen while the packet is in flight.
       interaction = IDLE;
@@ -1921,6 +1982,31 @@ export function startHotSeat(
       table.appendChild(tr);
     }
     scoreEl.appendChild(table);
+
+    // M3-END-SCREEN — the two things a decided match was missing.
+    //
+    // The breakdown above already says *what* happened; a networked seat also
+    // needs to know whether it won, because "Team 2 wins on kills" does not tell
+    // a player which team they were. The headline is therefore per-seat and
+    // exists only where a seat does — a hot-seat holds both sides on one screen,
+    // and its neutral team line is already the right sentence.
+    const outcome = outcomeFor(state, net?.team ?? currentSeat()?.team ?? 0);
+    if (outcome !== undefined && net !== undefined) {
+      const headline = document.createElement('h2');
+      headline.className = `end-headline is-${outcome}`;
+      headline.dataset['outcome'] = outcome;
+      headline.textContent = endHeadline(outcome);
+      scoreEl.prepend(headline);
+    }
+    // …and a way out, however it ended. The front door rather than a rematch:
+    // re-entering a room is a protocol conversation nobody has specced, and the
+    // create form is one click from a new match.
+    const exit = document.createElement('a');
+    exit.className = 'end-exit';
+    exit.dataset['action'] = 'exit';
+    exit.href = net === undefined ? HOT_SEAT_DOOR : FRONT_DOOR;
+    exit.textContent = exitLabel(net !== undefined);
+    scoreEl.appendChild(exit);
   }
 
   const teamName = (t: number) => (t === 0 ? 'Team 1' : 'Team 2');
@@ -1931,6 +2017,21 @@ export function startHotSeat(
   // uses — the board cannot tell which produced them, which is the property
   // that lets one renderer serve both matches.
   net?.onResolved((next, events) => { void playResolution(state, events, next); });
+  // M3-TIMER: the countdown is the server's window, adopted. Registered
+  // alongside `onStatus` and kept separate from it on purpose — the banner and
+  // the clock are two different sentences about the same wait, and a single
+  // handler would sooner or later let one overwrite the other.
+  net?.onTimer((remaining, charges) => { adoptWindow(remaining, charges); });
+  // M3-RECONNECT: the control map is the server's and can change mid-match.
+  // Replaced in place rather than rebuilt, because `seatRoster` and
+  // `collectOrders` both read `seat.unitIds` fresh — so the next turn opens
+  // drafts for whatever this seat now holds, and drafts for characters it has
+  // handed back simply stop being collected.
+  net?.onControl((unitIds) => {
+    const seat = seats[0];
+    if (seat === undefined) return;
+    seats[0] = { ...seat, unitIds: [...unitIds] };
+  });
   net?.onStatus((text) => {
     banner = text;
     hud.setBanner(text);

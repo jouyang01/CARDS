@@ -65,6 +65,16 @@ const matchConfig = (room: Room): MatchConfig => ({
 /** Where the room record is kept between hibernations. */
 const STORAGE_KEY = 'room';
 
+/**
+ * The real clock, handed to the hub (M3-TIMER).
+ *
+ * This is the runtime's job and nobody else's: the hub takes its clock as an
+ * argument precisely so that a test can pass a counter, and `packages/engine`
+ * may never read one at all. Same milliseconds the DO's alarm is set in, which
+ * is what lets `hub.deadline` be passed straight to `setAlarm`.
+ */
+const NOW = (): number => Date.now();
+
 /** A monotonic per-DO counter, so two sockets never share a seat id. */
 let nextSocketId = 0;
 
@@ -79,8 +89,35 @@ export class RoomDurableObject {
     // because a DO woken by an alarm before any fetch is a real path.
     state.blockConcurrencyWhile(async () => {
       const stored = await state.storage.get<Room>(STORAGE_KEY);
-      if (stored !== undefined) this.#hub = new RoomHub(stored, matchConfig(stored));
+      if (stored !== undefined) this.#hub = new RoomHub(stored, matchConfig(stored), NOW);
     });
+  }
+
+  /**
+   * M3-TIMER — the decision window ran out.
+   *
+   * The alarm is the only wall clock in the system that can *act*; everything it
+   * knows about deadlines it asks the hub for. `expire()` is idempotent and
+   * checks the time itself, so an alarm that fires early (the runtime is allowed
+   * to) or late (the turn already resolved) is harmless.
+   */
+  async alarm(): Promise<void> {
+    this.#hub?.expire();
+    await this.#persist();
+    await this.#arm();
+  }
+
+  /**
+   * Point the alarm at the hub's current deadline, or clear it if there is none.
+   *
+   * Idempotent and cheap to call after every frame: a lock-in can close a window
+   * early, and a Time Bank charge can push one out, so "when should I wake" is
+   * re-asked rather than remembered.
+   */
+  async #arm(): Promise<void> {
+    const deadline = this.#hub?.deadline;
+    if (deadline === undefined) return void await this.#state.storage.deleteAlarm();
+    await this.#state.storage.setAlarm(deadline);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -96,7 +133,7 @@ export class RoomDurableObject {
       const mapId = url.searchParams.get('map') ?? undefined;
       if (this.#hub === undefined) {
         const room = createRoom(code, format, mapId);
-        this.#hub = new RoomHub(room, matchConfig(room));
+        this.#hub = new RoomHub(room, matchConfig(room), NOW);
         await this.#persist();
       }
       return Response.json(this.#hub.room);
@@ -139,10 +176,14 @@ export class RoomDurableObject {
       // hundred bytes and a turn is seconds long, so the write is free next to
       // losing a lobby to an eviction.
       void this.#persist();
+      // …and re-aimed, because a frame can open a window (start), close one
+      // early (the last lock-in) or push one out (the Time Bank).
+      void this.#arm();
     });
     const drop = (): void => {
       hub.close(seatId);
       void this.#persist();
+      void this.#arm();
     };
     server.addEventListener('close', drop);
     server.addEventListener('error', drop);

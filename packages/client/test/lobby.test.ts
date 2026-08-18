@@ -54,10 +54,10 @@ const lobbied = (over: {
   const seats = over.seats ?? [{ seatId: 'a', team: 0, name: 'Ada' }, { seatId: 'b', team: 1, name: 'Bo' }];
   const joined = applyServerMessage(initialNet(), {
     type: 'joined',
-    seat: { seatId, team, name: 'Ada', unitIds: [], picks: [] },
+    seat: { seatId, team, name: 'Ada', unitIds: [], picks: [], connected: true, missedTurns: 0 },
     room: {
       code: 'WXYZ', format: '2v2', turn: 0, canStart: false, started: false, locked: [],
-      seats: seats.map((s) => ({ ...s, unitIds: [], picks: [] })),
+      seats: seats.map((s) => ({ ...s, unitIds: [], picks: [], connected: true, missedTurns: 0 })),
     },
   });
   return applyServerMessage(joined, {

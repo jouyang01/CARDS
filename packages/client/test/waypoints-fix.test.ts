@@ -13,7 +13,7 @@ import {
   type UnitState,
   type Vec2,
 } from '@cards/engine';
-import { appendWaypointRouted, emptyDraft, remainingMove } from '../src/targeting.js';
+import { appendWaypointRouted, emptyDraft, liveWaypointMarks, nextDraft, remainingMove, toUnitOrders } from '../src/targeting.js';
 import { IDLE, arm, hoverBoard, impactLayer, previewMovePath, waypointClick, type Interaction } from '../src/order-mode.js';
 import { planningState } from '../src/fog.js';
 import vex from '../../../data/characters/vex.json';
@@ -361,5 +361,82 @@ describe('WAYPOINT-TELL: the composed route is visible while you build it', () =
     expect(shifted, 'a repaint is required').toBeDefined();
     expect(shifted!.hover.shift).toBe(true);
     expect(hoverBoard(shifted!, at, true), 'and nothing changed is still nothing').toBeUndefined();
+  });
+});
+
+describe('WAYPOINT-DASH-CLEAR: a dash IS the movement, so it takes the route with it', () => {
+  /**
+   * Builder OQ 2026-09-14 #2, ruled. A composed route correctly **survives** a
+   * non-dash ability — move and shoot is one turn — but `nextDraft` already
+   * drops `movePath` the moment a dash or a Dash catalyst is armed, because the
+   * dash *is* the reposition. The marks were separate controller state and did
+   * not follow, so they would have drawn a path the turn was never going to
+   * walk, and reappeared beside a fresh route if the player armed Move again.
+   *
+   * Derived rather than cleared: a mark is only meaningful while the route it
+   * belongs to still passes through it, so there is no second piece of state to
+   * keep in step and no code path that can forget.
+   */
+  const marks = [{ x: 6, y: 6 }, { x: 7, y: 6 }];
+
+  it('a cleared route leaves no marks — the dash case, by arithmetic', () => {
+    expect(liveWaypointMarks(marks, [])).toEqual([]);
+  });
+
+  it('a surviving route keeps the marks that are still on it', () => {
+    const path = [{ x: 6, y: 6 }, { x: 7, y: 6 }, { x: 8, y: 6 }];
+    expect(liveWaypointMarks(marks, path)).toEqual(marks);
+  });
+
+  it('a REPLACED route drops the marks it no longer passes through', () => {
+    // The subtler half: a plain move click auto-routes somewhere else, and a
+    // mark from the discarded route would label a square this path never visits.
+    const elsewhere = [{ x: 6, y: 8 }, { x: 7, y: 8 }];
+    expect(liveWaypointMarks(marks, elsewhere)).toEqual([]);
+  });
+
+  it('and keeps only the overlap when the two routes share a square', () => {
+    const partly = [{ x: 6, y: 6 }, { x: 6, y: 5 }];
+    expect(liveWaypointMarks(marks, partly)).toEqual([{ x: 6, y: 6 }]);
+  });
+
+  it('the marks it returns are copies — the board cannot edit the record', () => {
+    const source = [{ x: 6, y: 6 }];
+    const live = liveWaypointMarks(source, [{ x: 6, y: 6 }]);
+    live[0]!.x = 99;
+    expect(source[0]!.x).toBe(6);
+  });
+
+  it('arming a dash empties the draft\'s movePath — the engine\'s own rule', () => {
+    // The other half of the pair, at the function that owns it. Together with
+    // the filter above, "a dash clears the route and its marks" holds without
+    // the controller having to remember either.
+    const composed = { ...emptyDraft('u'), movePath: [{ x: 6, y: 6 }, { x: 7, y: 6 }] };
+    const dashed = nextDraft(composed, { type: 'selectAbility', abilityId: 'leap', isDash: true }, false);
+    expect(dashed.movePath, 'the dash owns the movement').toEqual([]);
+    expect(liveWaypointMarks(marks, dashed.movePath), 'so the marks go with it').toEqual([]);
+  });
+
+  it('a Dash CATALYST does the same — CAT-DASH-COST spends the Move too', () => {
+    const composed = { ...emptyDraft('u'), movePath: [{ x: 6, y: 6 }] };
+    const shifted = nextDraft(composed, { type: 'selectCatalyst', catalystId: 'shift', isDash: true }, false);
+    expect(shifted.movePath).toEqual([]);
+    expect(liveWaypointMarks(marks, shifted.movePath)).toEqual([]);
+  });
+
+  it('but a NON-dash ability leaves both — move and shoot is one turn', () => {
+    const composed = { ...emptyDraft('u'), movePath: [{ x: 6, y: 6 }, { x: 7, y: 6 }] };
+    const shot = nextDraft(composed, { type: 'selectAbility', abilityId: 'rail_shot', isDash: false }, false);
+    expect(shot.movePath, 'the walk is still part of the turn').toEqual(composed.movePath);
+    expect(liveWaypointMarks(marks, shot.movePath)).toEqual(marks);
+  });
+
+  it('and the order that goes out carries no movePath after a dash', () => {
+    // The AC's end-to-end half: what the engine is handed, not just what the
+    // board draws.
+    const composed = { ...emptyDraft(VEX.id), movePath: [{ x: 6, y: 6 }] };
+    const dashed = nextDraft(composed, { type: 'selectAbility', abilityId: 'combat_roll', isDash: true }, false);
+    const order = toUnitOrders(VEX, { ...dashed, aim: [{ x: 8, y: 7 }] });
+    expect(order.movePath, 'no path in the submitted order').toBeUndefined();
   });
 });

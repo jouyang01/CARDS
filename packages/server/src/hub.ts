@@ -25,6 +25,7 @@
  */
 
 import type { CatalystPool, CharacterDef, MapDef, Roster, UnitOrders } from '@cards/engine';
+import { DECISION_SECONDS, TIMEBANK_CHARGES, TIMEBANK_SECONDS } from '@cards/engine';
 import {
   ERROR_TEXT,
   PROTOCOL_VERSION,
@@ -34,8 +35,8 @@ import {
   type ServerMessage,
 } from './protocol.js';
 import {
-  canStart, charactersPerSeat, join, leave, lobbyReady, resolveRoomTurn, setPicks,
-  startFromPicks, startMatch, type Pick, type Room,
+  canStart, charactersPerSeat, controlledUnits, join, leave, lobbyReady, reclaim,
+  resolveRoomTurn, setPicks, startFromPicks, startMatch, type Pick, type Room,
 } from './room.js';
 import { filterEvents, ordersForTeam, teamView, visibleEnemyIds } from './view.js';
 
@@ -80,15 +81,77 @@ export class RoomHub {
   /** Seat ids that have completed a `join`. A socket is not a seat. */
   readonly #joined = new Set<string>();
   /**
+   * Socket id → the seat it speaks for (M3-RECONNECT).
+   *
+   * The two were the same thing until a reconnect could exist, and mostly still
+   * are: `open` binds a socket to itself, so a fresh connection's socket id *is*
+   * its seat id. A reclaim is the one case where they part — the DO mints a new
+   * socket id for the new connection, and the seat it takes over is the old one,
+   * with the old one's team, name, characters and submission still attached.
+   *
+   * Kept as an explicit map rather than by renaming the socket, because the DO
+   * hands us the id it minted on every frame and has no idea a reclaim happened.
+   */
+  readonly #bound = new Map<string, string>();
+  /**
    * This turn's submissions, by seat. Cleared the instant a turn resolves, so
    * "has this seat locked in" and "for which turn" can never disagree.
    */
   readonly #submissions = new Map<string, UnitOrders[]>();
   readonly #config: MatchConfig | undefined;
+  /**
+   * M3-TIMER — the clock, **injected**, exactly like `mintCode`'s randomness.
+   *
+   * The hub is otherwise a pure function of its messages, and a module that
+   * called `Date.now()` could only be tested by sleeping. A test passes a
+   * counter; the Durable Object passes the real clock.
+   */
+  readonly #now: () => number;
+  /**
+   * When this turn's decision window closes, in the injected clock's units.
+   * `undefined` before the match starts and between the resolve and the next
+   * window opening — there is no deadline when there is nothing to decide.
+   */
+  #deadline: number | undefined;
+  /** Time Bank charges left, per seat (TIMEBANK_CHARGES each, per match). */
+  readonly #charges = new Map<string, number>();
 
-  constructor(room: Room, config?: MatchConfig) {
+  constructor(room: Room, config?: MatchConfig, now: () => number = () => 0) {
     this.#room = room;
     this.#config = config;
+    this.#now = now;
+  }
+
+  /**
+   * When the current decision window closes, or `undefined` if none is open.
+   * The Durable Object reads this to set its alarm — the hub owns *when*, the
+   * runtime owns *how it is woken*.
+   */
+  get deadline(): number | undefined {
+    return this.#deadline;
+  }
+
+  /** Time Bank charges left for a seat. */
+  chargesFor(seatId: string): number {
+    return this.#charges.get(seatId) ?? TIMEBANK_CHARGES;
+  }
+
+  /**
+   * M3-TIMER — the decision window expired: resolve with whatever is in hand.
+   *
+   * **Missed submission → hold position** (ruled), and that needs no code of its
+   * own: `mergeSeatOrders` already contributes nothing for a seat with no
+   * submission, and a unit with no orders holds. So the timeout is the *same*
+   * resolve the last lock-in would have triggered, which is what keeps a timed
+   * turn and a played turn from being two different code paths.
+   *
+   * Idempotent and safe to call late: an alarm that fires after the turn already
+   * resolved finds no open window and does nothing.
+   */
+  expire(): void {
+    if (this.#deadline === undefined || this.#room.state === undefined) return;
+    if (this.#now() < this.#deadline) return; // woken early; the window is still open
+    this.resolveNow();
   }
 
   /** Seat ids that have locked in this turn, in join order. */
@@ -111,12 +174,19 @@ export class RoomHub {
    * `join` occupies no seat and counts against no bound, so opening sockets
    * cannot fill a room.
    */
-  open(seatId: string, sink: Sink): void {
-    this.#sinks.set(seatId, sink);
+  open(socketId: string, sink: Sink): void {
+    this.#sinks.set(socketId, sink);
+    this.#bound.set(socketId, socketId);
   }
 
-  /** Handle one frame from `seatId`. */
-  receive(seatId: string, raw: unknown): void {
+  /** The seat a socket speaks for. Itself, until a reclaim says otherwise. */
+  #seatOf(socketId: string): string {
+    return this.#bound.get(socketId) ?? socketId;
+  }
+
+  /** Handle one frame from the socket `socketId`. */
+  receive(socketId: string, raw: unknown): void {
+    const seatId = this.#seatOf(socketId);
     const sink = this.#sinks.get(seatId);
     if (sink === undefined) return; // frame from a socket we already dropped
 
@@ -132,6 +202,8 @@ export class RoomHub {
     if (msg.type === 'submit') return this.#receiveSubmit(seatId, msg.orders);
 
     if (msg.type === 'pick') return this.#receivePick(seatId, msg.picks);
+
+    if (msg.type === 'extend') return this.#receiveExtend(seatId);
 
     if (msg.type === 'start') {
       // LOBBY-START: pressing start is now the **only** way into a match, so a
@@ -154,6 +226,12 @@ export class RoomHub {
       return;
     }
 
+    // M3-RECONNECT: a ticket is a claim on a specific held seat, so it is tried
+    // *instead of* an ordinary join rather than after one — a ticket that failed
+    // must not quietly seat the client somewhere else, because the whole point
+    // of a reclaim is which seat it is.
+    if (msg.seatId !== undefined) return this.#reclaim(socketId, sink, msg.seatId);
+
     const result = join(this.#room, seatId, msg.name);
     if (!result.ok) {
       this.#send(seatId, errorMessage(result.reason));
@@ -175,6 +253,60 @@ export class RoomHub {
   }
 
   /**
+   * Take back a held seat and re-sync the client (M3-RECONNECT).
+   *
+   * Three things happen, in this order, and the order is the point:
+   *
+   * 1. **The seat is reclaimed** (`reclaim`, which owns the rules) and this
+   *    socket is bound to it, so every later frame from this connection speaks
+   *    as the old seat — including a submission it had not sent yet.
+   * 2. **The client is re-synced** with `matchStarted`. Deliberately the *same*
+   *    message the first start sends rather than a `resumed` of its own: a
+   *    rejoining client needs precisely what a starting one needs — the board as
+   *    its team may see it, and the characters it controls — and a second
+   *    message saying the same thing is a second one to keep in step.
+   * 3. **The room is told**, so a teammate's "disconnected" mark clears, and
+   *    the Decision phase is re-sent to everybody: the returning seat needs this
+   *    turn's window and lock list, and a stand-in teammate needs a control map
+   *    that no longer includes the characters just handed back.
+   *
+   * A refusal closes the socket, exactly as a refused join does. A client
+   * holding a ticket the room does not honour has nothing to wait for, and
+   * leaving it connected would leave it staring at a lobby it is not in.
+   */
+  #reclaim(socketId: string, sink: Sink, held: string): void {
+    const result = reclaim(this.#room, held);
+    if (!result.ok) {
+      this.#send(this.#seatOf(socketId), errorMessage(result.reason));
+      sink.close(CLOSE_POLICY, ERROR_TEXT[result.reason]);
+      this.#sinks.delete(this.#seatOf(socketId));
+      this.#bound.delete(socketId);
+      return;
+    }
+
+    this.#room = result.room;
+    this.#sinks.delete(this.#seatOf(socketId));
+    this.#bound.set(socketId, held);
+    this.#sinks.set(held, sink);
+    this.#joined.add(held);
+
+    const config = this.#config;
+    const state = this.#room.state;
+    if (config === undefined || state === undefined) return; // `reclaim` already refused this
+    const view = teamView(config.map, state, result.seat.team);
+    this.#send(held, {
+      type: 'matchStarted',
+      room: this.#view(),
+      seat: { ...result.seat, picks: [...result.seat.picks], unitIds: [...result.seat.unitIds] },
+      state: view.state,
+      visibleSquares: view.visibleSquares,
+      unitIds: controlledUnits(this.#room, held),
+    });
+    this.#broadcast({ type: 'roomUpdated', room: this.#view() }, held);
+    this.#sendDecision();
+  }
+
+  /**
    * Record a seat's lobby picks (M3-LOBBY).
    *
    * Every rule lives in `setPicks`; this is the transport. A refusal is answered
@@ -189,6 +321,32 @@ export class RoomHub {
     if (!result.ok) return this.#send(seatId, errorMessage(result.reason));
     this.#room = result.room;
     this.#sendLobby();
+  }
+
+  /**
+   * Spend a Time Bank charge on the open decision window (M3-TIMER).
+   *
+   * The extension is **the whole room's**, not the spender's: one deadline
+   * governs one turn, so a charge bought by one seat buys everybody the same ten
+   * seconds. A per-seat deadline would mean a turn had four different moments at
+   * which it resolved, which is not a thing a simultaneous turn can have.
+   *
+   * The charge is per seat and per match (`TIMEBANK_CHARGES`), and it is spent
+   * **only when it takes** — a refusal costs nothing, so a second click on a
+   * spent bank is an error message rather than a silently burnt resource.
+   */
+  #receiveExtend(seatId: string): void {
+    if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
+    if (this.#room.state === undefined) return this.#send(seatId, errorMessage('noMatch'));
+    if (this.#deadline === undefined) return this.#send(seatId, errorMessage('noBank'));
+    const left = this.chargesFor(seatId);
+    if (left <= 0) return this.#send(seatId, errorMessage('noBank'));
+    this.#charges.set(seatId, left - 1);
+    // Added to what is left rather than resetting the window: the bank *extends*
+    // a deadline, so banking at 8 seconds leaves 18, not 40.
+    this.#deadline += TIMEBANK_SECONDS * 1000;
+    // Everyone is re-sent their Decision view, because everyone's clock moved.
+    this.#sendDecision();
   }
 
   /**
@@ -262,9 +420,10 @@ export class RoomHub {
       this.#send(seat.seatId, {
         type: 'matchStarted',
         room: this.#view(),
+        seat: { ...seat, picks: [...seat.picks], unitIds: [...seat.unitIds] },
         state: view.state,
         visibleSquares: view.visibleSquares,
-        unitIds: [...seat.unitIds],
+        unitIds: controlledUnits(this.#room, seat.seatId),
       });
     }
     this.#sendDecision();
@@ -282,10 +441,30 @@ export class RoomHub {
   #sendDecision(): void {
     if (this.#config === undefined || this.#room.state === undefined) return;
     const state = this.#room.state;
+    // M3-TIMER: a decision window opens with the phase it belongs to. Set here
+    // rather than at the resolve, so the one place that says "everybody may now
+    // decide" is also the one that says how long for.
+    //
+    // `??=`, because this method also runs when a *teammate* locks in and when
+    // the bank is spent — a plain assignment would hand the room a fresh 40
+    // seconds every time somebody pressed a button, which is a clock that never
+    // runs out. `resolveNow` is the only thing that clears it, so exactly one
+    // window exists per turn. A finished match has nothing to decide and so has
+    // no window at all.
+    if (state.status !== 'active') this.#deadline = undefined;
+    else this.#deadline ??= this.#now() + DECISION_SECONDS * 1000;
+    const remainingMs = this.#deadline === undefined
+      ? undefined
+      : Math.max(0, this.#deadline - this.#now());
+    // M3-RECONNECT: the readiness counts are over the seats this turn is still
+    // owed an answer by, so "1/1 locked" is true on a team whose other player
+    // has dropped — a denominator that counted an empty chair would leave the
+    // waiting line permanently one short of the number that ends it.
+    const answering = new Set(this.#answering());
     for (const seat of this.#room.seats) {
       const view = teamView(this.#config.map, state, seat.team);
-      const mine = this.#room.seats.filter((s) => s.team === seat.team);
-      const theirs = this.#room.seats.filter((s) => s.team !== seat.team);
+      const mine = this.#room.seats.filter((s) => s.team === seat.team && answering.has(s.seatId));
+      const theirs = this.#room.seats.filter((s) => s.team !== seat.team && answering.has(s.seatId));
       this.#send(seat.seatId, {
         type: 'decision',
         turn: state.turn,
@@ -301,8 +480,44 @@ export class RoomHub {
         // and a seat id is a durable handle on one specific opponent.
         enemyLocked: theirs.filter((s) => this.#submissions.has(s.seatId)).length,
         enemyOf: theirs.length,
+        // M3-TIMER. A duration rather than an instant, so no client has to
+        // reason about the skew between its clock and the server's; and the
+        // bank is per seat, so it rides the per-seat message rather than the
+        // broadcast one.
+        ...(remainingMs === undefined ? {} : { remainingMs }),
+        bank: this.chargesFor(seat.seatId),
+        // M3-RECONNECT: the control map rides every Decision phase, because it
+        // can now change mid-match — a seat that misses a whole turn hands its
+        // characters to a teammate, and gets them back when it returns.
+        unitIds: controlledUnits(this.#room, seat.seatId),
       });
     }
+  }
+
+  /**
+   * The seats this turn is still owed an answer by (M3-RECONNECT).
+   *
+   * A **disconnected** seat is not one of them — there is nobody behind it to
+   * press Lock In, and waiting on it would make every turn after a permanent
+   * drop take the full `DECISION_SECONDS` before it could resolve. It is still
+   * counted while its own submission stands, because a player who locked in and
+   * *then* dropped answered this turn: their orders run, and the room is not
+   * pretending they are absent.
+   *
+   * This is also the ruled "hold" arriving early rather than differently — the
+   * absent seat contributes nothing to the merge either way, so the only thing
+   * that changes is how long everybody else waits to find out.
+   */
+  #answering(): string[] {
+    return this.#room.seats
+      .filter((s) => s.connected || this.#submissions.has(s.seatId))
+      .map((s) => s.seatId);
+  }
+
+  /** Has every seat that can still answer, answered? */
+  #allIn(): boolean {
+    const answering = this.#answering();
+    return answering.length > 0 && answering.every((id) => this.#submissions.has(id));
   }
 
   /**
@@ -319,15 +534,18 @@ export class RoomHub {
     if (this.#room.state === undefined) return this.#send(seatId, errorMessage('noMatch'));
     if (this.#submissions.has(seatId)) return this.#send(seatId, errorMessage('alreadyLocked'));
 
-    const seat = this.#room.seats.find((s) => s.seatId === seatId)!;
-    if (orders.some((o) => !seat.unitIds.includes(o.unitId))) {
+    // Checked against what this seat **controls**, not against the characters it
+    // was dealt: a stand-in holding an abandoned teammate's units is entitled to
+    // order them, and the original seat is not while it is away.
+    const controls = controlledUnits(this.#room, seatId);
+    if (orders.some((o) => !controls.includes(o.unitId))) {
       return this.#send(seatId, errorMessage('notYours'));
     }
 
     this.#submissions.set(seatId, orders);
-    const of = this.#room.seats.length;
+    const of = this.#answering().length;
     this.#broadcast({ type: 'submitted', locked: this.#submissions.size, of });
-    if (this.#submissions.size >= of) return this.resolveNow();
+    if (this.#allIn()) return this.resolveNow();
     // A teammate's plan is not hidden information, so the side that just gained
     // one is re-sent its Decision view. The enemy's `decision` message is
     // rebuilt too and still contains none of this.
@@ -357,6 +575,11 @@ export class RoomHub {
     const revealed: Record<string, UnitOrders[]> = {};
     for (const [seatId, o] of this.#submissions) revealed[seatId] = o;
     this.#submissions.clear();
+    // M3-TIMER: this window is spent. Cleared here rather than re-set, because
+    // `#sendDecision` is what opens one — and it is about to run. Clearing is
+    // also what makes `expire()` idempotent: an alarm that fires after the turn
+    // already resolved finds no window and does nothing.
+    this.#deadline = undefined;
 
     const state = resolved.room.state!;
     for (const seat of this.#room.seats) {
@@ -380,24 +603,31 @@ export class RoomHub {
   /**
    * Drop a socket. Idempotent: a close event after an error close is ordinary,
    * and a room that double-removed a seat would leak capacity.
+   *
+   * **In a lobby the seat goes; in a match it is held** — `leave` owns that
+   * split (M3-RECONNECT). The submission is **kept** for a match seat: a player
+   * who locked in and then dropped had already taken their turn, and binning it
+   * would punish them for a socket closing after the decision was made. In a
+   * lobby there is nothing to keep.
    */
-  close(seatId: string): void {
+  close(socketId: string): void {
+    const seatId = this.#seatOf(socketId);
+    this.#bound.delete(socketId);
     this.#sinks.delete(seatId);
     if (!this.#joined.delete(seatId)) return; // never joined — no seat to free
+    const inMatch = this.#room.state !== undefined;
     this.#room = leave(this.#room, seatId);
-    // A seat that leaves takes its submission with it, and may have been the one
-    // everybody was waiting for — so the turn can now be complete. Handling the
-    // disconnect-mid-turn *rule* (hold, or forfeit) is M3-TIMER's; all this does
-    // is stop the room waiting forever on a socket that is gone.
-    this.#submissions.delete(seatId);
+    if (!inMatch) this.#submissions.delete(seatId);
     this.#broadcast({ type: 'seatLeft', seatId, room: this.#view() });
     // A departure re-prices the lobby: the survivors on that team now owe more
     // characters than they picked, so their pick screens have to be told.
     this.#sendLobby();
-    if (this.#room.state !== undefined && this.#room.seats.length > 0
-      && this.#submissions.size >= this.#room.seats.length) {
-      this.resolveNow();
-    }
+    if (!inMatch) return;
+    // The room may have been waiting on exactly this seat. It is not owed an
+    // answer any more (`#answering`), so the turn can now be complete — and
+    // everybody else's Decision view has a smaller denominator either way.
+    if (this.#allIn()) return this.resolveNow();
+    this.#sendDecision();
   }
 
   /**

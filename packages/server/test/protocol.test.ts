@@ -311,12 +311,30 @@ describe('M3-PROTOCOL: a seat that leaves does not hang the turn', () => {
     expect(sockets[0]!.of('turnResolved'), 'the missing seat left, so the turn is complete').toHaveLength(1);
   });
 
-  it('a leaver takes its own submission with it', () => {
+  it('but a leaver KEEPS the submission it already made (M3-RECONNECT)', () => {
+    // This used to bin it, which was the wrong direction once a seat could come
+    // back: a player who locked in and *then* dropped had already taken their
+    // turn, and throwing the orders away punishes them for a socket closing
+    // after the decision was made. The seat is held, and so is its answer.
     const { hub } = running(4);
     hub.receive('s0', submitFrame([]));
     expect(hub.locked).toEqual(['s0']);
     hub.close('s0');
-    expect(hub.locked).toEqual([]);
+    expect(hub.locked, 'the orders stand').toEqual(['s0']);
+  });
+
+  it('a lobby seat still takes everything with it — there is nothing to hold', () => {
+    // The split `leave` makes: a lobby seat is nothing but a socket.
+    const { hub } = running(4);
+    const lobby = new RoomHub(createRoom('WXYZ', '2v2'), config);
+    for (const id of ['a', 'b']) {
+      lobby.open(id, new FakeSocket());
+      lobby.receive(id, joinFrame(id));
+    }
+    expect(lobby.room.seats).toHaveLength(2);
+    lobby.close('a');
+    expect(lobby.room.seats, 'gone, and the slot is free again').toHaveLength(1);
+    expect(hub.room.seats, 'while a running room holds all four').toHaveLength(4);
   });
 });
 

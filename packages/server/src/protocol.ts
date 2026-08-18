@@ -18,7 +18,7 @@
  */
 
 import type { FormatId, GameState, TurnEvent, UnitOrders, Vec2 } from '@cards/engine';
-import type { JoinRejection, Pick, PickRejection, Room, Seat } from './room.js';
+import type { JoinRejection, Pick, PickRejection, ReclaimRejection, Room, Seat } from './room.js';
 
 /** Bumped whenever a message's meaning changes. Clients send it on connect. */
 export const PROTOCOL_VERSION = 1;
@@ -83,7 +83,17 @@ export interface LobbyView {
 
 /** Client → server. */
 export type ClientMessage =
-  | { type: 'join'; version: number; name?: string }
+  /**
+   * The handshake. `seatId` is a **reclaim ticket** (M3-RECONNECT): the id of a
+   * seat this client held in this room before its socket went away.
+   *
+   * Optional, and only meaningful for a started match — a fresh joiner sends
+   * none and is seated normally. Presenting one is the *only* way back into a
+   * running room, which is what keeps the ruled reserve honest: `join` turns
+   * away every fresh socket to a started match, so a stranger who guessed the
+   * room code has no seat id to present and nothing to take.
+   */
+  | { type: 'join'; version: number; name?: string; seatId?: string }
   /**
    * Submit this seat's orders and lock in (M3-PROTOCOL). One message, not two:
    * a separate "lock" would let a seat lock with orders the server had not
@@ -107,6 +117,15 @@ export type ClientMessage =
    * error, and each send replaces the seat's picks wholesale.
    */
   | { type: 'pick'; picks: Pick[] }
+  /**
+   * Spend a Time Bank charge on this turn's decision window (M3-TIMER).
+   *
+   * Carries no amount: what a charge buys is `TIMEBANK_SECONDS`, which is the
+   * engine's constant, and a client that named its own extension would be
+   * setting the rule. The server answers by re-sending `decision` with the new
+   * `remainingMs` — the extension is only real once the authority says so.
+   */
+  | { type: 'extend' }
   /** A liveness probe the client can send; the server answers `pong`. */
   | { type: 'ping' };
 
@@ -114,6 +133,7 @@ export type ClientMessage =
 export type ErrorCode =
   | JoinRejection
   | PickRejection
+  | ReclaimRejection
   | 'badVersion'
   | 'badMessage'
   | 'notJoined'
@@ -127,7 +147,9 @@ export type ErrorCode =
   /** Joined a room whose match has already begun (M3-JOIN-GUARD). */
   | 'inProgress'
   /** Asked to start a room that cannot start yet, or has already started. */
-  | 'cannotStart';
+  | 'cannotStart'
+  /** Asked to extend with no Time Bank charge left, or with no window open. */
+  | 'noBank';
 
 /** Server → client. */
 export type ServerMessage =
@@ -143,10 +165,15 @@ export type ServerMessage =
    */
   | { type: 'lobby'; room: RoomView; lobby: LobbyView }
   /**
-   * The match began: the board **as this seat's team may see it**, and who this
-   * seat is ordering. Per-seat, never broadcast (M3-HIDDEN).
+   * The match began: the board **as this seat's team may see it**, who this
+   * seat is, and what it is ordering. Per-seat, never broadcast (M3-HIDDEN).
+   *
+   * Also the **resync a reclaimed seat gets** (M3-RECONNECT) — the same message,
+   * deliberately, because a rejoining client needs exactly what a starting one
+   * needs. `seat` is here for that: a reconnect never sees a `joined`, so this
+   * has to be able to say who you are on its own.
    */
-  | { type: 'matchStarted'; room: RoomView; state: GameState; visibleSquares: Vec2[]; unitIds: string[] }
+  | { type: 'matchStarted'; room: RoomView; seat: Seat; state: GameState; visibleSquares: Vec2[]; unitIds: string[] }
   /**
    * The Decision phase, as this seat may see it (M3-HIDDEN).
    *
@@ -176,6 +203,32 @@ export type ServerMessage =
        */
       enemyLocked: number;
       enemyOf: number;
+      /**
+       * M3-TIMER — how long is left in this decision window, in milliseconds.
+       *
+       * **Remaining, not a deadline.** An absolute instant would be in the
+       * server's clock, and the client would have to guess the skew between that
+       * and its own to draw a countdown; a duration is the same number on both
+       * machines. The clock is still the server's — this is measured at send
+       * time, and it is the server that acts on it when it runs out.
+       *
+       * `undefined` when no window is open (the match has ended), which is the
+       * signal to draw no countdown rather than a zero.
+       */
+      remainingMs?: number;
+      /** Time Bank charges this seat has left (`TIMEBANK_CHARGES` per match). */
+      bank: number;
+      /**
+       * The characters this seat may order **this turn** (M3-RECONNECT).
+       *
+       * `matchStarted` used to be the only place the control map appeared, which
+       * was fine while it never changed. It changes now: a teammate who
+       * disconnects and misses a whole turn hands their characters over
+       * (`controlledUnits`), and hands them back on reclaim. A control map sent
+       * once at the start would leave a stand-in unable to order the characters
+       * the server has already given them.
+       */
+      unitIds: string[];
     }
   /** This seat's submission was accepted; `locked` is the count so far. */
   | { type: 'submitted'; locked: number; of: number }
@@ -228,6 +281,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   const msg = parsed as Record<string, unknown>;
   if (msg['type'] === 'ping') return { type: 'ping' };
   if (msg['type'] === 'start') return { type: 'start' };
+  if (msg['type'] === 'extend') return { type: 'extend' };
   // Picks are checked for *shape* only — whether the ids name real characters,
   // add up to what the seat owes, or clash under R3 is `setPicks`' business, and
   // a second copy of those rules here is a second copy to keep in step.
@@ -250,9 +304,13 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   }
   if (msg['type'] === 'join' && typeof msg['version'] === 'number') {
     const name = typeof msg['name'] === 'string' ? msg['name'] : undefined;
-    return name === undefined
-      ? { type: 'join', version: msg['version'] }
-      : { type: 'join', version: msg['version'], name };
+    const seatId = typeof msg['seatId'] === 'string' ? msg['seatId'] : undefined;
+    return {
+      type: 'join',
+      version: msg['version'],
+      ...(name === undefined ? {} : { name }),
+      ...(seatId === undefined ? {} : { seatId }),
+    };
   }
   return undefined;
 }
@@ -294,6 +352,8 @@ export const ERROR_TEXT: Record<ErrorCode, string> = {
   notYours: 'that character belongs to another seat',
   inProgress: 'this match has already started',
   cannotStart: 'this room cannot start yet',
+  noBank: 'no Time Bank charge left',
+  seatTaken: 'somebody is already sitting in that seat',
   unknownSeat: 'no such seat in this room',
   wrongCount: 'that is not the number of characters this seat plays',
   unknownCharacter: 'no such character',

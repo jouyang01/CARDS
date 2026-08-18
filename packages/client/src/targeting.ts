@@ -478,6 +478,26 @@ export function pathSpend(origin: Vec2, path: readonly Vec2[]): number {
   return spent;
 }
 
+/**
+ * WAYPOINT-DASH-CLEAR — the waypoint marks that still mean something.
+ *
+ * A mark records a square the player *clicked* while composing a move. It is
+ * only meaningful while the route it belongs to is still the route: `nextDraft`
+ * already drops `movePath` the moment a dash (or a Dash catalyst) is armed,
+ * because **a dash IS the movement** — so marks left over from the discarded
+ * route would draw a path the turn will not walk, and would reappear beside a
+ * fresh one if the player armed Move again.
+ *
+ * Filtering rather than remembering to clear: the marks are derived from the
+ * path on every render, so there is no second piece of state to keep in step and
+ * no code path that can forget. A cleared route yields no marks by arithmetic.
+ */
+export function liveWaypointMarks(marks: readonly Vec2[], movePath: readonly Vec2[]): Vec2[] {
+  if (movePath.length === 0) return [];
+  const onPath = new Set(movePath.map((p) => `${p.x},${p.y}`));
+  return marks.filter((m) => onPath.has(`${m.x},${m.y}`)).map((m) => ({ x: m.x, y: m.y }));
+}
+
 /** Movement left after walking `path` — the number the Move button shows. */
 export function remainingMove(unit: UnitState, sprint: boolean, path: readonly Vec2[]): number {
   return Math.max(0, movementBudget(unit, sprint) - pathSpend(unit.pos, path));
