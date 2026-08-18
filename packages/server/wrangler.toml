@@ -1,10 +1,20 @@
 # Cloudflare Worker + one Durable Object per room (M3-ROOM).
 #
-# `wrangler deploy` is DELIBERATELY not wired to CI here — that is M3-DEPLOY,
-# and it needs owner infrastructure decisions (account, route, custom domain)
-# that no build step should guess at. This file exists so the Worker builds and
-# runs locally under `wrangler dev` / miniflare, and so the deploy item has a
-# starting point rather than a blank page.
+# M3-DEPLOY-PREP wired the tooling around this file; the publish itself is still
+# a separate, deliberate act.
+#
+#   npm run dev:server   `wrangler dev --local` — the Worker on the real runtime
+#   npm run smoke        boot it and check it mints a room (scripts/smoke.mjs)
+#   npm run deploy       `wrangler deploy` — needs Cloudflare credentials
+#
+# `deploy` is DELIBERATELY not run by CI here. That is M3-DEPLOY-LIVE, and it
+# needs a credential this repository does not have: the owner's `wrangler login`
+# lives on their Mac, and a build container is not logged in. The two ways to
+# close that (an API token as a GitHub secret, or the owner running the deploy
+# locally) are an owner decision, not something a workflow should assume.
+#
+# The client finds the deployed Worker through `VITE_WORKER_ORIGIN`, which is the
+# `workers.dev` host this `name` produces. Keep the two in step.
 
 name = "cards-rooms"
 main = "src/worker.ts"

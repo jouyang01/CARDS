@@ -9,6 +9,9 @@
     "test": "npm run test --workspaces --if-present",
     "dev": "npm run dev -w @cards/client",
     "build": "npm run build -w @cards/client",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev:server": "npm run dev -w @cards/server",
+    "smoke": "npm run smoke -w @cards/server",
+    "deploy": "npm run deploy -w @cards/server"
   }
 }

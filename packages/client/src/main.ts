@@ -27,7 +27,7 @@ import { describeSetup, parseSetup } from './match-setup.js';
 import { RoomClient, type NetState } from './net.js';
 import { lobbyStatus } from './lobby.js';
 import { createLobbyScreen, type CatalystOption } from './lobby-screen.js';
-import { parseRoomLink, roomSocketUrl, type RoomLink } from './room-url.js';
+import { parseRoomLink, roomSocketUrl, workerUrl, type RoomLink } from './room-url.js';
 import { createCreateScreen } from './create-screen.js';
 import { connectionLabel, waitingLabel } from './waiting.js';
 import { reconnectDelayMs, shouldReconnect, ticketsIn } from './reconnect.js';
@@ -58,6 +58,18 @@ const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn] as unkn
 
 /** The nine catalysts (CAT1). Validated here for the same reason the map is. */
 const CATALYSTS = catalystData as unknown as CatalystData;
+
+/**
+ * M3-DEPLOY-PREP — where the Worker is, read once, here.
+ *
+ * The **only** place this build's environment is consulted. Everything that
+ * needs it takes it as an argument, which is what keeps `room-url.ts` testable
+ * without a bundler and what stopped the socket URL being a `localhost` constant
+ * somebody would have to remember to change.
+ *
+ * Empty in development and in the hot-seat, where the page *is* the server.
+ */
+const WORKER_ORIGIN = import.meta.env.VITE_WORKER_ORIGIN ?? '';
 
 const app = document.getElementById('app')!;
 
@@ -100,7 +112,9 @@ function bootCreateRoom(): void {
   root.className = 'lobby';
   board.replaceChildren(root);
   createCreateScreen({ root }, MAPS, {
-    post: (path) => fetch(path, { method: 'POST' }),
+    // The Worker's origin rather than the page's: on Pages the two differ, and
+    // a relative POST would ask a static host to mint a room.
+    post: (path) => fetch(workerUrl(window.location, path, WORKER_ORIGIN), { method: 'POST' }),
     navigate: (href) => { window.location.search = href; },
   });
 }
@@ -133,7 +147,7 @@ function joinRoom(link: RoomLink): void {
    * first connect never exercises.
    */
   const connect = (): void => {
-    const socket = new WebSocket(roomSocketUrl(window.location, link.code));
+    const socket = new WebSocket(roomSocketUrl(window.location, link.code, WORKER_ORIGIN));
     const sink = {
       send: (data: string) => { socket.send(data); },
       close: () => { socket.close(); },

@@ -41,6 +41,17 @@ jobs:
         run: npm run build
         env:
           GH_PAGES_BASE: /${{ github.event.repository.name }}/
+          # M3-DEPLOY-PREP: where the Worker is. The deployed client is on Pages
+          # and the Worker is on workers.dev, so this is the one thing a build
+          # cannot derive from the page it will be served from.
+          #
+          # A repository *variable* rather than a secret: it is a public hostname
+          # that ships in the bundle, and putting it in the settings rather than
+          # in this file means changing it does not need a commit. Empty until
+          # the owner sets it (M3-DEPLOY-LIVE), and empty means same-origin —
+          # so the Pages build keeps working, with the networked path simply not
+          # reaching a server yet.
+          VITE_WORKER_ORIGIN: ${{ vars.WORKER_ORIGIN }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
