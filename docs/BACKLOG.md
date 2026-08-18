@@ -13,99 +13,61 @@ them. **`@cards/server` imports `@cards/engine` only, never the client** (the cl
 server protocol **types only**, `import type`). **Movement is Manhattan (MET1); aiming is Euclidean
 (AIM-METRIC).** **Open/update a PR to `main` every session** (CLAUDE.md).
 
+> ⚠️ **`main` is now LIVE.** A green push to `main` publishes the Worker (Cloudflare) and the client
+> (GitHub Pages) automatically. Keep it green.
+
 ## ✅ COMPLETE
 
-- The full local hot-seat game + AR parity + the screenshot UI batch + M3-ROOM…M3-LOCKLIST.
-- **PR #73:** WAYPOINT-TELL, M3-WAIT-STATE + M3-CONN-STATE, CREATE-LINK, BASIC-BEAM.
-- **PR #75 (this review):** **WAYPOINT-DASH-CLEAR** (a dash takes the composed route + marks with it,
-  derived not cleared), **M3-END-SCREEN** (a decided match says who won, per-seat, and offers the front
-  door), **M3-TIMER** (the 40s server clock, injected; one deadline per room; Time Bank +10s; missed →
-  hold), **M3-RECONNECT** (a dropped seat is held, reclaimed by name, and covered by a teammate
-  meanwhile — the handoff derived from `connected`+`missedTurns`).
+- The full local hot-seat game + AR parity + the screenshot UI batch + M3-ROOM…M3-LOCKLIST, the whole
+  M3 networked loop (lobby, net board, timer, reconnect/handoff, end screen), and the roster/basics work.
+- **PR #77 (this review):** **TIMER-PERSIST** (the decision window + Time Bank survive DO eviction;
+  RECONNECT-DETACH restores every seat disconnected), **NET-PRESENCE-UI** (mark disconnected seats +
+  tell a stand-in it's covering), **M3-DEPLOY-PREP** (the client's Worker origin is a build var; smoke
+  check), **M3-DEPLOY-LIVE** (CI publishes the Worker on a green `main` — **the game is deployed**;
+  Worker live at `cards-rooms.lockstepcards.workers.dev`, client on GitHub Pages).
 
-Current suite: **1876 tests** (858 + 792 + 226), typecheck + build clean. Engine source untouched.
+Current suite: **1914 tests** (882 + 792 + 240), typecheck + build clean. Engine source untouched.
 
-> **The networked game is feature-complete and playable end-to-end.** Remaining: two robustness/polish
-> items, then **deploy** — the prep is unblocked now; the live deploy is one owner login away (the
-> owner is setting up Cloudflare).
+## 🔧 OWNER ACTION (one setting — unblocks internet multiplayer)
+
+- **Set the repo VARIABLE `WORKER_ORIGIN` = `cards-rooms.lockstepcards.workers.dev`.** GitHub → repo
+  **Settings → Secrets and variables → Actions → Variables** tab → **New repository variable**. Then
+  re-run the Pages deploy (push any commit to `main`, or re-run the workflow). Until this is set, the
+  deployed client at `https://jouyang01.github.io/CARDS/` is same-origin and the networked path reaches
+  no server (Builder OQ 2026-09-16 #4). **The Worker 404 at its root is expected — it is the backend,
+  not the website.**
 
 ### Build order and dependencies
 
-**TIMER-PERSIST → NET-PRESENCE-UI → M3-DEPLOY-PREP → M3-DEPLOY-LIVE.** The first three are unblocked;
-M3-DEPLOY-LIVE is blocked only on the owner's Cloudflare login (in progress). **BASIC-MODES** is a
-separate engine session after. Realistic one-session cut: the first three, with M3-DEPLOY-LIVE landing
-the moment the owner confirms login.
+**SUBMISSIONS-PERSIST → NET-PRESENCE-ENEMY → BASIC-MODES.** The first two are small; BASIC-MODES is the
+last engine knob and its own session. No hard dependencies between them.
 
 ---
 
-## Server — deployed-play robustness (do before deploy)
+## Server — finish TIMER-PERSIST's job (do first)
 
-### TIMER-PERSIST. The decision deadline + Time Bank charges survive DO hibernation (SERVER, small) — UNBLOCKED (first)
-**Addresses Builder OQ 2026-09-15 #1 + #3.** `#deadline` and the Time Bank charge counts are **in
-memory only**, so a Durable Object evicted mid-decision returns with no open window (the turn waits for
-players until the alarm re-arms) and with everyone's charges reset. No regression vs pre-M3-TIMER, but
-eviction happens in **production** — this must be solid before deploy. *AC: the open deadline (as a
-duration or an absolute the DO can rehydrate) **and** each seat's remaining Time Bank charges are
-**persisted on the `Room` record** and **rehydrated in `#arm`** on wake; a Durable Object that reloads
-mid-decision resumes the same window and the same charge counts; a test evicts/reconstructs a DO
-mid-turn and asserts the deadline and charges are unchanged.* **Spec Notes.** Files:
-`packages/server/src/durable-object.ts` (persist alongside the existing `Room` write in
-`blockConcurrencyWhile`/on change), `hub.ts` (`#arm` rehydrate; the `Room` type gains the fields). One
-field-group on `Room` + a rehydrate line, as the Builder scoped. Keep it plain-JSON. Ruled in
-edge-cases (TIMER-PERSIST). Out of scope: the idle-player rule (flagged, not scheduled); changing the
-clock semantics.
+### SUBMISSIONS-PERSIST. Locked-in orders survive a DO eviction (SERVER, small) — UNBLOCKED (first)
+**Addresses Builder OQ 2026-09-16 #2.** TIMER-PERSIST persisted the deadline and the Time Bank charges;
+the **third** in-memory thing is this turn's submissions (`hub.ts` `#submissions`), so a Durable Object
+evicted mid-turn resumes the right window but every seat reads **unlocked** and must re-lock. *AC: the
+current turn's locked-in orders are **persisted on the `Room` record** (a plain object, same shape as
+`bank`) and **rehydrated on restore**, so a DO reconstructed mid-turn shows each seat still locked with
+its submitted orders; a test evicts/reconstructs a DO after a lock-in and asserts the submission and
+lock state are unchanged.* **Spec Notes.** Files: `packages/server/src/durable-object.ts` (persist
+alongside the deadline/charges write), `hub.ts` (`#submissions` rehydrate; the `Room` type gains the
+field). Plain-JSON, deterministic. This is the gap between "the clock survives" (done) and "the turn
+survives". Out of scope: mid-flight order *editing*; the idle-player rule (flagged).
 
-## Client — presence polish
+## Client — the optional presence follow-up
 
-### NET-PRESENCE-UI. Show disconnected seats and who is covering for whom (CLIENT, small) — UNBLOCKED
-**Addresses Builder OQ 2026-09-15 #4 + #5.** The handoff is server-correct but silent: a stand-in's
-board grows the disconnected teammate's characters with nothing saying so, and `RoomView.seats` carries
-`connected` no screen draws. *AC: the **lobby and the topbar mark a disconnected seat** (a dimmed / ❌
-nameplate, read from `seats.connected`); a seat **covering** for a disconnected teammate is **told so**
-(a line in the wait banner, or a mark on the borrowed nameplates), so the extra characters are
-explained; a test asserts a disconnected seat renders marked and a covering seat shows the cover
-notice.* **Spec Notes.** Files: `packages/client/src/` (the lobby view + the in-match topbar/HUD).
-Read `connected` + the server's derived control map (HANDOFF) — **recompute nothing**. Client-only, no
-protocol change. Ruled in edge-cases (NET-PRESENCE-UI). Out of scope: the handoff rule (server, shipped);
-reconnect logic (shipped).
-
-## Deploy — the last gate to internet multiplayer
-
-### M3-DEPLOY-PREP. Everything for deploy except the auth-gated push (SERVER + CLIENT + tooling) — UNBLOCKED
-Do the deploy plumbing that does **not** need the Cloudflare account, so the live deploy is one command
-once the owner is logged in. *AC: **`wrangler` is added** as a dev dependency and a **`deploy` script**
-exists for the Worker (`packages/server`, against the existing `wrangler.toml` — DO + `new_sqlite_classes`
-migration already declared); the **client's production Worker URL is configurable** (a build-time
-env/config, not a hard-coded `localhost` socket) so the built client connects to the deployed Worker's
-`wss://` origin; a **`wrangler dev`/miniflare smoke check** boots the Worker locally against the real
-runtime (first real-runtime check); the build (`npm run build`) produces the Pages artifact. Tests/checks:
-the smoke check boots and answers a health/`POST /rooms`; the client reads the Worker URL from config,
-not a constant.* **Spec Notes.** Files: `packages/server/package.json` (wrangler dep + `deploy` script),
-`packages/client/src/main.ts` (the socket URL from config/env), root scripts. Confirm the unauthenticated
-`POST …/start` route is gone (done PR #68). **Do not deploy** here — that is M3-DEPLOY-LIVE. Out of
-scope: the live push; custom domains.
-
-### M3-DEPLOY-LIVE. Deploy the Worker + client and wire the URLs (SERVER + CLIENT) — BLOCKED on a deploy CREDENTIAL in the build env (owner login done)
-The actual publish. **Owner inputs received (2026-09-15):** the owner ran `wrangler login` **on their
-Mac** and registered the **`lockstepcards`** workers.dev subdomain — so the Worker will publish to
-`cards-server.lockstepcards.workers.dev` (or similar), and free subdomains are the choice (no custom
-domain). *AC: `wrangler deploy` publishes the Worker (Durable Object with the SQLite migration —
-free-plan compatible); the client is deployed to **Pages** (or the repo's existing GitHub Pages
-workflow); the deployed client points at the deployed Worker's `wss://` URL (from M3-DEPLOY-PREP's
-config, e.g. `wss://cards-server.lockstepcards.workers.dev`); a real two-machine create → pick → play →
-resolve round-trips over the internet; the deploy gate is legible (pass/fail surfaced).*
-**Spec Notes — the remaining blocker is WHERE the deploy runs.** The owner's `wrangler login` lives on
-**their Mac only**; the Builder runs in a **cloud container that is not logged in**, so it cannot
-`wrangler deploy` as-is. Two ways to close this, owner to choose:
-- **(A, recommended) A Cloudflare API token in CI.** The owner creates an "Edit Cloudflare Workers"
-  token in the dashboard and adds it as a **GitHub repo secret** `CLOUDFLARE_API_TOKEN` (via the GitHub
-  website — never pasted into chat). Then a GitHub Actions workflow deploys the Worker on push (the repo
-  already has a Pages workflow for the client). Hands-off after setup, tied to no one laptop.
-- **(B) Owner runs it on their Mac.** Requires the repo cloned locally; the owner runs a single
-  `npm run deploy` the Builder provides. Fastest to a first deploy, but repeats on every deploy and
-  needs the repo on the Mac.
-**Flag the owner to pick A or B before building this.** Out of scope: custom domains (owner chose free
-subdomains); a full CI matrix.
+### NET-PRESENCE-ENEMY. An enemy "1 of 2 present" count (CLIENT, tiny) — UNBLOCKED (optional)
+**Addresses Builder OQ 2026-09-16 #6.** NET-PRESENCE-UI marks own-team disconnects; the enemy block
+shows only a pick count. *AC: the enemy lobby/topbar block may show a **present count** ("1 of 2
+present") beside its pick count; enemy character **ids and picks stay hidden** (BLIND-PICK); a test
+asserts the enemy present-count renders and no enemy id/pick leaks.* **Spec Notes.** Files:
+`packages/client/src/` (the enemy lobby/topbar block). Coarse status like the lock-count — **not** a
+golden-rule-#5 leak (ruled). Optional, not load-bearing; skip if the session is full. Out of scope:
+enemy seat ids; any pick data.
 
 ## Engine — the last roster knob
 
@@ -113,34 +75,34 @@ subdomains); a full CI matrix.
 *AC: an ability may carry `modes: [AbilityProfile, AbilityProfile]` chosen at aim time (order carries
 the index); ships with **Kestrel's Twin Bolts** (wide cone 2 ↔ thin line 6) and **returns Kestrel to
 the client's default `CATALOG`**; the client offers the toggle (AIM2 UI). Tests: each mode resolves its
-own profile.* **Spec Notes.** The largest BASIC-\* ask (real UI work); its own session, after the deploy
-work. Out of scope: other kits.
+own profile; validation rejects a malformed `modes` array.* **Spec Notes.** The largest BASIC-\* ask
+(real aim-UI work); its own session. Engine change → ships with tests (golden rule #3); keep the mode
+geometry integer/deterministic. Out of scope: other kits.
 
 ## Flagged future (not scheduled)
 
-- **M3-REMATCH** — re-enter the same room from the end screen (both players agree to re-arm); a protocol
-  conversation nobody has specced. The loop closes via the create form without it (Builder OQ 2026-09-15
-  #6). Flag if the owner wants it.
-- **IDLE-KICK** — a forfeit/kick for a *connected* seat that never acts (M3-TIMER already holds it each
-  turn, so it plays badly rather than hanging the game). Post-v1 griefing mitigation (Builder OQ
-  2026-09-15 #2). Not scheduled.
-- **LOBBY-TEAM-CHOICE** — let a seat choose its team; makes `wouldSeatNobody` live. Not scheduled.
+- **M3-REMATCH** — re-enter the same room from the end screen (a protocol conversation; the loop closes
+  via the create form without it).
+- **NET-E2E** — a two-client Playwright harness against a running Worker (would cover the presence
+  marks the hot-seat render suite can't reach — Builder OQ 2026-09-16 #5). Low.
+- **IDLE-KICK** — forfeit/kick a connected seat that never acts (M3-TIMER already holds it). Post-v1.
+- **LOBBY-TEAM-CHOICE** — let a seat choose its team; makes `wouldSeatNobody` live.
 
 ## CAMO-E2E-FINISH — UNBLOCKED (low)
 Before/after-delta at fixed coords (reuse `largestCluster`). Low; the rule is unit-covered.
 
 ## Routed to Designer / flags
 
-- **Beam + axisBonus** compose legally (ruled). **Chase-preview detour** deferred (destination marker,
-  not a drawn route). **Decoy as a universal obstacle** reverses R2 — Designer call. **Host-only in-lobby
-  map control** / **public draft** — reversals of set-at-creation / BLIND-PICK; flag if wanted.
-- **Dash melee-cover** (Designer-deferred). **Thorn's lobbed auto** (5→4 first nerf lever). **Pad tuning**
-  (`everyTurns` 4→5 on iron-basin). **Kestrel out of default `CATALOG`** until BASIC-MODES.
+- **Beam + axisBonus** compose legally (ruled). **Chase-preview detour** deferred. **Decoy as a
+  universal obstacle** reverses R2 — Designer call. **Host-only in-lobby map control** / **public
+  draft** — reversals of set-at-creation / BLIND-PICK; flag if wanted.
+- **Dash melee-cover** (Designer-deferred). **Thorn's lobbed auto** (5→4 first nerf lever). **Pad
+  tuning** (`everyTurns` 4→5 on iron-basin). **Kestrel out of default `CATALOG`** until BASIC-MODES.
 - **UI-TIMER hot-seat auto-lock**, **touch input**, **PREVIEW-MODIFIERS shields**, **AIM-SMOOTH**,
   `killerUnitId`/`gameEnd`, **A4**, **spectators**, **`vulnerable`** — unchanged, not scheduled.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **A real two-machine networked playtest** (now that the loop is complete — worth doing right after
-  M3-DEPLOY-LIVE), **the disconnect/handoff flow** (drop a seat mid-match, watch a teammate cover, then
-  reclaim), **Aegis's beam feel**, **the 40s clock feel**, **CHASE-COLLIDE**, **melee vs cover**.
+- **A real two-machine internet playtest** — the moment `WORKER_ORIGIN` is set: create a room, share
+  the code, play a friend over the network; **the disconnect/handoff/reconnect flow** end-to-end; **the
+  40s clock feel**; **Aegis's beam**, **CHASE-COLLIDE**, **melee vs cover**, **Might centre contest**.
