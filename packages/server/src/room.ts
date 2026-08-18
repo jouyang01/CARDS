@@ -163,7 +163,30 @@ export function isRoomCode(code: string): boolean {
   return [...code].every((ch) => CODE_ALPHABET.includes(ch));
 }
 
-export type JoinRejection = 'roomFull' | 'duplicateSeat' | 'inProgress';
+export type JoinRejection = 'roomFull' | 'duplicateSeat' | 'inProgress' | 'teamFull';
+
+/**
+ * SEAT-ZERO — would a player joining `team` be seated with **nothing**?
+ *
+ * `deriveSeats` hands a team's characters out at most two per player and gives
+ * the leftovers `?? []`, so a team with more players than characters seats
+ * somebody who has no character to pick in the lobby, no unit to order in the
+ * match, and a lock the room still waits for. Ruled: refuse that join
+ * (edge-cases, "SEAT-ZERO"). Derived from `teamSplit` rather than special-cased
+ * to 1v1 — the new seat is its team's last, and the split hands the last seat 0
+ * exactly when the team already has a player per character.
+ *
+ * **Currently unreachable through `join` alone, on purpose.** `nextTeam` always
+ * fills the emptier side and `roomFull` caps a room at `2 × charactersPerTeam`,
+ * so no sequence of joins can saturate one team while the room has space. This
+ * is the invariant written down where the next lobby feature — letting a player
+ * *choose* a team — will need it, which is why it is a named predicate rather
+ * than three lines inlined in `join`. See the Builder's open questions.
+ */
+export function wouldSeatNobody(room: Room, team: TeamId): boolean {
+  const seats = [...room.seats, { seatId: '', team, name: '', unitIds: [], picks: [] }];
+  return teamSplit({ ...room, seats }, team).at(-1) === 0;
+}
 
 export type JoinResult =
   | { ok: true; room: Room; seat: Seat }
@@ -209,7 +232,11 @@ export function join(room: Room, seatId: string, name?: string): JoinResult {
   if (room.state !== undefined) return { ok: false, reason: 'inProgress' };
   if (room.seats.some((s) => s.seatId === seatId)) return { ok: false, reason: 'duplicateSeat' };
   if (room.seats.length >= seatBounds(room.format).max) return { ok: false, reason: 'roomFull' };
-  const seat: Seat = { seatId, team: nextTeam(room), name: name ?? seatId, unitIds: [], picks: [] };
+
+  const team = nextTeam(room);
+  if (wouldSeatNobody(room, team)) return { ok: false, reason: 'teamFull' };
+
+  const seat: Seat = { seatId, team, name: name ?? seatId, unitIds: [], picks: [] };
   return { ok: true, room: { ...room, seats: [...room.seats, seat] }, seat };
 }
 

@@ -3352,3 +3352,126 @@ same cap logic as Vex's Overwatch; an immortal minefield is the stall the caps e
    (it emits one seat and the second gets `?? []`), so it is not new, but a lobby makes it visible —
    a player staring at a pick screen that asks for nothing. 1v1 is the dev format, so it is cheap
    either way: refuse the second join in 1v1, or let the lobby say "spectating". Not ruled, not built.
+
+## 2026-09-12 — Builder: the chase stops phasing, the lobby gets a screen, and moves get waypoints
+
+1. **The two chase Dev Notes turned out to be one cause, and one of them was the opposite of what
+   it looked like.** The router is `reachableSquares`, which marks an occupied square `canStop:
+   false` but still *expands through* it — correct for a player drawing a path (the ally
+   pass-through affordance) and wrong for a route walked the instant it is computed. So the
+   reported "phasing" was not a chaser gliding through a body: it was a chaser that **planned** to,
+   got stopped by `stepMovers` on its first step, and therefore moved **nothing**. Reproduced
+   before touching anything: chaser (5,10), enemy (6,10), target (8,10) → chaser ends on (5,10).
+   `reachableSquares` gained an opt-in `impassable` set; only the chase passes one.
+
+2. **A decoy is solid to the chase and to nothing else.** R2 says a decoy "blocks nothing" and dies
+   to an enemy *ending a move* on its square — deliberately, because walking onto one is how a
+   player proves it fake. But the chase is not a player choosing to test it: Wisp veils, the chaser
+   loses the sightline, the goal falls back to the last-known square, and the decoy is standing on
+   that square — so every such chase popped the decoy for free. The minimal compliant fix treats an
+   **enemy** decoy as a body **for the chase router only**; a deliberate `movePath` onto one still
+   destroys it, and there is a test pinning that. **Own-team decoys stay transparent**, matching
+   R2's own asymmetry (own-team decoys are untouched by their team's damage) — a team is not fooled
+   by its own illusion, and blocking on one would be a tell the enemy could read off the pathing.
+   No fog is leaked: an enemy decoy is *shown* to this team, so routing around it uses only what
+   the team already sees.
+
+3. **The chase router treats allies as solid too, and that is not the ally-pass-through ruling
+   being reversed.** That ruling is about a path a player *draws* and the engine validates later.
+   A chase computes and walks in one step against units that have all finished moving, so an ally
+   is exactly as immovable as an enemy at that moment. A sealed corridor therefore stops a chase
+   dead, which the test asserts as the honest outcome rather than papering over it.
+
+4. **SEAT-ZERO's guard is unreachable through `join` today, and the tests say so instead of
+   pretending.** `nextTeam` always fills the emptier side and `roomFull` caps the room at
+   `2 × charactersPerTeam`, so no sequence of joins can saturate one team while the room has space.
+   The rule was still worth writing down — the obvious next lobby feature is letting a player
+   *choose* a team, which produces exactly the lopsided room the guard refuses — so it is an
+   exported predicate (`wouldSeatNobody`) tested directly, plus a property test that no reachable
+   join sequence in any format ever creates a zero-character seat.
+
+5. **`MatchConfig.teams` became optional, and the DO dropped it.** LOBBY-START retires the
+   full-room auto-start, but a room that could still *deal* characters would let a player press
+   start and be handed somebody else's choices — the same defect one layer down. So the interim
+   deal is now an explicit opt-in that production does not take: the Durable Object carries the
+   full eight-character roster and no `teams`, and a networked match gets its characters from the
+   lobby or not at all. Tests that predate picking pass a deal and are unaffected.
+
+6. **The mid-pick guard moved from the auto-start into `start()`.** With the auto-trigger gone the
+   guard had nowhere to live, but the hazard it covered did not: a config *with* an interim deal
+   would otherwise deal over a half-filled lobby. `start()` now uses the deal only when **no seat
+   has picked at all**; once anybody has, `lobbyReady` is the only door. That is what makes the
+   AC's "start is refused until `lobbyReady`" true for every room that is actually using its lobby.
+
+7. **The lobby screen renders what the protocol sends and recomputes nothing** — the owed counts,
+   R3's greyed characters and `lobbyReady` are all values from the `lobby` message. This is not
+   only tidiness: BLIND-PICK means the enemy's picks are not on this client, so it is
+   *structurally incapable* of deciding whether the room is ready. One boolean, forwarded.
+
+8. **The pick screen is rebuilt on every update, which is the opposite of the HUD's rule and right
+   for the same reason.** The HUD is updated in place because UI1's hover state is load-bearing —
+   rebuilding a button under the pointer fires `mouseleave` and wipes the range envelope. A lobby
+   has no such state, so the simpler thing is also the correct one.
+
+9. **The client reads `@cards/server`'s protocol as types only, and the lobby tests import the hub
+   for real.** `import type` is erased, so nothing of the server reaches the bundle (181.5 kB gz,
+   well inside the 300 kB budget). The screen tests deliberately do *not* fake the wire: a click
+   goes through `RoomClient` into a real `RoomHub` and is validated by the same `setPicks` a
+   production room uses, so a screen that composed a pick the server would refuse fails there.
+
+10. **WAYPOINTS delegates legality to `validateMovePath` and treats exactly one verdict as
+    non-fatal.** Adjacency, terrain, the diagonal-corner rule and the budget are all the engine's
+    answers rather than a client copy. The exception is `occupied`, which is a rule about where a
+    path *ends* rather than whether a step is legal — refusing it mid-route would make walking
+    around a body impossible, and that is the Dev Note's own example. Whether the finished path
+    ends somewhere legal is still settled by the engine when the order is submitted.
+
+11. **The Move button now reads what is left, not what you started with.** `remainingMove` is
+    `movementBudget − Σ stepCost`, using the engine's own `stepCost`, so the number a player
+    watches draw down is the number they will be charged. It changes the non-waypoint case too — a
+    committed direct route now reads `Move (0)` — which is the same fact stated honestly.
+
+## Open Questions for the Analyzer — 2026-09-12
+
+1. **M3-LOBBY-UI is complete except the networked BOARD, which is the whole remaining piece.**
+   (`main.ts` `joinRoom`; `app.ts` `resolveAndPlay`.) Shipped: the pick screen, socket wiring,
+   `?room=CODE` boot, the start button gated on `lobbyReady`, the auto-start retirement and the
+   route deletion — with an end-to-end test that picks, starts and resolves a turn through a real
+   `RoomHub`. **Not shipped:** rendering a *networked* match on the 3D board. `app.ts` merges seat
+   orders and calls `resolveTurn` itself; pointing it at a server-authoritative stream means the
+   lock-in becomes a `submit`, the fog comes from `visibleSquares` instead of the local `fogView`,
+   and the hot-seat handover disappears — a controller rewrite inside a 1750-line file with the
+   whole render e2e suite downstream of it. I stopped at a clean seam rather than half-doing it;
+   on match start the page says so instead of pretending. **Please size it as its own item** —
+   suggest "M3-NET-BOARD".
+
+2. **Dev Note 1 vs the R2 decoy ruling — confirm the line I drew.** (Decision 2 above;
+   `chase-collide.test.ts`.) R2 says a decoy blocks nothing and dies to an enemy ending a move on
+   it; the owner says a chase must not move onto one. Both are true in what I shipped, because the
+   chase is engine-routed and a `movePath` is not. If the owner meant something broader — *no unit
+   may ever enter a decoy's square*, i.e. decoys become obstacles — that reverses R2's own
+   destruction mechanic and needs a Designer call, not a Builder one.
+
+3. **Should the chase's ally-solidity be visible in the plan-time preview?** (`chaseObstacles`.)
+   The chase now routes around teammates, but the client's chase preview does not know that, so a
+   player can be shown a pursuit that will actually detour. Cosmetic today (the chase tell is a
+   destination marker, not a drawn route), and it becomes real the moment somebody draws the chase
+   path. Not built; not specced.
+
+4. **A `wouldSeatNobody` that nothing can reach is a guard or a dead branch, and you should pick.**
+   (Decision 4.) I kept it because the team-choice lobby will need it. If team choice is not on the
+   roadmap, it is worth saying so and letting the guard go rather than carrying an unreachable
+   rejection code through the protocol.
+
+5. **The lobby has no map/format picker, and the AC asked for one.** (`M3-LOBBY-UI` AC bullet 1:
+   "each seat picks **map + format**".) Both are fixed at room creation today — the Worker takes
+   `format` when it mints the code and the DO hard-codes `duel-arena` — so a picker in the *seat's*
+   screen would be picking something already decided, and letting one seat change the map under
+   another mid-pick needs a rule nobody has written (who wins? does it reset the picks?). Shipped
+   the character/catalyst half; **the map/format half needs a ruling on where it lives** (room
+   creation, which is where it already is, or a host-only control in the lobby).
+
+6. **`?room=CODE` has no way to *create* a room from the client.** The Worker's `POST /rooms` mints
+   a code, but nothing in the UI calls it — a player needs a link somebody else made with `curl`.
+   One button and a redirect; not in this item's AC, so not built. Flagging because it is the last
+   thing between the lobby and somebody actually playing over the network.

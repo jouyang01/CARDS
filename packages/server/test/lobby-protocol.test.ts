@@ -225,20 +225,37 @@ describe('M3-LOBBY: the start button plays what was picked', () => {
     expect(sock['a']!.of('matchStarted').length).toBe(1);
   });
 
-  it('but a FULL room mid-pick waits instead of dealing over the picks', () => {
-    // The auto-trigger is a full room (ruled), and it dealt characters itself.
-    // Firing it while a player is halfway through choosing would throw the
-    // choices away silently — the one outcome worse than waiting.
-    const { hub, sock } = room(['a', 'b', 'c']);
-    hub.receive('a', pickFrame('ash'));
-    hub.open('d', new FakeSocket());
-    hub.receive('d', JSON.stringify({ type: 'join', version: PROTOCOL_VERSION }));
-    expect(sock['a']!.of('matchStarted'), 'the room is full but the lobby is not done').toEqual([]);
+  it('a FULL room does not start itself — being full is not a trigger any more', () => {
+    // LOBBY-START, ruled 2026-09-11 and the reason the auto-start is gone: a
+    // four-player 2v2 fills on the fourth join, which is *before* anybody has
+    // chosen a character. The old trigger fired straight over the empty pick
+    // screen, so the lobby was unreachable in exactly the room that wants one.
+    const { hub, sock } = room(['a', 'b', 'c', 'd']);
+    expect(sock['a']!.of('matchStarted'), 'full, and still in the lobby').toEqual([]);
+    expect(hub.room.state).toBeUndefined();
+  });
 
-    for (const [seat, id] of [['c', 'bry'], ['b', 'cyn'], ['d', 'dex']] as const) {
+  it('…not even once every seat has finished picking — somebody must press it', () => {
+    // Completing the lobby *enables* start; it does not perform it. The last
+    // pick is not a decision to begin.
+    const { hub, sock } = room(['a', 'b', 'c', 'd']);
+    for (const [seat, id] of [['a', 'ash'], ['c', 'bry'], ['b', 'cyn'], ['d', 'dex']] as const) {
       hub.receive(seat, pickFrame(id));
     }
-    expect(sock['a']!.of('matchStarted').length, 'the last pick completes it and it starts').toBe(1);
+    expect(sock['a']!.last('lobby')!.lobby.canStart, 'the button lights up').toBe(true);
+    expect(sock['a']!.of('matchStarted'), 'and waits to be pressed').toEqual([]);
+
+    hub.receive('a', JSON.stringify({ type: 'start' }));
+    expect(sock['a']!.of('matchStarted').length).toBe(1);
+  });
+
+  it('start is refused while a seat is still choosing', () => {
+    const { hub, sock } = room(['a', 'b', 'c', 'd']);
+    hub.receive('a', pickFrame('ash'));
+    hub.receive('a', JSON.stringify({ type: 'start' }));
+
+    expect(sock['a']!.of('error').map((e) => e.code)).toEqual(['cannotStart']);
+    expect(hub.room.state, 'and nothing began').toBeUndefined();
   });
 });
 

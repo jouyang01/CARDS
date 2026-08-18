@@ -69,13 +69,11 @@ export default {
     const stub = env.ROOMS.get(env.ROOMS.idFromName(route.code));
     if (route.rest === 'ws') return await stub.fetch(new Request('https://room/ws', request));
     if (route.rest === '') return await stub.fetch('https://room/room');
-    // M3-START, over HTTP: the dev affordance for a short room, until the
-    // client has a socket to send the `start` message down (M3-LOBBY). POST
-    // rather than GET because it changes the room — a link preview fetcher
-    // must not be able to start somebody's match.
-    if (route.rest === 'start' && request.method === 'POST') {
-      return await stub.fetch('https://room/start', { method: 'POST' });
-    }
+    // (`POST /rooms/:code/start` used to live here — the dev affordance for a
+    // short room while the client had no socket to send `start` down. Deleted
+    // with M3-LOBBY-UI, which is the slice that gave the client a start button;
+    // ruled to go in that same slice so a networked match is never left without
+    // a reachable start. The socket `start` message is the only one now.)
     return new Response('not found', { status: 404 });
   },
 };

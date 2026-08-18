@@ -297,6 +297,43 @@
         box-shadow: 0 4px 16px rgb(0 0 0 / 0.5); pointer-events: none; }
       footer { font-size: 12px; opacity: 0.5; }
 
+      /* ── M3-LOBBY-UI: the pick screen ─────────────────────────────────────
+         Mounted into #board, which is the full-viewport layer, so it scrolls on
+         its own rather than fighting the fixed HUD chrome around it. Plain
+         flow layout: a lobby is a form, and the board's absolute positioning
+         buys it nothing. */
+      .lobby { position: relative; z-index: 1; max-width: 860px; margin: 0 auto;
+        padding: 72px 20px 40px; overflow-y: auto; max-height: 100vh; }
+      .lobby h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+        opacity: 0.6; margin: 20px 0 8px; }
+      .lobby h3 { font-size: 12px; opacity: 0.6; margin: 16px 0 6px; font-weight: 500; }
+      .lobby-status { font-size: 14px; margin: 0 0 4px; }
+      .lobby-error { color: var(--spawn1); font-size: 13px; margin: 0 0 8px; }
+      .lobby-seat { display: flex; justify-content: space-between; gap: 12px;
+        padding: 8px 12px; border: 1px solid var(--grid-line); border-radius: 6px;
+        margin-bottom: 6px; background: var(--panel); font-size: 13px; }
+      /* Your own row is the one carrying the controls below it, so it is the one
+         that has to be findable at a glance. */
+      .lobby-seat.is-mine { border-color: var(--team0); }
+      .lobby-seat.is-ready { border-left: 3px solid var(--hp); }
+      .lobby-seat-picks { opacity: 0.7; }
+      /* The enemy is a count and never a name (BLIND-PICK) — there is nothing
+         here to style because there is nothing here to show. */
+      .lobby-enemy-count { font-size: 13px; opacity: 0.7; margin: 0; }
+      .lobby-slots, .lobby-characters, .lobby-catalyst-row { display: flex; flex-wrap: wrap; gap: 6px; }
+      .lobby-slot.is-active { border-color: var(--aim); color: var(--aim); }
+      .lobby-character { min-width: 150px; text-align: left; }
+      .lobby-character.is-chosen { border-color: var(--aim); color: var(--aim); }
+      /* Greyed because R3 refuses it — a teammate already has that character. */
+      .lobby-character.is-taken { opacity: 0.35; }
+      .lobby-catalyst-row { align-items: center; margin-bottom: 4px; }
+      .lobby-phase { min-width: 52px; font-size: 11px; text-transform: uppercase;
+        letter-spacing: 0.06em; opacity: 0.6; }
+      .lobby-catalyst { font-size: 11px; padding: 4px 8px; }
+      .lobby-catalyst.is-chosen { border-color: var(--aim); color: var(--aim); }
+      .lobby-start { margin-top: 24px; padding: 10px 20px; font-size: 14px; }
+      .lobby-start:disabled { opacity: 0.4; cursor: not-allowed; }
+
       /* ── UI-responsive: the fixed chrome has to give way on a laptop ───────
          The HUD and log are position:fixed, so below ~1200px they would simply
          cover the board. `sizeToContainer` measures them rather than assuming,

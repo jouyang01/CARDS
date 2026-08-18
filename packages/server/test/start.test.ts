@@ -165,11 +165,19 @@ describe('M3-START: when it is refused', () => {
 });
 
 /**
- * The HTTP affordance. The `start` message above is the real path; this exists
- * because the client has no socket layer until M3-LOBBY, and a short room that
- * can only be started by a client that does not exist is not startable at all.
+ * The HTTP affordance, **deleted** (M3-LOBBY-UI).
+ *
+ * `POST /rooms/:code/start` existed for one reason: the client had no socket to
+ * send the `start` message down, so a short room could only be started by a
+ * client that did not exist yet. M3-LOBBY-UI gave it a start button, and the
+ * ruling (edge-cases, "LOBBY-START") put the deletion in that same slice — not
+ * before, or a networked match would have had no reachable start at all.
+ *
+ * Kept as tests rather than removed, because "the route is gone" is the claim
+ * worth pinning: a route that quietly came back would be a second, unauthorised
+ * way to start somebody's match.
  */
-describe('M3-START: POST /rooms/:code/start', () => {
+describe('M3-LOBBY-UI: the temporary start route is gone', () => {
   class StubNamespace {
     readonly calls: { name: string; url: string; method: string }[] = [];
     idFromName(name: string) { return { name }; }
@@ -186,23 +194,24 @@ describe('M3-START: POST /rooms/:code/start', () => {
   }
   const env = (ns: StubNamespace): Env => ({ ROOMS: ns as unknown as Env['ROOMS'] });
 
-  it('routes to the room\'s object with POST', async () => {
+  it('POST no longer routes anywhere — the room is not even woken', async () => {
     const ns = new StubNamespace();
     const res = await worker.fetch(new Request('https://x/rooms/wxyz/start', { method: 'POST' }), env(ns));
-    expect(res.status).toBe(200);
-    expect(ns.calls).toEqual([{ name: 'WXYZ', url: 'https://room/start', method: 'POST' }]);
+    expect(res.status).toBe(404);
+    expect(ns.calls, 'nothing reached the durable object').toHaveLength(0);
   });
 
-  it('is POST-only — a link preview must not start somebody\'s match', async () => {
+  it('and GET is still nothing, as it always was', async () => {
     const ns = new StubNamespace();
     const res = await worker.fetch(new Request('https://x/rooms/WXYZ/start'), env(ns));
     expect(res.status).toBe(404);
-    expect(ns.calls, 'the room was never woken').toHaveLength(0);
+    expect(ns.calls).toHaveLength(0);
   });
 
-  it('still validates the code', async () => {
+  it('the routes that remain still work — this deleted one thing, not the router', async () => {
     const ns = new StubNamespace();
-    const res = await worker.fetch(new Request('https://x/rooms/nope1/start', { method: 'POST' }), env(ns));
-    expect(res.status).toBe(400);
+    const room = await worker.fetch(new Request('https://x/rooms/WXYZ'), env(ns));
+    expect(room.status).toBe(200);
+    expect(ns.calls).toEqual([{ name: 'WXYZ', url: 'https://room/room', method: 'GET' }]);
   });
 });

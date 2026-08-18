@@ -128,12 +128,22 @@ export const stepCost = (dx: number, dy: number): number => (dx !== 0 && dy !== 
  * Returns one entry per reachable square (excluding the origin) in ascending
  * cost order; `from` links form a min-cost tree, so walking them back from any
  * square yields a legal path of exactly that `cost` — see `reconstructPath`.
+ *
+ * `impassable` is an **opt-in** set of squares treated exactly like walls:
+ * neither entered nor expanded through, so no returned path crosses one. It is
+ * empty for ordinary planning, where a body is a `canStop: false` square a
+ * player may still *draw* a line through (the ally pass-through affordance).
+ * CHASE-COLLIDE uses it for the one caller that cannot afford that: an
+ * engine-routed chase walks its path immediately, against a board where nothing
+ * else is moving, so a route drawn through a body is a route that halts on the
+ * first step. See `pathToward`.
  */
 export function reachableSquares(
   board: Board,
   state: GameState,
   unit: UnitState,
   budget: number,
+  impassable?: ReadonlySet<string>,
 ): ReachableSquare[] {
   const results: ReachableSquare[] = [];
   if (budget <= 0 || !inBounds(board, unit.pos)) return results;
@@ -164,6 +174,7 @@ export function reachableSquares(
       for (const d of MOVE_STEPS) {
         const np: Vec2 = { x: node.x + d.x, y: node.y + d.y };
         if (blocksMovement(board, np)) continue; // walls/cover/edge block entry
+        if (impassable?.has(vecKey(np)) === true) continue; // CHASE-COLLIDE: a body is a wall here
         if (d.x !== 0 && d.y !== 0 && diagonalCornerBlocked(board, node, d.x, d.y)) continue;
         const nc = cost + stepCost(d.x, d.y);
         if (nc > budget) continue;

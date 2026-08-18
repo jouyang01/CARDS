@@ -275,6 +275,7 @@ function parsePicks(raw: readonly unknown[]): Pick[] | undefined {
 /** Human text for an error code, so every handler says the same thing. */
 export const ERROR_TEXT: Record<ErrorCode, string> = {
   roomFull: 'this room is full',
+  teamFull: 'that team already has a player for every character',
   duplicateSeat: 'that seat is already connected',
   badVersion: `this client speaks a different protocol version (server is ${PROTOCOL_VERSION})`,
   badMessage: 'unrecognised message',

@@ -65,7 +65,9 @@ import {
   emptyDraft,
   moveEnvelope,
   nextDraft,
+  appendWaypoint,
   pathTo,
+  remainingMove,
   rangeEnvelope,
   shapeOutline,
   chaseSprints,
@@ -1158,7 +1160,10 @@ export function startHotSeat(
         // A Dash catalyst buys its effect with the Move (CAT-DASH-COST), so the
         // budget reads 0 rather than 4 — the number has to say what you will
         // actually get, or the cost is invisible until the turn resolves.
-        budget: dashCatalystArmed(draft) ? 0 : movementBudget(unit, draft.sprint),
+        // WAYPOINTS: what is **left**, not what you started with. Each accepted
+        // waypoint spends its step (1 orthogonal, 2 diagonal), so the number the
+        // player watches is the one the engine will charge them.
+        budget: dashCatalystArmed(draft) ? 0 : remainingMove(unit, draft.sprint, draft.movePath),
         drawing: interaction.mode === 'move',
         sprinting: draft.sprint,
         // Sprint is move-only (GAME_SPEC §2) — but a FREE ability is not the
@@ -1373,13 +1378,20 @@ export function startHotSeat(
       // MOVE-FOG: the committed path is planned against the visible board too —
       // otherwise the preview and the order would disagree, and the order would
       // be the one that leaked.
-      draft.movePath = pathTo(
-        map,
-        planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units),
-        unit, sq, movementBudget(unit, draft.sprint),
-      );
-      interaction = afterCommit();
-      render();
+      const planned = planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units);
+      if (evt.shiftKey) {
+        // WAYPOINTS: Shift builds the route a tile at a time instead of taking
+        // the auto-route, so a player can walk *around* a trap or a body. The
+        // mode stays armed — a waypoint is one step of a path, not a finished
+        // order — and a refused click leaves the path exactly as it was.
+        const extended = appendWaypoint(map, planned, unit, draft.movePath, sq, draft.sprint);
+        if (extended !== undefined) draft.movePath = extended;
+        render();
+      } else {
+        draft.movePath = pathTo(map, planned, unit, sq, movementBudget(unit, draft.sprint));
+        interaction = afterCommit();
+        render();
+      }
     }
   }
 
