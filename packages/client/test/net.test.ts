@@ -211,7 +211,7 @@ describe('the reducer, on the frames that mean "forget something"', () => {
     const optimistic: NetState = { ...joined, submitted: true };
     const decision = applyServerMessage(optimistic, {
       type: 'decision', turn: 1, state: { turn: 1, units: [] } as never, visibleSquares: [],
-      orders: {}, locked: [], of: 1, enemyLocked: 0, enemyOf: 1,
+      orders: {}, locked: [], of: 1, enemyLocked: 0, enemyOf: 1, bank: 1,
     });
     expect(decision.submitted, 'the server did not list us').toBe(false);
   });

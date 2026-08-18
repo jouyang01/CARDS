@@ -107,6 +107,15 @@ export type ClientMessage =
    * error, and each send replaces the seat's picks wholesale.
    */
   | { type: 'pick'; picks: Pick[] }
+  /**
+   * Spend a Time Bank charge on this turn's decision window (M3-TIMER).
+   *
+   * Carries no amount: what a charge buys is `TIMEBANK_SECONDS`, which is the
+   * engine's constant, and a client that named its own extension would be
+   * setting the rule. The server answers by re-sending `decision` with the new
+   * `remainingMs` — the extension is only real once the authority says so.
+   */
+  | { type: 'extend' }
   /** A liveness probe the client can send; the server answers `pong`. */
   | { type: 'ping' };
 
@@ -127,7 +136,9 @@ export type ErrorCode =
   /** Joined a room whose match has already begun (M3-JOIN-GUARD). */
   | 'inProgress'
   /** Asked to start a room that cannot start yet, or has already started. */
-  | 'cannotStart';
+  | 'cannotStart'
+  /** Asked to extend with no Time Bank charge left, or with no window open. */
+  | 'noBank';
 
 /** Server → client. */
 export type ServerMessage =
@@ -176,6 +187,21 @@ export type ServerMessage =
        */
       enemyLocked: number;
       enemyOf: number;
+      /**
+       * M3-TIMER — how long is left in this decision window, in milliseconds.
+       *
+       * **Remaining, not a deadline.** An absolute instant would be in the
+       * server's clock, and the client would have to guess the skew between that
+       * and its own to draw a countdown; a duration is the same number on both
+       * machines. The clock is still the server's — this is measured at send
+       * time, and it is the server that acts on it when it runs out.
+       *
+       * `undefined` when no window is open (the match has ended), which is the
+       * signal to draw no countdown rather than a zero.
+       */
+      remainingMs?: number;
+      /** Time Bank charges this seat has left (`TIMEBANK_CHARGES` per match). */
+      bank: number;
     }
   /** This seat's submission was accepted; `locked` is the count so far. */
   | { type: 'submitted'; locked: number; of: number }
@@ -228,6 +254,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   const msg = parsed as Record<string, unknown>;
   if (msg['type'] === 'ping') return { type: 'ping' };
   if (msg['type'] === 'start') return { type: 'start' };
+  if (msg['type'] === 'extend') return { type: 'extend' };
   // Picks are checked for *shape* only — whether the ids name real characters,
   // add up to what the seat owes, or clash under R3 is `setPicks`' business, and
   // a second copy of those rules here is a second copy to keep in step.
@@ -294,6 +321,7 @@ export const ERROR_TEXT: Record<ErrorCode, string> = {
   notYours: 'that character belongs to another seat',
   inProgress: 'this match has already started',
   cannotStart: 'this room cannot start yet',
+  noBank: 'no Time Bank charge left',
   unknownSeat: 'no such seat in this room',
   wrongCount: 'that is not the number of characters this seat plays',
   unknownCharacter: 'no such character',

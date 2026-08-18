@@ -25,6 +25,7 @@
  */
 
 import type { CatalystPool, CharacterDef, MapDef, Roster, UnitOrders } from '@cards/engine';
+import { DECISION_SECONDS, TIMEBANK_CHARGES, TIMEBANK_SECONDS } from '@cards/engine';
 import {
   ERROR_TEXT,
   PROTOCOL_VERSION,
@@ -85,10 +86,59 @@ export class RoomHub {
    */
   readonly #submissions = new Map<string, UnitOrders[]>();
   readonly #config: MatchConfig | undefined;
+  /**
+   * M3-TIMER — the clock, **injected**, exactly like `mintCode`'s randomness.
+   *
+   * The hub is otherwise a pure function of its messages, and a module that
+   * called `Date.now()` could only be tested by sleeping. A test passes a
+   * counter; the Durable Object passes the real clock.
+   */
+  readonly #now: () => number;
+  /**
+   * When this turn's decision window closes, in the injected clock's units.
+   * `undefined` before the match starts and between the resolve and the next
+   * window opening — there is no deadline when there is nothing to decide.
+   */
+  #deadline: number | undefined;
+  /** Time Bank charges left, per seat (TIMEBANK_CHARGES each, per match). */
+  readonly #charges = new Map<string, number>();
 
-  constructor(room: Room, config?: MatchConfig) {
+  constructor(room: Room, config?: MatchConfig, now: () => number = () => 0) {
     this.#room = room;
     this.#config = config;
+    this.#now = now;
+  }
+
+  /**
+   * When the current decision window closes, or `undefined` if none is open.
+   * The Durable Object reads this to set its alarm — the hub owns *when*, the
+   * runtime owns *how it is woken*.
+   */
+  get deadline(): number | undefined {
+    return this.#deadline;
+  }
+
+  /** Time Bank charges left for a seat. */
+  chargesFor(seatId: string): number {
+    return this.#charges.get(seatId) ?? TIMEBANK_CHARGES;
+  }
+
+  /**
+   * M3-TIMER — the decision window expired: resolve with whatever is in hand.
+   *
+   * **Missed submission → hold position** (ruled), and that needs no code of its
+   * own: `mergeSeatOrders` already contributes nothing for a seat with no
+   * submission, and a unit with no orders holds. So the timeout is the *same*
+   * resolve the last lock-in would have triggered, which is what keeps a timed
+   * turn and a played turn from being two different code paths.
+   *
+   * Idempotent and safe to call late: an alarm that fires after the turn already
+   * resolved finds no open window and does nothing.
+   */
+  expire(): void {
+    if (this.#deadline === undefined || this.#room.state === undefined) return;
+    if (this.#now() < this.#deadline) return; // woken early; the window is still open
+    this.resolveNow();
   }
 
   /** Seat ids that have locked in this turn, in join order. */
@@ -132,6 +182,8 @@ export class RoomHub {
     if (msg.type === 'submit') return this.#receiveSubmit(seatId, msg.orders);
 
     if (msg.type === 'pick') return this.#receivePick(seatId, msg.picks);
+
+    if (msg.type === 'extend') return this.#receiveExtend(seatId);
 
     if (msg.type === 'start') {
       // LOBBY-START: pressing start is now the **only** way into a match, so a
@@ -189,6 +241,32 @@ export class RoomHub {
     if (!result.ok) return this.#send(seatId, errorMessage(result.reason));
     this.#room = result.room;
     this.#sendLobby();
+  }
+
+  /**
+   * Spend a Time Bank charge on the open decision window (M3-TIMER).
+   *
+   * The extension is **the whole room's**, not the spender's: one deadline
+   * governs one turn, so a charge bought by one seat buys everybody the same ten
+   * seconds. A per-seat deadline would mean a turn had four different moments at
+   * which it resolved, which is not a thing a simultaneous turn can have.
+   *
+   * The charge is per seat and per match (`TIMEBANK_CHARGES`), and it is spent
+   * **only when it takes** — a refusal costs nothing, so a second click on a
+   * spent bank is an error message rather than a silently burnt resource.
+   */
+  #receiveExtend(seatId: string): void {
+    if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
+    if (this.#room.state === undefined) return this.#send(seatId, errorMessage('noMatch'));
+    if (this.#deadline === undefined) return this.#send(seatId, errorMessage('noBank'));
+    const left = this.chargesFor(seatId);
+    if (left <= 0) return this.#send(seatId, errorMessage('noBank'));
+    this.#charges.set(seatId, left - 1);
+    // Added to what is left rather than resetting the window: the bank *extends*
+    // a deadline, so banking at 8 seconds leaves 18, not 40.
+    this.#deadline += TIMEBANK_SECONDS * 1000;
+    // Everyone is re-sent their Decision view, because everyone's clock moved.
+    this.#sendDecision();
   }
 
   /**
@@ -282,6 +360,21 @@ export class RoomHub {
   #sendDecision(): void {
     if (this.#config === undefined || this.#room.state === undefined) return;
     const state = this.#room.state;
+    // M3-TIMER: a decision window opens with the phase it belongs to. Set here
+    // rather than at the resolve, so the one place that says "everybody may now
+    // decide" is also the one that says how long for.
+    //
+    // `??=`, because this method also runs when a *teammate* locks in and when
+    // the bank is spent — a plain assignment would hand the room a fresh 40
+    // seconds every time somebody pressed a button, which is a clock that never
+    // runs out. `resolveNow` is the only thing that clears it, so exactly one
+    // window exists per turn. A finished match has nothing to decide and so has
+    // no window at all.
+    if (state.status !== 'active') this.#deadline = undefined;
+    else this.#deadline ??= this.#now() + DECISION_SECONDS * 1000;
+    const remainingMs = this.#deadline === undefined
+      ? undefined
+      : Math.max(0, this.#deadline - this.#now());
     for (const seat of this.#room.seats) {
       const view = teamView(this.#config.map, state, seat.team);
       const mine = this.#room.seats.filter((s) => s.team === seat.team);
@@ -301,6 +394,12 @@ export class RoomHub {
         // and a seat id is a durable handle on one specific opponent.
         enemyLocked: theirs.filter((s) => this.#submissions.has(s.seatId)).length,
         enemyOf: theirs.length,
+        // M3-TIMER. A duration rather than an instant, so no client has to
+        // reason about the skew between its clock and the server's; and the
+        // bank is per seat, so it rides the per-seat message rather than the
+        // broadcast one.
+        ...(remainingMs === undefined ? {} : { remainingMs }),
+        bank: this.chargesFor(seat.seatId),
       });
     }
   }
@@ -357,6 +456,11 @@ export class RoomHub {
     const revealed: Record<string, UnitOrders[]> = {};
     for (const [seatId, o] of this.#submissions) revealed[seatId] = o;
     this.#submissions.clear();
+    // M3-TIMER: this window is spent. Cleared here rather than re-set, because
+    // `#sendDecision` is what opens one — and it is about to run. Clearing is
+    // also what makes `expire()` idempotent: an alarm that fires after the turn
+    // already resolved finds no window and does nothing.
+    this.#deadline = undefined;
 
     const state = resolved.room.state!;
     for (const seat of this.#room.seats) {

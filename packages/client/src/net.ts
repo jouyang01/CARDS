@@ -21,6 +21,7 @@
  * bundle.
  */
 
+import { TIMEBANK_CHARGES } from '@cards/engine';
 import type { GameState, TurnEvent, UnitOrders, Vec2 } from '@cards/engine';
 import type {
   ClientMessage, ErrorCode, LobbyView, RoomView, ServerMessage,
@@ -65,6 +66,17 @@ export interface NetState {
   enemyOf: number;
   /** Whether this client has locked in this turn — drives the Lock In button. */
   submitted: boolean;
+  /**
+   * M3-TIMER — how long was left in the decision window when the server sent it.
+   *
+   * Held exactly as received and never counted down here: the reducer is pure
+   * and has no clock, so the countdown is the caller's job (it knows when this
+   * arrived). `undefined` means no window is open — a finished match — which is
+   * the signal to draw no countdown rather than a zero.
+   */
+  remainingMs?: number;
+  /** This seat's Time Bank charges left, from the server. */
+  bank: number;
   /** The last resolved turn's filtered event log, for playback. */
   events: TurnEvent[];
   /** Both teams' orders, revealed with the resolution. */
@@ -77,7 +89,7 @@ export function initialNet(): NetState {
   return {
     phase: 'connecting', visibleSquares: [], unitIds: [], orders: {},
     locked: [], of: 0, enemyLocked: 0, enemyOf: 0, submitted: false,
-    events: [], revealed: {},
+    events: [], revealed: {}, bank: TIMEBANK_CHARGES,
   };
 }
 
@@ -129,6 +141,12 @@ export function applyServerMessage(net: NetState, msg: ServerMessage): NetState 
         // so by naming our seat. Trusting our own optimistic flag instead would
         // survive a rejected submit and leave the button stuck.
         submitted: net.seat !== undefined && msg.locked.includes(net.seat.seatId),
+        // M3-TIMER: the window is the server's, and this is the only message
+        // that carries it. `remainingMs` is spread rather than assigned so the
+        // field is *absent* when the server sent none — `undefined` and "no
+        // window" have to stay the same thing under `exactOptionalPropertyTypes`.
+        ...(msg.remainingMs === undefined ? { remainingMs: undefined } : { remainingMs: msg.remainingMs }),
+        bank: msg.bank,
       };
     case 'submitted':
       return { ...clean, submitted: true };
@@ -161,6 +179,7 @@ export const frames = {
   pick: (picks: Pick[]): ClientMessage => ({ type: 'pick', picks }),
   start: (): ClientMessage => ({ type: 'start' }),
   submit: (orders: UnitOrders[]): ClientMessage => ({ type: 'submit', orders }),
+  extend: (): ClientMessage => ({ type: 'extend' }),
   ping: (): ClientMessage => ({ type: 'ping' }),
 };
 
@@ -217,6 +236,13 @@ export class RoomClient {
   pick(picks: Pick[]): void { this.send(frames.pick(picks)); }
   start(): void { this.send(frames.start()); }
   submit(orders: UnitOrders[]): void { this.send(frames.submit(orders)); }
+  /**
+   * Ask for the Time Bank (M3-TIMER). Nothing is applied locally: the charge is
+   * the server's to spend, and the client learns it took when the next
+   * `decision` arrives with more time on it. An optimistic +10 that the server
+   * then refused would be the one lie a clock must never tell.
+   */
+  extend(): void { this.send(frames.extend()); }
 
   /** The socket went away. Terminal — a closed client shows no room. */
   closed(): void {

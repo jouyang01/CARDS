@@ -166,6 +166,12 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
 
   let onResolved: ((state: GameState, events: TurnEvent[]) => void) | undefined;
   let onStatus: ((banner: string | undefined) => void) | undefined;
+  let onTimer: ((remainingMs: number | undefined, charges: number) => void) | undefined;
+  // M3-TIMER: only a frame that actually carried a window is forwarded. The
+  // reducer keeps the last `remainingMs` across every other message type, so
+  // re-sending it on (say) a `pong` would silently rewind the countdown to
+  // whatever it was when the last `decision` arrived.
+  let clock: { remainingMs: number | undefined; bank: number } | undefined;
   // Only *this* turn's resolution counts: the reducer keeps the last one, so a
   // repaint for some other reason must not replay a turn already animated.
   let played = opening.turn;
@@ -185,6 +191,10 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
     if (next !== shown) {
       shown = next;
       onStatus?.(next);
+    }
+    if (clock === undefined || clock.remainingMs !== now.remainingMs || clock.bank !== now.bank) {
+      clock = { remainingMs: now.remainingMs, bank: now.bank };
+      onTimer?.(now.remainingMs, now.bank);
     }
     if (now.state === undefined || now.state.turn <= played) return;
     played = now.state.turn;
@@ -209,6 +219,8 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
       submit: (orders) => { client.submit(orders); },
       onResolved: (handler) => { onResolved = handler; },
       onStatus: (handler) => { onStatus = handler; },
+      onTimer: (handler) => { onTimer = handler; },
+      extend: () => { client.extend(); },
     },
     opening,
   );
