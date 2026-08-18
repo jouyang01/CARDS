@@ -81,7 +81,7 @@ cones differing only in range and damage. AR made the no-cooldown basic the kit'
 | **Asuna** — a cone that is almost a circle | Point-blank all-around | **✅ expressible NOW** — self-centred `circle` r1 (`melee`) | **Ravok** (this PR) |
 | **Orion** — circle, more damage in the centre | Damage falloff | **ENGINE ASK `BASIC-INNER`** — `innerRadius`/`innerAmount` on `circle` | **Cinder** (when the knob lands) |
 | **Titus** — cone AND line, extra damage in the line | Axis bonus | **ENGINE ASK `BASIC-AXIS`** — `axisBonus: amount` on `cone`: tiles on the central line take `amount` extra. The axis is already computed (CONE-B measures perpendicular distance from it) | **Bastion** (when the knob lands) |
-| **PUP** — close rectangle instead of a cone | Constant-width wedge | **ENGINE ASK `BASIC-BEAM`** — `beamWidth: n` on `cone`: half-width becomes the constant n instead of CONE-B's `halfWidth(d)=d` ramp. Same integer test, one substitution | **Aegis** (when the knob lands) |
+| **PUP** — close rectangle instead of a cone | Constant-width wedge | **ENGINE ASK `BASIC-BEAM`** — `beamWidth: n` on `cone`: a constant-width lane instead of CONE-B's `halfWidth(d)=d` ramp. **Semantics ruled in §3.4** — n is the TOTAL width in tiles, odd only | **Aegis** (when the knob lands) |
 | **Elle** — shotgun toggles wide-short ↔ thin-long | Aim-time mode select | **ENGINE ASK `BASIC-MODES`** — the largest ask: an ability carrying two profiles, chosen at aim time (`modes: [AbilityProfile, AbilityProfile]`; order carries the index). UI is real work (AIM2 toggle) | **Kestrel** (when the knob lands) |
 | **Lockwood** — bounces off walls | Reflected line geometry | **❌ not adopted** — new geometry in the shape resolver, already catalogued as the highest-cost candidate; worth it only when a kit is built *around* it | — |
 | **Helios** — bounces enemy-to-enemy | Chain targeting | **❌ not adopted** — target-graph resolution is a genuinely new mechanic; same verdict | — |
@@ -100,7 +100,7 @@ geometry kernels, no trig, no floats.**
 | **Thorn** | **Barbed Sling** | **circle range 5 r1 · 15 damage** (lob) | Zuki. The zone kit pokes over the walls it fights around; pairs with her traps' area denial |
 | **Ravok** | **Whirling Cleave** | **circle self r1 · 22 damage**, `melee` | Asuna. The Berserker hits *everyone* adjacent — dive the middle, swing all around; distinct from Shockwave (r2 + slow, cd 2) |
 | **Bastion** | Crushing Slam | cone 2, `melee` now; **+ `axisBonus` when BASIC-AXIS lands** (proposed +8 on the centre line) | Titus. The Anchor's hammer rewards the straight-on read |
-| **Aegis** | Shield Bash | cone 2, `melee` now; **→ beam 1×2 when BASIC-BEAM lands** | PUP. A shield edge is a wall, not a fan |
+| **Aegis** | Shield Bash | cone 2, `melee` now; **→ `beamWidth: 3`, range 2 when BASIC-BEAM lands** (§3.4) | PUP. A shield edge is a wall, not a fan |
 | **Cinder** | Ember Bolt | line 7 now; **→ circle r1 with `innerAmount` when BASIC-INNER lands** (proposed 22 centre / 14 ring) | Orion. The Amplifier's flare burns hottest at its heart |
 | **Kestrel** | Twin Bolts | line 6 now; **→ two-mode when BASIC-MODES lands** (wide cone 2 ↔ thin line 6) | Elle. The Skirmisher adapts her gun to her spacing — the mode *is* the movement decision |
 
@@ -119,6 +119,38 @@ data must not carry fields the engine cannot read. Each BASIC-* ask ships with i
 edit in the same commit, exactly as `chargeHits`, `impact` and `free` did.
 
 ---
+
+### 3.4 `BASIC-BEAM` unblocked — the semantics and Aegis's number (Designer, 2026-08-16)
+
+The Builder was right to stop: my "Shield Bash as a 1×2 beam" phrasing collided with the
+half-width reading (`beamWidth: 1` → a 3-wide lane), and those are different abilities. Both
+halves ruled:
+
+> **RULED — `beamWidth` is the TOTAL width of the lane in tiles, and must be odd.**
+> `beamWidth: 3` means a lane 3 tiles wide, centred on the aim axis. The engine maps it to
+> the existing integer test as `halfWidth = (beamWidth − 1) / 2`, constant at every depth —
+> one substitution into CONE-B's comparison, as scoped. **Even values are a validation
+> error** (an even lane has no centre axis to rotate around), as is `beamWidth < 1` or the
+> field on any shape but `cone`. Total-width semantics because of the standing principle:
+> **a number in `data/` means the footprint you get** — a designer writing `beamWidth: 3`
+> should get a 3-wide beam, not a 7-wide one.
+>
+> **RULED — Aegis's Shield Bash: `beamWidth: 3`, `range: 2`, damage 20 unchanged.**
+> A 3-wide × 2-deep wall of force — **6 tiles** against the cone's 8. That is the PUP
+> rectangle fantasy read correctly: a tower shield's edge is *broad and short*, the whole
+> face of the shield hitting the two rows in front of you. Not the 1×2 spear my earlier
+> phrasing implied — a 2-tile footprint would have been a ~75% area cut on an auto attack,
+> which no damage bump repairs. The mild tightening (8 → 6 tiles, losing the diagonal
+> splash) is priced by the shape's identity gain; damage stays 20. **Acceptance:** the
+> axis-aligned footprint is exactly 6 tiles and every quantized rotation lands within ±1;
+> `melee: true` is retained. Playtest flag: if the loss of the diagonal tiles makes Aegis
+> whiff on brawl corners, the lever is `beamWidth` 3 → 5 (10 tiles), not a return to the cone.
+
+While I am unblocking Builder items — **`AXIS-MODIFIERS-CHECK` is answered: scales,
+confirmed, no change.** The axis bonus is damage, and damage composes through the ruled
+order (Might/Weaken → cover → shields). A flat exception would make it the only number in
+the game outside the composition rules, invisible to Might and cover alike — harder to
+reason about at the aim preview and a special case the engine does not need.
 
 ## 4. Rulings on the Designer items the Builder left
 
