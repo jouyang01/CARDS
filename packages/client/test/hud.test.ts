@@ -217,3 +217,44 @@ describe('UI3: playback swaps the HUD without destroying it', () => {
     expect(abilityButtons()[0]).toBe(rail); // survived the round trip
   });
 });
+
+/**
+ * M3-WAIT-STATE / M3-CONN-STATE — the banner that says why the board is not
+ * taking orders.
+ *
+ * Both items were opened because a stall with no explanation reads as a freeze:
+ * a submitted networked turn left the HUD armed and silent, and a dropped socket
+ * left the board simply not responding. The banner is the explanation, and — in
+ * keeping with the rest of this file — it is a node built once and hidden rather
+ * than created on demand, so it never appears *under* the pointer.
+ */
+describe('the waiting / disconnected banner', () => {
+  it('is absent until something is worth saying', () => {
+    createHud(root, handlers()).update(model());
+    const banner = root.querySelector('.hud-banner') as HTMLElement;
+    expect(banner, 'the node exists from the first frame').not.toBeNull();
+    expect(banner.style.display, 'and is hidden').toBe('none');
+  });
+
+  it('shows the text it is given, and hides again when it is cleared', () => {
+    const hud = createHud(root, handlers());
+    hud.update(model());
+    hud.setBanner('Locked in · waiting for 1 opponent(s)');
+    const banner = root.querySelector('.hud-banner') as HTMLElement;
+    expect(banner.textContent).toContain('Locked in');
+    expect(banner.style.display).not.toBe('none');
+
+    hud.setBanner(undefined);
+    expect(banner.textContent, 'cleared, not left stale').toBe('');
+    expect(banner.style.display).toBe('none');
+  });
+
+  it('is the same node across updates — it must not be rebuilt under the pointer', () => {
+    const hud = createHud(root, handlers());
+    hud.update(model());
+    const before = root.querySelector('.hud-banner');
+    hud.setBanner('Connection lost');
+    hud.setBanner('Locked in');
+    expect(root.querySelector('.hud-banner')).toBe(before);
+  });
+});

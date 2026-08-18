@@ -139,6 +139,16 @@ export interface NetPlay {
    * resolution can arrive whenever the server is ready.
    */
   onResolved(handler: (state: GameState, events: TurnEvent[]) => void): void;
+  /**
+   * M3-WAIT-STATE / M3-CONN-STATE — register the handler for "why is the board
+   * not taking orders". A string is a reason to show and a locked board;
+   * `undefined` means this client is deciding again.
+   *
+   * The *text* is composed outside the controller (`waiting.ts`), because the
+   * one sentence that mentions the other team is the one place M3-HIDDEN's
+   * count-only rule has to hold, and that belongs somewhere a test can reach.
+   */
+  onStatus(handler: (banner: string | undefined) => void): void;
 }
 
 const PALETTE = {
@@ -304,6 +314,11 @@ export function startHotSeat(
    * were routed is a fact about the *gesture*, and only the board needs it.
    */
   let waypointMarks: Vec2[] = [];
+  /**
+   * M3-WAIT-STATE — why the board is refusing orders, or `undefined` while it
+   * is taking them. Networked only: a hot-seat is never waiting for anybody.
+   */
+  let banner: string | undefined;
   let projection: ProjectionName = 'isometric';
 
   /** The shield pool `initView` sums, so board and HUD never disagree. */
@@ -791,6 +806,7 @@ export function startHotSeat(
    * clock move on — and only when every seat is done does the turn resolve.
    */
   function lockSelected(): void {
+    if (banner !== undefined) return; // already sent, or disconnected
     if (selectedUnitId === undefined) return;
     locked.add(selectedUnitId);
     const next = seatRoster().find((u) => !locked.has(u.unitId));
@@ -1415,6 +1431,10 @@ export function startHotSeat(
    * committed order is what stays on screen. Re-aim by re-selecting the ability.
    */
   function onBoardClick(evt: MouseEvent): void {
+    // M3-WAIT-STATE: a sent turn is not re-aimable. The board disarms rather
+    // than quietly accepting clicks that will never be submitted — "it let me
+    // change my order and then ignored it" is worse than a locked board.
+    if (banner !== undefined) return;
     const sq = renderer.squareFromPoint(evt.clientX, evt.clientY);
     if (!sq) return;
     const unit = selectedUnit();
@@ -1605,7 +1625,11 @@ export function startHotSeat(
     const ordersBySeat = collectOrders();
     if (net !== undefined) {
       stopTimer();
+      // Disarmed before the send, not after the reply: the click that ends the
+      // turn must not leave a live aim on screen while the packet is in flight.
+      interaction = IDLE;
       net.submit(ordersBySeat.get(net.seatId) ?? []);
+      render();
       return;
     }
     const prev = state;
@@ -1907,6 +1931,14 @@ export function startHotSeat(
   // uses — the board cannot tell which produced them, which is the property
   // that lets one renderer serve both matches.
   net?.onResolved((next, events) => { void playResolution(state, events, next); });
+  net?.onStatus((text) => {
+    banner = text;
+    hud.setBanner(text);
+    // A locked board keeps nothing armed: the next repaint would otherwise
+    // paint a hover over a turn that has already gone.
+    if (text !== undefined) interaction = IDLE;
+    render();
+  });
 
   beginTurn();
 
