@@ -1327,6 +1327,19 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   full reclaim path is M3-RECONNECT's. This also settles that **the lock total is over
   seated-and-controlling players only** — a socket that never `join`ed, or is refused, counts for
   nothing (M3-ROOM decision 8 already holds "a socket is not a seat").
+  - **RULED — RECONNECT-DETACH: a room restored from storage marks every seat DISCONNECTED (Builder OQ
+    2026-09-16 #1; SHIPPED PR #77; confirms the Builder's call inside M3-RECONNECT).** A Durable Object
+    that was evicted and wakes from its persisted `Room` record would otherwise claim **everyone is
+    still present** — sockets do not survive the eviction, but the `connected` flags on disk do — so
+    each returning player's own reclaim ticket is refused as `seatTaken`, and the reconnect the
+    persistence was *for* is broken by the very restore meant to survive it. Ruling: on restore
+    (`detachAll` in the DO's `blockConcurrencyWhile` constructor, before any request is served) **every
+    seat is set disconnected**; a live socket re-announces itself and reclaims its seat by identity
+    (the normal reconnect path). This is the `connected` invariant made **true again** after a cold
+    wake, not a new rule — a restored room genuinely has no live sockets. **HANDOFF composes
+    harmlessly:** a woken room that sits empty for a turn accrues `missedTurns` for everyone, but a
+    disconnected seat controls nothing and a reclaim clears it, so no character is mis-assigned.
+    Deterministic; server-side. Ratified.
 - **RULED — A networked match starts when the room is FULL, with an explicit "start now" escape
   hatch for short rooms (M3; Builder OQ 2026-08-16 #3, decision 8).** Auto-starting on "both teams
   have someone" deals characters before the later players arrive and seats them controlling nothing,
@@ -1494,6 +1507,17 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   extra characters are explained rather than mysterious. Read `connected` + the derived control map
   (HANDOFF) the server already sends — recompute nothing. Client-only; no protocol change. Out of
   scope: the handoff *rule* (server, ruled + shipped); reconnect logic (M3-RECONNECT, shipped).
+  - **SHIPPED PR #77 (own-team + own-side); enemy PRESENCE-count ALLOWED (Builder OQ 2026-09-16 #6).**
+    The lobby/topbar now mark disconnected own-team seats and tell a stand-in it is covering. The enemy
+    block still shows only a pick **count** (BLIND-PICK). Ruling: **showing the enemy's presence as a
+    count — "1 of 2 present" — is allowed and is NOT a golden-rule-#5 leak.** Presence is not a *pick*:
+    it is coarse connection status, the same category as the "N enemies locked" count M3-HIDDEN already
+    exposes, and it never reveals a character choice or a plan. It is also genuinely useful — a player
+    staring at a stalled turn deserves to know the far side is a player short, not that the game froze.
+    So the enemy block **may** carry a present-count beside its pick-count; enemy character ids and
+    picks stay hidden. Small client addition (fold into NET-PRESENCE-UI's follow-up); optional, not
+    load-bearing. **What stays hidden:** *which* enemy seat is absent by id, and anything about their
+    picks — a bare count only, mirroring the lock-count rule.
 - **RULED — a `beamWidth` cone MAY also carry `axisBonus`; the two compose and are not forbidden
   (Builder OQ 2026-09-14 #5; ratifies the shipped geometry).** A beam's axis is its centre file, which
   is exactly where `axisBonus` already adds — so a constant-width lane with a hotter centre line is a
