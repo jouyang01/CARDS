@@ -215,3 +215,71 @@ describe('M3-LOBBY-UI: the temporary start route is gone', () => {
     expect(ns.calls).toEqual([{ name: 'WXYZ', url: 'https://room/room', method: 'GET' }]);
   });
 });
+
+/**
+ * M3-ROOM-CREATE — the host's map, from the mint call to the board.
+ *
+ * Map and format are **room-level** (ruled), so both are settled when the code
+ * is minted. `format` already was; `map` was hard-coded in the Durable Object,
+ * which made the client's map chooser a control over nothing. These pin the
+ * whole path: the Worker validates and forwards it, the record carries it, and
+ * an unknown id is refused rather than quietly becoming the default.
+ */
+describe('M3-ROOM-CREATE: the map is chosen when the room is minted', () => {
+  class StubNamespace {
+    readonly calls: { name: string; url: string; method: string }[] = [];
+    idFromName(name: string) { return { name }; }
+    get(id: { name: string }) {
+      return {
+        fetch: async (input: string | Request, init?: RequestInit): Promise<Response> => {
+          const url = typeof input === 'string' ? input : input.url;
+          const method = init?.method ?? (typeof input === 'string' ? 'GET' : input.method);
+          this.calls.push({ name: id.name, url, method });
+          // A room that does not exist yet, so the mint loop takes the first code.
+          if (url.endsWith('/room')) return new Response('no room', { status: 404 });
+          return Response.json({ ok: true });
+        },
+      };
+    }
+  }
+  const env = (ns: StubNamespace): Env => ({ ROOMS: ns as unknown as Env['ROOMS'] });
+
+  it('forwards the chosen map to the durable object', async () => {
+    const ns = new StubNamespace();
+    const res = await worker.fetch(
+      new Request('https://x/rooms?format=4v4&map=iron-basin', { method: 'POST' }), env(ns),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ format: '4v4', map: 'iron-basin' });
+    const create = ns.calls.find((c) => c.url.includes('/create'))!;
+    expect(create.url).toContain('map=iron-basin');
+    expect(create.url).toContain('format=4v4');
+  });
+
+  it('omits it when the host did not choose — the server default stands', async () => {
+    const ns = new StubNamespace();
+    await worker.fetch(new Request('https://x/rooms?format=2v2', { method: 'POST' }), env(ns));
+    const create = ns.calls.find((c) => c.url.includes('/create'))!;
+    expect(create.url).not.toContain('map=');
+  });
+
+  it('an unknown map is refused, not silently swapped for another board', async () => {
+    // MAPTOGGLE's rule, one layer up: creating a room on a different map than
+    // the host asked for is the one outcome a chooser must not have.
+    const ns = new StubNamespace();
+    const res = await worker.fetch(
+      new Request('https://x/rooms?format=2v2&map=atlantis', { method: 'POST' }), env(ns),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: expect.stringContaining('atlantis') });
+    expect(ns.calls.some((c) => c.url.includes('/create')), 'no room was minted').toBe(false);
+  });
+
+  it('the room record remembers which map it is on', () => {
+    // `mapId` rather than a whole `MapDef`: the record is persisted and shipped
+    // over the wire, and re-sending a board of terrain the client already has is
+    // paying for nothing.
+    expect(createRoom('WXYZ', '2v2', 'iron-basin').mapId).toBe('iron-basin');
+    expect(createRoom('WXYZ', '2v2').mapId, 'absent means the runtime default').toBeUndefined();
+  });
+});

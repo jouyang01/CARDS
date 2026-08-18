@@ -12,6 +12,7 @@ import {
   isDecoyPurple,
   isFogged,
   isTeamBlue,
+  isMoveLine,
   isRangeWash,
   isSceneBackground,
   isTeamRed,
@@ -661,6 +662,44 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
     .toBeGreaterThan(0);
 });
 
+
+/**
+ * WAYPOINTS-FIX — the reported gesture, in a real browser, through the real
+ * click handler.
+ *
+ * This test exists because the shipped WAYPOINTS had **thirteen green unit
+ * tests and did nothing**. Both halves of the failure were in the wiring the
+ * unit tests could not see: the Shift branch was nested inside "move is already
+ * armed", and the append refused anything non-adjacent. So the AC asks for the
+ * handler itself to be driven, and only a browser can do that.
+ *
+ * The assertion is the route's own colour rather than "the frame changed": a
+ * frame diff would also pass on the hover highlight that any click produces.
+ */
+test('Shift-click draws a move route without arming Move first (WAYPOINTS-FIX)', async ({ page }) => {
+  const before = countPixels(await pixels(page), isMoveLine);
+
+  // Nothing armed — exactly the state the owner was in. Shift-click a tile a
+  // few squares from the selected unit; the client should arm move itself and
+  // route there.
+  await page.keyboard.down('Shift');
+  let painted = before;
+  for (const [fx, fy] of [[0.42, 0.5], [0.38, 0.42], [0.46, 0.58], [0.34, 0.55]] as const) {
+    await clickAt(page, fx, fy);
+    painted = Math.max(painted, countPixels(await pixels(page), isMoveLine));
+    if (painted > before) break;
+  }
+  await page.keyboard.up('Shift');
+
+  expect(painted, 'a Shift-click with nothing armed drew no route — the reported bug')
+    .toBeGreaterThan(before);
+
+  // And it armed Move rather than committing and disarming: the readout has to
+  // have been spent by the segment, which is the "budget draws down" half.
+  const move = page.locator('.hud-moves .hud-move').nth(0);
+  const left = Number(/\((\d+)\)/.exec((await move.textContent()) ?? '')?.[1] ?? '-1');
+  expect(left, 'the waypoint segment did not draw the budget down').toBeGreaterThanOrEqual(0);
+});
 
 /**
  * RENDER-COVERAGE — one multi-turn drive over the render styles that shipped

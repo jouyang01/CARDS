@@ -3496,3 +3496,105 @@ BASIC-BEAM commit — the field is not in the schema yet, and data must not lead
 composes through the ruled order; a flat exception would be the only number in the game
 outside the composition rules — invisible to Might and cover alike, and a special case the
 engine does not need.
+
+## 2026-09-13 — Builder: the waypoint gesture works, rooms can be made, and a networked match renders
+
+1. **WAYPOINTS shipped green and did nothing, and neither fault was in the function its tests
+   covered.** The Shift branch was nested inside the "move is already armed" arm of `onBoardClick`,
+   so a player who had merely selected a unit never reached it; and `appendWaypoint` took one
+   adjacent step per click, refusing anything further with a bare `undefined`. Thirteen unit tests
+   passed over the half that worked. The gate is now `waypointClick()` — a named rule with the
+   broken case (nothing armed) as its first test — and the routing is `appendWaypointRouted`, which
+   delegates to `pathTo` from the last waypoint on the remaining budget. **The lesson recorded, not
+   just the fix:** a rule expressed as a nesting level is a rule no test can hold.
+
+2. **The AC asked for the real click handler to be driven, so there is a browser test, and it was
+   verified to fail without the fix.** I sabotaged `waypointClick` to return `'ignore'`, watched
+   the new e2e go red, and reverted. A test that cannot fail is worth less than no test, and this
+   item exists precisely because the previous batch's tests could not fail on the thing that was
+   broken.
+
+3. **PR #66 shipped a render regression that nothing caught, and it is fixed here.** The
+   AIM-RANGE-TELL commit **deleted** `renderer.highlight('impact', …)` while adding its own version,
+   and the replacement never landed — so DASH-PREVIEW's landing discs silently stopped drawing and
+   AIM-RANGE-TELL's own marker never appeared, with `refusedAim` and `REFUSED` sitting in the file
+   as dead code through a green suite and a green render e2e. The decision is `impactLayer()` now:
+   three things share that layer and none can be wanted at once, which is a fact a pure function can
+   state and a render loop cannot. WAYPOINTS-FIX needed the marker, which is how it surfaced.
+
+4. **A waypoint refusal is click-driven, unlike AIM-RANGE-TELL's hover-driven one.** It is an answer
+   to something the player *did*, so it survives the pointer moving off the square; a hover-scoped
+   marker would flash and vanish. Cleared by the next click that does anything.
+
+5. **`occupied` stays non-fatal mid-route, and that is now load-bearing rather than incidental.**
+   The verdict is about where a path *ends*; refusing it mid-segment would make routing around a
+   body — the Dev Note's own example — impossible. Whether the finished path ends legally is settled
+   by the engine at submit, as it always was.
+
+6. **M3-ROOM-CREATE needed the map to become real.** `POST /rooms` took only a format and the DO
+   hard-coded `duel-arena`, so a host's map chooser would have been a control over nothing. The room
+   record now carries a `mapId` — an **id, not a `MapDef`**, because the record is persisted and
+   shipped over the wire and re-sending a board of terrain the client already has is paying for
+   nothing — and the DO builds its `MatchConfig` per room from it.
+
+7. **An unknown map is a 400, not a fallback.** MAPTOGGLE's rule one layer up: creating a room on a
+   different board than the host asked for is the one outcome a chooser must not have.
+
+8. **The create form narrows formats by the chosen map's spawn counts.** A two-spawn map cannot seat
+   a 4v4, and `validateMapForFormat` would only say so at match creation — by which point the room
+   exists and everybody has picked. Derived from `map.spawns` rather than tabulated, so a map that
+   grows a spawn starts offering the bigger format without anyone editing a list.
+
+9. **M3-NET-BOARD forks the controller at exactly one point.** `resolveAndPlay` became
+   `collectOrders` / `endTurn` / `playResolution`, and only `endTurn` differs: the hot-seat resolves
+   because it *is* both sides, a networked client submits because it is one seat of two. Everything
+   downstream takes the same `(prev, events, next)`, so the board cannot tell which produced them —
+   which is what let a networked match render on the renderer the hot-seat already had, rather than
+   growing a second one.
+
+10. **The networked fog is the seat's by construction, not by a flag.** The state the board renders
+    *is* the server's team-filtered view, so an enemy outside vision is **absent from the data**
+    rather than present-and-hidden. There is no local view for a bug to widen. `visibleSquares` is
+    still sent and still unused by the board — flagged below rather than wired for the sake of it,
+    because `fogView` over an already-filtered state computes the same answer.
+
+11. **`RoomView` gained `mapId` because the client must draw the board the server is resolving on.**
+    Public information by definition — it is the terrain everybody is about to look at — so it rides
+    the broadcast view rather than the per-seat one.
+
+## Open Questions for the Analyzer — 2026-09-13
+
+1. **BASIC-BEAM is no longer blocked, and the backlog has not caught up.** (`docs/design/
+   clashes-and-basics.md` §3.4, commit `a2d94d5` on `main`.) The Designer ruled it while this batch
+   was being written: **`beamWidth` is the TOTAL width in tiles, odd only** (even is a validation
+   error — no centre axis), the engine maps it to `halfWidth = (beamWidth-1)/2`, and **Aegis's
+   Shield Bash is `beamWidth: 3`, range 2**. BACKLOG.md still says "BLOCKED on a Designer number"
+   and your notes for this session repeated it, so I did not build it — the number exists now and
+   the item is a `coneSquares` substitution plus one data edit. **Please reschedule it.**
+
+2. **`visibleSquares` is sent to the board and not read.** (M3-NET-BOARD AC; `main.ts`
+   `startNetworkedMatch`, `app.ts` `paintFog`.) The AC says the board should show "server-filtered
+   `visibleSquares`… not the local `fogView`". What shipped is equivalent but arrives differently:
+   the *state* is filtered, so `fogView` over it computes this seat's own vision and nothing wider.
+   Using `visibleSquares` directly would be one less derivation and would survive a future
+   filtering change on the server — but it is a second source of truth for the same fact today.
+   **Confirm which you want**; I did not add a second path speculatively.
+
+3. **A networked match has no timer and no "waiting for the other side" state.** (`app.ts`
+   `endTurn`.) After submitting, the board sits on the last frame with the HUD still armed —
+   nothing says the turn is locked or that anybody is being waited for. UI-TIMER is per-seat and
+   client-side, and M3-TIMER (server clock) is blocked on this item. The gap is small and the fix
+   is a HUD state, but "what does a networked client show while it waits" is not specced. **Worth
+   an item** — suggest "M3-WAIT-STATE".
+
+4. **The networked path has no reconnect and no disconnect handling in the UI.** A closed socket
+   sets `phase: 'closed'` and the board simply stops responding. M3-RECONNECT owns the rejoin; what
+   is unowned is the *client* saying it happened. Same shape as #3.
+
+5. **`?create` has no link to it from anywhere.** A host still has to know to type it. One link on
+   the hot-seat page would close the loop end-to-end; not in the AC, so not built.
+
+6. **Confirm the chase-preview gap is still acceptable.** (Prior OQ 2026-09-12 #3, unruled.) The
+   chase now routes around bodies but the drawn chase route does not, so a player can be shown a
+   pursuit that will detour. Unchanged this session; re-flagged because it is the last known
+   preview/resolution disagreement.

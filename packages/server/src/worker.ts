@@ -13,7 +13,7 @@
  */
 
 import { DEFAULT_FORMAT, FORMATS, type FormatId } from '@cards/engine';
-import { RoomDurableObject } from './durable-object.js';
+import { RoomDurableObject, isMapId } from './durable-object.js';
 import { ROOM_CODE_LENGTH, isRoomCode, mintCode } from './room.js';
 
 export { RoomDurableObject };
@@ -46,6 +46,15 @@ export default {
       if (!(requested in FORMATS)) return json({ error: `unknown format "${requested}"` }, 400);
       const format = requested as FormatId;
 
+      // M3-ROOM-CREATE: the map is the **host's** choice, taken here because
+      // map and format are room-level (ruled) — the seat screen picks characters
+      // and catalysts, and neither belongs to a seat. Validated rather than
+      // defaulted on a typo, for MAPTOGGLE's reason: silently creating a room on
+      // a different board than the host asked for is the one outcome a chooser
+      // must not have.
+      const map = url.searchParams.get('map') ?? undefined;
+      if (map !== undefined && !isMapId(map)) return json({ error: `unknown map "${map}"` }, 400);
+
       // Collisions are astronomically unlikely at 22^4 codes and one room per
       // party, but "unlikely" is not "handled": a second room minted onto a
       // live one would drop everybody already in it into somebody else's lobby.
@@ -54,8 +63,9 @@ export default {
         const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
         const existing = await stub.fetch(`https://room/room`);
         if (existing.status !== 404) continue; // somebody is already in there
-        await stub.fetch(`https://room/create?code=${code}&format=${format}`);
-        return json({ code, format });
+        const query = map === undefined ? '' : `&map=${encodeURIComponent(map)}`;
+        await stub.fetch(`https://room/create?code=${code}&format=${format}${query}`);
+        return json(map === undefined ? { code, format } : { code, format, map });
       }
       return json({ error: 'could not mint a free room code' }, 503);
     }

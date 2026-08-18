@@ -89,6 +89,17 @@ export interface Seat {
 export interface Room {
   code: string;
   format: FormatId;
+  /**
+   * The map this room plays on, chosen by the **host at creation**
+   * (M3-ROOM-CREATE; ruled "MAP/FORMAT are ROOM-level").
+   *
+   * An id rather than a `MapDef`, for the same reason `format` is an id: the
+   * room record is persisted and shipped over the wire, and a whole board of
+   * terrain in every `roomUpdated` would be paying to re-send something the
+   * client already has. Absent means "the runtime's default" — every room
+   * created before this field existed, and every test that does not care.
+   */
+  mapId?: string;
   /** Seats in join order — the order is the tie-break for team assignment. */
   seats: Seat[];
   /** The turn the match is on; 0 until it starts. */
@@ -131,8 +142,10 @@ export function seatBounds(format: FormatId): { min: number; max: number } {
 }
 
 /** A fresh, empty room. */
-export function createRoom(code: string, format: FormatId): Room {
-  return { code, format, seats: [], turn: 0, history: [] };
+export function createRoom(code: string, format: FormatId, mapId?: string): Room {
+  return mapId === undefined
+    ? { code, format, seats: [], turn: 0, history: [] }
+    : { code, format, mapId, seats: [], turn: 0, history: [] };
 }
 
 /**

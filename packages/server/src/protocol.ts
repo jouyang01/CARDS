@@ -27,6 +27,13 @@ export const PROTOCOL_VERSION = 1;
 export interface RoomView {
   code: string;
   format: FormatId;
+  /**
+   * The map this room plays on, chosen by the host at creation
+   * (M3-ROOM-CREATE). Public: it is the board everybody is about to look at,
+   * and M3-NET-BOARD needs it to render the right one. Absent means the
+   * server's default.
+   */
+  mapId?: string;
   seats: Seat[];
   turn: number;
   /** Whether the room could start a match right now (M3-LOBBY acts on it). */
@@ -186,6 +193,7 @@ export function roomView(room: Room, canStart: boolean, locked: readonly string[
   return {
     code: room.code,
     format: room.format,
+    ...(room.mapId === undefined ? {} : { mapId: room.mapId }),
     // Picks are **stripped here** and delivered by the per-seat `lobby` message
     // instead (M3-LOBBY). A `RoomView` rides `joined`, `roomUpdated` and
     // `seatLeft`, all broadcast as the same bytes to both teams — carrying picks

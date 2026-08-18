@@ -25,6 +25,7 @@ import {
   type CatalystPool,
   type Roster,
   type TeamId,
+  type TurnEvent,
   type UnitOrders,
   type UnitState,
   type Vec2,
@@ -44,7 +45,9 @@ import {
   previewCatalystAim,
   previewFreeAim,
   previewMovePath,
+  impactLayer,
   refusedAim,
+  waypointClick,
   type Interaction,
 } from './order-mode.js';
 import {
@@ -65,7 +68,7 @@ import {
   emptyDraft,
   moveEnvelope,
   nextDraft,
-  appendWaypoint,
+  appendWaypointRouted,
   pathTo,
   remainingMove,
   rangeEnvelope,
@@ -103,6 +106,39 @@ export interface HotSeatUI {
   controls: HTMLElement;
   /** The right-side combat log panel (UI6). Optional so tests can omit it. */
   log?: HTMLElement;
+}
+
+/**
+ * M3-NET-BOARD — the seam that turns this controller into a **networked**
+ * client. Absent for the hot-seat, which is unchanged in every respect.
+ *
+ * Three differences, and they are all here rather than sprinkled through the
+ * controller:
+ *
+ * 1. **One seat, no handover.** A networked client is one player of two, so
+ *    `seats` is this seat alone and the "pass the mouse" loop has nothing to
+ *    pass to. The hot-seat's `deriveSeats` walk is skipped entirely.
+ * 2. **Lock-in submits.** The turn ends by sending orders, not by resolving —
+ *    the client is not the authority and must not pretend to be. A client that
+ *    ran its own `resolveTurn` would drift the moment the server disagreed, and
+ *    the whole point of a pure engine is that it need not.
+ * 3. **Resolutions arrive.** The server's `turnResolved` carries the state and
+ *    the event log **already filtered for this team**, and both go straight into
+ *    the same playback the hot-seat uses.
+ */
+export interface NetPlay {
+  /** Which seat this client is — the one whose orders `submit` carries. */
+  seatId: string;
+  team: TeamId;
+  /** The characters this seat orders, from `matchStarted`. */
+  unitIds: string[];
+  submit(orders: UnitOrders[]): void;
+  /**
+   * Register the handler the socket calls when a turn resolves. Called once, at
+   * start-up; the controller supplies the callback rather than polling, so a
+   * resolution can arrive whenever the server is ready.
+   */
+  onResolved(handler: (state: GameState, events: TurnEvent[]) => void): void;
 }
 
 const PALETTE = {
@@ -212,16 +248,28 @@ export function startHotSeat(
   catalysts: CatalystPool = {},
   /** CAMO-SEED: a dev-only starting arrangement. Absent for a normal match. */
   scenario?: ScenarioId,
+  /** M3-NET-BOARD: present for a networked match, absent for the hot-seat. */
+  net?: NetPlay,
+  /** The server's opening state for a networked match — already team-filtered. */
+  opening?: GameState,
 ): void {
   // CAMO-SEED: a dev-only nudge to the starting positions, applied once and
   // never again — everything after this is the ordinary engine on an ordinary
   // state. Absent for a normal match.
-  let state = scenario === undefined
+  //
+  // M3-NET-BOARD: a networked match is handed its opening state instead. The
+  // server is the authority, so the client never *creates* a match — it renders
+  // the one it was given, already filtered for this seat.
+  let state = opening ?? (scenario === undefined
     ? createMatch(map, format, teams)
-    : applyScenario(scenario, buildBoard(map), createMatch(map, format, teams));
+    : applyScenario(scenario, buildBoard(map), createMatch(map, format, teams)));
   /** SCORE1's running ledger, folded from each turn's event log as it plays. */
   let totals: MatchTotals = initTotals(state);
-  const seats = deriveSeats(state, playersPerTeam);
+  // One seat and no handover when networked (see `NetPlay`): this client is one
+  // player of two, and there is nobody on this machine to pass the mouse to.
+  const seats = net === undefined
+    ? deriveSeats(state, playersPerTeam)
+    : [{ seatId: net.seatId, team: net.team, unitIds: [...net.unitIds] }];
 
   // UI1's Lock-In ruling: a seat's characters are all orderable at once and the
   // player switches between them freely; **Lock In locks the selected character
@@ -233,6 +281,15 @@ export function startHotSeat(
   let locked = new Set<string>();
   let drafts = new Map<string, OrderDraft>();
   let interaction: Interaction = IDLE;
+  /**
+   * WAYPOINTS-FIX — the square a Shift-click could not route to, marked until
+   * the next click does something.
+   *
+   * Click-driven rather than hover-driven, unlike AIM-RANGE-TELL's marker: a
+   * waypoint refusal is an answer to something the player *did*, and it has to
+   * survive the pointer moving off the square or it would flash and vanish.
+   */
+  let refusedSquare: Vec2 | undefined;
   let projection: ProjectionName = 'isometric';
 
   /** The shield pool `initView` sums, so board and HUD never disagree. */
@@ -701,7 +758,7 @@ export function startHotSeat(
   function openSeat(): void {
     while (seatIdx < seats.length && seatRoster().length === 0) seatIdx += 1;
     const roster = seatRoster();
-    if (roster.length === 0) return void resolveAndPlay(); // nobody left to order
+    if (roster.length === 0) return void endTurn(); // nobody left to order
     for (const unit of roster) draftFor(unit); // every character is orderable at once
     startTimer();
     selectUnit(roster[0]!.unitId);
@@ -861,6 +918,18 @@ export function startHotSeat(
     // a player choosing between two landing squares is reading the second.
     // Plan-time only — the engine detonates from wherever the dash really stops.
     const impact = impactPreview(map, unit, chosen, preview.aim, preview.aimStep);
+    // Three things share this layer, and they can never be wanted at once: a
+    // dash's landing discs, AIM-RANGE-TELL's refused *aim*, and WAYPOINTS-FIX's
+    // refused *waypoint*. A refusal has no landing to preview, and a landing is
+    // not a refusal. (This line was dropped by the AIM-RANGE-TELL commit, which
+    // silently took the dash discs off the board with it — see the regression
+    // test in `dash-preview.test.ts`.)
+    const layer = impactLayer(
+      [...impact.origin, ...impact.destination],
+      refusedAim(map, state, unit, chosen, interaction),
+      refusedSquare,
+    );
+    renderer.highlight('impact', layer.squares, layer.refused ? REFUSED : IMPACT, 0.4);
 
     // ── UI2 Layer 1: the continuous shape over Layer 2's tiles ───────────────
     // The tiles are the truth (centre-in binary, AIM2); the wedge/beam/disk is
@@ -1328,6 +1397,33 @@ export function startHotSeat(
     if (unit === undefined) return;
     const draft = draftFor(unit);
 
+    // WAYPOINTS-FIX: a Shift-click is a waypoint before it is anything else,
+    // and it **arms move by itself** — the shipped version only ran once move
+    // was already armed, which is why the reported gesture did nothing. The
+    // aiming modes still win (`waypointClick` returns 'ignore' for them), so
+    // this cannot steal a click from an aim in progress.
+    const waypoint = waypointClick(interaction, draft, evt.shiftKey, unit.alive);
+    if (waypoint !== 'ignore') {
+      if (waypoint === 'armAndAppend') {
+        drafts.set(unit.unitId, nextDraft(
+          draft, { type: 'selectMove' }, currentIsDash(draft, characterFor(unit)), dashCatalystArmed(draft),
+        ));
+        interaction = arm('move');
+      }
+      // MOVE-FOG: segments route against the team-visible board, like every
+      // other plan-time query — a fogged enemy is not an obstacle you know about.
+      const planned = planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units);
+      const live = draftFor(unit);
+      const extended = appendWaypointRouted(map, planned, unit, live.movePath, sq, live.sprint);
+      // Every click answers: the route grows, or the square is marked. Silence
+      // is what made the shipped version look broken.
+      if (extended === undefined) refusedSquare = { x: sq.x, y: sq.y };
+      else { live.movePath = extended; refusedSquare = undefined; }
+      render();
+      return;
+    }
+    refusedSquare = undefined;
+
     // AIM-RANGE: every slot commits through `commitAim`, which returns nothing
     // for an out-of-range click. The slot then stays armed rather than
     // recording an order the engine will silently drop at resolution — the
@@ -1378,20 +1474,12 @@ export function startHotSeat(
       // MOVE-FOG: the committed path is planned against the visible board too —
       // otherwise the preview and the order would disagree, and the order would
       // be the one that leaked.
+      // Without Shift this is the ordinary direct-line auto-route (MOVE1),
+      // unchanged: it replaces the drawn path rather than extending it.
       const planned = planningState(state, currentFog(currentSeat()?.team ?? unit.owner).units);
-      if (evt.shiftKey) {
-        // WAYPOINTS: Shift builds the route a tile at a time instead of taking
-        // the auto-route, so a player can walk *around* a trap or a body. The
-        // mode stays armed — a waypoint is one step of a path, not a finished
-        // order — and a refused click leaves the path exactly as it was.
-        const extended = appendWaypoint(map, planned, unit, draft.movePath, sq, draft.sprint);
-        if (extended !== undefined) draft.movePath = extended;
-        render();
-      } else {
-        draft.movePath = pathTo(map, planned, unit, sq, movementBudget(unit, draft.sprint));
-        interaction = afterCommit();
-        render();
-      }
+      draft.movePath = pathTo(map, planned, unit, sq, movementBudget(unit, draft.sprint));
+      interaction = afterCommit();
+      render();
     }
   }
 
@@ -1453,7 +1541,8 @@ export function startHotSeat(
 
   // ── Turn resolution + playback ───────────────────────────────────────────────
 
-  async function resolveAndPlay(): Promise<void> {
+  /** This board's drafts, as `UnitOrders`, keyed by the seat that owns them. */
+  function collectOrders(): Map<string, UnitOrders[]> {
     const ordersBySeat = new Map<string, UnitOrders[]>();
     for (const seat of seats) {
       const units = seat.unitIds
@@ -1465,8 +1554,43 @@ export function startHotSeat(
         .filter((o): o is UnitOrders => o !== undefined);
       if (units.length > 0) ordersBySeat.set(seat.seatId, units);
     }
+    return ordersBySeat;
+  }
+
+  /**
+   * M3-NET-BOARD — end the turn the way this match ends turns.
+   *
+   * The hot-seat resolves locally because it *is* both sides. A networked client
+   * is one seat of two and **may not resolve anything**: it sends its orders and
+   * waits for the server's `turnResolved`, which arrives already filtered for
+   * this team. The whole difference between the two matches is this fork —
+   * everything downstream (the log, the playback, the camera) is fed the same
+   * `(prev, events, next)` either way, which is what keeps one renderer honest
+   * about two very different sources of truth.
+   */
+  async function endTurn(): Promise<void> {
+    const ordersBySeat = collectOrders();
+    if (net !== undefined) {
+      stopTimer();
+      net.submit(ordersBySeat.get(net.seatId) ?? []);
+      return;
+    }
     const prev = state;
     const result = resolveTurn(prev, map, mergeSeatOrders(seats, ordersBySeat), roster, catalysts);
+    await playResolution(prev, result.events, result.state);
+  }
+
+  /**
+   * Fold one resolved turn into the board: the log, the decoy snapshots, the
+   * animation, and the next Decision phase.
+   *
+   * Source-agnostic on purpose. `resolveTurn` produced these three arguments in
+   * a hot-seat match and the **server** produced them in a networked one, and
+   * nothing below this line can tell — which is exactly the property that lets a
+   * networked match render on the board the hot-seat already drew.
+   */
+  async function playResolution(prev: GameState, events: TurnEvent[], next: GameState): Promise<void> {
+    const result = { state: next, events };
     // The log is written from the resolved event list up front, so it is
     // complete whether the player watches the animation or skips it.
     combatLog?.appendTurn(prev.turn, result.events, logNames);
@@ -1743,6 +1867,13 @@ export function startHotSeat(
   }
 
   const teamName = (t: number) => (t === 0 ? 'Team 1' : 'Team 2');
+
+  // M3-NET-BOARD: a resolution can arrive at any moment once this client has
+  // submitted, so the handler is registered before the first turn opens. It
+  // feeds the server's `(state, events)` into exactly the playback the hot-seat
+  // uses — the board cannot tell which produced them, which is the property
+  // that lets one renderer serve both matches.
+  net?.onResolved((next, events) => { void playResolution(state, events, next); });
 
   beginTurn();
 

@@ -204,3 +204,78 @@ export function previewMovePath(
   }
   return draft.movePath;
 }
+
+/**
+ * WAYPOINTS-FIX — what a **Shift-click** on the board means, given what is
+ * currently armed.
+ *
+ * Owner Dev Note: *"WAYPOINTS is not working. I cannot hold shift + click to
+ * move to a waypoint."*
+ *
+ * This is the half that was actually broken. `appendWaypoint` had unit tests and
+ * passed them; the feature still did nothing, because the Shift branch lived
+ * *inside* the "move is already armed" arm of the click handler. A player who
+ * selects a unit and Shift-clicks has armed nothing, so the branch never ran and
+ * there was no feedback to say why. The gate is therefore pulled out here, where
+ * it can be tested as the rule it is rather than inferred from a nesting level.
+ *
+ * The rule (ruled, edge-cases "WAYPOINTS-FIX"):
+ * - No Shift, or an immovable unit → not a waypoint click; the caller does
+ *   whatever it did before.
+ * - **Aiming wins.** A Shift-click while an ability, free action, catalyst or
+ *   chase is mid-commit is not a waypoint — those modes own the click, and
+ *   stealing it would drop the aim the player is halfway through.
+ * - Move already armed (or a sprint drafted) → append to the drawn path.
+ * - Otherwise → **arm move and append**, so the first Shift-click starts the
+ *   route without the player hunting for the Move button first.
+ */
+export type WaypointClick = 'ignore' | 'append' | 'armAndAppend';
+
+export function waypointClick(
+  interaction: Interaction,
+  draft: OrderDraft,
+  shiftKey: boolean,
+  movable: boolean,
+): WaypointClick {
+  if (!shiftKey || !movable) return 'ignore';
+  if (interaction.mode === 'aim' || interaction.mode === 'free'
+    || interaction.mode === 'catalyst' || interaction.mode === 'chase') {
+    return 'ignore';
+  }
+  return interaction.mode === 'move' || draft.sprint ? 'append' : 'armAndAppend';
+}
+
+/**
+ * What the shared **impact layer** shows, and in which of its two meanings.
+ *
+ * Three things want that layer and none of them can be wanted at once: a dash's
+ * landing discs (DASH-PREVIEW), the square an *aim* was refused at
+ * (AIM-RANGE-TELL), and the square a *waypoint* was refused at (WAYPOINTS-FIX).
+ * A refusal has no landing to preview and a landing is not a refusal, so one
+ * layer carries all three and the colour says which.
+ *
+ * Pulled out of the render loop because the alternative was not testable, and
+ * that mattered: the AIM-RANGE-TELL commit deleted the layer's `highlight` call
+ * while adding its own and shipped **neither** — the dash discs silently stopped
+ * drawing and the refusal marker never appeared, through a green suite and a
+ * green render e2e. A pure function cannot fix a caller that forgets to call it,
+ * but it can make the decision itself something a test can hold.
+ */
+export interface ImpactLayer {
+  squares: Vec2[];
+  /** True when these are refusals rather than a landing — draw them in the "no" colour. */
+  refused: boolean;
+}
+
+export function impactLayer(
+  discs: readonly Vec2[],
+  aimRefused: readonly Vec2[],
+  waypointRefused: Vec2 | undefined,
+): ImpactLayer {
+  if (discs.length > 0) return { squares: discs.map((p) => ({ ...p })), refused: false };
+  const squares = [
+    ...aimRefused.map((p) => ({ ...p })),
+    ...(waypointRefused === undefined ? [] : [{ ...waypointRefused }]),
+  ];
+  return { squares, refused: true };
+}

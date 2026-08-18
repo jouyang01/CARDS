@@ -18,14 +18,17 @@ import {
   validateCatalysts,
   type CatalystData,
   type CharacterDef,
+  type GameState,
   type MapDef,
+  type TurnEvent,
 } from '@cards/engine';
 import { startHotSeat, type HotSeatUI } from './app.js';
 import { describeSetup, parseSetup } from './match-setup.js';
-import { RoomClient } from './net.js';
+import { RoomClient, type NetState } from './net.js';
 import { lobbyStatus } from './lobby.js';
 import { createLobbyScreen, type CatalystOption } from './lobby-screen.js';
 import { parseRoomLink, roomSocketUrl, type RoomLink } from './room-url.js';
+import { createCreateScreen } from './create-screen.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
@@ -65,8 +68,27 @@ if (roomLink !== undefined) {
     throw new Error('invalid room link');
   }
   joinRoom(roomLink.link);
+} else if (new URLSearchParams(window.location.search).has('create')) {
+  // M3-ROOM-CREATE: `?create` is the host's entry. Its own query rather than a
+  // control on the hot-seat board, because creating a room replaces the screen
+  // — and because the hot-seat is still the default with no query at all.
+  bootCreateRoom();
 } else {
   bootHotSeat();
+}
+
+/** The create form: choose a map and a format, get a code, follow it in. */
+function bootCreateRoom(): void {
+  const board = document.getElementById('board')!;
+  const status = document.getElementById('status')!;
+  status.textContent = 'Create a room';
+  const root = document.createElement('div');
+  root.className = 'lobby';
+  board.replaceChildren(root);
+  createCreateScreen({ root }, MAPS, {
+    post: (path) => fetch(path, { method: 'POST' }),
+    navigate: (href) => { window.location.search = href; },
+  });
 }
 
 /**
@@ -99,22 +121,66 @@ function joinRoom(link: RoomLink): void {
     if (net.phase !== 'match' || inMatch) return;
     inMatch = true;
     screen.destroy();
-    // The networked **board** is the one piece of M3-LOBBY-UI still to land:
-    // `app.ts` resolves turns locally, and pointing it at a server-authoritative
-    // stream is a controller change, not a wiring one. Everything under it is
-    // already here and tested — `RoomClient` folds the fogged `decision` and the
-    // filtered `turnResolved`, and `client.submit` sends the orders back.
     board.replaceChildren();
-    const waiting = document.createElement('p');
-    waiting.className = 'lobby-status';
-    waiting.textContent = `Match started — turn ${net.state?.turn ?? 1}, `
-      + `you are ordering ${net.unitIds.length} character(s).`;
-    board.append(waiting);
+    startNetworkedMatch(client, net);
   });
 
   socket.addEventListener('open', () => { client.join(link.name); });
   socket.addEventListener('message', (event: MessageEvent<string>) => { client.receive(event.data); });
   socket.addEventListener('close', () => { client.closed(); });
+}
+
+/**
+ * M3-NET-BOARD — hand the started match to the board controller.
+ *
+ * The seat, its characters and the opening state all come from `matchStarted`,
+ * which is already filtered for this team; the controller renders that and
+ * **never resolves anything**. Lock-in calls `submit`, and the server's
+ * `turnResolved` — which `RoomClient` has already folded, filtered — is fed back
+ * through `onResolved` into the same playback the hot-seat uses.
+ */
+function startNetworkedMatch(client: RoomClient, started: NetState): void {
+  const seat = started.seat;
+  const opening = started.state;
+  if (seat === undefined || opening === undefined) return;
+
+  const ui: HotSeatUI = {
+    board: document.getElementById('board')!,
+    status: document.getElementById('status')!,
+    controls: document.getElementById('controls')!,
+    log: document.getElementById('log') ?? undefined,
+  };
+
+  let onResolved: ((state: GameState, events: TurnEvent[]) => void) | undefined;
+  // Only *this* turn's resolution counts: the reducer keeps the last one, so a
+  // repaint for some other reason must not replay a turn already animated.
+  let played = opening.turn;
+  client.subscribe((now) => {
+    if (now.state === undefined || now.state.turn <= played) return;
+    played = now.state.turn;
+    onResolved?.(now.state, now.events);
+  });
+
+  startHotSeat(
+    ui,
+    // The map is the room's, and the room is the server's — the format comes
+    // from the state it sent rather than from anything this client chose.
+    MAPS.find((m) => m.id === started.room?.mapId) ?? MAPS[0]!,
+    buildRoster(CATALOG),
+    [[], []], // unused: the opening state is handed in, not created here
+    opening.format,
+    [1, 1],
+    buildCatalystPool(CATALYSTS),
+    undefined,
+    {
+      seatId: seat.seatId,
+      team: seat.team,
+      unitIds: started.unitIds,
+      submit: (orders) => { client.submit(orders); },
+      onResolved: (handler) => { onResolved = handler; },
+    },
+    opening,
+  );
 }
 
 /** The local hot-seat, unchanged: MAPTOGGLE's query, `startHotSeat`, no socket. */

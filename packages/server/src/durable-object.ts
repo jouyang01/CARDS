@@ -17,6 +17,7 @@ import { RoomHub, type MatchConfig, type Sink } from './hub.js';
 import { createRoom, type Room } from './room.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
+import ironBasin from '../../../data/maps/iron-basin.json';
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
 import wisp from '../../../data/characters/wisp.json';
@@ -41,11 +42,25 @@ import thorn from '../../../data/characters/thorn.json';
  * be handed characters nobody chose.
  */
 const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn] as unknown as CharacterDef[];
-const MATCH: MatchConfig = {
-  map: duelArena as unknown as MapDef,
+
+/**
+ * The maps a room may be created on (M3-ROOM-CREATE). The first is the default,
+ * for a room whose record carries no `mapId` — every room minted before the
+ * host could choose one, and every test that does not care.
+ */
+export const MAPS = [duelArena, ironBasin] as unknown as MapDef[];
+export const isMapId = (id: string): boolean => MAPS.some((m) => m.id === id);
+
+/**
+ * The config a room runs on. Built per room rather than once per module, because
+ * the **map is now the host's choice** and lives on the record — the roster and
+ * the catalyst pool are still the same for everybody.
+ */
+const matchConfig = (room: Room): MatchConfig => ({
+  map: MAPS.find((m) => m.id === room.mapId) ?? MAPS[0]!,
   roster: buildRoster(CATALOG),
   catalysts: buildCatalystPool(catalystData as unknown as CatalystData),
-};
+});
 
 /** Where the room record is kept between hibernations. */
 const STORAGE_KEY = 'room';
@@ -64,7 +79,7 @@ export class RoomDurableObject {
     // because a DO woken by an alarm before any fetch is a real path.
     state.blockConcurrencyWhile(async () => {
       const stored = await state.storage.get<Room>(STORAGE_KEY);
-      if (stored !== undefined) this.#hub = new RoomHub(stored, MATCH);
+      if (stored !== undefined) this.#hub = new RoomHub(stored, matchConfig(stored));
     });
   }
 
@@ -76,8 +91,12 @@ export class RoomDurableObject {
     if (url.pathname === '/create') {
       const code = url.searchParams.get('code') ?? '';
       const format = (url.searchParams.get('format') ?? DEFAULT_FORMAT) as FormatId;
+      // The Worker has already validated both; an unknown map id would fall back
+      // to the default above rather than failing, which is the safe direction.
+      const mapId = url.searchParams.get('map') ?? undefined;
       if (this.#hub === undefined) {
-        this.#hub = new RoomHub(createRoom(code, format), MATCH);
+        const room = createRoom(code, format, mapId);
+        this.#hub = new RoomHub(room, matchConfig(room));
         await this.#persist();
       }
       return Response.json(this.#hub.room);

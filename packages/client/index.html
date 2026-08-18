@@ -334,6 +334,17 @@
       .lobby-start { margin-top: 24px; padding: 10px 20px; font-size: 14px; }
       .lobby-start:disabled { opacity: 0.4; cursor: not-allowed; }
 
+      /* ── M3-ROOM-CREATE: the host's form, inside the same .lobby column ──── */
+      .create-hint { font-size: 12px; opacity: 0.6; margin: 0 0 16px; max-width: 46em; }
+      .create-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+      .create-label { min-width: 64px; font-size: 12px; text-transform: uppercase;
+        letter-spacing: 0.06em; opacity: 0.6; }
+      .create-row select { background: var(--open); color: var(--text);
+        border: 1px solid var(--grid-line); border-radius: 4px; padding: 6px 8px; font: inherit; }
+      .create-error { color: var(--spawn1); font-size: 13px; margin: 8px 0 0; }
+      .create-submit { margin-top: 20px; padding: 10px 20px; font-size: 14px; }
+      .create-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+
       /* ── UI-responsive: the fixed chrome has to give way on a laptop ───────
          The HUD and log are position:fixed, so below ~1200px they would simply
          cover the board. `sizeToContainer` measures them rather than assuming,
