@@ -4193,3 +4193,92 @@ action is closed and the block is stale.
    computes no layout; LOBBY-INSPECT and LOBBY-READY are unit-tested against a real hub. Actual
    pixel overflow at 8 seats is still unverified by anything. NET-E2E would close it, as it would
    the mode toggle and the presence marks (OQ 2026-09-17 #4).
+
+## 2026-09-19 — Builder: the cone that was already fixed, and the seam that proves it
+
+**KESTREL-CONE was a lie in the HUD, not a broken cone — and it was already
+closed.** The data was right and every pure function was right: `abilityProfile`
+merges the Spread profile, `modeOptions` offers both, `draftAbility` picks the armed one,
+`toUnitOrders` sends the index. What was wrong is that `modeOptions` marks `chosen ??
+DEFAULT_MODE` — index 0 — as live, and an order carrying no `mode` resolves the ability's
+**own** profile. Kestrel shipped with Spread (cone 2) at index 0 against a line-6 base, so the
+HUD lit up "Spread" while an untouched toggle previewed and resolved a **line 6**. A player who
+never pressed anything saw a cone named and a line drawn, which is exactly why it read as "not
+working as a cone at all" rather than as a toggle nobody had found. MODE-BASE-INVARIANT (shipped
+2026-09-18, one item after this note was written) fixed it by making `modes[0]` equal the base
+profile and teaching `validateAbility` to refuse anything else. This session's contribution is the
+tests that connect the guard to the symptom — including a reproduction against the pre-swap data,
+which now fails validation.
+
+**`startHotSeat` had no test at all, and that is the shape of this whole class of bug.**
+`createRenderer` builds a `WebGLRenderer` eagerly, which throws in any headless DOM, so the one
+file where the HUD button, the draft reducer, the preview and the order builder are wired together
+could not be driven — while every piece it wires had several tests each. `HotSeatUI` now takes an
+optional renderer factory (absent in production) and `test/app-harness.ts` supplies a stub that
+satisfies `Renderer` in full and records what it was told to draw. The `aim` highlight layer **is**
+the preview a player sees, so the tests assert on that rather than on a function that feeds it.
+
+**PREVIEW-AUDIT: the footprint needed nothing; the numbers needed four things.** Preview and
+resolution both go through `expandShape`, so a sweep over all 45 roster abilities at a fixed aim
+found **zero** footprint mismatches — that sweep is now the audit's spine. The gaps were all in
+`damageTell`, which knew the core/ring split and the axis bonus and nothing else: Aegis's Shield
+Bash read "20 dmg" with no mention of its constant-width lane (the named Dev Note #3 gap — the lane
+already *resolved* correctly under BASIC-BEAM), Solar Flare read "30" when it is 30 and then 8
+twice, and Snare Bloom and Overwatch Trap read **nothing at all** while burying a 12- and a
+20-damage mine. Burns and mines are numbers a damage preview owes the player, so they are in;
+statuses are not, because the glyph row and the description already carry those and a tell that
+listed everything would be a second description.
+
+**DASH-STATUS: the victim list is now built for a rider-only dash.** Gating it on a damage effect
+is precisely what made Bramble Stride's Root and Tempest Run's Slow invisible, so a dash whose only
+effect is a status now finds its victims and pays enemy-only use energy for reaching one. No
+shipped content is rider-only; the alternative was leaving a field the engine reads and then does
+nothing with, which is the bug this item is.
+
+**LOBBY-DETAIL-PANEL is fixed to the left margin and hides below 1320px.** `.lobby` is a centred
+860px column, so the left third is empty on a wide screen — the space the owner pointed at. Fixed
+rather than in the flow because the lobby scrolls on its own and a panel that scrolled with the
+character grid would leave the screen while being read. Below the width where that margin stops
+existing it hides entirely: overlapping the pick screen with a description of it would be worse
+than the hover tooltip alone, which still works at every size.
+
+## Open Questions for the Analyzer — 2026-09-19
+
+1. **KESTREL-CONE shipped as tests, not as a behaviour change.** The symptom was cured by
+   MODE-BASE-INVARIANT the session before the item was written. Nothing in the client changed
+   except the renderer seam. If the owner is still seeing a line, it is a **different** bug and I
+   need the build they saw it on — please confirm the report post-dates PR #82.
+
+2. **Kestrel is unreachable in the hot-seat.** The default roster is Vex + Wisp vs Bastion + Aegis
+   and there is no character-selection query parameter, so the mode toggle can only be reached
+   through the **lobby**, which needs a working Worker origin. Worth an item either way (a dev
+   `?chars=` route, or the roster in MAPTOGGLE) — otherwise the one two-mode ability in the game
+   is untestable by hand.
+
+3. **`WORKER_ORIGIN`: the backlog and the owner disagree, still.** The owner's Dev Note last
+   session said *"The Repo Variable is set correctly, I mistyped it in the prompt with the
+   analyzer, multiplayer should be working"* (recorded 2026-09-18). This session's backlog repeats
+   the OWNER ACTION block claiming it is wrong. One of the two is stale and I cannot edit
+   `BACKLOG.md` to say which. **Please reconcile** — several items' reachability depends on it.
+
+4. **PREVIEW-AUDIT went past the AC's literal list.** It named centre/axis/beam, DoT and
+   heal-vs-damage; I also added **traps**, because Snare Bloom and Overwatch Trap previewed *no
+   number at all* while dealing 12 and 20. That reads to me as squarely inside "audit all skills to
+   ensure damage preview is correct", but it is scope I added — confirm or trim.
+
+5. **A beam has no sub-band, only a narrower footprint.** `previewBands` marks the axis and the
+   core because those tiles pay a *different number*; every tile of a beam pays the same. So Aegis
+   reads apart from Bastion by shape and by the tell, and by nothing else on the board. If the
+   owner wants the lane visually distinct from a wedge beyond its outline, that is a Designer/render
+   ask, not a preview bug.
+
+6. **The app controller has one test file now, where it had none.** `app-harness.ts` can drive
+   anything `startHotSeat` does — aiming, catalysts, free actions, the chase, playback. Everything
+   in it is currently exercised only through KESTREL-CONE. An item to broaden that would be the
+   cheapest insurance available against the exact pattern that produced three of this batch's five
+   items ("pure function passes, wiring is broken").
+
+7. **The lobby detail panel's breakpoint is a guess.** It hides under 1320px, which is where the
+   860px column plus a 300px panel stops fitting. If the owner plays windowed at 1280 they will
+   never see it, and the answer is probably a collapsed/toggled panel rather than a lower
+   breakpoint — Designer's call on which.

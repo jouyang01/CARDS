@@ -21,7 +21,8 @@
  * returns `undefined` until the draft is a thing worth sending.
  */
 
-import { CATALYST_PHASES, type AbilityPhase, type CharacterDef } from '@cards/engine';
+import { CATALYST_PHASES, ULT_COST, type AbilityPhase, type CharacterDef } from '@cards/engine';
+import { damageTell } from './targeting.js';
 import type { LobbyView, NetState, Pick } from './net.js';
 
 /** One character slot in the local player's draft, before it is sent. */
@@ -298,4 +299,72 @@ export function lobbyStatus(net: NetState): string {
   if (canStart(net)) return `Room ${net.room.code} — everybody has picked. Start when ready.`;
   return `Room ${net.room.code} — your team ${lobby.ready.length}/${mine}, `
     + `the other side ${enemy.ready}/${enemy.of}.`;
+}
+
+// ── LOBBY-DETAIL-PANEL ──────────────────────────────────────────────────────
+
+/**
+ * One skill as the lobby's side panel lists it.
+ *
+ * Name, what it costs you to read (phase and the numeric tell), and the
+ * Designer's own sentence. Nothing is composed here that is not already in
+ * `data/` — the panel is a *reading* of the character file, which is why a
+ * balance edit shows up in it with no client change.
+ */
+export interface DetailSkill {
+  id: string;
+  name: string;
+  /** The ultimate, which is worth marking: it is the one with a price. */
+  isUlt: boolean;
+  phase: AbilityPhase;
+  /** `damageTell` — the numbers, and where they differ. Empty for pure utility. */
+  tell: string;
+  description: string;
+}
+
+/**
+ * LOBBY-DETAIL-PANEL — everything a character is, for the panel on the left.
+ *
+ * Owner Dev Note: *"When selecting a character in the lobby, the mouseover is
+ * going great, but it should also expand into a bigger window on the side that
+ * shows a description of all the skills. There is space on the left."*
+ *
+ * LOBBY-INSPECT's hover tooltip answers "what is this" in a glance and vanishes;
+ * this answers "what would I be playing" and stays. Same source — the character
+ * file — so the two can never disagree about a kit; the difference is that the
+ * hover shows the *slots* and this shows the *sentences*.
+ *
+ * **Every** ability plus the ultimate, in the file's own order. A panel that
+ * showed four of five would be worse than none, because it would look complete.
+ */
+export interface CharacterDetail {
+  id: string;
+  name: string;
+  archetype: string;
+  maxHp: number;
+  /** What an ultimate costs, so the last row's price is on screen beside it. */
+  ultCost: number;
+  skills: DetailSkill[];
+}
+
+export function characterDetail(character: CharacterDef): CharacterDetail {
+  const row = (def: CharacterDef['ultimate'], isUlt: boolean): DetailSkill => ({
+    id: def.id,
+    name: def.name,
+    isUlt,
+    phase: def.phase,
+    tell: damageTell(def),
+    description: def.description,
+  });
+  return {
+    id: character.id,
+    name: character.name,
+    archetype: character.archetype,
+    maxHp: character.maxHp,
+    ultCost: ULT_COST,
+    skills: [
+      ...character.abilities.map((def) => row(def, false)),
+      row(character.ultimate, true),
+    ],
+  };
 }

@@ -1277,6 +1277,12 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
   // below moves units and applies the phase's statuses, and applied afterwards
   // in one batch. See `applyDashHits`.
   const dashHits: DashHit[] = [];
+  /**
+   * DASH-STATUS — the phase's status riders, gathered with the damage and
+   * applied before it (PHASE-STATUS-FIRST). Separate from `dashHits` because
+   * they land in the other sub-step, not because they come from anywhere else.
+   */
+  const dashDebuffs: { victim: UnitState; effect: AbilityEffect; source: Source }[] = [];
   const arming: (() => void)[] = []; // TRAP-CENTRE, buried after the phase's statuses
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
@@ -1317,9 +1323,20 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // user; Shadowstep's `impact: { destination: 1 }` says the same thing in
     // data, so the branch is gone (closes MET1-tp).
     const dmg = a.def.effects.find((e) => e.kind === 'damage');
+    // DASH-STATUS (Builder OQ 2026-09-18 #3): the riders a dash carries.
+    //
+    // `runDash` used to apply damage and displacement and nothing else, so
+    // Bramble Stride's Root and Tempest Run's Slow were in the data and reached
+    // nobody — two shipped kits doing less than they say. They are gathered here
+    // beside the damage and applied in the status batch below, which is where
+    // PHASE-STATUS-FIRST puts every other status in the phase.
+    const riders = a.def.effects.filter((e) => HARMFUL_KINDS.has(e.kind) && isStatusKind(e.kind));
     let hitEnemy = false;
     const struck = new Set<string>(); // each unit is affected at most once
-    if (dmg !== undefined) {
+    // The victim list is built for a rider-only dash too. Gating it on damage —
+    // as it was — is what makes a status effect a field the engine reads and
+    // then does nothing with, which is the class of bug this item is.
+    if (dmg !== undefined || riders.length > 0) {
       // ALLY-SAFE trims the charge's own list before `chargeHits` counts it: an
       // ability that spares its team does not spend its single hit on a
       // teammate it was never going to damage.
@@ -1336,7 +1353,16 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       for (const { unit: victim, from } of [...crossedVictims, ...blasted]) {
         if (struck.has(victim.unitId)) continue;
         struck.add(victim.unitId);
+        // CASTER-SAFE holds here by construction rather than by a check —
+        // `walkCharge` never returns the walker and `blasted` filters by owner —
+        // but it is asserted in `dash-status.test.ts` so a future change to
+        // either list cannot quietly let a dasher root itself.
         if (isUntargetable(victim)) continue; // UNTGT1 — no damage, no rider, no energy
+        if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
+        for (const e of riders) {
+          dashDebuffs.push({ victim, effect: e, source: sourceOf(plan.unit, a.def.id) });
+        }
+        if (dmg === undefined) continue;
         // MELEE-COVER: a melee strike is not reduced by cover at any range. The
         // wall check is elsewhere and unaffected — you still cannot reach
         // through one.
@@ -1344,11 +1370,10 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
           ? false
           : isBehindCover(board, from, victim.pos, a.def.range);
         // PHASE-STATUS-FIRST: gathered, not applied. The Dash phase's statuses
-        // — a bodyguard's shield, a dive's buff — all land in the loop this is
-        // inside; the damage waits for the batch below so that every blow in
-        // the phase is measured against the same finished state.
+        // — a bodyguard's shield, a dive's buff, and now a dive's Root — all
+        // land before this does, so that every blow in the phase is measured
+        // against the same finished state.
         dashHits.push({ attacker: plan.unit, victim, def: a.def, raw: dmg.amount ?? 0, behindCover, from, alreadyShoved: victim.unitId === shovedAside?.unitId });
-        if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
       }
     }
 
@@ -1407,6 +1432,15 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
   }
 
   for (const arm of arming) arm();
+  // DASH-STATUS, in PHASE-STATUS-FIRST's status sub-step: every rider the phase
+  // applies, both teams at once, before any of its damage. So a Root landed by
+  // one charge is on its victim while a second charge's number is computed —
+  // the same rule the Blast phase runs under.
+  for (const { victim, effect, source } of dashDebuffs) {
+    if (!victim.alive) continue;
+    applyStatus(victim, effect.kind, effect.duration ?? 1, effect.amount, authorOf(effect.kind, source));
+    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, amount: effect.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
+  }
   applyDashHits(draft, board, dashHits, pending, events);
 
   // A decoy is destroyed by an enemy ending a *voluntary* reposition on its

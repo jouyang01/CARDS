@@ -150,9 +150,15 @@ describe('AUTO-PREVIEW: the numeric tell says where the numbers differ', () => {
     expect(damageTell(auto(CHARS.cinder))).toBe('22 core / 14 ring');
   });
 
-  it('Thorn and Ravok: one number each, because there is one number', () => {
-    expect(damageTell(auto(CHARS.thorn))).toBe('15 dmg');
+  it('Ravok: one number, because there is one number', () => {
     expect(damageTell(auto(CHARS.ravok))).toBe('22 dmg');
+  });
+
+  it('Thorn: two, since the auto started leaving a mine behind it', () => {
+    // TRAP-CENTRE gave Barbed Sling an 8-damage mine on the square it lands on,
+    // and PREVIEW-AUDIT made the tell say so. The premise this used to assert —
+    // "one number each" — stopped being true of Thorn when the kit changed.
+    expect(damageTell(auto(CHARS.thorn))).toBe('15 dmg · 8 mine');
   });
 
   it('it is derived from the def, so a Designer edit needs no client change', () => {

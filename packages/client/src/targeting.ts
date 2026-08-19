@@ -359,7 +359,9 @@ export function previewBands(
  */
 export function damageTell(def: AbilityDef): string {
   const parts: string[] = [];
-  const damage = def.effects.find((e) => e.kind === 'damage')?.amount;
+  const amount = (kind: AbilityEffect['kind']): AbilityEffect | undefined =>
+    def.effects.find((e) => e.kind === kind);
+  const damage = amount('damage')?.amount;
   if (damage !== undefined) {
     // BASIC-INNER reads as a split rather than a base, because the core number
     // *replaces* the ring's — "22 core / 14 ring", not "14 and sometimes 22".
@@ -368,10 +370,29 @@ export function damageTell(def: AbilityDef): string {
     // BASIC-AXIS is genuinely additive, so it reads as a bonus on top.
     if (def.axisBonus !== undefined) parts.push(`+${def.axisBonus} on the axis`);
   }
-  const heal = def.effects.find((e) => e.kind === 'heal')?.amount;
+  // PREVIEW-AUDIT — BASIC-BEAM. A `beamWidth` cone is a **constant-width lane**,
+  // not the widening wedge every other cone draws, and the footprint is the only
+  // place that showed: Aegis's Shield Bash read as a plain "20 dmg", which is
+  // the "does not have anything special about it" the owner reported. Named
+  // here because a shape is a thing you can say out loud.
+  if (def.beamWidth !== undefined) parts.push(`${def.beamWidth}-wide lane`);
+  // PREVIEW-AUDIT — DOT-HOT. A burn is damage the ability deals; leaving it out
+  // made Solar Flare read as "30 dmg" when it is 30 and then 8 twice, which is
+  // the wrong number for the only question the tell exists to answer.
+  const burn = amount('damageOverTime');
+  if (burn?.amount !== undefined) parts.push(`${burn.amount} burn ×${burn.duration ?? 1}`);
+  const heal = amount('heal')?.amount;
   if (heal !== undefined) parts.push(`+${heal} heal to allies`);
-  const shield = def.effects.find((e) => e.kind === 'shield')?.amount;
+  const regen = amount('healOverTime');
+  if (regen?.amount !== undefined) parts.push(`+${regen.amount} regen ×${regen.duration ?? 1}`);
+  const shield = amount('shield')?.amount;
   if (shield !== undefined) parts.push(`+${shield} shield`);
+  // PREVIEW-AUDIT — the trap a shot leaves behind. Snare Bloom and Overwatch
+  // Trap had **no tell at all** while burying a 12- and a 20-damage mine, and
+  // Barbed Sling's said 15 while also seeding an 8. A preview that shows nothing
+  // for an ability that does something is the worst reading of the three.
+  const trap = amount('trap');
+  if (trap?.amount !== undefined) parts.push(`${trap.amount} mine`);
   return parts.join(' · ');
 }
 

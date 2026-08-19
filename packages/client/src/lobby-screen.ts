@@ -22,6 +22,7 @@ import {
   chooseCharacter,
   draftPicks,
   emptyDraft,
+  characterDetail,
   enemyProgress,
   isCreator,
   isReady,
@@ -93,6 +94,64 @@ export function createLobbyScreen(
   const hoverPanel = el('div', 'inspect');
   hoverPanel.style.display = 'none';
   document.body.appendChild(hoverPanel);
+
+  /**
+   * LOBBY-DETAIL-PANEL (owner Dev Note) — *"it should also expand into a bigger
+   * window on the side that shows a description of all the skills. There is
+   * space on the left."*
+   *
+   * Which character the side panel is describing. **Sticky**: set by pointing at
+   * a character or by picking one, and it stays until another is chosen, which
+   * is the difference between this and the hover tooltip beside it. A panel that
+   * emptied when the pointer left would be the tooltip again, with more pixels.
+   */
+  let detailId: string | undefined;
+  const detailPanel = el('aside', 'lobby-detail');
+  detailPanel.style.display = 'none';
+  document.body.appendChild(detailPanel);
+
+  /** Repaint the side panel for `detailId`, or hide it when nothing is chosen. */
+  const renderDetail = (): void => {
+    const character = catalog.find((c) => c.id === detailId);
+    if (character === undefined) {
+      detailPanel.style.display = 'none';
+      return;
+    }
+    const detail = characterDetail(character);
+    detailPanel.replaceChildren();
+    detailPanel.dataset['character'] = detail.id;
+
+    const head = el('div', 'lobby-detail-head');
+    head.append(el('h2', 'lobby-detail-name', detail.name));
+    head.append(el('p', 'lobby-detail-role', `${detail.archetype} · ${detail.maxHp} HP`));
+    detailPanel.append(head);
+
+    const list = el('div', 'lobby-detail-skills');
+    for (const skill of detail.skills) {
+      const row = el('div', `lobby-detail-skill${skill.isUlt ? ' is-ult' : ''}`);
+      row.dataset['skill'] = skill.id;
+      const title = el('div', 'lobby-detail-skill-name');
+      title.append(el('span', 'lobby-detail-skill-title', skill.name));
+      // The phase is the half of "when" a description usually leaves out, and
+      // the ult's price is the half of "what it costs" — both beside the name
+      // rather than buried in the sentence.
+      title.append(el('span', 'lobby-detail-skill-meta',
+        skill.isUlt ? `ultimate · ${detail.ultCost} energy` : skill.phase));
+      row.append(title);
+      if (skill.tell !== '') row.append(el('div', 'lobby-detail-skill-tell', skill.tell));
+      row.append(el('p', 'lobby-detail-skill-text', skill.description));
+      list.append(row);
+    }
+    detailPanel.append(list);
+    detailPanel.style.display = '';
+  };
+
+  /** Point at or pick a character: the side panel follows, and stays. */
+  const showDetail = (characterId: string): void => {
+    if (detailId === characterId) return;
+    detailId = characterId;
+    renderDetail();
+  };
 
   const send = (): void => {
     const picks = draftPicks(draft);
@@ -187,11 +246,15 @@ export function createLobbyScreen(
           button.addEventListener('mouseenter', (event) => {
             const at = event as MouseEvent;
             renderInspectPanel(hoverPanel, inspectCharacter(def, team), { x: at.clientX, y: at.clientY });
+            // LOBBY-DETAIL-PANEL: the hover fills the side panel too, and unlike
+            // the tooltip it does not empty on the way out.
+            showDetail(option.id);
           });
           button.addEventListener('mouseleave', () => { renderInspectPanel(hoverPanel, undefined); });
         }
         button.addEventListener('click', () => {
           draft = chooseCharacter(draft, active, option.id);
+          showDetail(option.id); // the panel follows the pick, not just the pointer
           send();
           render();
         });
@@ -268,6 +331,7 @@ export function createLobbyScreen(
     destroy: () => {
       unsubscribe();
       ui.root.replaceChildren();
+      detailPanel.remove();
       // The hover panel lives outside the lobby's root, so tearing the lobby
       // down does not take it with it. Removed explicitly, or it would hang
       // over the board the match starts on.

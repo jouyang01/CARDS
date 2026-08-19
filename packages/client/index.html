@@ -428,6 +428,37 @@
         letter-spacing: 0.06em; opacity: 0.6; }
       .lobby-catalyst { font-size: 11px; padding: 4px 8px; }
       .lobby-catalyst.is-chosen { border-color: var(--aim); color: var(--aim); }
+      /* ── LOBBY-DETAIL-PANEL: the persistent kit panel, in the left margin ──
+         Owner Dev Note: "it should also expand into a bigger window on the side
+         that shows a description of all the skills. There is space on the left."
+         And there is — `.lobby` is a centred 860px column, so on a wide screen
+         the left third is empty. Fixed rather than in the flow, because the
+         lobby scrolls on its own and a panel that scrolled with the character
+         grid would leave the screen exactly while you were reading it.
+
+         It hides below the width where that margin stops existing: overlapping
+         the pick screen with a description of it would be worse than the
+         tooltip alone, which still works at every size. */
+      .lobby-detail { position: fixed; left: 20px; top: 72px; width: 300px;
+        max-height: calc(100vh - 96px); overflow-y: auto; z-index: 2;
+        padding: 14px 16px; border: 1px solid var(--grid-line); border-radius: 8px;
+        background: var(--panel); box-sizing: border-box; }
+      @media (max-width: 1320px) { .lobby-detail { display: none !important; } }
+      .lobby-detail-head { border-bottom: 1px solid var(--grid-line); padding-bottom: 8px; }
+      .lobby-detail-name { font-size: 16px; margin: 0; text-transform: none; letter-spacing: 0; opacity: 1; }
+      .lobby-detail-role { font-size: 11px; opacity: 0.6; margin: 2px 0 0; }
+      .lobby-detail-skills { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+      .lobby-detail-skill { font-size: 12px; }
+      /* The ultimate is the one with a price, so it reads as its own thing. */
+      .lobby-detail-skill.is-ult { border-left: 2px solid #6b5b8e; padding-left: 8px; }
+      .lobby-detail-skill-name { display: flex; justify-content: space-between;
+        align-items: baseline; gap: 8px; }
+      .lobby-detail-skill-title { font-weight: 600; }
+      .lobby-detail-skill-meta { font-size: 10px; opacity: 0.5; white-space: nowrap; }
+      /* The numbers, in the same warm tone the HUD uses for a damage readout. */
+      .lobby-detail-skill-tell { font-size: 11px; color: #ff9b7a; margin-top: 1px; }
+      .lobby-detail-skill-text { font-size: 11px; opacity: 0.75; line-height: 1.4; margin: 3px 0 0; }
+
       .lobby-start { margin-top: 24px; padding: 10px 20px; font-size: 14px; }
       .lobby-start:disabled { opacity: 0.4; cursor: not-allowed; }
       /* LOBBY-READY: the control a non-creator seat holds instead of Start.

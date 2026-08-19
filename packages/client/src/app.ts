@@ -110,6 +110,23 @@ export interface HotSeatUI {
   controls: HTMLElement;
   /** The right-side combat log panel (UI6). Optional so tests can omit it. */
   log?: HTMLElement;
+  /**
+   * KESTREL-CONE — the renderer factory, so the controller can be driven without
+   * a GPU.
+   *
+   * `createRenderer` builds a `WebGLRenderer` eagerly, which throws in any
+   * headless DOM. That single line is why `startHotSeat` — the file where the
+   * HUD, the draft reducer and the preview are actually wired together — had no
+   * test at all, while every piece it wires had several. The Kestrel cone bug is
+   * exactly what that gap hides: `abilityProfile`, `modeOptions`, `draftAbility`
+   * and `toUnitOrders` each passed, and the question nobody could ask was
+   * whether pressing the button in the HUD reached them.
+   *
+   * A factory rather than a flag, so the seam is the same shape as the real
+   * thing and a test's stub has to satisfy `Renderer` in full. Absent in
+   * production, where `main.ts` never passes one.
+   */
+  createRenderer?: typeof createRenderer;
 }
 
 /**
@@ -497,7 +514,7 @@ export function startHotSeat(
   let boardMemo: Board | undefined;
   const previewBoard = (): Board => (boardMemo ??= buildBoard(map));
 
-  const renderer: Renderer = createRenderer(ui.board, map, PALETTE);
+  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, PALETTE);
 
   // ── VISION1-opening ───────────────────────────────────────────────────────
   // Paint the fogged board NOW, before the render loop starts, so the very

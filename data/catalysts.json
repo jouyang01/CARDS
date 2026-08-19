@@ -32,11 +32,11 @@
       "effects": [
         {
           "kind": "shield",
-          "amount": 35,
+          "amount": 40,
           "duration": 1
         }
       ],
-      "description": "Shield 35 for a turn. Pre-empt a predicted burst \u2014 bigger than any kit shield, but once."
+      "description": "Shield 40 for a turn. Pre-empt a predicted burst \u2014 bigger than any kit shield, but once."
     },
     {
       "id": "brainwave",
