@@ -86,6 +86,16 @@ export interface Seat {
    */
   picks: Pick[];
   /**
+   * LOBBY-READY (Dev Note #4) — this seat has said it is happy to start.
+   *
+   * Only meaningful before the match, and only for seats other than the
+   * creator's: seat 0 holds the button, everybody else holds this. Revocable
+   * until the match starts, and **cleared whenever the seat changes hands or
+   * comes back** — a ready that survived a disconnect would let a room start
+   * on the say-so of somebody who is no longer looking at it.
+   */
+  ready: boolean;
+  /**
    * Whether a socket is currently attached to this seat (M3-RECONNECT).
    *
    * A seat in a **lobby** is deleted when its socket goes, because a lobby seat
@@ -345,7 +355,7 @@ export type JoinRejection = 'roomFull' | 'duplicateSeat' | 'inProgress' | 'teamF
  */
 export function wouldSeatNobody(room: Room, team: TeamId): boolean {
   const seats = [...room.seats, {
-    seatId: '', team, name: '', unitIds: [], picks: [], connected: true, missedTurns: 0,
+    seatId: '', team, name: '', unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0,
   }];
   return teamSplit({ ...room, seats }, team).at(-1) === 0;
 }
@@ -399,7 +409,7 @@ export function join(room: Room, seatId: string, name?: string): JoinResult {
   if (wouldSeatNobody(room, team)) return { ok: false, reason: 'teamFull' };
 
   const seat: Seat = {
-    seatId, team, name: name ?? seatId, unitIds: [], picks: [], connected: true, missedTurns: 0,
+    seatId, team, name: name ?? seatId, unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0,
   };
   return { ok: true, room: { ...room, seats: [...room.seats, seat] }, seat };
 }
@@ -480,7 +490,10 @@ export function reclaim(room: Room, seatId: string): ReclaimResult {
   const seat = room.seats.find((s) => s.seatId === seatId);
   if (seat === undefined) return { ok: false, reason: 'unknownSeat' };
   if (seat.connected) return { ok: false, reason: 'seatTaken' };
-  const taken: Seat = { ...seat, connected: true, missedTurns: 0 };
+  // LOBBY-READY: a returning seat comes back un-readied. The room may have
+  // moved on while it was gone, and a ready that outlived the connection would
+  // be a vote cast by somebody who is not in the room.
+  const taken: Seat = { ...seat, ready: false, connected: true, missedTurns: 0 };
   return {
     ok: true,
     seat: taken,
@@ -694,6 +707,51 @@ export function lobbyReady(room: Room): boolean {
   if (room.state !== undefined || !canStart(room)) return false;
   if (!teamCovered(room, 0) || !teamCovered(room, 1)) return false;
   return room.seats.every((s) => s.picks.length === charactersPerSeat(room, s.seatId));
+}
+
+/**
+ * LOBBY-READY (Dev Note #4) — mark a seat ready, or take it back.
+ *
+ * Revocable until the match starts, which is the whole reason it is a stored
+ * flag rather than a one-way latch: a player who readies and then notices their
+ * teammate picked the wrong character has to be able to say so, and the only
+ * signal they have is this one.
+ *
+ * A no-op once the match is running, and for an id the room does not have —
+ * both are ordinary things for a late frame to say, not errors.
+ */
+export function setReady(room: Room, seatId: string, ready: boolean): Room {
+  if (room.state !== undefined) return room;
+  if (!room.seats.some((s) => s.seatId === seatId)) return room;
+  return { ...room, seats: room.seats.map((s) => (s.seatId === seatId ? { ...s, ready } : s)) };
+}
+
+/** The room's creator: the first seat to join, and the only one that may start. */
+export function creatorSeatId(room: Room): string | undefined {
+  return room.seats[0]?.seatId;
+}
+
+/**
+ * LOBBY-READY — may the room start *now*?
+ *
+ * `lobbyReady` asks whether the lobby is complete: everybody seated, everybody
+ * picked, both teams coverable. This adds the handshake on top — **every
+ * occupied seat but the creator's has readied** — because "we are all here"
+ * and "we are all happy with this" are different questions and the room used to
+ * only ask the first.
+ *
+ * The creator is excluded rather than implicitly ready: pressing Start *is*
+ * their readiness, and asking them to say it twice would be a button that
+ * disables itself until you press a different button.
+ *
+ * Disconnected seats are excluded too. A held seat cannot ready, and waiting on
+ * one would mean a dropped player could freeze a lobby indefinitely — the
+ * opposite of the "no turn ever waits on a player" rule the match runs under.
+ */
+export function everyoneReady(room: Room): boolean {
+  if (!lobbyReady(room)) return false;
+  const creator = creatorSeatId(room);
+  return room.seats.every((s) => s.seatId === creator || !s.connected || s.ready);
 }
 
 /**

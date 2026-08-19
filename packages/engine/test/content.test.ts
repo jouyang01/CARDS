@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { validateCharacter, validateMap } from '../src/validate.js';
+import { buildCatalystPool, type CatalystData } from '../src/catalysts.js';
 import { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from '../src/resolve.js';
-import { MAX_ABILITY_RANGE } from '../src/constants.js';
+import { DASH_RANGE_FLOOR, MAX_ABILITY_RANGE } from '../src/constants.js';
 import { distance } from '../src/board.js';
 import { getFormat, type FormatId } from '../src/formats.js';
 import { movementBudget } from '../src/movement.js';
@@ -17,6 +18,7 @@ import lumen from '../../../data/characters/lumen.json';
 import thorn from '../../../data/characters/thorn.json';
 import aegis from '../../../data/characters/aegis.json';
 import ravok from '../../../data/characters/ravok.json';
+import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
 
@@ -402,6 +404,53 @@ describe('non-ultimate range is capped at 8 (M2)', () => {
         expect(a.range, `${c.id}.${a.id} range`).toBeLessThanOrEqual(MAX_ABILITY_RANGE);
       }
     }
+  });
+});
+
+describe('DASH-FLOOR-GUARD: a dash moves you further than a walk does', () => {
+  /**
+   * Dev Note #20, ruled in edge-cases: **every Dash-phase reposition is range 4
+   * or more**. A dash shorter than the move budget is not a mobility tool, it is
+   * a turn spent going nowhere, and the five shipped ones already sit on the
+   * floor — this is here so the sixth cannot quietly undercut it.
+   *
+   * Abilities *and* catalysts, because Shift is a catalyst and a floor with a
+   * hole in it is not a floor.
+   *
+   * "Reposition" is narrower than "Dash-phase": the engine moves a dasher when
+   * the shape is a `path` it walks or a `square` it blinks to, and Fade,
+   * Unshackle and Fetter are Dash-phase catalysts that move nobody — a range-0
+   * `self` buff has no travel to put a floor under.
+   */
+  const REPOSITIONS = (a: { shape: string; effects: readonly { kind: string }[] }): boolean =>
+    a.shape === 'path' || a.shape === 'square' || a.effects.some((e) => e.kind === 'teleport');
+  const dashes: { where: string; range: number }[] = [
+    ...characters.flatMap((c) => [...c.abilities, c.ultimate]
+      .filter((a) => a.phase === 'dash' && REPOSITIONS(a))
+      .map((a) => ({ where: `${c.id}.${a.id}`, range: a.range }))),
+    ...Object.values(buildCatalystPool(catalystData as unknown as CatalystData))
+      .filter((a) => a.phase === 'dash' && REPOSITIONS(a))
+      .map((a) => ({ where: `catalyst.${a.id}`, range: a.range })),
+  ];
+
+  it('finds the repositions rather than an empty list', () => {
+    // A guard that iterates nothing passes forever. The owner's ruling names
+    // five, so five is the floor on the guard as well as on the content.
+    expect(dashes.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('every one of them is at least the floor', () => {
+    for (const { where, range } of dashes) {
+      expect(range, `${where} is a dash reposition below the floor`)
+        .toBeGreaterThanOrEqual(DASH_RANGE_FLOOR);
+    }
+  });
+
+  it('and the guard would actually catch one that was not', () => {
+    // The check on the check: a floor nobody can demonstrate failing is a
+    // comment. A hand-built entry one square short must trip the assertion.
+    const short = [...dashes, { where: 'invented.shuffle', range: DASH_RANGE_FLOOR - 1 }];
+    expect(short.every((d) => d.range >= DASH_RANGE_FLOOR)).toBe(false);
   });
 });
 

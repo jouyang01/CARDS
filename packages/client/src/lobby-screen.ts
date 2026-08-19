@@ -23,12 +23,16 @@ import {
   draftPicks,
   emptyDraft,
   enemyProgress,
+  isCreator,
+  isReady,
   lobbyStatus,
   resizeDraft,
   seatRows,
   type Draft,
 } from './lobby.js';
 import { AWAY_LABEL, AWAY_MARK } from './presence.js';
+import { inspectCharacter } from './inspect.js';
+import { renderInspectPanel } from './inspect-panel.js';
 
 /** One catalyst, as the screen offers it. Named so the pool's shape stays out. */
 export interface CatalystOption {
@@ -75,6 +79,20 @@ export function createLobbyScreen(
   let draft: Draft = emptyDraft(0);
   /** Which slot the character grid is filling. Reset when the draft re-sizes. */
   let active = 0;
+
+  /**
+   * LOBBY-INSPECT (Dev Note #2) — the same panel the board shows, over the
+   * character your pointer is on.
+   *
+   * Built once and re-filled, exactly as the HUD's is, and for exactly the same
+   * reason: the screen below it is rebuilt on every update, and a panel rebuilt
+   * with it would vanish from under the pointer that summoned it. It hangs off
+   * `document.body` rather than off the lobby, so it is not clipped by the
+   * panel it is describing (LOBBY-BOUNDS put a boundary there on purpose).
+   */
+  const hoverPanel = el('div', 'inspect');
+  hoverPanel.style.display = 'none';
+  document.body.appendChild(hoverPanel);
 
   const send = (): void => {
     const picks = draftPicks(draft);
@@ -158,6 +176,20 @@ export function createLobbyScreen(
         button.disabled = option.taken;
         if (option.chosen) button.classList.add('is-chosen');
         if (option.taken) button.classList.add('is-taken');
+        // LOBBY-INSPECT: kit, health and archetype, from the same builder the
+        // board uses. A **disabled** button still answers — "what does the
+        // character my teammate took do" is exactly the question a greyed row
+        // provokes, and `mouseenter` fires on a disabled button where `click`
+        // does not.
+        const def = catalog.find((c) => c.id === option.id);
+        if (def !== undefined) {
+          const team = client.net.seat?.team ?? 0;
+          button.addEventListener('mouseenter', (event) => {
+            const at = event as MouseEvent;
+            renderInspectPanel(hoverPanel, inspectCharacter(def, team), { x: at.clientX, y: at.clientY });
+          });
+          button.addEventListener('mouseleave', () => { renderInspectPanel(hoverPanel, undefined); });
+        }
         button.addEventListener('click', () => {
           draft = chooseCharacter(draft, active, option.id);
           send();
@@ -191,14 +223,41 @@ export function createLobbyScreen(
       ui.root.append(loadout);
     }
 
-    // ── start ──────────────────────────────────────────────────────────────
-    const start = el('button', 'lobby-start', 'Start match');
-    start.dataset['action'] = 'start';
-    // Live only when the *server* says the whole room is ready — this client
-    // cannot see the other side's picks and so cannot answer that itself.
-    start.disabled = !canStart(net);
-    start.addEventListener('click', () => { client.start(); });
-    ui.root.append(start);
+    // ── ready / start (LOBBY-READY, Dev Note #4) ───────────────────────────
+    //
+    // Two controls, and a seat gets exactly one of them. The room's creator
+    // holds Start; everybody else holds Ready and waits. That is the whole
+    // mechanic: a lobby where any seat can start is a lobby where the last
+    // person to finish picking decides for everyone.
+    if (isCreator(net)) {
+      const start = el('button', 'lobby-start', 'Start match');
+      start.dataset['action'] = 'start';
+      // Live only when the *server* says so — this client cannot see the other
+      // side's picks or readiness, so it is structurally unable to answer.
+      start.disabled = !canStart(net);
+      start.addEventListener('click', () => { client.start(); });
+      ui.root.append(start);
+      // Named so the wait is a fact rather than a guess about a greyed button.
+      if (!canStart(net)) {
+        ui.root.append(el('p', 'lobby-wait', 'Waiting for the room to be ready…'));
+      }
+    } else {
+      const ready = isReady(net);
+      const button = el('button', 'lobby-ready', ready ? 'Ready ✓' : 'Ready up');
+      button.dataset['action'] = 'ready';
+      button.dataset['ready'] = String(ready);
+      if (ready) button.classList.add('is-ready');
+      // Revocable until the match starts: a player who readies and then sees a
+      // teammate pick the wrong character has to be able to say so, and this is
+      // the only signal they have.
+      button.addEventListener('click', () => { client.ready(!ready); });
+      ui.root.append(button);
+      ui.root.append(el(
+        'p',
+        'lobby-wait',
+        ready ? 'Waiting for the host to start…' : 'Tell the host you are ready.',
+      ));
+    }
   };
 
   const unsubscribe = client.subscribe(() => { render(); });
@@ -209,6 +268,10 @@ export function createLobbyScreen(
     destroy: () => {
       unsubscribe();
       ui.root.replaceChildren();
+      // The hover panel lives outside the lobby's root, so tearing the lobby
+      // down does not take it with it. Removed explicitly, or it would hang
+      // over the board the match starts on.
+      hoverPanel.remove();
     },
   };
 }

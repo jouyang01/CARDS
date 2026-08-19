@@ -80,6 +80,22 @@ export interface NetState {
   remainingMs?: number;
   /** This seat's Time Bank charges left, from the server. */
   bank: number;
+  /**
+   * TIMER-EVERY-PHASE — how many Decision payloads have arrived. Bumped by
+   * `decision` and by nothing else.
+   *
+   * The countdown must re-anchor whenever the server sends a fresh measurement,
+   * and "a fresh measurement arrived" is an **event**, not a change of value:
+   * turn 2 opens with exactly the same `remainingMs` and `bank` as turn 1 did,
+   * because both are a full window measured the instant it opened. A controller
+   * watching those two numbers for a change therefore never heard about turn 2
+   * — which is the whole of the reported bug (Dev Note #5, "lock-in timer
+   * disappears after turn 1"): the timer is stopped for playback, and nothing
+   * ever started it again.
+   *
+   * A counter says the thing the values cannot: *this frame carried a window*.
+   */
+  windowSeq: number;
   /** The last resolved turn's filtered event log, for playback. */
   events: TurnEvent[];
   /** Both teams' orders, revealed with the resolution. */
@@ -92,7 +108,7 @@ export function initialNet(): NetState {
   return {
     phase: 'connecting', visibleSquares: [], unitIds: [], orders: {},
     locked: [], of: 0, enemyLocked: 0, enemyOf: 0, submitted: false,
-    events: [], revealed: {}, bank: TIMEBANK_CHARGES,
+    events: [], revealed: {}, bank: TIMEBANK_CHARGES, windowSeq: 0,
   };
 }
 
@@ -163,6 +179,10 @@ export function applyServerMessage(net: NetState, msg: ServerMessage): NetState 
         // back on return — so it is re-read from every Decision phase rather
         // than kept from `matchStarted`.
         unitIds: msg.unitIds,
+        // TIMER-EVERY-PHASE: the one place this is bumped. Every other frame
+        // carries the last window's numbers forward unchanged, which is exactly
+        // why a value comparison could not tell a new window from an old one.
+        windowSeq: net.windowSeq + 1,
       };
     case 'submitted':
       return { ...clean, submitted: true };
@@ -200,6 +220,7 @@ export const frames = {
   }),
   pick: (picks: Pick[]): ClientMessage => ({ type: 'pick', picks }),
   start: (): ClientMessage => ({ type: 'start' }),
+  ready: (ready: boolean): ClientMessage => ({ type: 'ready', ready }),
   submit: (orders: UnitOrders[]): ClientMessage => ({ type: 'submit', orders }),
   extend: (): ClientMessage => ({ type: 'extend' }),
   ping: (): ClientMessage => ({ type: 'ping' }),
@@ -274,6 +295,13 @@ export class RoomClient {
   join(name?: string, seatId?: string): void { this.send(frames.join(name, seatId)); }
   pick(picks: Pick[]): void { this.send(frames.pick(picks)); }
   start(): void { this.send(frames.start()); }
+  /**
+   * LOBBY-READY — say this seat is happy to start, or take it back.
+   *
+   * Carries the value rather than toggling, so a re-sent frame is idempotent
+   * and two clicks racing each other cannot land on the wrong answer.
+   */
+  ready(ready: boolean): void { this.send(frames.ready(ready)); }
   submit(orders: UnitOrders[]): void { this.send(frames.submit(orders)); }
   /**
    * Ask for the Time Bank (M3-TIMER). Nothing is applied locally: the charge is

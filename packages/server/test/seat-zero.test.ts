@@ -21,7 +21,7 @@ import { ERROR_TEXT } from '../src/protocol.js';
  */
 
 const seat = (seatId: string, team: 0 | 1) =>
-  ({ seatId, team, name: seatId, unitIds: [], picks: [], connected: true, missedTurns: 0 });
+  ({ seatId, team, name: seatId, unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0 });
 /** A room with seats placed by hand, bypassing `nextTeam`'s balancing. */
 const lopsided = (format: '1v1' | '2v2' | '4v4', teams: (0 | 1)[]): Room => ({
   ...createRoom('WXYZ', format),

@@ -35,8 +35,9 @@ import {
   type ServerMessage,
 } from './protocol.js';
 import {
-  canStart, charactersPerSeat, chargesFor, clearSubmissions, controlledUnits, hasSubmitted, join,
-  leave, lobbyReady, reclaim, resolveRoomTurn, setPicks, spendCharge, startFromPicks, startMatch,
+  canStart, charactersPerSeat, chargesFor, clearSubmissions, controlledUnits, creatorSeatId,
+  everyoneReady, hasSubmitted, join,
+  leave, lobbyReady, reclaim, resolveRoomTurn, setPicks, setReady, spendCharge, startFromPicks, startMatch,
   submissionsOf, withDeadline, withSubmission, withoutSubmission,
   type Pick, type Room,
 } from './room.js';
@@ -202,6 +203,17 @@ export class RoomHub {
 
     if (msg.type === 'extend') return this.#receiveExtend(seatId);
 
+    if (msg.type === 'ready') {
+      // LOBBY-READY: a seated player only. Silently ignored for anyone else —
+      // an unseated socket has nothing to be ready with, and there is no useful
+      // sentence to say back to it.
+      if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
+      const before = this.#room;
+      this.#room = setReady(this.#room, seatId, msg.ready);
+      if (this.#room !== before) this.#sendLobby();
+      return;
+    }
+
     if (msg.type === 'start') {
       // LOBBY-START: pressing start is now the **only** way into a match, so a
       // refusal has to say so rather than being ignored — a start button that
@@ -209,6 +221,13 @@ export class RoomHub {
       // player may press it: a socket that never joined is not in the room and
       // has no standing to decide it is ready.
       if (!this.#joined.has(seatId)) return this.#send(seatId, errorMessage('notJoined'));
+      // LOBBY-READY: the creator holds the button. Everybody else says they are
+      // ready and waits — a lobby where any seat can start is a lobby where the
+      // last person to finish picking decides for everyone.
+      const creator = creatorSeatId(this.#room);
+      if (creator !== undefined && seatId !== creator) {
+        return this.#send(seatId, errorMessage('cannotStart'));
+      }
       if (!this.start()) return this.#send(seatId, errorMessage('cannotStart'));
       return;
     }
@@ -368,7 +387,13 @@ export class RoomHub {
           ready: mine.filter(done).map((s) => s.seatId),
           enemyReady: theirs.filter(done).length,
           enemyOf: theirs.length,
-          canStart: lobbyReady(this.#room),
+          // LOBBY-READY: `canStart` is the whole gate now — the lobby being
+          // complete AND every other occupied seat having readied — so the
+          // Start button reads one boolean rather than re-deriving the
+          // handshake on the client.
+          canStart: everyoneReady(this.#room),
+          readied: mine.filter((s) => s.ready).map((s) => s.seatId),
+          ...(creatorSeatId(this.#room) === undefined ? {} : { creator: creatorSeatId(this.#room)! }),
         },
       });
     }
@@ -402,7 +427,11 @@ export class RoomHub {
     if (this.#config === undefined || this.#room.state !== undefined) return false;
     const picking = this.#room.seats.some((s) => s.picks.length > 0);
     const deal = picking ? undefined : this.#config.teams;
-    const started = lobbyReady(this.#room)
+    // LOBBY-READY gates the lobby door on the handshake as well as on the
+    // picks. The interim deal below is untouched: a room that never started
+    // picking has nobody to ready, and holding M3-START's short-room hatch to a
+    // handshake nobody in it can perform would close the hatch.
+    const started = everyoneReady(this.#room)
       ? startFromPicks(this.#room, this.#config.map, this.#config.roster)
       : deal === undefined
         ? { ok: false as const }

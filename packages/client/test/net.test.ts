@@ -74,6 +74,7 @@ const started = (): { hub: RoomHub; a: Wire; b: Wire } => {
   b.client.join('B');
   a.client.pick([{ characterId: 'ash' }, { characterId: 'bry' }]);
   b.client.pick([{ characterId: 'cyn' }, { characterId: 'dex' }]);
+  b.client.ready(true); // LOBBY-READY: the creator's Start waits on it
   a.client.start();
   return { hub, a, b };
 };
@@ -204,7 +205,7 @@ describe('the reducer, on the frames that mean "forget something"', () => {
     // cleared would leave the Lock In button dead for the rest of the turn.
     const joined = applyServerMessage(initialNet(), {
       type: 'joined',
-      seat: { seatId: 'a', team: 0, name: 'a', unitIds: [], picks: [], connected: true, missedTurns: 0 },
+      seat: { seatId: 'a', team: 0, name: 'a', unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0 },
       room: { code: 'WXYZ', format: '2v2', seats: [], turn: 0, canStart: false, started: false, locked: [] },
     });
     expect(seatOf(joined)).toBe('a');

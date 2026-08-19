@@ -15,6 +15,10 @@ import { initView, playEvents } from '../src/playback.js';
 const ALL_STATUS_KINDS: EffectKind[] = [
   'might', 'weaken', 'haste', 'slow', 'root', 'reveal', 'energized',
   'unstoppable', 'stealth', 'untargetable', 'shield',
+  // BRUSH-BREAK: a marker the enemy applies to you by hitting you in a bush,
+  // and one a player has to be able to see — "the thicket has stopped working"
+  // is a positioning decision, and an invisible one is a trap.
+  'brushBroken',
 ];
 
 describe('the pip vocabulary is total over the statuses that exist', () => {

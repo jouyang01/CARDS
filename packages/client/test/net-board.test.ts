@@ -59,6 +59,7 @@ const started = () => {
   b.client.join('Bo');
   a.client.pick([{ characterId: 'vex' }, { characterId: 'wisp' }]);
   b.client.pick([{ characterId: 'bastion' }, { characterId: 'aegis' }]);
+  b.client.ready(true); // LOBBY-READY: the creator's Start waits on it
   a.client.start();
   return { hub, a, b };
 };

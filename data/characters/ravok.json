@@ -97,6 +97,7 @@
     "radius": 3,
     "cooldown": 0,
     "energyGain": 0,
+    "selfDamagePct": 50,
     "effects": [
       {
         "kind": "damage",
@@ -107,6 +108,6 @@
         "duration": 1
       }
     ],
-    "description": "Shatter the ground: all enemies within 3 squares take 38 and are Rooted. Stand in the middle of them and detonate. (100 energy)"
+    "description": "Shatter the ground: all enemies within 3 squares take 38 and are Rooted, and Ravok takes 19 himself. Stand in the middle of them and detonate. (100 energy)"
   }
 }

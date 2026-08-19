@@ -51,7 +51,7 @@ const config: MatchConfig = {
 };
 
 const seat = (over: Partial<Seat> & { seatId: string }): Seat => ({
-  team: 0, name: over.seatId, unitIds: [], picks: [], connected: true, missedTurns: 0, ...over,
+  team: 0, name: over.seatId, unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0, ...over,
 });
 
 describe('NET-PRESENCE-UI: reading presence off what the server sent', () => {
@@ -308,6 +308,7 @@ describe('NET-PRESENCE-UI: end to end, a drop the client can see', () => {
     for (const [i, client] of clients.entries()) {
       client.pick([{ characterId: ['ash', 'bry', 'cyn', 'dex'][i]! }]);
     }
+    for (const c of clients.slice(1)) c.ready(true); // LOBBY-READY
     clients[0]!.start();
 
     const gone = clients[3]!;

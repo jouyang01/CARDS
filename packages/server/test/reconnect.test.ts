@@ -93,7 +93,7 @@ describe('M3-RECONNECT: a match seat is held, a lobby seat is freed', () => {
 
   it('the pure `leave` is where that split lives, not the hub', () => {
     const lobby = { ...createRoom('WXYZ', '2v2'), seats: [
-      { seatId: 'a', team: 0 as const, name: 'a', unitIds: [], picks: [], connected: true, missedTurns: 0 },
+      { seatId: 'a', team: 0 as const, name: 'a', unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0 },
     ] };
     expect(leave(lobby, 'a').seats).toHaveLength(0);
     const { hub } = running();

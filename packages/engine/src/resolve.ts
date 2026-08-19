@@ -39,10 +39,13 @@ import {
   computeDamage,
   grantEnergy,
   isBehindCover,
+  outgoingDamagePct,
+  scaleDamage,
 } from './combat.js';
 import {
   PASSIVE_ENERGY,
   RESPAWN_TURNS,
+  BRUSH_BREAK_TURNS,
   REVEAL_ON_ATTACK_TURNS,
   TRAP_MAX_LIFETIME,
   ULT_COST,
@@ -51,6 +54,7 @@ import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
+import { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from './polarity.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import { buildVision, teamCanSee, teamHasSightline, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
@@ -181,36 +185,33 @@ interface UnitPlan {
  * own team. teleport/decoy/trap are neither — they are self/placement effects
  * handled by their own phase, not filtered by area allegiance.
  */
-// Effect polarity (edge-cases: no-friendly-fire + R7). The three sets partition
-// EFFECT_KINDS exactly — every kind sits in one row, so the table is total (a
-// content guardrail test asserts it). Harmful → enemies only; beneficial → own
-// team only; neutral → self/placement, unfiltered by area allegiance.
-export const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
-  'damage',
-  'weaken',
-  'slow',
-  'root',
-  'knockback',
-  'pull',
-  'reveal',
-  'damageOverTime', // DOT-HOT: it damages, so FF1 reaches allies in the area too
-]);
-export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
-  'heal',
-  'shield',
-  'might',
-  'haste',
-  'energized',
-  'unstoppable',
-  'stealth',
-  'untargetable', // R7 (2026-08-19): concealing/protecting a unit is friendly
-  'healOverTime', // DOT-HOT: a heal is a heal, own team only
-]);
-export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
-  'teleport',
-  'decoy',
-  'trap',
-]);
+// Effect polarity lives in `polarity.ts` so `validate.ts` can consult it
+// without importing the resolver (which imports the catalysts, which import
+// the validator — a cycle). Re-exported here because every caller, the client
+// included, has always reached for it through this module.
+export { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from './polarity.js';
+
+/**
+ * CASTER-SAFE — the effects of an ability that may land on the unit that fired
+ * it: everything except the harmful half.
+ *
+ * FF1 says a harmful effect reaches every unit standing in the area, "ally or
+ * enemy". It was never meant to read *including yourself*: Ravok's Whirling
+ * Cleave is a `circle` with `range: 0`, so its area is centred on him and he
+ * took the full 22 off his own swing; Shockwave hit him for 12 and slowed him
+ * as well. No kit wants accidental self-harm, so the rule is global rather
+ * than a flag per ability — a unit is never a target of its own ability's
+ * harmful effects (Dev Notes #16 + #18, `dev-notes-batch-3.md` §B).
+ *
+ * The one way back in is deliberate: `selfDamagePct` (RECOIL), which is priced
+ * into the ability rather than suffered by accident. Note the asymmetry is
+ * only about *harm* — a self-cast's shields, heals and buffs are untouched,
+ * and an ALLY standing in your own area is still hit, because CASTER-SAFE
+ * excludes the caster and nobody else (that is ALLY-SAFE, a separate item).
+ */
+function casterSafe(effects: readonly AbilityEffect[]): readonly AbilityEffect[] {
+  return effects.filter((e) => !HARMFUL_KINDS.has(e.kind));
+}
 
 /**
  * UNTGT1 — Untargetable is "cannot be hit this phase/turn" (GAME_SPEC §6), and
@@ -292,20 +293,41 @@ function revealIfConcealed(
 }
 
 /**
- * Taking damage: Stealth always breaks (GAME_SPEC §6), and a unit that was
- * *concealed* when it was hit is additionally revealed (CAMO-REVEAL) — a
- * brush-hidden unit that takes a hit used to keep its concealment next turn,
- * which is the half of the owner's rule the engine was missing.
+ * Taking damage: Stealth always breaks (GAME_SPEC §6), and being hit while
+ * hidden costs you the hiding place.
  *
- * Order matters: concealment is read **before** `breakStealth`, or a stealthed
- * unit standing in the open would have its own gate cleared out from under it.
+ * BRUSH-BREAK (Dev Note #19) splits that second half by *which* veil was doing
+ * the work. Being shot in a thicket used to apply **Reveal**, which is far too
+ * much: Reveal pierces everything, everywhere, so a unit clipped once in brush
+ * was lit up across the whole board for two turns including on open ground it
+ * later ran to. What being seen in a bush should cost you is the bush.
+ *
+ *   • hit **in brush** → `brushBroken` for two turns. The thicket stops working
+ *     for this unit — any thicket, because the marker rides the unit rather
+ *     than the patch — and nothing else about its concealment changes.
+ *   • hit while **Stealthed** → unchanged: the Stealth breaks and the Reveal
+ *     lands, exactly as CAMO-REVEAL had it. Stealth is the stronger veil and it
+ *     is paid for; losing it is meant to hurt.
+ *
+ * Order matters: both are read **before** `breakStealth`, or a stealthed unit
+ * would have its own gate cleared out from under it.
  */
 function onDamageTaken(
   board: Board, victim: UnitState, abilityId: string, events: TurnEvent[],
 ): void {
-  const concealed = isConcealed(board, victim, victim.pos);
+  const stealthed = hasStatus(victim, 'stealth');
+  const inBrush = terrainAt(board, victim.pos) === 'brush';
   breakStealth(victim, events);
-  if (concealed) applyReveal(victim, abilityId, events);
+  if (stealthed) {
+    applyReveal(victim, abilityId, events);
+    return;
+  }
+  if (!inBrush) return;
+  applyStatus(victim, 'brushBroken', BRUSH_BREAK_TURNS);
+  events.push({
+    type: 'statusApplied', unitId: victim.unitId, status: 'brushBroken',
+    duration: BRUSH_BREAK_TURNS, sourceUnitId: victim.unitId, abilityId,
+  });
 }
 
 /** Does this ability count as "an offensive ability" for CAMO-REVEAL? */
@@ -698,10 +720,21 @@ const sourceOf = (unit: UnitState, abilityId: string): Source => ({ unitId: unit
  * not apply (see DECISIONS.md) — and the trap's non-trap effects (e.g. Reveal)
  * hit the victim. A trap is one-shot: it is consumed when it fires. A unit that
  * merely *starts* on a freshly-placed trap never calls this, so it is safe until
- * it re-enters. Returns true if the victim died.
+ * it re-enters.
+ *
+ * Returns **true when the unit's movement ends here** — because it died, or
+ * because the trap was a halting one (TRAP-HALT, Dev Note #10b). Every caller
+ * already treated the return value as "stop walking", so the two reasons need
+ * only one channel: a Move step discards the rest of the path, a charge stops
+ * where it stands. It is a stop, not a displacement — nothing is pushed and
+ * nothing else about the turn is cancelled.
+ *
+ * **Unstoppable ignores the halt**, exactly as it already ignores the Slow these
+ * traps carry: the damage still lands, the walk simply does not stop.
  */
 function triggerTrapsOnEntry(draft: GameState, board: Board, unit: UnitState, events: TurnEvent[]): boolean {
   if (!unit.alive) return false;
+  let halted = false;
   for (const trap of draft.traps.filter((t) => t.owner !== unit.owner && vecEq(t.pos, unit.pos))) {
     draft.traps = draft.traps.filter((t) => t.id !== trap.id); // consumed
     events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
@@ -720,8 +753,9 @@ function triggerTrapsOnEntry(draft: GameState, board: Board, unit: UnitState, ev
       killUnit(draft, unit, trap.owner, events);
       return true;
     }
+    if (trap.halt === true && !hasStatus(unit, 'unstoppable')) halted = true;
   }
-  return false;
+  return halted;
 }
 
 // ── Displacement (knockback / pull) ─────────────────────────────────────────
@@ -878,21 +912,29 @@ function grantUseEnergy(unit: UnitState, def: AbilityDef, hitEnemy: boolean, eve
 function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'prep' });
   runCatalysts(draft, board, plans, 'prep', events);
+  // PHASE-STATUS-FIRST: Prep's two sub-steps. Prep lands no damage of its own —
+  // its only damage-shaped act is **arming a trap**, whose number is stamped
+  // from the owner's Might/Weaken at placement. So the traps wait: every Prep
+  // status in the phase lands first, and a Might an ally threw you a moment ago
+  // is in the mine you just buried. Heals need no such treatment here, having
+  // nothing in this phase to be simultaneous with.
+  const arming: (() => void)[] = [];
   // Free actions resolve next (FREE1). Validation pins them to Prep, so this is
   // the only phase that needs the pass — and going first is the ordering
   // catalysts will need, so there is one rule rather than two.
   for (const plan of orderedPlans(draft, plans)) {
-    if (plan.freeAbility !== undefined) firePrep(draft, board, plan.unit, plan.freeAbility, events);
+    if (plan.freeAbility !== undefined) firePrep(draft, board, plan.unit, plan.freeAbility, events, arming);
   }
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'prep') continue;
-    firePrep(draft, board, plan.unit, a, events);
+    firePrep(draft, board, plan.unit, a, events, arming);
   }
+  for (const arm of arming) arm();
 }
 
-/** Resolve one Prep-phase ability for `unit`: traps place, everything else self-applies. */
-function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbility, events: TurnEvent[]): void {
+/** Resolve one Prep-phase ability for `unit`: traps arm (deferred), everything else self-applies. */
+function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbility, events: TurnEvent[], arming: (() => void)[]): void {
   if (!unit.alive) return;
   events.push({ type: 'abilityFired', unitId: unit.unitId, abilityId: a.def.id, area: a.area });
   markAbilityUsed(unit, a, events);
@@ -905,7 +947,7 @@ function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbi
 
   const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
   if (trapEffect !== undefined) {
-    placeTraps(draft, unit, a, trapEffect, events);
+    arming.push(() => placeTraps(draft, unit, a, trapEffect, events));
   } else {
     // PREP-AOE: a beneficial AREA ability reaches every ally standing in it,
     // not just the caster. This branch used to apply the effects to `unit`
@@ -919,13 +961,21 @@ function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbi
 }
 
 /**
- * Apply an ability's beneficial effects to every ally standing in its area,
- * **and to the caster exactly once** whether or not it is standing in it.
+ * Apply an ability's beneficial effects to every ally standing in its area —
+ * **the caster included, on the same terms as anybody else** (MENDING-RANGE).
  *
- * The caster is unconditional because an ability's self-effects are not an area
- * question — Untargetable on a dash, Might on an ult, a shield the caster grants
- * itself — while the area half is FF1 polarity: beneficial effects reach your
- * own team only. Both meet in one pass so nobody is shielded twice.
+ * The caster used to be unconditional, on the argument that a self-effect is
+ * "not an area question". It is: Mending Light is a `circle` aimed up to 5 away,
+ * and Lumen was healed by it from anywhere on the board — the owner's report
+ * that it "heals outside its range" (Dev Note #12). The aim gate was working
+ * perfectly; the caster was simply never asked to be inside the area it aimed.
+ *
+ * Every case the old exception defended still works, because the caster is
+ * genuinely in the area for all of them: a `self` shape's area **is** the
+ * caster's square, a dash's area is the path or the landing square it ends on,
+ * and a `circle` with `range: 0` (Warding Halo) is centred on the caster. What
+ * changes is exactly the abilities aimed *away* — and there the boon is now a
+ * targeting decision rather than a freebie, which is what the area was for.
  */
 function applyAreaBoons(
   draft: GameState,
@@ -934,10 +984,15 @@ function applyAreaBoons(
   source: Source,
   events: TurnEvent[],
 ): void {
-  applySelfEffects(draft, caster, a.def.effects, source, events);
+  const area = new Set(a.area.map(vecKey));
+  // Non-beneficial effects on this path are the caster's own business (a `decoy`
+  // spawns at its feet; a self-cast's statuses), so they are applied whenever
+  // the caster is in its own area — which for a self-cast is always. Minus the
+  // harmful ones: CASTER-SAFE means your own Weaken or Root never lands on you,
+  // however faithfully the area covers your square.
+  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, casterSafe(a.def.effects), source, events);
   const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
   if (boons.length === 0) return;
-  const area = new Set(a.area.map(vecKey));
   for (const ally of draft.units) {
     if (!ally.alive || ally.owner !== caster.owner || ally.unitId === caster.unitId) continue;
     if (!area.has(vecKey(ally.pos))) continue;
@@ -1015,24 +1070,44 @@ function placeTraps(
   events: TurnEvent[],
 ): void {
   const onTrigger = planned.def.effects.filter((e) => e.kind !== 'trap');
-  for (const [i, pos] of planned.area.entries()) {
-    const trap: TrapState = {
-      id: `trap-${owner.unitId}-t${draft.turn}-${i}`,
-      owner: owner.owner,
-      ownerUnitId: owner.unitId,
-      abilityId: planned.def.id,
-      pos: { x: pos.x, y: pos.y },
-      damage: trapEffect.amount ?? 0,
-      // TRAP-LIFETIME: stamped at placement, measured exactly like a status
-      // `duration` — `lifetime: 2` covers this turn and the next. An omitted
-      // lifetime lands on the cap rather than living forever, so a trap can only
-      // be *shorter* than the rule by being under-specified, never longer.
-      expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
-      onTrigger,
-    };
-    draft.traps.push(trap);
-    events.push({ type: 'trapPlaced', trapId: trap.id, pos: trap.pos, owner: trap.owner });
-  }
+  // TRAP-CENTRE (Dev Note #9): **one** trap, at the square the ability was aimed
+  // at. This used to walk `planned.area` and bury a mine under every tile it
+  // covered, which turned a radius-1 disc into five traps and a radius-2 disc
+  // into thirteen — a minefield from one cast, and an ability whose trap count
+  // was a function of its shape rather than of anything anybody authored.
+  //
+  // A `square` or `self` shape lands in exactly the same place it always did:
+  // for those the area *is* the aimed square (or the caster's own), so this is
+  // one rule with no special case rather than a carve-out for area shapes.
+  const pos = planned.aim[0] ?? owner.pos;
+  const trap: TrapState = {
+    // The ability is part of the id because a unit can now arm two traps in
+    // one turn — Thorn's auto-mine in Blast beside a free Snare Bloom in Prep
+    // — and two traps sharing an id would make the consumed-trap filter in
+    // `triggerTrapsOnEntry` sweep away the one that did not fire.
+    id: `trap-${owner.unitId}-t${draft.turn}-${planned.def.id}`,
+    owner: owner.owner,
+    ownerUnitId: owner.unitId,
+    abilityId: planned.def.id,
+    pos: { x: pos.x, y: pos.y },
+    // PHASE-STATUS-FIRST: the number is stamped now, from the Might or Weaken
+    // the owner is carrying as the mine goes in the ground — including one
+    // applied earlier in this same phase, which is why arming is the phase's
+    // second sub-step. A trap that detonates three turns later is not
+    // re-measured against whatever the owner happens to be feeling then; the
+    // charge was set when it was buried.
+    damage: scaleDamage(trapEffect.amount ?? 0, outgoingDamagePct(owner)),
+    // TRAP-LIFETIME: stamped at placement, measured exactly like a status
+    // `duration` — `lifetime: 2` covers this turn and the next. An omitted
+    // lifetime lands on the cap rather than living forever, so a trap can only
+    // be *shorter* than the rule by being under-specified, never longer.
+    expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
+    // TRAP-HALT: carried from the effect, like the lifetime beside it.
+    ...(trapEffect.halt === true ? { halt: true } : {}),
+    onTrigger,
+  };
+  draft.traps.push(trap);
+  events.push({ type: 'trapPlaced', trapId: trap.id, pos: trap.pos, owner: trap.owner });
 }
 
 /** `"x,y"` back to a `Vec2` — the inverse of `vecKey`, for blast bookkeeping. */
@@ -1127,6 +1202,57 @@ function contestedBlinks(plans: readonly UnitPlan[]): ReadonlySet<string> {
  * aimed at (edge-cases: dash immunity scope). Displacement from a dash is queued
  * for end of Blast (BACKLOG item 8); trap triggers attach here (item 9).
  */
+/**
+ * One blow a Dash-phase ability landed, gathered before any of it is applied
+ * (PHASE-STATUS-FIRST). `raw` is the ability's authored number; the attacker's
+ * Might/Weaken is read at apply time, so a buff that landed in this same Dash
+ * is already counted.
+ */
+interface DashHit {
+  attacker: UnitState;
+  victim: UnitState;
+  def: AbilityDef;
+  raw: number;
+  behindCover: boolean;
+  /** The square the blow came from — where a shove that follows it is measured. */
+  from: Vec2;
+  /** DASH-OCCUPIED already shoved this victim out of the landing square. */
+  alreadyShoved: boolean;
+}
+
+/**
+ * Apply the Dash phase's damage, all of it at once, after every dash has moved
+ * and every Dash-phase status has landed (PHASE-STATUS-FIRST, Dev Note #21).
+ *
+ * The batch is what makes the phase simultaneous rather than sequential. Two
+ * charges that kill each other now both connect, because neither victim is dead
+ * while the hits are being gathered; a shield thrown by a bodyguard's dive
+ * absorbs the dive it was thrown in front of, whichever plan the ordering
+ * happened to reach first. Nothing here depends on the order of `hits` beyond
+ * which attacker is credited with an overkill, and that order is the fixed
+ * `orderedPlans` walk.
+ */
+function applyDashHits(
+  draft: GameState,
+  board: Board,
+  hits: readonly DashHit[],
+  pending: Displacement[],
+  events: TurnEvent[],
+): void {
+  for (const h of hits) {
+    if (!h.victim.alive) continue;
+    const res = applyDamage(h.victim, computeDamage(h.raw, h.attacker, h.behindCover));
+    events.push({ type: 'damage', unitId: h.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: h.attacker.unitId, abilityId: h.def.id });
+    onDamageTaken(board, h.victim, h.def.id, events); // CAMO-REVEAL: + reveal if concealed
+    if (res.died) killUnit(draft, h.victim, h.attacker.owner, events);
+    // …unless this dash already shoved them out of its landing square, in which
+    // case they have taken their displacement for this ability.
+    else if (!h.alreadyShoved) {
+      collectDisplacement(pending, h.def.effects, h.victim, h.from, h.attacker.unitId);
+    }
+  }
+}
+
 function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], displaced: Set<string>, events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'dash' });
   // Shift resolves before a dash ability the same unit declared. Its Move cost
@@ -1147,6 +1273,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     }
   }
   const repositioned: UnitState[] = []; // units that actually moved under their own power (D1-dash)
+  // PHASE-STATUS-FIRST: every blow the phase lands, gathered while the loop
+  // below moves units and applies the phase's statuses, and applied afterwards
+  // in one batch. See `applyDashHits`.
+  const dashHits: DashHit[] = [];
+  const arming: (() => void)[] = []; // TRAP-CENTRE, buried after the phase's statuses
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'dash' || !plan.unit.alive) continue;
@@ -1189,8 +1320,14 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     let hitEnemy = false;
     const struck = new Set<string>(); // each unit is affected at most once
     if (dmg !== undefined) {
+      // ALLY-SAFE trims the charge's own list before `chargeHits` counts it: an
+      // ability that spares its team does not spend its single hit on a
+      // teammate it was never going to damage.
+      const run = a.def.noFriendlyFire === true
+        ? crossed.filter((u) => u.owner !== plan.unit.owner)
+        : crossed;
       const crossedVictims = a.def.shape === 'path'
-        ? (a.def.chargeHits === 'all' ? crossed : crossed.slice(0, 1)).map((u) => ({ unit: u, from: origin }))
+        ? (a.def.chargeHits === 'all' ? run : run.slice(0, 1)).map((u) => ({ unit: u, from: origin }))
         : [];
       const blasted = blasts.flatMap(({ centre, area }) =>
         draft.units
@@ -1206,16 +1343,12 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
         const behindCover = a.def.melee === true
           ? false
           : isBehindCover(board, from, victim.pos, a.def.range);
-        const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
-        events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
-        onDamageTaken(board, victim, a.def.id, events); // CAMO-REVEAL: + reveal if concealed
+        // PHASE-STATUS-FIRST: gathered, not applied. The Dash phase's statuses
+        // — a bodyguard's shield, a dive's buff — all land in the loop this is
+        // inside; the damage waits for the batch below so that every blow in
+        // the phase is measured against the same finished state.
+        dashHits.push({ attacker: plan.unit, victim, def: a.def, raw: dmg.amount ?? 0, behindCover, from, alreadyShoved: victim.unitId === shovedAside?.unitId });
         if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
-        if (res.died) killUnit(draft, victim, plan.unit.owner, events);
-        // …unless this dash already shoved them out of its landing square, in
-        // which case they have taken their displacement for this ability.
-        else if (victim.unitId !== shovedAside?.unitId) {
-          collectDisplacement(pending, a.def.effects, victim, from, plan.unit.unitId);
-        }
       }
     }
 
@@ -1247,7 +1380,17 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     }
 
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
-    applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
+    //
+    // MENDING-RANGE gates this on the area too, for the same reason as Prep's:
+    // a dash ends inside its own path or on its landing square, and a `self`
+    // shape's area is the caster's square, so every self-buff that was meant to
+    // land still lands — but a `line` never covers the square it was fired from,
+    // so Lumen no longer heals herself off a beam aimed at somebody else.
+    // CASTER-SAFE trims the harmful half here as it does in Prep: a dash's own
+    // Slow is for whoever it ran through, not for the unit that ran.
+    if (a.area.some((p) => vecEq(p, plan.unit.pos))) {
+      applySelfEffects(draft, plan.unit, casterSafe(a.def.effects), sourceOf(plan.unit, a.def.id), events);
+    }
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
     // CAMO-REVEAL / REVEAL-FIX: a dash gives a *concealed* dasher away, whether
     // it landed damage or merely carried a debuff or a shove — and gives an open
@@ -1256,7 +1399,15 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // now that the damaging branch is no longer unconditional.
     if (hitEnemy || isHarmfulUse(a.def)) revealIfConcealed(board, plan.unit, origin, a.def.id, events);
     if (!vecEq(plan.unit.pos, origin)) repositioned.push(plan.unit);
+    // TRAP-CENTRE: a dash may arm a mine too. No shipped kit does, but a trap
+    // effect that silently did nothing on one phase out of three would be a
+    // content trap of its own.
+    const dashTrap = a.def.effects.find((e) => e.kind === 'trap');
+    if (dashTrap !== undefined) arming.push(() => placeTraps(draft, plan.unit, a, dashTrap, events));
   }
+
+  for (const arm of arming) arm();
+  applyDashHits(draft, board, dashHits, pending, events);
 
   // A decoy is destroyed by an enemy ending a *voluntary* reposition on its
   // square — Dash as well as Move (D1-dash, edge-cases 2026-08-20). Only units
@@ -1297,7 +1448,7 @@ function walkCharge(draft: GameState, board: Board, unit: UnitState, path: reado
     const from = unit.pos;
     unit.pos = { x: step.x, y: step.y };
     events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-    if (triggerTrapsOnEntry(draft, board, unit, events)) return crossed; // died mid-charge
+    if (triggerTrapsOnEntry(draft, board, unit, events)) return crossed; // died or halted (TRAP-HALT)
   }
   return crossed;
 }
@@ -1427,6 +1578,11 @@ function runBlast(
   // their locked squares, folded into this turn's simultaneous damage.
   detonateDelayedBlasts(draft, roster, hits, debuffs, benefits, events);
 
+  // TRAP-CENTRE + PHASE-STATUS-FIRST: mines armed by this phase's abilities,
+  // buried after the status batch so the charge carries the Might that landed
+  // beside it. Same shape as Prep's arming list.
+  const arming: (() => void)[] = [];
+
   // CAMO-REVEAL: who *used* an offensive ability this phase, whether or not it
   // landed. Recorded during the gather loop and applied after the damage pass,
   // so a caster that did land damage takes the unconditional reveal instead and
@@ -1471,12 +1627,18 @@ function runBlast(
     const inner = new Set(a.inner.map(vecKey));
     const innerAmount = a.def.innerAmount;
     let hitEnemy = false;
+    // ALLY-SAFE (Dev Note #11): FF1's default is that an attack endangers
+    // whoever is standing in it. An ability may opt out of the friendly half.
+    const allySafe = a.def.noFriendlyFire === true;
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
       const enemy = target.owner !== plan.unit.owner;
+      const self = target.unitId === plan.unit.unitId; // CASTER-SAFE
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of a.def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
+          if (self) continue; // CASTER-SAFE — see `casterSafe`; RECOIL is below
+          if (allySafe && !enemy) continue; // ALLY-SAFE — this one spares the team
           if (untargetable) continue; // the whole harmful half is skipped, energy included
           // Energy stays enemy-only, so splashing an ally pays nothing.
           if (enemy) hitEnemy = true;
@@ -1494,6 +1656,39 @@ function runBlast(
         }
       }
     }
+    // TRAP-CENTRE: an ability arms its mine whatever phase it fires in — Thorn's
+    // Barbed Sling leaves one on the square every shot lands on. Deferred with
+    // the rest of the arming so the charge is stamped after this phase's
+    // statuses (PHASE-STATUS-FIRST), exactly as Prep's is.
+    const blastTrap = a.def.effects.find((e) => e.kind === 'trap');
+    if (blastTrap !== undefined) arming.push(() => placeTraps(draft, plan.unit, a, blastTrap, events));
+
+    // RECOIL — the one deliberate way back through CASTER-SAFE. `selfDamagePct`
+    // charges the caster a fraction of the ability's own damage, gathered into
+    // the same simultaneous list as everything else so a caster the recoil kills
+    // still dealt every blow it swung.
+    //
+    // Three properties, each load-bearing:
+    //   • `fixedDamage` — the recoil bypasses cover (there is none between you
+    //     and the ground under your feet) and, for the same reason, Might and
+    //     Weaken: it is the authored number scaled, not an attack you aimed at
+    //     yourself. Shields still absorb it, because `applyDamage` is where the
+    //     shield pool lives and a shield is a shield whatever broke it.
+    //   • It is a **cost of firing**, not an area effect. Ravok's own Seismic
+    //     Rupture is a `range: 0` circle so the distinction never shows on live
+    //     content, but an ability aimed away from its caster would still recoil
+    //     — you paid for the earthquake either way (DECISIONS 2026-09-18).
+    //   • `killUnit` credits nobody when the killer owns the victim, so blowing
+    //     yourself up hands the enemy team no point.
+    const recoilPct = a.def.selfDamagePct;
+    if (recoilPct !== undefined) {
+      const base = a.def.effects.find((e) => e.kind === 'damage')?.amount ?? 0;
+      const recoil = Math.floor((base * recoilPct) / 100);
+      if (recoil > 0) {
+        hits.push({ attacker: plan.unit, victim: plan.unit, abilityId: a.def.id, raw: recoil, range: a.def.range, fixedDamage: recoil });
+      }
+    }
+
     // A decoy in a damaging ability's area is destroyed (R2) — no energy, no
     // riders; it never counts as an enemy hit, so `hitEnemy` stays units-only.
     if (a.def.effects.some((e) => e.kind === 'damage')) {
@@ -1502,8 +1697,44 @@ function runBlast(
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
   }
 
-  // Apply all damage. Deaths happen here but every hit was gathered first, so a
-  // unit that dies still dealt its damage (edge-cases: mutual damage).
+  // ── Sub-step 1: every status in the phase, both teams at once ──────────────
+  //
+  // PHASE-STATUS-FIRST (Dev Note #21). Statuses used to be applied *after* the
+  // damage, which made a Blast-phase Weaken a promise about next turn: Dazzling
+  // Ray weakened its victim, and the victim's own attack — fired in the same
+  // Blast — landed at full strength anyway. The owner wants it to blunt that
+  // attack. So the phase resolves as two batches: all statuses, then all damage
+  // computed against the state those statuses left behind.
+  //
+  // Both batches are order-independent by construction. `debuffs` and
+  // `benefits` were gathered from every plan before either loop runs, so no
+  // team is privileged by going first, and applying a status is idempotent with
+  // respect to the other statuses landing beside it.
+  //
+  // Beneficial effects split here: a **shield** is a status and lands in this
+  // batch, which is what lets Aegis's shield absorb the very volley he threw it
+  // in front of, regardless of plan order. A **heal** is not — the AC groups it
+  // with damage, and it stays after the damage below so that a heal arriving in
+  // the same phase as a lethal blow is still too late, exactly as today.
+  for (const { victim, effect, source } of debuffs) {
+    if (!victim.alive) continue;
+    applyStatus(victim, effect.kind, effect.duration ?? 1, effect.amount, authorOf(effect.kind, source));
+    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, amount: effect.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
+  }
+  for (const { target, effect, source } of benefits) {
+    if (effect.kind === 'heal' || !target.alive) continue;
+    applySelfEffects(draft, target, [effect], source, events);
+  }
+  for (const arm of arming) arm();
+
+  // ── Sub-step 2: every damage and heal, both teams at once ─────────────────
+  //
+  // Deaths happen here but every hit was gathered first, so a unit that dies
+  // still dealt its damage (edge-cases: mutual damage) and mutual kills land in
+  // full. `computeDamage` reads the attacker's statuses live, which is the whole
+  // point of the ordering above: a Weaken applied moments ago is already in the
+  // number.
+  //
   // Keyed by attacker, valued by the ability that landed — the reveal below is a
   // consequence of a specific attack, and A0-heal makes the log say which.
   const dealtDamage = new Map<string, string>();
@@ -1522,16 +1753,9 @@ function runBlast(
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
 
-  // Non-displacement debuffs on surviving enemies.
-  for (const { victim, effect, source } of debuffs) {
-    if (!victim.alive) continue;
-    applyStatus(victim, effect.kind, effect.duration ?? 1, effect.amount, authorOf(effect.kind, source));
-    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, amount: effect.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
-  }
-
-  // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
+  // The other half of sub-step 2: heals, on allies who survived the damage.
   for (const { target, effect, source } of benefits) {
-    if (target.alive) applySelfEffects(draft, target, [effect], source, events);
+    if (effect.kind === 'heal' && target.alive) applySelfEffects(draft, target, [effect], source, events);
   }
 
   // Queue displacement against survivors, to resolve at end of Blast (item 8).
@@ -1610,6 +1834,10 @@ function detonateDelayedBlasts(
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
+          // CASTER-SAFE reaches here too: a grenade you armed two turns ago is
+          // still your own ability, and standing on it should not blow you up.
+          if (target.unitId === caster.unitId) continue;
+          if (def.noFriendlyFire === true && !enemy) continue; // ALLY-SAFE
           if (untargetable) continue;
           if (enemy) hitEnemy = true; // energy stays enemy-only
           if (e.kind === 'damage') hits.push({ attacker: caster, victim: target, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
@@ -2274,7 +2502,7 @@ function stepMovers(
       const k = vecKey(to);
       entered.set(k, [...(entered.get(k) ?? []), m]);
       events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
-      if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died → path discarded
+      if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died or halted → rest of the path dropped
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
       bounceOffOccupied(draft, movers, m, step, events);

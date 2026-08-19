@@ -74,7 +74,7 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     };
     const wedge: AbilityDef = {
       id: 'y', name: 'Y', phase: 'blast', shape: 'cone', range: 3, cooldown: 0, energyGain: 4,
-      melee: true, axisBonus: 8, beamWidth: 3,
+      melee: true, axisBonus: 8, beamWidth: 3, selfDamagePct: 50, noFriendlyFire: true,
       effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
     const bomb: AbilityDef = {
@@ -87,7 +87,7 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     // cone-only or circle-only keys above.
     const twin: AbilityDef = {
       id: 'w', name: 'W', phase: 'blast', shape: 'line', range: 6, cooldown: 0, energyGain: 8,
-      modes: [{ name: 'Spread', shape: 'cone', range: 2 }, { name: 'Focus', shape: 'line', range: 6 }],
+      modes: [{ name: 'Focus', shape: 'line', range: 6 }, { name: 'Spread', shape: 'cone', range: 2 }],
       effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
     expect(validateAbility(charge, 'x')).toEqual([]);

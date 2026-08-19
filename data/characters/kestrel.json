@@ -11,13 +11,13 @@
       "shape": "line",
       "range": 6,
       "modes": [
-        { "name": "Spread", "shape": "cone", "range": 2 },
-        { "name": "Focus", "shape": "line", "range": 6 }
+        { "name": "Focus", "shape": "line", "range": 6 },
+        { "name": "Spread", "shape": "cone", "range": 2 }
       ],
       "cooldown": 0,
       "energyGain": 8,
       "effects": [{ "kind": "damage", "amount": 24 }],
-      "description": "Paired bolts, aimed two ways: Spread fans a cone 2 squares out, Focus fires a line 6 squares long. Same damage either way \u2014 the mode is the spacing decision."
+      "description": "Paired bolts, aimed two ways: Focus fires a line 6 squares long, Spread fans a cone 2 squares out. Same damage either way \u2014 the mode is the spacing decision."
     },
     {
       "id": "skim",

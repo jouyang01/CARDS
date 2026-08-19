@@ -95,13 +95,23 @@ describe('PREP-AOE: a Prep beneficial area shields every ally standing in it', (
     expect(unit(state, 'near').hp).toBe(70);
   });
 
-  it('aimed at empty space it shields the caster and nobody else', () => {
+  it('aimed at empty space it shields NOBODY — not even the caster (MENDING-RANGE)', () => {
+    // This used to shield the caster. The caster's self-effects *are* an area
+    // question: an aimed circle that reached its caster from anywhere on the
+    // board is what the owner reported as "Mending Light heals outside its
+    // range" (Dev Note #12). Aiming at nothing now buffs nothing.
     const { state } = run(setup(), [{ unitId: 'caster', ability: { abilityId: 'pulse', target: [{ x: 5, y: 4 }] } }]);
-    // The caster's self-effects are not an area question — a shield you grant
-    // yourself lands whether or not you stood in your own circle.
-    expect(shieldOf(state, 'caster')).toBe(25);
+    expect(shieldOf(state, 'caster')).toBe(0);
     expect(shieldOf(state, 'near')).toBe(0);
     expect(shieldOf(state, 'far')).toBe(0);
+  });
+
+  it('…and the caster gets it by AIMING at itself, which is the whole point', () => {
+    // The boon is not gone, it is targeted. A `circle` reaches range 0, so a
+    // caster who wants the shield asks for it — one decision, not a freebie.
+    const { state } = run(setup(), [{ unitId: 'caster', ability: { abilityId: 'pulse', target: [{ x: 5, y: 7 }] } }]);
+    expect(shieldOf(state, 'caster')).toBe(25);
+    expect(shieldCount(state, 'caster'), 'and exactly once').toBe(1);
   });
 
   it('a self-cast is unchanged — it was never the broken case', () => {
@@ -167,7 +177,11 @@ describe('PREP-AOE: the shipped roster', () => {
       e.type === 'statusApplied' && e.status === 'shield' && e.abilityId === 'barrier_pulse'
         ? [[e.unitId, e.amount]]
         : []);
-    expect(shielded.map(([id]) => id).sort()).toEqual(['aegis', 'ally1', 'ally2']);
+    // MENDING-RANGE: Aegis is at (5,7) and the radius-1 circle at (7,7) does not
+    // cover her, so she is no longer shielded by a pulse aimed past herself.
+    // The Dev Note this test was written for — "it only ever shielded Aegis" —
+    // is still answered: both allies in the circle get it.
+    expect(shielded.map(([id]) => id).sort()).toEqual(['ally1', 'ally2']);
     for (const [, got] of shielded) expect(got).toBe(amount);
   });
 });

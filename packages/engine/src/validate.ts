@@ -9,6 +9,7 @@ import {
   TARGET_SHAPES,
 } from './types.js';
 import { MAX_ABILITY_RANGE, TRAP_MAX_LIFETIME } from './constants.js';
+import { HARMFUL_KINDS } from './polarity.js';
 
 /**
  * Content validation for data-driven characters and maps.
@@ -34,7 +35,7 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
   'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
-  'oncePerMatch', 'impact', 'modes',
+  'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire',
   'effects', 'description',
 ] as const;
 
@@ -44,7 +45,7 @@ export const PROFILE_KEYS = [
 ] as const;
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
-export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime'] as const;
+export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime', 'halt'] as const;
 
 /** Every key a `PowerupPad` may carry (PADS1) — same argument again. */
 export const POWERUP_PAD_KEYS = ['x', 'y', 'type', 'firstTurn', 'everyTurns'] as const;
@@ -155,6 +156,43 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
         && JSON.stringify({ ...first, name: undefined }) === JSON.stringify({ ...second, name: undefined })) {
         errs.push(`${path}: the two modes are identical — the toggle would do nothing`);
       }
+      // MODE-BASE-INVARIANT (Builder OQ 2026-09-17 #2): mode 0 IS the base
+      // profile. An order with no `mode`, an order naming mode 0, and an old
+      // client that has never heard of modes all resolve through the ability's
+      // own `shape`+`range` — so if `modes[0]` disagrees with those, "absent
+      // mode = base = mode 0" quietly stops being true and the same ability aims
+      // two different ways depending on which client sent the order. Cheaper to
+      // refuse the content than to reconcile the three paths.
+      if (first !== undefined) {
+        if (first.shape !== undefined && first.shape !== a.shape) {
+          errs.push(`${path}: modes[0] shape "${first.shape}" must match the ability's own "${a.shape}" — mode 0 is the base profile`);
+        }
+        if (first.range !== undefined && first.range !== a.range) {
+          errs.push(`${path}: modes[0] range ${first.range} must match the ability's own ${a.range} — mode 0 is the base profile`);
+        }
+      }
+    }
+  }
+  // ALLY-SAFE: the flag says "skip friendly fire", so an ability with nothing
+  // harmful to skip is carrying a decision it can never act on.
+  if (a.noFriendlyFire !== undefined) {
+    if (a.noFriendlyFire !== true) {
+      errs.push(`${path}: noFriendlyFire must be true when present (omit it for the FF1 default)`);
+    } else if (!a.effects.some((e) => HARMFUL_KINDS.has(e.kind))) {
+      errs.push(`${path}: noFriendlyFire needs a harmful effect to spare the caster's team`);
+    }
+  }
+  // RECOIL: a percentage of damage the caster takes. Meaningless without damage
+  // to take a fraction of — an ability with none would carry a number the engine
+  // reads and then has nothing to multiply, which is the silent-nothing this
+  // file exists to prevent. Bounded 1..100: 0 is "no recoil" (say nothing
+  // instead) and above 100 is a self-hit harder than the blow itself.
+  if (a.selfDamagePct !== undefined) {
+    if (!isInt(a.selfDamagePct) || a.selfDamagePct < 1 || a.selfDamagePct > 100) {
+      errs.push(`${path}: selfDamagePct must be an integer 1..100 when present`);
+    }
+    if (!a.effects.some((e) => e.kind === 'damage')) {
+      errs.push(`${path}: selfDamagePct needs a damage effect to take a fraction of`);
     }
   }
   if (!isInt(a.cooldown) || a.cooldown < 0) errs.push(`${path}: cooldown must be a non-negative integer`);
@@ -232,6 +270,16 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
           errs.push(`${path}.effects[${i}]: lifetime is only meaningful on a "trap" effect`);
         } else if (!isInt(e.lifetime) || e.lifetime < 1 || e.lifetime > TRAP_MAX_LIFETIME) {
           errs.push(`${path}.effects[${i}]: trap lifetime must be an integer 1..${TRAP_MAX_LIFETIME}`);
+        }
+      }
+      // TRAP-HALT: same argument as `lifetime` — a `halt` on anything but a trap
+      // is a field the engine never reads, and `halt: false` is a way of writing
+      // "no halt" that looks like a decision. Only `true` is a value.
+      if (e.halt !== undefined) {
+        if (e.kind !== 'trap') {
+          errs.push(`${path}.effects[${i}]: halt is only meaningful on a "trap" effect`);
+        } else if (e.halt !== true) {
+          errs.push(`${path}.effects[${i}]: halt must be true when present (omit it for no halt)`);
         }
       }
     }

@@ -67,6 +67,11 @@ export const EFFECT_KINDS = [
   // "something that lasts N turns" already has one implementation here.
   'damageOverTime',
   'healOverTime',
+  // BRUSH-BREAK (Dev Note #19): the marker a unit gets for being hit while a
+  // thicket was hiding it. Engine-applied only — no ability authors it — but it
+  // lives on `unit.statuses` and ticks like everything else there, because
+  // "something that lasts N turns" already has one implementation.
+  'brushBroken',
 ] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
@@ -83,6 +88,17 @@ export interface AbilityEffect {
    * data omits it, so no trap can outlive the cap by being under-specified.
    */
   lifetime?: number;
+  /**
+   * TRAP-HALT — `trap` only. A unit that **enters** this trap ends its movement
+   * on that square: the rest of its path, or the rest of its charge, is simply
+   * dropped.
+   *
+   * It is a stop, not a displacement — nothing is pushed, nothing is cancelled
+   * beyond the steps that never happened, so a halted unit keeps whatever else
+   * its turn had. **Unstoppable ignores it**, exactly as it already ignores the
+   * Slow such traps carry (Dev Note #10b).
+   */
+  halt?: boolean;
 }
 
 export interface AbilityDef {
@@ -229,6 +245,43 @@ export interface AbilityDef {
    * flight and every replay. Absent = today's behaviour exactly.
    */
   modes?: [AbilityProfile, AbilityProfile];
+  /**
+   * RECOIL — the caster takes `floor(amount × selfDamagePct / 100)` of this
+   * ability's damage (Designer §B #17; Ravok's Seismic Rupture carries 50).
+   *
+   * The **deliberate exception** to CASTER-SAFE, which is why it is opt-in data
+   * rather than a rule: no kit wants accidental self-harm, but shattering the
+   * earth under your own feet should cost something, and it prices a 38-damage
+   * radius-3 ult honestly.
+   *
+   * **Bypasses cover** — there is no taking cover from the ground you are
+   * standing on — and equally bypasses Might and Weaken: the recoil is the
+   * ability's authored number scaled, not an attack the caster aimed at itself,
+   * so a buff that sharpens your blows does not sharpen the ground. **Shields
+   * absorb it normally**, because a shield is a thing between you and harm
+   * whatever the harm's direction.
+   *
+   * Meaningless without damage to take a fraction of, so `validateAbility`
+   * rejects it on an ability with none.
+   */
+  selfDamagePct?: number;
+  /**
+   * ALLY-SAFE — this ability's **harmful** effects skip the caster's own team
+   * (Dev Note #11).
+   *
+   * FF1 stays the global default: an attack endangers whoever is standing in
+   * it, and that is the positioning tax the whole game is built around. This is
+   * the per-ability exception, for the kits where the default is simply wrong —
+   * Lumen's Radiant Lash is a beam that damages enemies and heals allies along
+   * the same line, so a Mender whose healing beam friendly-fires was
+   * self-contradictory.
+   *
+   * Beneficial effects are untouched (they were own-team-only already), and so
+   * is CASTER-SAFE, which excludes the caster from every ability. ALLY-SAFE is
+   * the team-scoped, opt-in version of the same idea. `validateAbility` rejects
+   * it on an ability with no harmful effect to skip.
+   */
+  noFriendlyFire?: boolean;
   effects: AbilityEffect[];
   description: string;
 }
@@ -374,6 +427,8 @@ export interface TrapState {
    * a `duration: N` status is measured by.
    */
   expiresOnTurn: number;
+  /** TRAP-HALT: entering it ends the mover's movement (Unstoppable excepted). */
+  halt?: boolean;
   /** Applied to whoever triggers it. */
   onTrigger: AbilityEffect[];
 }

@@ -28,13 +28,13 @@
 import { BENEFICIAL_KINDS, HARMFUL_KINDS, type EffectKind } from '@cards/engine';
 
 /**
- * Display order, and simultaneously the whitelist: only the eleven kinds that
+ * Display order, and simultaneously the whitelist: only the twelve kinds that
  * live on `unit.statuses` (GAME_SPEC §6) are drawable, and each always occupies
  * the same slot in the row so the eye can learn a position rather than re-read
  * a colour. Debuffs lead — what is being done *to* you is the more urgent read.
  */
 export const PIP_ORDER: readonly EffectKind[] = [
-  'root', 'slow', 'weaken', 'reveal',
+  'root', 'slow', 'weaken', 'reveal', 'brushBroken',
   'shield', 'might', 'haste', 'energized', 'unstoppable', 'untargetable', 'stealth',
 ];
 
@@ -50,6 +50,9 @@ export const PIP_COLORS: Readonly<Record<string, number>> = {
   slow: 0x4a7fc8,
   weaken: 0x6b5fa8,
   reveal: 0xff7fbf,
+  // BRUSH-BREAK: a duller, leafier cousin of Reveal's pink — the same family of
+  // "they can see you", a weaker version of it.
+  brushBroken: 0xbf8f6a,
   shield: 0x62d0e0,
   might: 0xff6b4a,
   haste: 0x7de08a,
@@ -213,6 +216,14 @@ export const STATUS_GLYPHS: Readonly<Record<string, readonly GlyphPart[]>> = {
     { d: 'M10.7 11 a1.3 1.3 0 1 1 -2.6 0 a1.3 1.3 0 1 1 2.6 0', fill: true },
     { d: 'M15.9 11 a1.3 1.3 0 1 1 -2.6 0 a1.3 1.3 0 1 1 2.6 0', fill: true },
   ],
+  // Snapped branch — a leafy stem with a break through it. The bush, and the
+  // fact that it is no longer working.
+  brushBroken: [
+    { d: 'M4 21 C7 14 11 9 19 4' },
+    { d: 'M9 14 C9 10 11 8 14 7' },
+    { d: 'M13 18 C14 15 16 13 19 12' },
+    { d: 'M17 3 l4 6 M21 3 l-4 6' },
+  ],
   // Domino mask — drawn to the owning team only (`OWNER_ONLY_PIPS`).
   stealth: [
     { d: 'M2.5 8.5 h19 v3 c0 4 -4.5 5 -7.5 2.5 L12 12.5 l-2 1.5 C7 16.5 2.5 15.5 2.5 11.5 z' },
@@ -321,6 +332,7 @@ export const STATUS_LABELS: Readonly<Record<string, string>> = {
   slow: 'Slowed',
   weaken: 'Weakened',
   reveal: 'Revealed',
+  brushBroken: 'Cover Blown',
   shield: 'Shielded',
   might: 'Might',
   haste: 'Hasted',
@@ -343,6 +355,7 @@ export const STATUS_BLURBS: Readonly<Record<string, string>> = {
   slow: 'Moves fewer squares.',
   weaken: 'Deals less damage.',
   reveal: 'Visible to the enemy team even in cover or brush.',
+  brushBroken: 'Brush no longer hides this unit — any brush, until it expires.',
   shield: 'Absorbs damage before health does.',
   might: 'Deals more damage.',
   haste: 'Moves further.',

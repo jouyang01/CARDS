@@ -9,6 +9,16 @@ export const VISION_RANGE = 6;
  * this would silently reintroduce the turn-1 spawn hit. Ultimates are exempt.
  */
 export const MAX_ABILITY_RANGE = 8;
+/**
+ * DASH-FLOOR-GUARD — the shortest a Dash-phase reposition may be (Dev Note #20,
+ * ruled in edge-cases).
+ *
+ * A dash that moves you less than a walk does is not a mobility tool; it is a
+ * turn spent going nowhere. The shipped five (Combat Roll, Backdraft, Glimmer
+ * Step, Bramble Stride, Shift) all sit exactly here, and a content test refuses
+ * anything under it — a floor is only a floor if something checks.
+ */
+export const DASH_RANGE_FLOOR = 4;
 /** Percent damage reduction behind cover (applied round-down). */
 export const COVER_REDUCTION_PCT = 50;
 export const PASSIVE_ENERGY = 5;
@@ -33,6 +43,12 @@ export const TRAP_MAX_LIFETIME = 4;
  * survives this turn's end-of-turn tick and the next one.
  */
 export const REVEAL_ON_ATTACK_TURNS = 2;
+/**
+ * BRUSH-BREAK — turns a unit's brush concealment stays suppressed after it is
+ * hit in a thicket. 2, read exactly as `REVEAL_ON_ATTACK_TURNS` is: the current
+ * turn and the next, expiring at the end of that one.
+ */
+export const BRUSH_BREAK_TURNS = 2;
 /** Percent modifiers (round down when applied). */
 export const MIGHT_PCT = 25;
 export const WEAKEN_PCT = 25;

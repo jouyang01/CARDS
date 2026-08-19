@@ -66,7 +66,7 @@ describe('M3-ROOM: joining', () => {
     // `unitIds` is empty in the lobby: the DO deals characters at match start
     // (M3-PROTOCOL), not at join.
     expect(result.seat).toEqual({
-      seatId: 's0', team: 0, name: 'Ada', unitIds: [], picks: [], connected: true, missedTurns: 0,
+      seatId: 's0', team: 0, name: 'Ada', unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0,
     });
     expect(result.room.seats).toHaveLength(1);
     expect(room.seats, 'the room it was given is untouched').toHaveLength(0);

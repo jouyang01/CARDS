@@ -32,7 +32,7 @@ const OPEN: MapDef = {
 };
 
 const seat = (over: Partial<Seat> & { seatId: string }): Seat => ({
-  team: 0, name: over.seatId, unitIds: [], picks: [], connected: true, missedTurns: 0, ...over,
+  team: 0, name: over.seatId, unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0, ...over,
 });
 
 const room = (seats: Seat[]): RoomView => ({

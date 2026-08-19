@@ -84,6 +84,7 @@ const started = () => {
   clients[1]!.join('B');
   clients[0]!.pick([{ characterId: 'ash' }, { characterId: 'bry' }]);
   clients[1]!.pick([{ characterId: 'cyn' }, { characterId: 'dex' }]);
+  clients[1]!.ready(true); // LOBBY-READY: the creator's button waits on it
   clients[0]!.start();
   return { hub, a: clients[0]!, b: clients[1]! };
 };
@@ -269,6 +270,7 @@ describe('M3-RECONNECT: end to end against a real room', () => {
     for (const [i, client] of clients.entries()) {
       client.pick([{ characterId: ['ash', 'bry', 'cyn', 'dex'][i]! }]);
     }
+    for (const client of clients.slice(1)) client.ready(true); // LOBBY-READY
     clients[0]!.start();
 
     const gone = clients[3]!;
