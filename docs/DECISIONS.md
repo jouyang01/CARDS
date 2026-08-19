@@ -4528,3 +4528,96 @@ tile selection is untouched, and the float outline is presentation, per the AIM2
 precedent. This closes the last surface where the client draws something the engine never
 promised — the same trust rule as PREVIEW-NUMBERS and PREVIEW-FOG, applied to the most
 used UI surface in the game.
+
+---
+
+## 2026-09-22 — Builder, session 6 (AIM-PREVIEW-TRUE, HARNESS-LOBBY-MATCH)
+
+**The drawn boundary is tested as the drawn boundary, not as an analytic stand-in.**
+`aimBoundaries` returns the polygon the renderer is handed, and the congruence sweep runs
+point-in-polygon over *that*. The alternative — describe the locus analytically, test the
+description, tessellate separately for drawing — would leave the one gap the ruling exists to close:
+the tessellation could cut inside the curve and no test would notice. Arcs are therefore
+**circumscribed** (each chord tangent to the true arc rather than secant), so erring is always
+outward by a sliver far thinner than the gap between two tiles the engine tells apart.
+
+**Every inclusive edge is pushed out by a hair (`EPS = 1e-4`); the one exclusive edge is pulled in
+by it.** The engine's comparisons are `≤`, so a tile centre sitting exactly on the boundary is lit —
+and a polygon test cannot answer "exactly on my edge" reliably in floating point. The near edge of a
+directional shape is the exception (`a > 0` is strict) and is inset instead. The size is chosen
+against the smallest gap the engine can produce: coordinates are integers over `|V| ≤ AIM_STEPS/4`,
+so two tiles it separates differ by at least `4/512 ≈ 0.0078`, two orders of magnitude more.
+**This is load-bearing** — set it to zero and most of the roster fails the sweep immediately, which
+was checked rather than assumed. (Circumscription, checked the same way, is *not* load-bearing
+today; the comment in the source says so rather than claiming credit for it.)
+
+**Two rows of the Designer's boundary table are wrong about the shipped engine, and the engine
+wins.** The spec calls `line` "a capsule of half-width ½" and `cone`+`beamWidth` "a rounded-corner
+rectangle" — both being the shape ⊕ disc(½). But `lineSquares` and `beamCovers` fold the half tile
+into the **width** only and cap the depth with a bare `a ≤ range`, so their true loci have **square**
+ends and corners: a tile just past the far end is out even when it is within ½ of the endpoint. Only
+`wedgeCovers` is a genuine Minkowski inflation, and it is drawn as one. Drawing the rounded version
+would put an unlit sliver inside the outline at every cap — the same lie in a new place — and AC #1
+is the binding form of the ruling, while the table is its shorthand. The spec's own §2 says the
+boundary was "verified against the shipped engine", so I read this as the table over-generalising
+from the wedge rather than as a ruling I am overriding. Flagged below.
+
+**Congruence is claimed on an open board only, and occlusion gets a weaker, true claim.** A wall
+removes tiles for reasons that are not geometric — the wall tile itself is dropped, and LOS-OCCLUSION
+shadows what is behind one — so no drawn boundary could be congruent on a board with a wall in it;
+the spec says as much for `circle` ("draws whole… the missing tiles beneath it are the point"). The
+occlusion block asserts what is actually true: the boundary shortens to the deepest tile the shape
+reached, and nothing still lit is left outside it. Tiles going dark *inside* the outline is the
+design.
+
+**A `radius: 0` circle is drawn as its tile.** Cinder's Ember Bolt authors `innerRadius: 0` — a core
+of exactly the aimed tile — and the locus of `d² ≤ 0` is a single point, which cannot be drawn. The
+tile outline is the smallest figure containing that one centre and no other, so the congruence claim
+survives intact and something is visible.
+
+**Locked orders are drawn own-team only, and that filter is load-bearing.** AC #5 asks that a locked
+plan re-render from the same derivation. In a hot-seat `drafts` outlives the seat handover, so an
+unfiltered read would show the previous seat's committed shot to the player it is aimed at. The rule
+is `intentBadges`'s: hidden information is team vs team. There is a test that hands the device across
+the table and asserts the incoming seat sees nothing.
+
+**`net-boot.ts` exists so the lobby→match handoff can be reached at all.** `main.ts` runs its whole
+boot on import — it reads `window.location`, mounts into `#app`, and starts a hot-seat if no query
+says otherwise — so nothing in it was ever reachable from a test. The handoff moved out with the
+renderer seam threaded one level further; `main.ts` keeps the page (the query string, the socket, the
+element ids), which is the part a test has no business driving.
+
+## Open Questions for the Analyzer — 2026-09-22
+
+1. **The Designer's boundary table is wrong for `line` and `cone`+`beamWidth`** (see above). I drew
+   the shipped predicate — square ends — because AC #1 is the binding form and the rounded version
+   would enclose tiles that never light. Please reconcile `docs/design/aim-preview-true.md` §2's
+   table with the engine, or rule that the *engine* should gain the rounded caps (which would be a
+   real balance change to reach, not a drawing change, and an ENGINE ASK).
+
+2. **`aegis.shield_bash` now reads as a lane — re-ask the Designer about beam distinctness.** The
+   backlog flags this as cross-item ("may resolve the Designer's Aegis beam distinctness flag —
+   re-ask after"). It is now a rounded-free rectangle three tiles wide, visibly not a wedge. My read
+   is that the flag is resolved, but it is a look-at-it judgement and not mine to close.
+
+3. **The congruence sweep's rotation density is a judgement call.** Every one of the 512 quantized
+   steps for shapes at range ≤ 3 (which is both cones, the beam and Kestrel's Spread), every 8th for
+   longer lines — a range-99 line at 512 steps is minutes of CPU for a shape whose geometry is a
+   rectangle that rotates. If you want all 512 everywhere, say so and I will move the long lines to
+   their own slower suite rather than quietly making the fast one slow.
+
+4. **The old `shapeOutline` and its tests are deleted, not deprecated.** A second, hand-drawn answer
+   living beside the derived one is exactly how these two came apart in the first place. The claims
+   its tests made are all re-made (more strongly) in `aim-boundary.test.ts`; if you want the old
+   assertions kept verbatim somewhere for audit, that is a five-minute job, but I would argue against.
+
+5. **AC #4's "tiles pop as their centre crosses the line" is now literally true and may read oddly
+   at first.** The outline passes through the *centres* of the boundary tiles, so a lit tile's outer
+   half sits outside the drawn shape. That is the ruling working as specified rather than a defect,
+   but it is a visible change from the old over-drawn silhouette and the owner should see it before
+   anyone "fixes" it. Worth a playtest note.
+
+6. **One e2e flake, not reproduced in the rerun.** `UI-VIEWPORT … duel-arena at 1920x1080` failed
+   once with "no `#board canvas`" — a WebGL context that never came up, in the `beforeEach`, while
+   vitest was running concurrently on the same box. Every other size and map passed in the same run.
+   Recorded here so a future intermittent failure is not diagnosed from scratch.
