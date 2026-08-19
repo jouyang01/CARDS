@@ -16,9 +16,14 @@
         {
           "kind": "damage",
           "amount": 15
+        },
+        {
+          "kind": "trap",
+          "amount": 8,
+          "lifetime": 2
         }
       ],
-      "description": "A slung burst of barbs that detonates where it lands \u2014 lobbed over walls, 15 damage in the blast. The zone kit pokes over the terrain it fights around.",
+      "description": "A slung burst of barbs that detonates where it lands \u2014 lobbed over walls, 15 damage in the blast, and the barbs left behind are an 8-damage mine on that square for 2 turns. The zone kit pokes over the terrain it fights around.",
       "radius": 1
     },
     {

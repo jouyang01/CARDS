@@ -1060,30 +1060,42 @@ function placeTraps(
   events: TurnEvent[],
 ): void {
   const onTrigger = planned.def.effects.filter((e) => e.kind !== 'trap');
-  for (const [i, pos] of planned.area.entries()) {
-    const trap: TrapState = {
-      id: `trap-${owner.unitId}-t${draft.turn}-${i}`,
-      owner: owner.owner,
-      ownerUnitId: owner.unitId,
-      abilityId: planned.def.id,
-      pos: { x: pos.x, y: pos.y },
-      // PHASE-STATUS-FIRST: the number is stamped now, from the Might or Weaken
-      // the owner is carrying as the mine goes in the ground — including one
-      // applied earlier in this same Prep phase, which is why arming is the
-      // phase's second sub-step. A trap that detonates three turns later is not
-      // re-measured against whatever the owner happens to be feeling then; the
-      // charge was set when it was buried.
-      damage: scaleDamage(trapEffect.amount ?? 0, outgoingDamagePct(owner)),
-      // TRAP-LIFETIME: stamped at placement, measured exactly like a status
-      // `duration` — `lifetime: 2` covers this turn and the next. An omitted
-      // lifetime lands on the cap rather than living forever, so a trap can only
-      // be *shorter* than the rule by being under-specified, never longer.
-      expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
-      onTrigger,
-    };
-    draft.traps.push(trap);
-    events.push({ type: 'trapPlaced', trapId: trap.id, pos: trap.pos, owner: trap.owner });
-  }
+  // TRAP-CENTRE (Dev Note #9): **one** trap, at the square the ability was aimed
+  // at. This used to walk `planned.area` and bury a mine under every tile it
+  // covered, which turned a radius-1 disc into five traps and a radius-2 disc
+  // into thirteen — a minefield from one cast, and an ability whose trap count
+  // was a function of its shape rather than of anything anybody authored.
+  //
+  // A `square` or `self` shape lands in exactly the same place it always did:
+  // for those the area *is* the aimed square (or the caster's own), so this is
+  // one rule with no special case rather than a carve-out for area shapes.
+  const pos = planned.aim[0] ?? owner.pos;
+  const trap: TrapState = {
+    // The ability is part of the id because a unit can now arm two traps in
+    // one turn — Thorn's auto-mine in Blast beside a free Snare Bloom in Prep
+    // — and two traps sharing an id would make the consumed-trap filter in
+    // `triggerTrapsOnEntry` sweep away the one that did not fire.
+    id: `trap-${owner.unitId}-t${draft.turn}-${planned.def.id}`,
+    owner: owner.owner,
+    ownerUnitId: owner.unitId,
+    abilityId: planned.def.id,
+    pos: { x: pos.x, y: pos.y },
+    // PHASE-STATUS-FIRST: the number is stamped now, from the Might or Weaken
+    // the owner is carrying as the mine goes in the ground — including one
+    // applied earlier in this same phase, which is why arming is the phase's
+    // second sub-step. A trap that detonates three turns later is not
+    // re-measured against whatever the owner happens to be feeling then; the
+    // charge was set when it was buried.
+    damage: scaleDamage(trapEffect.amount ?? 0, outgoingDamagePct(owner)),
+    // TRAP-LIFETIME: stamped at placement, measured exactly like a status
+    // `duration` — `lifetime: 2` covers this turn and the next. An omitted
+    // lifetime lands on the cap rather than living forever, so a trap can only
+    // be *shorter* than the rule by being under-specified, never longer.
+    expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
+    onTrigger,
+  };
+  draft.traps.push(trap);
+  events.push({ type: 'trapPlaced', trapId: trap.id, pos: trap.pos, owner: trap.owner });
 }
 
 /** `"x,y"` back to a `Vec2` — the inverse of `vecKey`, for blast bookkeeping. */
@@ -1253,6 +1265,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
   // below moves units and applies the phase's statuses, and applied afterwards
   // in one batch. See `applyDashHits`.
   const dashHits: DashHit[] = [];
+  const arming: (() => void)[] = []; // TRAP-CENTRE, buried after the phase's statuses
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'dash' || !plan.unit.alive) continue;
@@ -1368,8 +1381,14 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // now that the damaging branch is no longer unconditional.
     if (hitEnemy || isHarmfulUse(a.def)) revealIfConcealed(board, plan.unit, origin, a.def.id, events);
     if (!vecEq(plan.unit.pos, origin)) repositioned.push(plan.unit);
+    // TRAP-CENTRE: a dash may arm a mine too. No shipped kit does, but a trap
+    // effect that silently did nothing on one phase out of three would be a
+    // content trap of its own.
+    const dashTrap = a.def.effects.find((e) => e.kind === 'trap');
+    if (dashTrap !== undefined) arming.push(() => placeTraps(draft, plan.unit, a, dashTrap, events));
   }
 
+  for (const arm of arming) arm();
   applyDashHits(draft, board, dashHits, pending, events);
 
   // A decoy is destroyed by an enemy ending a *voluntary* reposition on its
@@ -1541,6 +1560,11 @@ function runBlast(
   // their locked squares, folded into this turn's simultaneous damage.
   detonateDelayedBlasts(draft, roster, hits, debuffs, benefits, events);
 
+  // TRAP-CENTRE + PHASE-STATUS-FIRST: mines armed by this phase's abilities,
+  // buried after the status batch so the charge carries the Might that landed
+  // beside it. Same shape as Prep's arming list.
+  const arming: (() => void)[] = [];
+
   // CAMO-REVEAL: who *used* an offensive ability this phase, whether or not it
   // landed. Recorded during the gather loop and applied after the damage pass,
   // so a caster that did land damage takes the unconditional reveal instead and
@@ -1610,6 +1634,13 @@ function runBlast(
         }
       }
     }
+    // TRAP-CENTRE: an ability arms its mine whatever phase it fires in — Thorn's
+    // Barbed Sling leaves one on the square every shot lands on. Deferred with
+    // the rest of the arming so the charge is stamped after this phase's
+    // statuses (PHASE-STATUS-FIRST), exactly as Prep's is.
+    const blastTrap = a.def.effects.find((e) => e.kind === 'trap');
+    if (blastTrap !== undefined) arming.push(() => placeTraps(draft, plan.unit, a, blastTrap, events));
+
     // RECOIL — the one deliberate way back through CASTER-SAFE. `selfDamagePct`
     // charges the caster a fraction of the ability's own damage, gathered into
     // the same simultaneous list as everything else so a caster the recoil kills
@@ -1672,6 +1703,7 @@ function runBlast(
     if (effect.kind === 'heal' || !target.alive) continue;
     applySelfEffects(draft, target, [effect], source, events);
   }
+  for (const arm of arming) arm();
 
   // ── Sub-step 2: every damage and heal, both teams at once ─────────────────
   //
