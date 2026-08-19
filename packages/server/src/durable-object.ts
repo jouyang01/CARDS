@@ -83,6 +83,16 @@ let nextSocketId = 0;
 export class RoomDurableObject {
   #hub: RoomHub | undefined;
   readonly #state: DurableObjectState;
+  /**
+   * QUOTA-RUNAWAY: rows written are a metered resource (the free tier caps
+   * them per day, and exhausting the cap breaks every room in the account), so
+   * a write that changes nothing is not free — it is the budget. These two
+   * fields let `#persist` and `#arm` skip the no-op case: the serialized form
+   * of the last record written, and the alarm time last armed (`null` = known
+   * clear, `undefined` = a fresh instance that has not asked yet).
+   */
+  #saved: string | undefined;
+  #armedFor: number | null | undefined;
 
   constructor(state: DurableObjectState) {
     this.#state = state;
@@ -129,9 +139,11 @@ export class RoomDurableObject {
    * re-asked rather than remembered.
    */
   async #arm(): Promise<void> {
-    const deadline = this.#hub?.deadline;
-    if (deadline === undefined) return void await this.#state.storage.deleteAlarm();
-    await this.#state.storage.setAlarm(deadline);
+    const deadline = this.#hub?.deadline ?? null;
+    if (deadline === this.#armedFor) return; // already aimed exactly there
+    if (deadline === null) await this.#state.storage.deleteAlarm();
+    else await this.#state.storage.setAlarm(deadline);
+    this.#armedFor = deadline;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -207,6 +219,14 @@ export class RoomDurableObject {
 
   async #persist(): Promise<void> {
     if (this.#hub === undefined) return;
-    await this.#state.storage.put(STORAGE_KEY, this.#hub.room);
+    const room = this.#hub.room;
+    // A record identical to the one already in storage is not written again —
+    // pings and other no-op frames used to cost a row write each. Serializing
+    // to compare is the cheap side of the trade: a room is a few hundred bytes,
+    // a row write is the metered resource.
+    const serialized = JSON.stringify(room);
+    if (serialized === this.#saved) return;
+    await this.#state.storage.put(STORAGE_KEY, room);
+    this.#saved = serialized;
   }
 }
