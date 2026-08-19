@@ -1563,6 +1563,21 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   commit leaves both. Client-only (the order is already correct at resolve); ships with a test that a
   dash after a composed waypoint route leaves no move marks and the resolved order carries no
   `movePath`. Low risk, but the marks are player-facing.
+- **RULED — BASIC-MODES: a mode is AIM-TIME GEOMETRY ONLY, and mode 0 must equal the ability's own
+  profile (Builder OQ 2026-09-17 #1/#2; SHIPPED PR #79; ratifies the boundary + adds one invariant).**
+  An `AbilityProfile` (a `modes[]` entry) may change **shape and range only** — never `effects`,
+  `cooldown` or `energyGain` (`abilityProfile` overlays the profile's own keys; the validator enforces
+  it). **Confirmed as the boundary:** a mode is the same ability *aimed* differently. A future
+  ability that wants to **trade damage for reach** is a different, larger knob (effects vary per mode)
+  and gets **its own item** — do not widen `AbilityProfile` to smuggle it in. **New invariant
+  (resolves OQ #2) — MODE-BASE-INVARIANT:** the engine treats an absent `mode` as the base profile and
+  the client highlights **mode 0**, so the two agree only because `modes[0]` currently equals the
+  ability's own shape/range. Make that a **rule, not a coincidence:** `validateAbility` must reject a
+  `modes` ability whose **`modes[0]` geometry does not equal the ability's base `shape`+`range`** — so
+  "absent mode = base = mode 0" holds by construction. Tiny validator add (backlog MODE-BASE-INVARIANT).
+  **Also ratified:** `modes` is reachable only on a normal ability, not a catalyst (OQ #3) — deliberate,
+  the ask was one ability; extend later if wanted. The mode toggle's Playwright gap (OQ #4) is the same
+  coverage boundary as the presence marks — NET-E2E (flagged) would close both; unit-covered meanwhile.
 
 ## Economy & timing
 
