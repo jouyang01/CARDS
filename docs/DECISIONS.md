@@ -4066,3 +4066,29 @@ engine does not need.
 
 6. **`WORKER_ORIGIN` is still the one owner action** (backlog's own note). Nothing in this session
    depends on it, but the deployed client still reaches no server until it is set.
+## 2026-08-16 — Dev Notes batch 3: 21 owner notes triaged and ruled (Designer)
+
+Full triage in `docs/design/dev-notes-batch-3.md` — lobby/flow (client), kit changes (data
+now where the schema allows, engine-gated where not), and two systems rulings. The calls
+worth remembering. **(1) CASTER-SAFE was verified before ruling:** a scratch probe against
+the shipped engine showed Whirling Cleave hitting Ravok himself for the full 22 and
+Shockwave for 12 — FF1's "ally or enemy" was never meant to read "including yourself," so
+the exclusion is global, with `selfDamagePct` as the deliberate opt-in (Seismic Rupture at
+half, bypassing cover because you cannot take cover from the ground under your own feet).
+**(2) PHASE-STATUS-FIRST keeps simultaneity by splitting each phase into two simultaneous
+sub-steps** — all statuses land together, then all damage computes together against
+post-status state. Mutual Weakens both apply and both attacks arrive blunted; nobody is
+order-privileged; mutual kills still land in full. This is what makes Dazzling Ray and
+Suppression same-trade tools, which was always their design intent. **(3) BRUSH-BREAK
+distinguishes proof from beacon:** getting shot in brush proves where you were — it should
+not install the Revealed tracking status. The unit's brush concealment is suppressed for
+current + next turn instead; Reveal stays the piercing status it is, Stealth stays broken by
+damage. **(4) Stoke the Flame going free is an owner-designated exception** to the
+free-action criteria (it grants immediate combat power, which §1.2 excluded) — the rule now
+carries an "or owner-designated" clause and the roster test asserts four free kits with the
+reason in a comment, rather than silently widening the rule. Standard price paid (cd 3→4,
+energy 0). **(5) The range-4 dash floor is a flat owner directive** applied to all five
+sub-4 repositions including the Shift catalyst; the guard test keeps future kits honest.
+**(6) RESOLVE-PARTIAL is per-character, not per-seat:** locked characters always act,
+never-locked characters hold — no turn ever waits on a player, and the OPEN
+disconnect/timeout question closes the same way.

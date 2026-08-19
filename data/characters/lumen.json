@@ -46,7 +46,7 @@
       "name": "Glimmer Step",
       "phase": "dash",
       "shape": "square",
-      "range": 3,
+      "range": 4,
       "cooldown": 3,
       "energyGain": 5,
       "effects": [
@@ -59,7 +59,7 @@
           "duration": 1
         }
       ],
-      "description": "Flash to a square within 3 and gain a 15-point shield for the turn. The escape that keeps a healer alive in a duel."
+      "description": "Flash to a square within 4 and gain a 15-point shield for the turn. The escape that keeps a healer alive in a duel."
     },
     {
       "id": "dazzling_ray",
