@@ -34,6 +34,7 @@ import {
 import { AWAY_LABEL, AWAY_MARK } from './presence.js';
 import { inspectCharacter } from './inspect.js';
 import { renderInspectPanel } from './inspect-panel.js';
+import { createTooltip } from './tooltip.js';
 
 /** One catalyst, as the screen offers it. Named so the pool's shape stays out. */
 export interface CatalystOption {
@@ -96,6 +97,22 @@ export function createLobbyScreen(
   document.body.appendChild(hoverPanel);
 
   /**
+   * CATALYST-TIP-FAST (owner Dev Note) — *"Catalyst descriptions on mouseover
+   * appear very slowly, can we speed up how soon they show up?"*
+   *
+   * The catalyst buttons carried their description as a `title`, and the delay
+   * before a native tooltip appears belongs to the browser: about half a second
+   * to a second, with nothing to configure. Nine catalysts is nine waits.
+   *
+   * So it becomes an element, like the character hover beside it — which has
+   * never had a delay, because there was never a timer to have one. Built once
+   * and re-shown, for the same reason `hoverPanel` is: the screen underneath is
+   * rebuilt on every message, and a tip rebuilt with it would vanish from under
+   * the pointer that summoned it.
+   */
+  const tip = createTooltip();
+
+  /**
    * LOBBY-DETAIL-PANEL (owner Dev Note) — *"it should also expand into a bigger
    * window on the side that shows a description of all the skills. There is
    * space on the left."*
@@ -110,11 +127,51 @@ export function createLobbyScreen(
   detailPanel.style.display = 'none';
   document.body.appendChild(detailPanel);
 
+  /**
+   * LOBBY-PANEL-RESPONSIVE (Builder OQ 2026-09-19 #7) — the panel's handle
+   * below the breakpoint.
+   *
+   * The panel was `display: none` under 1320px, so a player windowed at 1280
+   * never saw a kit and had no way to ask for one. This is the "ask for one":
+   * a button that is in the DOM at every width and shown by CSS only where the
+   * panel does not fit, because *whether it fits* is a question about the
+   * viewport and CSS is what knows the answer. A JS breakpoint here would be a
+   * second copy of the 1320 with no way to keep the two in step.
+   *
+   * Closed by default even once a character is chosen: at that width opening it
+   * covers the grid, and a panel that appeared over what you were pointing at
+   * because you pointed at it is the tooltip's job done badly.
+   */
+  let detailOpen = false;
+  const detailToggle = el('button', 'lobby-detail-toggle');
+  detailToggle.dataset['action'] = 'toggle-detail';
+  detailToggle.addEventListener('click', () => {
+    detailOpen = !detailOpen;
+    syncToggle();
+  });
+  document.body.appendChild(detailToggle);
+
+  /** Name what the button opens, and whether it is open. */
+  const syncToggle = (): void => {
+    const character = catalog.find((c) => c.id === detailId);
+    // Disabled rather than hidden when there is nothing chosen: a control that
+    // came and went as the pointer moved would be a moving target, and "why is
+    // there no kit button" is a worse question than a greyed one answers.
+    detailToggle.disabled = character === undefined;
+    detailToggle.textContent = character === undefined
+      ? 'Character kit'
+      : `${character.name}’s kit ${detailOpen ? '▾' : '▸'}`;
+    detailToggle.dataset['open'] = String(detailOpen && character !== undefined);
+    detailPanel.classList.toggle('is-open', detailOpen && character !== undefined);
+  };
+  syncToggle(); // label it before anything has been pointed at
+
   /** Repaint the side panel for `detailId`, or hide it when nothing is chosen. */
   const renderDetail = (): void => {
     const character = catalog.find((c) => c.id === detailId);
     if (character === undefined) {
       detailPanel.style.display = 'none';
+      syncToggle();
       return;
     }
     const detail = characterDetail(character);
@@ -143,7 +200,12 @@ export function createLobbyScreen(
       list.append(row);
     }
     detailPanel.append(list);
+    // Cleared rather than set to `block`, so the stylesheet decides. That is
+    // what lets LOBBY-PANEL-RESPONSIVE's media query keep the panel collapsed
+    // at a narrow width — an inline `block` here would beat it, and the toggle
+    // would be a button with nothing to do.
     detailPanel.style.display = '';
+    syncToggle();
   };
 
   /** Point at or pick a character: the side panel follows, and stays. */
@@ -272,7 +334,14 @@ export function createLobbyScreen(
         for (const cat of catalysts.filter((c) => c.phase === phase)) {
           const button = el('button', 'lobby-catalyst', cat.name);
           button.dataset['catalyst'] = cat.id;
-          button.title = cat.description;
+          // CATALYST-TIP-FAST: on `mouseenter`, which is *now*. No `title` —
+          // one description in two places would be one the browser still
+          // delays, over the top of the one that does not.
+          button.addEventListener('mouseenter', (event) => {
+            const at = event as MouseEvent;
+            tip.show(cat.description, { x: at.clientX, y: at.clientY });
+          });
+          button.addEventListener('mouseleave', () => { tip.hide(); });
           if (draft.slots[active]?.catalysts[phase] === cat.id) button.classList.add('is-chosen');
           button.addEventListener('click', () => {
             draft = chooseCatalyst(draft, active, phase, cat.id);
@@ -335,7 +404,9 @@ export function createLobbyScreen(
       // The hover panel lives outside the lobby's root, so tearing the lobby
       // down does not take it with it. Removed explicitly, or it would hang
       // over the board the match starts on.
+      detailToggle.remove();
       hoverPanel.remove();
+      tip.destroy();
     },
   };
 }

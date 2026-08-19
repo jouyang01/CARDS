@@ -158,14 +158,24 @@ describe('LOBBY-INSPECT: hovering a catalyst says what it does', () => {
   it('every catalyst in the picker carries its own description', () => {
     // Dev Note #3, and it is the same text the in-match chip shows — the pool's
     // `description`, forwarded rather than restated.
+    //
+    // **The mechanism changed under this test** (CATALYST-TIP-FAST): the
+    // description used to be a `title` attribute, whose reveal delay belongs to
+    // the browser. It is now shown on `mouseenter` in a tip of our own. The
+    // claim being checked is the same one — each button says its own sentence —
+    // so the test moved with it rather than being deleted; the delay itself is
+    // `catalyst-tip.test.ts`.
     const { root } = mounted();
     characterButton(root, 'vex').click();
     const buttons = [...root.querySelectorAll<HTMLButtonElement>('.lobby-catalyst')];
     expect(buttons.length).toBeGreaterThan(0);
+    const tip = (): HTMLElement => document.body.querySelector<HTMLElement>('.tip')!;
     for (const button of buttons) {
       const option = CATALYSTS.find((c) => c.id === button.dataset['catalyst'])!;
-      expect(button.title, option.id).toBe(option.description);
-      expect(button.title.length, 'and it actually says something').toBeGreaterThan(0);
+      hover(button);
+      expect(tip().textContent, option.id).toBe(option.description);
+      expect(tip().textContent!.length, 'and it actually says something').toBeGreaterThan(0);
+      expect(button.hasAttribute('title'), 'and not through the browser').toBe(false);
     }
   });
 });

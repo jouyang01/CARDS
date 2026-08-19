@@ -14,6 +14,7 @@
  */
 
 import { ULT_MARK } from './hud-marks.js';
+import { placeBeside } from './tooltip.js';
 import type { InspectPanel } from './inspect.js';
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] => {
@@ -111,13 +112,9 @@ export function renderInspectPanel(
   }
 
   node.style.display = 'block';
-  if (at !== undefined) {
-    // Kept inside the viewport, and flipped to the pointer's left when it
-    // would otherwise run off the right edge.
-    const box = node.getBoundingClientRect();
-    const left = at.x + 18 + box.width > globalThis.innerWidth ? at.x - 18 - box.width : at.x + 18;
-    const top = Math.min(at.y + 12, Math.max(8, globalThis.innerHeight - box.height - 8));
-    node.style.left = `${Math.round(Math.max(8, left))}px`;
-    node.style.top = `${Math.round(Math.max(8, top))}px`;
-  }
+  // Kept inside the viewport, and flipped to the pointer's left when it would
+  // otherwise run off the right edge. CATALYST-TIP-FAST lifted the arithmetic
+  // into `tooltip.ts`, so the catalyst tip and this panel place themselves by
+  // one rule rather than by two copies of one.
+  if (at !== undefined) placeBeside(node, at);
 }

@@ -4282,3 +4282,104 @@ than the hover tooltip alone, which still works at every size.
    860px column plus a 300px panel stops fitting. If the owner plays windowed at 1280 they will
    never see it, and the answer is probably a collapsed/toggled panel rather than a lower
    breakpoint — Designer's call on which.
+
+---
+
+## 2026-09-20 — Builder, session 4 (LOBBY-READY-FIX → LOBBY-PANEL-RESPONSIVE)
+
+**A reconnect ticket is a match-only thing; presented to a lobby it is ignored, not refused.**
+The hub tried a `join` carrying a `seatId` as a reclaim *instead of* an ordinary join —
+deliberately, because a reclaim is about *which* seat it is and a failed one must not put a
+returning player in somebody else's chair. But a **lobby holds no seat for anybody**: `leave`
+deletes a lobby seat outright, so there is never a held one to come back to, and the reasoning
+does not apply because there is no chair to be put in by mistake. The refusal it produced
+(`noMatch`, socket closed) is how a second tab of the same browser — one `localStorage`, one
+ticket — ended up with no seat, no `lobby` frame and no ready button. Now `room.state === undefined`
+means the ticket is skipped and the client is seated normally. The match rules are untouched: a
+live seat still refuses a ticket as `seatTaken`, a held one still comes back to its owner.
+**This reverses** the encoded behaviour in `reconnect.test.ts` ("a ticket before the match has
+started has nothing to reclaim"), which now asserts the seating; the test says so and why.
+
+**The reconnect ticket moved to `sessionStorage`.** Per browsing context is the lifetime the
+ticket actually wants: a reload of this tab keeps it (the case it exists for), a second tab does
+not get it (a second player, not a returning one). Same-browser two-seat testing is the normal way
+this game gets played locally, so a store two tabs share was the wrong store.
+
+**The reported symptom was not reproduced as stated, but the cause was.** The Analyzer's PROPOSED
+RECLAIM-SCOPE reasoned from *"Both Seat 0 and seat 1 have a 'start game'"* to "both tabs believe
+they are the creator". Driving two real clients through a real hub shows something different and
+worse: the second tab is **refused outright** and never gets a seat at all — a client with no seat
+renders the unjoined screen, which carries a Ready button, not a Start. The likeliest path to two
+disabled Start buttons is two tabs each on `?create`, i.e. **two different one-seat rooms**, which
+is what a person does after the second tab fails to join the first room. Either way the defect is
+the same one and the fix is the one the ruling proposed; the hypothesis about *how it looked*
+should be corrected in edge-cases (Analyzer's file) when RECLAIM-SCOPE is promoted from PROPOSED.
+
+**`?chars=` falls back with a notice, where every other setup parameter errors out.**
+`match-setup.ts` treats a bad `map`, `format`, `players` or `scenario` as an error that refuses to
+load, on the stated principle that silently loading `duel-arena` because you mistyped is the one
+outcome a dev toggle must not have. DEV-CHARSELECT's AC asks for a fallback instead. Taken as
+written, and made safe by the half that is not optional: the notice is rendered in the page as a
+persistent `.setup-note`, not into the status line the controller rewrites on the next render. The
+substitution is **all-or-nothing** — one bad id does not seat the three good ones, which would be
+precisely the silent mis-seat DECISIONS 2026-09-18 rules out, with most of the roster right to
+make it look deliberate. If the Analyzer would rather have consistency with the file, the change
+is one line (push the note into `errors`), and I would mildly prefer that.
+
+**The lobby's responsive breakpoint stays in CSS and only in CSS.** LOBBY-PANEL-RESPONSIVE needs
+"is the panel collapsed" to agree with "does the panel fit", and the second is a question about the
+viewport that the stylesheet already answers at 1320px. A JS copy of that number would be a second
+one to keep in step, and the two would part the day somebody edited the stylesheet alone. So the
+toggle button is in the DOM at every width and *shown* by a media query, and `renderDetail` clears
+the panel's inline `display` rather than setting `block` — an inline `block` would beat the media
+query and leave the toggle with nothing to do.
+
+**The collapsed panel opens only when pressed.** Choosing or hovering a character fills it at every
+width, but below the breakpoint filling it must not also open it: opening covers the character grid,
+and a panel that appeared over what you were pointing at because you pointed at it is the hover
+tooltip's job done badly. The toggle is `disabled` rather than hidden when nothing is chosen —
+a control that came and went as the pointer moved would be a moving target.
+
+**One tooltip placement rule, not two.** CATALYST-TIP-FAST needed a floating element beside the
+pointer, which `inspect-panel.ts` already had inline. `placeBeside` was lifted into `tooltip.ts`
+and both callers now share it: "stay inside the viewport, flip left at the right edge" is a rule,
+and two copies of a rule is one copy that is wrong.
+
+## Open Questions for the Analyzer — 2026-09-20
+
+1. **RECLAIM-SCOPE's symptom explanation needs correcting when it is promoted.** As above: the
+   two-client reproduction shows the second tab **refused and seatless**, not two clients both
+   believing they are the creator — an unjoined client renders Ready, not Start. The cause and the
+   remedies in the ruling are right; the "both tabs are the creator" sentence is not. Please
+   reword it as you promote PROPOSED → RULED, since `docs/design/` is yours.
+
+2. **A lobby that survives a Durable Object restart looks unjoinable, and it is not in any item.**
+   `durable-object.ts` mints socket ids from a **module-level counter** (`seat-${nextSocketId++}`)
+   which resets when the DO is evicted. A room restored from storage still holds seats named
+   `seat-0`, `seat-1`; the next socket to connect is *also* `seat-0`, so its ordinary join is
+   refused as `duplicateSeat` and its socket closed. I did not touch it — it is outside
+   LOBBY-READY-FIX's AC and I could not reproduce it against a real DO from here — but it is the
+   same family as the bug I did fix, and it would look identical to a player. Worth an item.
+
+3. **`?chars=` falls back where its neighbours error.** See the DECISIONS entry above. I
+   implemented the AC as written and flagged the inconsistency rather than quietly making it an
+   error; your call which way it should settle.
+
+4. **The board's remaining `title` attributes were left alone.** CATALYST-TIP-FAST's AC names the
+   lobby's catalyst buttons, and its Spec Note adds "the character/ability tooltips **if they use
+   `title`**" — in the lobby they do not (they already use the instant hover panel). But
+   `hud.ts:410` (status chips), `hud.ts:346` (the Time Bank button), `app.ts:1255–1268` (topbar
+   portraits) and `inspect-panel.ts:90` (catalyst chips inside the inspect panel) still do, and all
+   four have the same delay. `tooltip.ts` now exists to make converting them small. Out of scope
+   here; an item would close the family.
+
+5. **The Skip-during-playback control shares the `hud-lock` class with Lock In.** The harness has
+   to address them by their rows (`.hud-lockrow .hud-lock` vs `.hud-playback .hud-lock`) because
+   "the first `.hud-lock`" would silently start pressing the wrong one if the two rows ever swap.
+   Not a bug, but a rename to `hud-skip` would make the DOM say what it means. Trivial if wanted.
+
+6. **`app-harness.ts` now covers aiming/commit, catalysts, free actions, the chase and playback,
+   but not the second seat.** Everything is driven through a *networked* seat (`recordingNet`), so
+   the hot-seat's own `deriveSeats` handover — pass-the-device between players between turns — is
+   still untested at the controller level. It is the one flow in `startHotSeat` a harness can reach
+   and does not. Cheap follow-on if you want the coverage completed.

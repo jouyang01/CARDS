@@ -78,7 +78,14 @@ export function stubRenderer(): StubRenderer {
 }
 
 /** The four DOM nodes the controller mounts into, plus the recording renderer. */
-export function mountUI(): { ui: HotSeatUI; renderer: StubRenderer; controls: HTMLElement; board: HTMLElement } {
+export function mountUI(): {
+  ui: HotSeatUI;
+  renderer: StubRenderer;
+  controls: HTMLElement;
+  board: HTMLElement;
+  status: HTMLElement;
+  log: HTMLElement;
+} {
   const board = document.createElement('div');
   const status = document.createElement('div');
   const controls = document.createElement('div');
@@ -90,8 +97,70 @@ export function mountUI(): { ui: HotSeatUI; renderer: StubRenderer; controls: HT
     renderer,
     controls,
     board,
+    status,
+    log,
   };
 }
+
+// ── HARNESS-BROADEN: the HUD, named ─────────────────────────────────────────
+//
+// The controller's own DOM, addressed by the classes `hud.ts` gives it. Here
+// rather than in each spec because every flow starts by pressing one of these,
+// and a spec that grew its own selector would be one rename away from testing
+// nothing while still passing — `click(undefined)` throws, but
+// `querySelectorAll('.hud-gone')` quietly returns an empty list.
+
+/** Ability buttons in the hotbar, in the order the HUD lists them. */
+export const abilityButtons = (controls: HTMLElement): HTMLButtonElement[] =>
+  [...controls.querySelectorAll<HTMLButtonElement>('.hud-ability')];
+
+/** Arm the ability whose button names it. Throws if the hotbar has no such button. */
+export const armAbility = (controls: HTMLElement, name: string): void => {
+  click(abilityButtons(controls).find((n) => (n.textContent ?? '').includes(name)));
+};
+
+/** The catalyst row (CAT1) — three slots, once per match. */
+export const catalystButtons = (controls: HTMLElement): HTMLButtonElement[] =>
+  [...controls.querySelectorAll<HTMLButtonElement>('.hud-catalyst')];
+
+export const armCatalyst = (controls: HTMLElement, name: string): void => {
+  click(catalystButtons(controls).find((n) => (n.textContent ?? '').includes(name)));
+};
+
+/** Move / Sprint / Chase / Clear, by their labels. */
+export const moveButton = (controls: HTMLElement, label: string): HTMLButtonElement | undefined =>
+  [...controls.querySelectorAll<HTMLButtonElement>('.hud-move')]
+    .find((n) => (n.textContent ?? '').startsWith(label));
+
+/** BASIC-MODES' aim-time profiles, shown only while a multi-mode ability is armed. */
+export const modeButtons = (controls: HTMLElement): HTMLButtonElement[] =>
+  [...controls.querySelectorAll<HTMLButtonElement>('.hud-mode')];
+
+/**
+ * LOCK IN. Addressed through `.hud-lockrow` rather than as "the first
+ * `.hud-lock`", because Skip wears the same class — an index would silently
+ * start pressing Skip the day the two rows swap order.
+ */
+export const lockIn = (controls: HTMLElement): void => {
+  click(controls.querySelector('.hud-lockrow .hud-lock'));
+};
+
+/** The playback row, and its one control. */
+export const playbackRow = (controls: HTMLElement): HTMLElement =>
+  controls.querySelector<HTMLElement>('.hud-playback')!;
+export const skipPlayback = (controls: HTMLElement): void => {
+  click(playbackRow(controls).querySelector('.hud-lock'));
+};
+
+/** Aim at a square and commit it — hover then click, the two halves of UI1. */
+export const aimAndCommit = (board: HTMLElement, square: Vec2): void => {
+  aimAt(board, square, 'mousemove');
+  aimAt(board, square, 'click');
+};
+
+/** The tiles the player is looking at: the renderer's own layers. */
+export const layer = (renderer: StubRenderer, name: HighlightLayer): Vec2[] =>
+  renderer.draw.highlights.get(name) ?? [];
 
 /**
  * A `NetPlay` whose `submit` records the orders instead of sending them.

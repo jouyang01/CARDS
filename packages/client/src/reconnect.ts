@@ -62,6 +62,26 @@ export function ticketsIn(storage: TicketStorage | undefined): TicketStore {
 }
 
 /**
+ * LOBBY-READY-FIX — the ticket store for **one browsing context**.
+ *
+ * `sessionStorage` rather than `localStorage`, and that is the whole of it. The
+ * two differ in exactly the dimension a reconnect ticket cares about: a reload
+ * of this tab keeps it (which is the case the ticket exists for), and a *second
+ * tab* does not get it (which is a second player, not a returning one).
+ *
+ * With the ticket in `localStorage`, opening a room in a second tab handed the
+ * server the first tab's seat id — the owner's "there is no ready button", one
+ * refused handshake later. Same-browser two-seat testing is the normal way this
+ * game gets played locally, so a store two tabs share is the wrong store.
+ *
+ * Takes the window rather than the storage so the choice is stated in one named
+ * place instead of at the call site in `main.ts`, where it reads as a detail.
+ */
+export function ticketsFor(context: { sessionStorage?: TicketStorage }): TicketStore {
+  return ticketsIn(context.sessionStorage);
+}
+
+/**
  * How many times a dropped client tries before it gives up and says so.
  *
  * Finite on purpose. A client that retried forever would sit on a "reconnecting…"

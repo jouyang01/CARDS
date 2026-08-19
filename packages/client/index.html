@@ -167,6 +167,15 @@
         background: rgb(12 14 19 / 0.96); font-size: 11px; line-height: 1.45;
         box-shadow: 0 8px 24px rgb(0 0 0 / 0.5); }
       .inspect.t1 { border-left-color: #ff6b5e; }
+      /* CATALYST-TIP-FAST: the instant tooltip that replaced `title` on the
+         lobby's catalyst buttons. Same fixed, pointer-transparent, above-the-HUD
+         treatment as the inspect panel — it is the same mechanism, carrying one
+         sentence instead of a kit. */
+      .tip { position: fixed; z-index: 8; pointer-events: none;
+        max-width: 260px; padding: 7px 9px;
+        border-radius: 7px; border: 1px solid #2b3140; border-left: 3px solid #c4aef0;
+        background: rgb(12 14 19 / 0.96); font-size: 11px; line-height: 1.45;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.5); }
       .inspect-name { font-size: 13px; font-weight: 700; }
       .inspect-role { font-size: 9px; opacity: 0.55; text-transform: uppercase; letter-spacing: 1px; }
       .inspect-vitals { display: flex; justify-content: space-between; gap: 10px;
@@ -348,6 +357,15 @@
         border-bottom: 1px solid currentColor; }
       #create-link:hover { opacity: 0.8; }
 
+      /* DEV-CHARSELECT: a `?chars=` that could not be honoured. Loud and
+         permanent — this is the notice that makes falling back to the default
+         deal legitimate rather than a silent mis-seat, so it must not read as
+         decoration. */
+      .setup-note { max-width: 46ch; margin: 0 0 6px; padding: 6px 9px;
+        border-radius: 6px; border-left: 3px solid #ffb84d;
+        background: rgb(40 30 10 / 0.92); color: #ffd79a;
+        font-size: 12px; line-height: 1.45; }
+
       /* ── M3-WAIT-STATE / M3-CONN-STATE: why the board is not taking orders ─
          Beside Lock In, where a player is already looking when they finish a
          turn. Amber rather than red: a locked turn is the normal state of a
@@ -436,14 +454,38 @@
          lobby scrolls on its own and a panel that scrolled with the character
          grid would leave the screen exactly while you were reading it.
 
-         It hides below the width where that margin stops existing: overlapping
-         the pick screen with a description of it would be worse than the
-         tooltip alone, which still works at every size. */
+         Below the width where that margin stops existing it COLLAPSES — see
+         LOBBY-PANEL-RESPONSIVE below. */
       .lobby-detail { position: fixed; left: 20px; top: 72px; width: 300px;
         max-height: calc(100vh - 96px); overflow-y: auto; z-index: 2;
         padding: 14px 16px; border: 1px solid var(--grid-line); border-radius: 8px;
         background: var(--panel); box-sizing: border-box; }
-      @media (max-width: 1320px) { .lobby-detail { display: none !important; } }
+
+      /* LOBBY-PANEL-RESPONSIVE: collapsed, not gone (Builder OQ 2026-09-19 #7).
+
+         The panel used to be `display: none !important` under 1320px, so a
+         player windowed at 1280 never saw a kit and had no way to ask for one.
+         Hiding it was right about the *space* — there is no empty left third to
+         put it in down there, and a panel overlapping the character grid you are
+         reading it about is worse than no panel. It was wrong about the
+         *choice*: a reader who wants the kit more than the grid for a moment
+         should be able to say so.
+
+         So below the breakpoint it is a button, and the panel is what the button
+         opens — laid over the lobby deliberately, because at that width there is
+         nowhere else for it to be. Above the breakpoint the button is not there
+         at all: nothing to collapse when it already fits. */
+      .lobby-detail-toggle { display: none; position: fixed; left: 20px; top: 72px;
+        z-index: 3; pointer-events: auto; font-size: 12px; padding: 6px 10px;
+        max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; }
+      @media (max-width: 1320px) {
+        .lobby-detail { display: none; }
+        .lobby-detail.is-open { display: block; top: 108px;
+          width: min(340px, calc(100vw - 40px)); max-height: calc(100vh - 132px);
+          box-shadow: 0 12px 32px rgb(0 0 0 / 0.6); }
+        .lobby-detail-toggle { display: inline-block; }
+      }
       .lobby-detail-head { border-bottom: 1px solid var(--grid-line); padding-bottom: 8px; }
       .lobby-detail-name { font-size: 16px; margin: 0; text-transform: none; letter-spacing: 0; opacity: 1; }
       .lobby-detail-role { font-size: 11px; opacity: 0.6; margin: 2px 0 0; }

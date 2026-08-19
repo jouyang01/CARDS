@@ -179,6 +179,16 @@ export interface SeatRow {
   owed: number;
   /** Character *names*, resolved through the catalogue; empty until picked. */
   picked: string[];
+  /**
+   * LOBBY-READY-FIX — has this seat **said it is ready**, the handshake the host
+   * is waiting on.
+   *
+   * Read off `lobby.readied`. It used to read `lobby.ready`, which is the list
+   * of seats that have finished *picking* — so every teammate was marked the
+   * moment they chose a character, and the mark said nothing about the one thing
+   * it exists to say. The two lists are one letter apart and mean different
+   * things; `picked` above already carries the other one.
+   */
   ready: boolean;
   /**
    * NET-PRESENCE-UI — whether a socket is attached to this seat.
@@ -207,7 +217,10 @@ export function seatRows(net: NetState, catalog: readonly CharacterDef[]): SeatR
       isMine: s.seatId === net.seat!.seatId,
       owed: lobby.owed[s.seatId] ?? 0,
       picked: (lobby.picks[s.seatId] ?? []).map((p) => nameOf.get(p.characterId) ?? p.characterId),
-      ready: lobby.ready.includes(s.seatId),
+      // `?? []` for the same reason `isReady` has one: a frame that predates
+      // the field is a version skew, and a lobby that threw on one would be a
+      // blank screen where a stale mark would do.
+      ready: (lobby.readied ?? []).includes(s.seatId),
       connected: s.connected,
     }));
 }
