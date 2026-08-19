@@ -4478,3 +4478,29 @@ make the panel interactive to reach it: that is a behaviour change nothing asked
    in `main.ts` (`joinRoom`'s subscribe handler tearing down the lobby screen and calling
    `startNetworkedMatch`), which is real wiring with no test. Not blocking anything; worth an item
    if you want the class of bug closed rather than reduced.
+
+## 2026-08-17 — AIM-PREVIEW-TRUE: the preview shape becomes the predicate (Designer)
+
+The owner reported that the aim preview "feels like the highlight preview plus the squares
+that get affected" — two different things. The diagnosis: they ARE two different things.
+The smooth AIM2 graphic draws the ability's input region; the tiles draw the answer; and
+under HITBOX1 (hit = the region touches the tile's central ½-circle) those disagree at
+every edge by up to half a tile, at every rotation. My first suggestion was to delete the
+smooth graphic and let the tile set be the preview; the owner pushed back wanting the
+smooth shape kept and the tiles true to it — and the push-back found the better design.
+The key identity: "region touches a ½-circle at p" ⟺ "p is inside the region inflated by
+½" — so there EXISTS a continuous shape against which "tile lights iff its centre is
+inside" holds exactly: the Minkowski sum of the region with the half-tile disc. Drawing
+that instead of the raw region makes the graphic the rule rather than a picture of the
+input. Per shape it is even cleaner than the general statement: circles draw at exactly
+their authored radius (CIRCLE-FIX already folded the hitbox into the number — graphic,
+data value and tile set all agree), while cones, beams and lines draw their region
+inflated by ½ with rounded corners, matching the shipped `wedgeCovers` "inside the wedge,
+or within half a tile of it" predicate verbatim. The keystone acceptance criterion is a
+congruence sweep — lit tiles equal tiles-with-centres-inside-the-boundary for every shape
+at every quantized rotation — which is simultaneously the feature's proof and a standing
+regression guard on the whole aiming geometry stack. Client-only; the engine's integer
+tile selection is untouched, and the float outline is presentation, per the AIM2
+precedent. This closes the last surface where the client draws something the engine never
+promised — the same trust rule as PREVIEW-NUMBERS and PREVIEW-FOG, applied to the most
+used UI surface in the game.

@@ -138,6 +138,23 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 >   TRAP-HALT), and the **range-4 dash floor** (Combat Roll, Backdraft, Glimmer Step, Bramble
 >   Stride, Shift — Builder: add the ≥4 content-test guard).
 
+> **⚠ NOT YET FOLDED IN — `AIM-PREVIEW-TRUE`, 2026-08-17 (Designer; owner-flagged VERY
+> IMPORTANT).** Full spec with acceptance criteria: `docs/design/aim-preview-true.md`.
+> The aim preview currently draws two objects that cannot agree — the smooth AIM2 shape
+> (the *input region*) and the `expandShape` tile fill (the *answer*) — because HITBOX1
+> hits any tile whose central ½-circle the region touches, so tiles rightly light up
+> outside the drawn silhouette. **Ruling: the continuous graphic becomes the analytic
+> boundary of the engine's own tile-centre predicate**, so a tile is hit iff its centre is
+> inside the drawn shape — exactly, at every rotation. Per shape: circles draw at radius
+> **exactly r** (CIRCLE-FIX already folded the hitbox in); cones/beams/lines draw their
+> region **inflated by ½ tile** with rounded corners (region ⊕ disc(½) ≡ the shipped
+> `wedgeCovers` "within half a tile of it" test); Kestrel's modes each draw their own;
+> the boundary **must truncate at walls** where line/cone occlusion stops the tiles.
+> Client-only — `expandShape`, HITBOX1, CONE-B, CIRCLE-FIX untouched; the boundary is
+> generated from engine parameters, never hand-drawn art. The keystone AC: a congruence
+> sweep asserting lit tiles == tiles-with-centres-inside-the-boundary for every shape and
+> rotation — which doubles as a geometry regression guard. Schedule HIGH per the owner.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
