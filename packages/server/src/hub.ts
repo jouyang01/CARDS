@@ -246,7 +246,18 @@ export class RoomHub {
     // *instead of* an ordinary join rather than after one — a ticket that failed
     // must not quietly seat the client somewhere else, because the whole point
     // of a reclaim is which seat it is.
-    if (msg.seatId !== undefined) return this.#reclaim(socketId, sink, msg.seatId);
+    //
+    // LOBBY-READY-FIX narrows that to what it was always about: **a match**. A
+    // lobby holds no seat for anybody — `leave` deletes a lobby seat outright —
+    // so there is nothing here a ticket could be a claim on, and the reasoning
+    // above simply does not apply: there is no chair to be put in by mistake.
+    // Treating it as a reclaim anyway refused the client and closed its socket,
+    // which is how a second tab of the same browser (one `localStorage`, one
+    // ticket) ended up with no seat and no ready button at all. In a lobby the
+    // ticket is ignored and the client is seated normally.
+    if (msg.seatId !== undefined && this.#room.state !== undefined) {
+      return this.#reclaim(socketId, sink, msg.seatId);
+    }
 
     const result = join(this.#room, seatId, msg.name);
     if (!result.ok) {

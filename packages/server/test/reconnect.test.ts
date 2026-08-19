@@ -193,12 +193,21 @@ describe('M3-RECONNECT: the reclaim is identity-matched', () => {
     expect(hub.room.seats, 'nobody was seated').toHaveLength(4);
   });
 
-  it('a ticket before the match has started has nothing to reclaim', () => {
+  it('a ticket before the match has started is ignored, and the client is seated', () => {
+    // **Reversed by LOBBY-READY-FIX** (was: refused with `noMatch`, socket
+    // closed). A lobby holds no seat for anybody — `leave` deletes a lobby seat
+    // outright — so a ticket presented to one is a claim on nothing rather than
+    // a claim that failed, and the refusal it used to earn was how a second tab
+    // of the same browser (one `localStorage`, one ticket) ended up with no seat
+    // at all. The *match* rules above are untouched.
     const hub = new RoomHub(createRoom('WXYZ', '2v2'), config);
     const s = new FakeSocket();
     hub.open('a', s);
-    hub.receive('a', joinFrame('A', 'a'));
-    expect(s.of('error').at(-1)?.code).toBe('noMatch');
+    hub.receive('a', joinFrame('A', 'stale-ticket-from-a-dead-room'));
+    expect(s.of('error'), 'no refusal').toEqual([]);
+    expect(s.closed, 'and no closed door').toBeUndefined();
+    expect(hub.room.seats.map((seat) => seat.seatId), 'seated under its own socket id')
+      .toEqual(['a']);
   });
 
   it('the rules are the pure `reclaim`\'s, not the hub\'s', () => {

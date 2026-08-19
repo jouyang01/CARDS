@@ -30,7 +30,7 @@ import { createLobbyScreen, type CatalystOption } from './lobby-screen.js';
 import { parseRoomLink, roomSocketUrl, workerUrl, type RoomLink } from './room-url.js';
 import { createCreateScreen } from './create-screen.js';
 import { connectionLabel, waitingLabel } from './waiting.js';
-import { reconnectDelayMs, shouldReconnect, ticketsIn } from './reconnect.js';
+import { reconnectDelayMs, shouldReconnect, ticketsFor } from './reconnect.js';
 import { NO_PRESENCE, coverNotice, presenceOf, type Presence } from './presence.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
@@ -141,7 +141,12 @@ function joinRoom(link: RoomLink): void {
   // M3-RECONNECT: the ticket is a seat id remembered per room code. Read before
   // the first connection, because the first connection may *be* the reconnect —
   // a reload after a drop is exactly the case this exists for.
-  const tickets = ticketsIn(window.localStorage);
+  //
+  // LOBBY-READY-FIX: **per browsing context** (`ticketsFor` → `sessionStorage`).
+  // This was `localStorage`, which two tabs of one browser share — so opening a
+  // room in a second tab handed the server the *first* tab's seat id, and
+  // same-browser two-seat testing could not seat a second player at all.
+  const tickets = ticketsFor(window);
   let attempt = 0;
   let client!: RoomClient;
 
