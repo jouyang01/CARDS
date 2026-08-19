@@ -10,103 +10,91 @@ independently shippable. Each item carries **Spec Notes** (Analyzer's build guid
 **dependency-free**; client/server consume `TurnEvent[]` + the engine's derived queries — never
 recompute them. **`@cards/server` imports `@cards/engine` only** (client may import server protocol
 **types only**). **Movement is Manhattan (MET1); aiming is Euclidean.** **Every engine behavior change
-ships with a Vitest test in the same commit.** **Drive the real UI wiring in tests** (use
-`app-harness.ts` / two-net-client tests — the standing "green-but-broken" lesson). **Open/update a PR
-to `main` every session.**
+ships with a Vitest test in the same commit.** **Drive the real UI wiring in tests** (`app-harness.ts`
+/ two-net-client tests). **Open/update a PR to `main` every session.**
 
-> ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set (`WORKER_ORIGIN` correct). Keep it green.
+> ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set. Keep it green.
 
 ## ✅ COMPLETE
 
 - The full hot-seat game + AR parity + the whole M3 networked loop + deploy + Dev Notes batch 3.
-- **PR #86 (this review):** **LOBBY-READY-FIX** (a second tab is a second player, not a refused
-  reclaim — confirmed by a two-net-client test), **CATALYST-TIP-FAST** (instant hover tooltip via the
-  new `tooltip.ts`), **HARNESS-BROADEN** (the controller harness drives the real flows), **DEV-CHARSELECT**
-  (`?chars=`), **LOBBY-PANEL-RESPONSIVE** (the kit panel collapses instead of vanishing).
+- **PR #88 (this review):** **HUD-LAYOUT** (the board dominates the screen — catalysts bottom-left,
+  movement bottom-right, lock-in bar centre, score top), **SOCKET-ID-STABLE** (a restored room is
+  joinable — the next id derives from the persisted seats), **TOOLTIP-SWEEP** (the last four native
+  tooltips are instant), **DEV-CHARSELECT-ERROR** (a bad `?chars=` refuses to load), **HARNESS-HOTSEAT**
+  (the pass-the-device handover is harness-driven).
 
-Current suite: **2284 tests** (1099 + 910 + 275), typecheck + build clean.
+Current suite: **2333 tests** (1137 + 910 + 286), typecheck + build clean.
 
 ### Build order and dependencies
 
-**HUD-LAYOUT → SOCKET-ID-STABLE → TOOLTIP-SWEEP → DEV-CHARSELECT-ERROR → HARNESS-HOTSEAT.** All
-independent; ordered by owner-visible value (the re-layout first, the restart bug second). Realistic
-one-session cut: HUD-LAYOUT + SOCKET-ID-STABLE + TOOLTIP-SWEEP.
+**AIM-PREVIEW-TRUE → HARNESS-LOBBY-MATCH.** AIM-PREVIEW-TRUE is large and owner-flagged VERY IMPORTANT
+— a full session on its own; HARNESS-LOBBY-MATCH rides if there's room. No engine work.
 
 ---
 
-## Client — the HUD re-layout (do first)
+## Client — the truthful aim preview (do first; owner VERY IMPORTANT)
 
-### HUD-LAYOUT. Reflow the in-match HUD so the board dominates the screen (CLIENT) — UNBLOCKED (first)
-**Addresses Dev Note: "The main game screen is too small in comparison to the buttons. Look at
-screenshot as reference and make the changes listed below and on screenshot. 1. Catalysts move to the
-left of the bottom next to character 2. Movement/clear moves to the right of the bottom. 3. Lock in bar
-and timer moves to where catalyst used tod be 4. SCore and teams move to the top of the window. 5. Board
-expands and is bigger and covers as much screen as possible where the timer/lock in bar was."** *AC (the
-five, from the owner's annotated screenshot):*
-1. *The **catalyst row** moves to the **bottom-left**, beside the character portrait/HP block.*
-2. *The **movement controls** (Move / Sprint / Chase / Clear) move to the **bottom-right**.*
-3. *The **Lock In bar + timer** move to the **centre-bottom** (where the catalyst row used to be), above
-   the ability row.*
-4. *The **score + team pips** (V/W · 0 · 0 · B/A · "Turn N of 16 · First to 4") move to the **top** of
-   the window.*
-5. *The **board expands** to fill the space the timer/lock-in bar vacated — as large as fits, dominating
-   the screen (the board was the "gigantic rectangle" in the screenshot).*
-*Nothing changes behaviourally — the timer-bar, score, catalyst and movement components **move**, not
-change. A layout test asserts each block's new region and that the board's rect grew.*
-**Spec Notes.** Files: `packages/client/src/` — the HUD component tree + CSS/layout (`hud.ts`, the
-in-match container, the board sizing that `renderer3d`/`fitCamera` reads). The board's canvas resize
-must re-fit the camera (it already reacts to viewport). **Fold in OQ #5:** rename the Skip-during-playback
-control's `hud-lock` class to **`hud-skip`** while restructuring the rows. Out of scope: engine/protocol;
-the lobby screen (a different layout); new controls. Cross-item: none — pure client layout.
+### AIM-PREVIEW-TRUE. The aim preview's shape becomes the engine's own tile-centre predicate (CLIENT) — UNBLOCKED (first, HIGH)
+**Addresses Dev Note #3: "View the PR #90 Designer and ensure it makes it into the next builder spec"**
+(the Designer spec is `docs/design/aim-preview-true.md`, owner-flagged **VERY IMPORTANT**); and the two
+live preview bugs it fixes — **Dev Note #1: "BAstion's Crushign Slam Center hit does not account for
+preview correctly."** and **Dev Note #2: "Aegis Shield Bash still shows a cone preview, it should be
+the 3 tile wide rectangle."** The client draws two objects that cannot agree — the smooth AIM2 *input
+region* and the `expandShape` *answer* — which under HITBOX1 disagree by up to ½ tile at every edge and
+rotation. *AC (from `aim-preview-true.md` §3):*
+1. **Congruence (the keystone test):** for every shipped shape — circle, cone, **beam**, line, both
+   Kestrel modes, dash impact — over a sweep of quantized rotations, the lit `expandShape` tile set
+   equals **exactly** the set of tiles whose centres fall inside the drawn boundary (none outside, none
+   missing). This doubles as a HITBOX1/CONE-B/CIRCLE-FIX geometry regression guard.
+2. The boundary is **generated from the ability's engine parameters** (`range`, radius, the
+   `halfWidth(d)=d` ramp, `beamWidth`, quantized `aimStep`) in **one module** — never hand-drawn art.
+3. **Wall occlusion is drawn** — line/cone boundaries truncate at the first wall (LOS-OCCLUSION);
+   circle draws whole.
+4. **Both layers render:** the smooth boundary outline **plus** the tile fills inside it; tiles pop as
+   their centre crosses the line. Damage numbers unchanged.
+5. **Locked orders** re-render the same boundary + tiles in the locked style (one derivation for
+   preview, confirmation, resolution).
+6. **Determinism boundary respected:** tile selection stays the engine's integer `expandShape`; the
+   outline is float/curve client presentation (as AIM2 already ruled).
+*Per-shape boundary (from the spec's table): `circle` → radius exactly r; `cone` → the wedge inflated
+by ½ (edges out ½, apex/corners radius-½ arcs); `cone`+`beamWidth` → **the lane inflated by ½: a
+rounded-corner rectangle** (Aegis, Dev Note #2); `line` → a half-width-½ capsule; `modes` → each mode
+its own; dash `impact` → the circle rule at the landing.*
+**Spec Notes (mine, extending the Designer's §4).** Files: `packages/client/src/` — a **single**
+boundary-derivation module reading engine params (keeps AC #2 structural), the renderer that tessellates
+it (the wedge ⊕ disc(½) is ~a dozen points + three arcs, not a general Minkowski), and the range
+envelope moved to a **quieter** channel (thin border, faded once a live aim exists — the second half of
+the owner's "two things" feeling). **Sub-band tell (Dev Note #1):** the axis/inner highlights (Bastion's
++8 line via `axisSquares`, Cinder's core via `innerSquares`) must draw **congruently from the same
+engine predicate** as the outer boundary — "Center hit does not account for preview correctly" is about
+which tiles show the centre bonus, so the band is the engine's answer too, not a client redraw. An
+**optional engine export** of the analytic boundary description is fine (the spec allows it); keep
+`expandShape`/HITBOX1/CONE-B/CIRCLE-FIX **untouched** — this draws what they compute. **Out of scope:**
+any change to the shape engine; the damage numbers (correct since PREVIEW-AUDIT). Cross-item: may
+resolve the Designer's "Aegis beam distinctness" flag — re-ask after.
 
-## Server — the DO-restart collision (real bug)
+## Client — the last harness gap
 
-### SOCKET-ID-STABLE. Socket/seat ids must not collide after a Durable Object restart (SERVER bug) — UNBLOCKED
-**Addresses Builder OQ 2026-09-20 #2.** `durable-object.ts` mints socket ids from a **module-level
-counter** (`seat-${nextSocketId++}`) that **resets to 0 on eviction**. A room restored from storage
-still holds `seat-0`, `seat-1`; the next socket to connect is *also* minted `seat-0`, so its join is
-refused as `duplicateSeat` and its socket closed — the room looks **unjoinable** to a real player after
-a restart. *AC: after a DO evict/reconstruct, a new socket connecting to a restored room gets a
-**non-colliding** id (derive the next from the **persisted** seat set — max existing index + 1 — or a
-non-resetting source) and joins/reclaims correctly; a test evicts/reconstructs a DO with seats present
-and asserts the next socket is not refused as `duplicateSeat`.* **Spec Notes.** Files:
-`packages/server/src/durable-object.ts` (the id source), possibly `room.ts`. Keep it deterministic and
-plain-JSON. Same family as RECLAIM-SCOPE; a production bug (eviction is normal), so do it before the
-next networked playtest. Out of scope: the ticket/reclaim logic (fixed); seat identity semantics.
-
-## Client — the tooltip family
-
-### TOOLTIP-SWEEP. Convert the remaining native `title` tooltips to the instant tooltip (CLIENT) — UNBLOCKED
-**Addresses Builder OQ 2026-09-20 #4** (and generalises Dev Note 2026-09-19 #1). CATALYST-TIP-FAST
-converted the lobby catalysts; `hud.ts:410` (status chips), `hud.ts:346` (Time Bank button),
-`app.ts:1255–1268` (topbar portraits) and `inspect-panel.ts:90` (inspect-panel catalyst chips) still
-use native `title` with the browser's reveal delay. *AC: those four show their description
-**immediately** via `tooltip.ts` instead of `title`; a test asserts each renders on hover without
-`title`.* **Spec Notes.** Files: the four sites + `tooltip.ts` (exists). Mechanical. Out of scope:
-restyle; touch.
-
-## Dev tooling & tests
-
-### DEV-CHARSELECT-ERROR. `?chars=` fails loudly on a bad id (CLIENT, tiny) — UNBLOCKED
-**Addresses Builder OQ 2026-09-20 #3.** DEV-CHARSELECT falls back on an unknown id; its neighbour
-toggles error (a dev toggle must not silently seat the wrong roster — DECISIONS 2026-09-18). *AC: an
-unknown `?chars=` id shows a **visible error** and does **not** boot a fallback roster; a valid list
-seats normally; a test asserts the error path.* **Spec Notes.** File: `packages/client/src/main.ts`.
-Tiny; consistency with MAPTOGGLE. Out of scope: the valid path (works).
-
-### HARNESS-HOTSEAT. Cover the hot-seat pass-the-device handover in the controller harness (CLIENT test) — UNBLOCKED (low)
-**Addresses Builder OQ 2026-09-20 #6.** `app-harness.ts` drives only a networked seat; the hot-seat's
-`deriveSeats` handover (pass-the-device between players between turns) is untested at the controller
-level. *AC: a harness test drives a two-seat hot-seat through a turn boundary and asserts the handover
-(the next seat's orders, the seat-index advance).* **Spec Notes.** Files: `packages/client/test/`.
-Low; completes the harness coverage. Out of scope: networked seats (covered).
+### HARNESS-LOBBY-MATCH. Drive the lobby→match transition through the harness (CLIENT test, low) — UNBLOCKED
+**Addresses Builder OQ 2026-09-21 #6.** `app-harness.ts` covers everything in `startHotSeat`; the one
+untested wiring surface is `main.ts`'s `joinRoom` subscribe handler tearing down the lobby and calling
+`startNetworkedMatch` — the *class* that produced the ready-button bug. *AC: a test drives a lobby that
+reaches `matchStarted`, asserts the lobby screen is torn down and the board comes up on the seat's
+filtered state.* **Spec Notes.** Files: `packages/client/test/` + the harness. Low; closes the last
+"pure passes, wiring broken" surface. Out of scope: the match loop (covered).
 
 ## Routed to Designer / flags
 
-- **Aegis's beam distinctness** (a beam has no sub-band; distinct-from-a-wedge beyond outline + tell is
-  a render/Designer ask), **Warding Halo's dead `weaken`** (add an enemy-facing Prep path or drop the
-  rider), **trap count cap** (none exists; a count cap + eviction is a Designer decision if the mine
-  carpet is oppressive) — all still Designer-owned.
+- **Aegis's beam distinctness** — AIM-PREVIEW-TRUE draws the beam as a distinct rounded-rectangle lane;
+  **re-ask the Designer after it ships** whether that reads distinct enough from a wedge, or a further
+  render treatment is wanted.
+- **Warding Halo's dead `weaken`** (add an enemy-facing Prep path or drop the rider), **trap count cap**
+  (none exists; a count cap + eviction is a Designer decision if the mine carpet is oppressive) — still
+  Designer-owned.
+- **Inspect-panel chips hoverable** (Builder OQ 2026-09-21 #3) — the inspect chips carry their text but
+  are `pointer-events:none`; making them hoverable needs a **pinned-panel** design (a panel that stops
+  chasing the pointer). Future item if the owner wants it.
 - **Beam + axisBonus** compose legally. **Chase-preview detour** deferred. **Decoy-universal-obstacle**
   / **host map control** / **public draft** — reversals, flag if wanted. **Solar Flare DoT ceiling**,
   **Thorn mine carpet** — playtest.
@@ -118,7 +106,6 @@ Low; completes the harness coverage. Out of scope: networked seats (covered).
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **A real two-machine internet playtest** (deploy works; do it after SOCKET-ID-STABLE so a restart
-  can't strand a room). **PHASE-STATUS-FIRST feel**, **CASTER-SAFE**, **DASH-STATUS** (Bramble Stride
-  Root / Tempest Run Slow now bite), **BRUSH-BREAK**, **the timer bar**, **Aegis's beam**, **Thorn's
-  mine carpet**.
+- **A real two-machine internet playtest** (deploy works; SOCKET-ID-STABLE now survives a restart).
+  **The new HUD layout feel**, **PHASE-STATUS-FIRST**, **CASTER-SAFE**, **DASH-STATUS**, **BRUSH-BREAK**,
+  **Aegis's beam** (after AIM-PREVIEW-TRUE), **Thorn's mine carpet**.
