@@ -65,8 +65,14 @@
          region `sizeToViewport` already reserves (TOP_CHROME_PX), so it costs
          the board nothing. `pointer-events: none` because nothing in it is
          clickable and it must never eat a board click near the top edge. */
+      /* HUD-LAYOUT: the top band — dev chrome on the left, the match readout
+         taking the rest of the width. Side by side rather than stacked, so the
+         score sits at the top of the window (AC 4) and the whole band is one
+         title tall instead of two, which the board takes back as top inset. */
+      #topchrome { display: flex; align-items: flex-start; gap: 18px; }
+      #title-block { flex: 0 0 auto; }
       .scoreboard { pointer-events: none; display: flex; flex-direction: column;
-        gap: 4px; margin-top: 4px; text-shadow: 0 2px 8px rgb(0 0 0 / 0.9); }
+        gap: 4px; flex: 1; min-width: 0; text-shadow: 0 2px 8px rgb(0 0 0 / 0.9); }
       .score-head { display: flex; gap: 18px; align-items: baseline;
         font-size: 15px; font-weight: 700; letter-spacing: 0.5px; }
       .score-clock { font-size: 13px; font-weight: 600; opacity: 0.8; }
@@ -119,9 +125,13 @@
          Bottom-left character panel, bottom-centre hotbar, bottom-right Lock
          In. Anchored so it never moves as the board redraws, and built once —
          see hud.ts for why rebuilding it would break UI1's hover. */
+      /* HUD-LAYOUT widened the side columns: they now carry the catalyst strip
+         (left) and the movement row (right), which the centre column used to
+         stack under the abilities. The centre is `auto`, so the abilities keep
+         their natural width and the sides split what is left. */
       .hud { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
         pointer-events: auto;
-        display: grid; grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+        display: grid; grid-template-columns: minmax(280px, 1fr) auto minmax(240px, 1fr);
         align-items: end; gap: 16px; padding: 12px 18px 14px;
         background: linear-gradient(to top, rgb(9 10 14 / 0.97) 55%, rgb(9 10 14 / 0)); }
       .hud-left { display: grid; grid-template-columns: auto auto; gap: 4px 10px;
@@ -215,7 +225,13 @@
       .hud-ability-note { font-size: 10px; opacity: 0.6; }
       /* Catalysts (CAT2): once per match, so they read as a resource strip —
          smaller than the hotbar, colour-coded by the phase they fire in. */
-      .hud-catalysts { display: flex; gap: 6px; justify-content: center; }
+      /* HUD-LAYOUT: the catalyst strip is bottom-LEFT now, under the character
+         it belongs to, so it packs from the left and spans both grid columns
+         of `.hud-left`. It wraps rather than widening the column — the left
+         column is a share of the width, and a strip that grew it would take the
+         space back off the board this re-layout exists to give. */
+      .hud-catalysts { display: flex; gap: 6px; justify-content: flex-start;
+        flex-wrap: wrap; grid-column: 1 / -1; margin-top: 4px; }
       .hud-catalyst { display: flex; flex-direction: column; align-items: center;
         justify-content: center; gap: 1px;
         min-width: 84px; min-height: 44px; padding: 4px 8px; font-size: 11px; line-height: 1.2;
@@ -225,7 +241,9 @@
       .hud-catalyst[data-phase="blast"] { border-left: 3px solid #e0664a; }
       .hud-catalyst.sel { border-color: var(--aim); color: var(--aim); }
       .hud-catalyst.spent { opacity: 0.35; text-decoration: line-through; }
-      .hud-moves { display: flex; gap: 6px; }
+      /* HUD-LAYOUT: bottom-RIGHT, so it packs toward the edge like everything
+         else in that column. */
+      .hud-moves { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
       .hud-move { font-size: 11px; padding: 3px 10px; min-width: 44px; min-height: 44px; }
 
       .hud-right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
@@ -271,7 +289,11 @@
          stays legible after it is gone. */
       .hud-bank.spent { color: #6b7180; border-color: #2b3140; }
       .hud-small { font-size: 11px; padding: 3px 8px; min-width: 44px; min-height: 44px; }
-      .hud-lock { background: var(--reach); color: #fff; border-color: var(--reach);
+      /* `.hud-skip` is the playback control (HUD-LAYOUT / OQ #5). It looks like
+         Lock In because it plays the same role — the one button that ends what
+         you are watching — but it is a different control and no longer shares
+         its class, so a selector can name one without catching the other. */
+      .hud-lock, .hud-skip { background: var(--reach); color: #fff; border-color: var(--reach);
         font-weight: 700; font-size: 14px; padding: 10px 20px;
         min-width: 44px; min-height: 44px; }
       /* TIMER-BAR: the enlarged Lock In at the bar's right end. Bigger than
@@ -356,15 +378,6 @@
         font-size: 12px; color: var(--aim); text-decoration: none;
         border-bottom: 1px solid currentColor; }
       #create-link:hover { opacity: 0.8; }
-
-      /* DEV-CHARSELECT: a `?chars=` that could not be honoured. Loud and
-         permanent — this is the notice that makes falling back to the default
-         deal legitimate rather than a silent mis-seat, so it must not read as
-         decoration. */
-      .setup-note { max-width: 46ch; margin: 0 0 6px; padding: 6px 9px;
-        border-radius: 6px; border-left: 3px solid #ffb84d;
-        background: rgb(40 30 10 / 0.92); color: #ffd79a;
-        font-size: 12px; line-height: 1.45; }
 
       /* ── M3-WAIT-STATE / M3-CONN-STATE: why the board is not taking orders ─
          Beside Lock In, where a player is already looking when they finish a
@@ -550,9 +563,14 @@
       }
       @media (max-width: 820px) {
         /* Narrower than this the character panel is the first thing to go —
-           its HP/energy are also on the unit's own billboarded bars. */
-        .hud-left { display: none; }
-        .hud { grid-template-columns: 1fr auto; }
+           its HP/energy are also on the unit's own billboarded bars.
+
+           HUD-LAYOUT: the *panel* goes, not the whole left column. The catalyst
+           strip moved in here, and it has no second home the way HP does — a
+           rule that took the column would have deleted three once-per-match
+           controls off small screens as a side effect of moving them. */
+        .hud-portrait, .hud-identity, .hud-bars, .hud-statuses, .hud-switcher { display: none; }
+        .hud-left { justify-content: center; }
       }
     </style>
   </head>
@@ -560,12 +578,23 @@
     <div id="board"></div>
     <aside id="log" class="log"></aside>
     <div id="app">
-      <h1>CARDS — Duel Arena</h1>
-      <!-- CREATE-LINK: `?create` has existed since M3-ROOM-CREATE and nothing
-           pointed at it, so a host had to know to type it. This is the whole
-           end-to-end loop's front door: hot-seat → create → share the code. -->
-      <a id="create-link" href="?create">Play online — create a room ▸</a>
-      <div id="status"></div>
+      <!-- HUD-LAYOUT (owner AC 4): the score and team pips go to the top of the
+           window. They used to stack *under* the title block, which put them a
+           title's height down the screen and cost the board that height in top
+           inset. Here the two sit side by side in one band — dev chrome on the
+           left, the match readout filling the rest — so the score is at the top
+           and the band is shorter than it was. `app.ts` puts the scoreboard in
+           this row when it is present. -->
+      <div id="topchrome">
+        <div id="title-block">
+          <h1>CARDS — Duel Arena</h1>
+          <!-- CREATE-LINK: `?create` has existed since M3-ROOM-CREATE and nothing
+               pointed at it, so a host had to know to type it. This is the whole
+               end-to-end loop's front door: hot-seat → create → share the code. -->
+          <a id="create-link" href="?create">Play online — create a room ▸</a>
+          <div id="status"></div>
+        </div>
+      </div>
       <div id="controls" class="hud"></div>
       <footer>M2 hot-seat · order entry, resolution & playback driven entirely by the engine</footer>
     </div>

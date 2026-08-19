@@ -88,7 +88,17 @@ export function renderInspectPanel(
       const chip = el('span', 'inspect-catalyst');
       chip.classList.toggle('spent', catalyst.spent);
       chip.textContent = catalyst.name;
-      chip.title = catalyst.spent ? `${catalyst.name} — spent` : `${catalyst.name} — ${catalyst.phase}`;
+      // TOOLTIP-SWEEP: `data-tip` rather than `title`, for consistency with the
+      // rest of the sweep.
+      //
+      // **It cannot currently fire, and that is by design, not an oversight.**
+      // `.inspect` is `pointer-events: none` (it follows the mouse, so a panel
+      // you could hover would chase itself off the unit it describes), which
+      // means no pointer event ever reaches this chip — the native `title` here
+      // never showed either. Carrying the text keeps the panel's own record
+      // complete and makes it work the day the panel gains a pinned mode;
+      // making the panel interactive to reach it is a different item.
+      chip.dataset['tip'] = catalyst.spent ? `${catalyst.name} — spent` : `${catalyst.name} — ${catalyst.phase}`;
       cats.appendChild(chip);
     }
     node.appendChild(cats);

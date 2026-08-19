@@ -43,17 +43,6 @@ export interface MatchSetup {
    * Absent when the default catalogue deal was used.
    */
   chars?: string[];
-  /**
-   * DEV-CHARSELECT — non-fatal complaints the screen must **show**.
-   *
-   * The only ones in the file: every other bad parameter here is an error that
-   * refuses to load, on the stated principle that silently loading
-   * `duel-arena` because you mistyped the map is the one outcome a dev toggle
-   * must not have. `?chars=` is the exception the backlog asked for — it falls
-   * back to the ordinary deal so you still get a board — and a fallback is only
-   * safe *because* this is rendered. It must never be dropped on the floor.
-   */
-  notes?: string[];
 }
 
 export type SetupResult = { setup: MatchSetup } | { errors: string[] };
@@ -103,32 +92,35 @@ export function dealTeams(
  * Alternating, like `dealTeams`, so `?chars=kestrel,vex` reads left to right as
  * "Kestrel against Vex" and a longer list keeps that pairing.
  *
- * **A problem here is a note, not an error** — the one parameter in this file
- * that falls back rather than refusing to load (backlog AC). That is only safe
- * because the note is rendered: an unknown id must never quietly become the
- * default deal (DECISIONS 2026-09-18). It is all-or-nothing on purpose — a
- * partial substitution would be exactly the "seated the wrong thing" outcome,
- * with half the roster right to make it convincing.
+ * **A problem here is an error, like every other parameter in this file**
+ * (DEV-CHARSELECT-ERROR). It shipped as a fallback-with-a-notice, which was the
+ * original AC, and the Analyzer took the Builder's own flag and reversed it: a
+ * dev toggle must not seat the wrong roster, and a notice beside a board that
+ * is already running is a notice you play past. `?chars=kestrel` on a 2v2 now
+ * refuses to load and names the ids that would have worked, exactly as a
+ * mistyped `?map=` has always done.
+ *
+ * That also removes the asymmetry the fallback created: every other typo here
+ * stops the page, so a reader had to remember which one behaved differently.
  */
 function parseChars(
   raw: string | null,
   catalog: readonly CharacterDef[],
   perTeam: number,
-): { teams: [CharacterDef[], CharacterDef[]]; chars: string[] } | { note: string } | undefined {
+): { teams: [CharacterDef[], CharacterDef[]]; chars: string[] } | { error: string } | undefined {
   if (raw === null) return undefined;
   const ids = raw.split(',').map((s) => s.trim().toLowerCase()).filter((s) => s !== '');
   const known = ids.map((id) => catalog.find((c) => c.id === id));
   const unknown = ids.filter((_, i) => known[i] === undefined);
   if (unknown.length > 0) {
     return {
-      note: `chars: no such character ${unknown.map((id) => `"${id}"`).join(', ')}`
-        + ` — dealing the default roster instead. Known ids: ${catalog.map((c) => c.id).join(', ')}`,
+      error: `unknown character ${unknown.map((id) => `"${id}"`).join(', ')} in chars`
+        + ` — try one of: ${catalog.map((c) => c.id).join(', ')}`,
     };
   }
   if (ids.length < perTeam * 2) {
     return {
-      note: `chars: ${perTeam * 2} characters are needed for this format, got ${ids.length}`
-        + ' — dealing the default roster instead',
+      error: `chars needs ${perTeam * 2} characters for this format, got ${ids.length}`,
     };
   }
   const picked = known.slice(0, perTeam * 2) as CharacterDef[];
@@ -197,7 +189,7 @@ export function parseSetup(
   // DEV-CHARSELECT. Read after the format, because how many characters a chosen
   // roster owes is the format's answer, not this parameter's.
   const chosen = parseChars(params.get('chars'), catalog, perTeam);
-  const notes = chosen !== undefined && 'note' in chosen ? [chosen.note] : [];
+  if (chosen !== undefined && 'error' in chosen) errors.push(chosen.error);
 
   if (errors.length > 0 || map === undefined || typeof players === 'string') return { errors };
   const setup: MatchSetup = {
@@ -206,7 +198,6 @@ export function parseSetup(
     teams: chosen !== undefined && 'teams' in chosen ? chosen.teams : dealTeams(catalog, perTeam),
     playersPerTeam: players,
     ...(chosen !== undefined && 'chars' in chosen ? { chars: chosen.chars } : {}),
-    ...(notes.length > 0 ? { notes } : {}),
   };
   return { setup: scenario === undefined ? setup : { ...setup, scenario } };
 }

@@ -21,6 +21,7 @@ import type { StatusChip } from './status-pips.js';
 import { ULT_MARK } from './hud-marks.js';
 import type { InspectPanel } from './inspect.js';
 import { renderInspectPanel } from './inspect-panel.js';
+import { createTooltip, delegateTooltips } from './tooltip.js';
 import type { TimerView } from './timer.js';
 import type { ModeOption } from './targeting.js';
 
@@ -214,19 +215,36 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const energy = makeBar('EN', 'energy');
   bars.append(hp.root, shield.root, energy.root);
   const switcher = el('div', 'hud-switcher');
-  left.append(portrait, identity, bars, statusStrip, switcher);
 
   // ── bottom-centre: the hotbar ─────────────────────────────────────────────
   const centre = el('div', 'hud-centre');
   const hotbar = el('div', 'hud-hotbar');
-  // The catalyst row sits above the hotbar: three slots, once per match, so they
-  // read as a resource rather than as four more abilities.
+  /**
+   * HUD-LAYOUT — the catalyst row is **bottom-left, beside the character**
+   * (owner AC 1). It used to sit above the hotbar in the centre column.
+   *
+   * Three slots, once per match, so they read as a resource rather than as four
+   * more abilities — and a resource belongs with the character that owns it,
+   * next to its HP and energy, rather than in the column the turn is *spent*
+   * from. Moving it out is also half of why the board grew: the centre column
+   * was five stacked rows and is now three (AC 5).
+   */
   const catalystRow = el('div', 'hud-catalysts');
+  left.append(portrait, identity, bars, statusStrip, switcher, catalystRow);
   // BASIC-MODES: the mode row sits between the hotbar and the move controls —
   // under the ability it belongs to, above the movement it trades against.
   // Hidden when the armed ability has no modes, which is almost always.
   const modeRow = el('div', 'hud-modes');
   modeRow.style.display = 'none';
+  /**
+   * HUD-LAYOUT — the movement controls are **bottom-right** (owner AC 2).
+   *
+   * They were the last row of the centre column, under the abilities. Move is
+   * the thing a turn does *as well as* an ability rather than instead of one
+   * (MS1), so it reads better as its own corner than as a fifth row of the
+   * column the ability is chosen from — and the centre column is what was
+   * pushing the board up.
+   */
   const moveRow = el('div', 'hud-moves');
   const moveBtn = el('button', 'hud-move');
   moveBtn.textContent = 'Move';
@@ -272,7 +290,10 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const lockBtn = el('button', 'hud-lock');
   lockBtn.onclick = () => handlers.lock();
   lockRow.append(timerRow, lockBtn);
-  centre.append(lockRow, catalystRow, hotbar, modeRow, moveRow);
+  // HUD-LAYOUT (AC 3): the centre column is now Lock In + timer, the abilities,
+  // and the mode toggle — three rows where there were five. The bar sits
+  // directly over the hotbar it times, in the slot the catalyst row vacated.
+  centre.append(lockRow, hotbar, modeRow);
 
   // ── bottom-right: the view toggles and the waiting banner ─────────────────
   const right = el('div', 'hud-right');
@@ -286,11 +307,19 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const orbitBtn = el('button', 'hud-small');
   orbitBtn.onclick = () => handlers.toggleOrbit();
   viewRow.append(projBtn, orbitBtn);
-  right.append(viewRow, banner);
+  // HUD-LAYOUT: the movement row is last, so it sits at the very bottom-right
+  // (the column is bottom-aligned) — the corner the owner's annotation puts it
+  // in, and diagonally opposite the catalysts it trades against.
+  right.append(banner, viewRow, moveRow);
 
   // ── playback: one Skip, replacing the ordering controls ───────────────────
   const playback = el('div', 'hud-playback');
-  const skipBtn = el('button', 'hud-lock');
+  // HUD-LAYOUT folds in Builder OQ 2026-09-20 #5: Skip wore `hud-lock`, so
+  // "the first `.hud-lock`" meant Lock In only by accident of row order and a
+  // test that addressed it that way would have started pressing Skip the day
+  // the rows moved — which is this item. It styles the same; it is not the
+  // same control, and the DOM now says so.
+  const skipBtn = el('button', 'hud-skip');
   skipBtn.textContent = 'Skip ⏭';
   playback.appendChild(skipBtn);
   playback.style.display = 'none';
@@ -316,6 +345,18 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const inspectPanel = el('div', 'inspect');
   inspectPanel.style.display = 'none';
   document.body.appendChild(inspectPanel);
+
+  /**
+   * TOOLTIP-SWEEP — instant tooltips for the HUD's `data-tip` nodes (the Time
+   * Bank pip and the status chips), replacing native `title`.
+   *
+   * Delegated over the whole HUD rather than wired per node, because these
+   * nodes are keyed and re-filled on every update (UI3): the text changes every
+   * turn while the element stays, so an attribute the update already writes is
+   * the natural carrier and one listener on the root is the natural reader.
+   */
+  const tip = createTooltip();
+  delegateTooltips(root, tip);
 
   return {
     setBanner(text) {
@@ -343,7 +384,10 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
       // socket rather than as nothing, so the resource is still legible after
       // it is gone.
       bankBtn.textContent = view.charges > 0 ? '●' : '○';
-      bankBtn.title = view.charges > 0
+      // TOOLTIP-SWEEP: `data-tip`, not `title` — the browser's reveal delay is
+      // about a second, and this is the button a player reaches for with eight
+      // seconds on the clock.
+      bankBtn.dataset['tip'] = view.charges > 0
         ? `Time Bank — add ${TIMEBANK_SECONDS} seconds (${view.charges} left)`
         : 'Time Bank — spent';
       bankBtn.disabled = !view.canExtend;
@@ -407,7 +451,9 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
         turns.textContent = `${status.remaining}t`;
         node.appendChild(turns);
         node.classList.toggle('harm', status.harmful);
-        node.title = `${status.label} — ${status.blurb} ${status.remaining} turn${status.remaining === 1 ? '' : 's'} left.`;
+        // TOOLTIP-SWEEP: what a status actually does is the thing a player
+        // most often does not know, so it is the worst place for a delay.
+        node.dataset['tip'] = `${status.label} — ${status.blurb} ${status.remaining} turn${status.remaining === 1 ? '' : 's'} left.`;
       }
       for (const [kind, node] of statusNodes) {
         if (!statuses.some((s) => s.kind === kind)) { node.remove(); statusNodes.delete(kind); }

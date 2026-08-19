@@ -77,8 +77,55 @@ const STORAGE_KEY = 'room';
  */
 const NOW = (): number => Date.now();
 
-/** A monotonic per-DO counter, so two sockets never share a seat id. */
-let nextSocketId = 0;
+/**
+ * SOCKET-ID-STABLE — the shape of a minted socket id.
+ *
+ * A socket's id **becomes its seat id** when it joins (see `hub.open` /
+ * `join`), so minting one that a seat already holds is not a cosmetic clash: it
+ * is a join refused as `duplicateSeat` and a socket shown the door.
+ */
+const SOCKET_PREFIX = 'seat-';
+
+/** A socket id from its index. One place, so the parse below cannot drift. */
+export const socketIdFor = (index: number): string => `${SOCKET_PREFIX}${index}`;
+
+/**
+ * SOCKET-ID-STABLE — where the next socket index comes from: **the seats the
+ * room already has**, not a counter in module scope.
+ *
+ * The counter used to be `let nextSocketId = 0` beside this function, which is
+ * correct exactly as long as the isolate lives. A Durable Object is reclaimed
+ * whenever the runtime feels like it — locally almost never, in production
+ * routine — and the next instance started counting from zero again while the
+ * room came back from storage still holding `seat-0` and `seat-1`. The first
+ * player to reconnect was minted `seat-0`, `join` found that id already seated
+ * and refused it as `duplicateSeat`, and their socket was closed. Every
+ * subsequent attempt got the same id and the same refusal, so a room that
+ * survived an eviction was **unjoinable** — which looks, from the outside,
+ * exactly like the server being down.
+ *
+ * Derived rather than separately persisted, so there is one source of truth and
+ * no second field to keep in step: the seats ARE the record of which ids are
+ * spoken for, and they are already written after every frame. Monotonic within
+ * an instance (the caller increments), and never below the highest id the room
+ * has ever handed out and kept.
+ *
+ * Ids that are not ours — a test's `'a'`, a hand-written record — are skipped
+ * rather than parsed into `NaN`, which would poison the maximum.
+ */
+export function nextSocketIndex(room: Room | undefined): number {
+  let next = 0;
+  for (const seat of room?.seats ?? []) {
+    if (!seat.seatId.startsWith(SOCKET_PREFIX)) continue;
+    const suffix = seat.seatId.slice(SOCKET_PREFIX.length);
+    // `Number('')` is 0, not NaN, so a bare `seat-` would otherwise claim index
+    // zero and reserve an id nothing holds.
+    if (suffix === '') continue;
+    const index = Number(suffix);
+    if (Number.isSafeInteger(index) && index >= next) next = index + 1;
+  }
+  return next;
+}
 
 export class RoomDurableObject {
   #hub: RoomHub | undefined;
@@ -93,6 +140,11 @@ export class RoomDurableObject {
    */
   #saved: string | undefined;
   #armedFor: number | null | undefined;
+   * A monotonic counter, so two sockets never share a seat id — **seeded from
+   * the restored room**, so it does not restart at zero under a room that has
+   * already used the low numbers (SOCKET-ID-STABLE).
+   */
+  #nextSocketId = 0;
 
   constructor(state: DurableObjectState) {
     this.#state = state;
@@ -108,6 +160,11 @@ export class RoomDurableObject {
       // come back — a record that still claimed they were present would refuse
       // every one of them as `seatTaken`.
       this.#hub = new RoomHub(detachAll(stored), matchConfig(stored), NOW);
+      // SOCKET-ID-STABLE: pick the counter back up where the last instance left
+      // it. Read off the restored seats rather than from a stored number — the
+      // seats are what a new id has to avoid, so asking them directly is the
+      // one form of the question that cannot go stale.
+      this.#nextSocketId = nextSocketIndex(stored);
       // TIMER-PERSIST: re-aim the alarm at the window the record came back with.
       // The alarm itself survives hibernation, so this is belt-and-braces rather
       // than the whole fix — but a restore triggered some other way (a fetch, a
@@ -186,7 +243,7 @@ export class RoomDurableObject {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    const seatId = `seat-${nextSocketId++}`;
+    const seatId = socketIdFor(this.#nextSocketId++);
     server.accept();
 
     const hub = this.#hub;

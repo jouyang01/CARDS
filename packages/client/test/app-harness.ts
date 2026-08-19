@@ -137,9 +137,12 @@ export const modeButtons = (controls: HTMLElement): HTMLButtonElement[] =>
   [...controls.querySelectorAll<HTMLButtonElement>('.hud-mode')];
 
 /**
- * LOCK IN. Addressed through `.hud-lockrow` rather than as "the first
- * `.hud-lock`", because Skip wears the same class — an index would silently
- * start pressing Skip the day the two rows swap order.
+ * LOCK IN.
+ *
+ * Skip used to wear `hud-lock` too, so this had to be addressed through
+ * `.hud-lockrow` to avoid catching it; HUD-LAYOUT renamed Skip to `hud-skip`,
+ * and the row qualifier stays anyway — it says *which* control this is rather
+ * than relying on there happening to be one of them.
  */
 export const lockIn = (controls: HTMLElement): void => {
   click(controls.querySelector('.hud-lockrow .hud-lock'));
@@ -149,7 +152,7 @@ export const lockIn = (controls: HTMLElement): void => {
 export const playbackRow = (controls: HTMLElement): HTMLElement =>
   controls.querySelector<HTMLElement>('.hud-playback')!;
 export const skipPlayback = (controls: HTMLElement): void => {
-  click(playbackRow(controls).querySelector('.hud-lock'));
+  click(playbackRow(controls).querySelector('.hud-skip'));
 };
 
 /** Aim at a square and commit it — hover then click, the two halves of UI1. */

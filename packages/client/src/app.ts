@@ -103,6 +103,7 @@ import {
 } from './scoreboard.js';
 import { FRONT_DOOR, HOT_SEAT_DOOR, endHeadline, exitLabel, outcomeFor } from './end-screen.js';
 import { AWAY_LABEL, NO_PRESENCE, type Presence } from './presence.js';
+import { createTooltip, delegateTooltips } from './tooltip.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -544,11 +545,23 @@ export function startHotSeat(
    * The board's own container is still never measured — the canvas is its only
    * child, so that would feed the canvas its own width back and pin it.
    */
-  // SCORE1's readout lives in its own element under the status line, so the
-  // HUD's in-place update never has to know about it and vice versa.
+  // SCORE1's readout lives in its own element, so the HUD's in-place update
+  // never has to know about it and vice versa.
+  //
+  // HUD-LAYOUT (owner AC 4): it goes in the page's **top band** — beside the
+  // title block rather than under it — so the score and team pips are at the
+  // top of the window. `#topchrome` is `index.html`'s; when it is absent (the
+  // test harness mounts four bare nodes) it falls back to sitting after the
+  // status line, which is where it always was.
   const scoreEl = document.createElement('div');
   scoreEl.className = 'scoreboard';
-  ui.status.after(scoreEl);
+  const topChrome = document.getElementById('topchrome');
+  if (topChrome !== null) topChrome.appendChild(scoreEl);
+  else ui.status.after(scoreEl);
+  // TOOLTIP-SWEEP: the portraits' tooltips. Delegated on `scoreEl`, which is
+  // built once, because the strip inside it is rebuilt wholesale on every
+  // render — per-node listeners would be re-attached every turn.
+  delegateTooltips(scoreEl, createTooltip());
 
   const sizeToViewport = (): void => {
     // UI-VIEWPORT: the canvas IS the viewport. The board used to be the app
@@ -570,7 +583,12 @@ export function startHotSeat(
       // Measured, not assumed: the scoreboard's strip grows with the format's
       // character count, so a fixed number would frame the board under it in
       // 4v4 and leave a gap in 1v1.
-      top: Math.max(scoreEl.getBoundingClientRect().bottom + 8, TOP_CHROME_FALLBACK_PX),
+      //
+      // HUD-LAYOUT: measured off the **band**, not off the scoreboard alone.
+      // The two are side by side now, so whichever of them is taller sets the
+      // bottom edge — reading only the score would frame the board under the
+      // status line whenever the status line ran longer.
+      top: Math.max((topChrome ?? scoreEl).getBoundingClientRect().bottom + 8, TOP_CHROME_FALLBACK_PX),
       right: logIsColumn ? (logBox?.width ?? 0) : 0,
       bottom: ui.controls.getBoundingClientRect().height + (logIsColumn ? 0 : (logBox?.height ?? 0)),
       left: 0,
@@ -1252,7 +1270,9 @@ export function startHotSeat(
     for (const p of portraits) {
       const cell = document.createElement('div');
       cell.className = p.alive ? 'topbar-portrait' : 'topbar-portrait dead';
-      cell.title = p.alive ? `${p.name} — ${p.hp}/${p.maxHp}` : `${p.name} — down, back in ${p.respawnIn}`;
+      // TOOLTIP-SWEEP: `data-tip`, read by the delegated tooltip on `scoreEl`,
+      // rather than `title` and the browser's second-long delay.
+      cell.dataset['tip'] = p.alive ? `${p.name} — ${p.hp}/${p.maxHp}` : `${p.name} — down, back in ${p.respawnIn}`;
       // NET-PRESENCE-UI: two marks, and they are different facts. `away` says
       // this character's *player* is gone (the seat is held for them); `borrowed`
       // says the handoff has put them in your hands. A character can be both,
@@ -1260,12 +1280,12 @@ export function startHotSeat(
       if (p.away) {
         cell.classList.add('away');
         cell.dataset['away'] = 'true';
-        cell.title = `${p.name} — ${AWAY_LABEL}`;
+        cell.dataset['tip'] = `${p.name} — ${AWAY_LABEL}`;
       }
       if (p.borrowed) {
         cell.classList.add('borrowed');
         cell.dataset['borrowed'] = 'true';
-        cell.title = `${cell.title} · you are ordering them`;
+        cell.dataset['tip'] = `${cell.dataset['tip']} · you are ordering them`;
       }
 
       const face = document.createElement('div');

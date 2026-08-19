@@ -138,6 +138,23 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 >   TRAP-HALT), and the **range-4 dash floor** (Combat Roll, Backdraft, Glimmer Step, Bramble
 >   Stride, Shift — Builder: add the ≥4 content-test guard).
 
+> **⚠ NOT YET FOLDED IN — `AIM-PREVIEW-TRUE`, 2026-08-17 (Designer; owner-flagged VERY
+> IMPORTANT).** Full spec with acceptance criteria: `docs/design/aim-preview-true.md`.
+> The aim preview currently draws two objects that cannot agree — the smooth AIM2 shape
+> (the *input region*) and the `expandShape` tile fill (the *answer*) — because HITBOX1
+> hits any tile whose central ½-circle the region touches, so tiles rightly light up
+> outside the drawn silhouette. **Ruling: the continuous graphic becomes the analytic
+> boundary of the engine's own tile-centre predicate**, so a tile is hit iff its centre is
+> inside the drawn shape — exactly, at every rotation. Per shape: circles draw at radius
+> **exactly r** (CIRCLE-FIX already folded the hitbox in); cones/beams/lines draw their
+> region **inflated by ½ tile** with rounded corners (region ⊕ disc(½) ≡ the shipped
+> `wedgeCovers` "within half a tile of it" test); Kestrel's modes each draw their own;
+> the boundary **must truncate at walls** where line/cone occlusion stops the tiles.
+> Client-only — `expandShape`, HITBOX1, CONE-B, CIRCLE-FIX untouched; the boundary is
+> generated from engine parameters, never hand-drawn art. The keystone AC: a congruence
+> sweep asserting lit tiles == tiles-with-centres-inside-the-boundary for every shape and
+> rotation — which doubles as a geometry regression guard. Schedule HIGH per the owner.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
@@ -1391,26 +1408,24 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     harmlessly:** a woken room that sits empty for a turn accrues `missedTurns` for everyone, but a
     disconnected seat controls nothing and a reclaim clears it, so no character is mis-assigned.
     Deterministic; server-side. Ratified.
-  - **PROPOSED — RECLAIM-SCOPE: a reconnect ticket must reclaim only a seat this identity ACTUALLY
-    HOLDS; a fresh client must never reclaim a LIVE seat (leading root-cause of the 2026-09-19
-    ready-button report; backlog LOBBY-READY-FIX).** The reconnect ticket is stored in
-    **`window.localStorage`** keyed by room code (`main.ts:144`) and every connect joins **with** it
-    (`main.ts:167`). Two browser **tabs of the same browser share localStorage**, so a second tab
-    opening the same room reads the first tab's ticket and tries to reclaim **its** seat — the
-    creator's. Symptom (owner, verbatim): *"There is no 'ready' button. Both Seat 0 and seat 1 have a
-    'start game' but it cannot be clicked."* — consistent with **both tabs believing they are the
-    creator** (both show the creator's Start, nobody shows Ready, and Start stays disabled because no
-    distinct second seat ever readies). Proposed ruling: **a reclaim is honoured only for a seat that
-    is currently HELD/disconnected for that identity; a ticket that names a still-connected seat is
-    refused (`seatTaken`) and the client joins FRESH** (a new seat) rather than stealing it — and,
-    client-side, the ticket store should be **per browsing context** (`sessionStorage`, or keyed so
-    two live tabs do not collide) so same-browser two-seat testing works. The Builder must **confirm
-    by driving two real net clients** (this is the "pure function passes, wiring is broken" pattern —
-    Builder OQ 2026-09-19 #6). Also fold in the display fix below.
-  - **NOTE — the lobby seat-row `is-ready` marker reads the wrong list.** `seatRows` marks a seat
-    "ready" off `lobby.ready` (`lobby.ts:210`), which the server fills with seats that have **finished
-    PICKING**, not seats that have **readied** (`readied`). `isReady` correctly reads `readied`. The
-    seat row should read `readied` too, or the checkmark lies. Fix with LOBBY-READY-FIX.
+  - **RULED — RECLAIM-SCOPE: a reconnect ticket reclaims only a seat this identity HOLDS; a fresh
+    client never reclaims a LIVE seat, and the ticket store is per browsing context (SHIPPED PR #86;
+    was the 2026-09-19 ready-button report; corrected per Builder OQ 2026-09-20 #1).** The reconnect
+    ticket was stored in **`window.localStorage`** keyed by room code (`main.ts:144`) and every connect
+    joined **with** it (`main.ts:167`); two **tabs of the same browser share localStorage**, so a
+    second tab read the first tab's ticket and tried to reclaim the creator's — still-live — seat.
+    **Corrected mechanism (the two-client repro):** the reclaim was **refused** (the seat was
+    connected), leaving the second tab **seatless** — and an unjoined client renders **Ready**, not
+    Start; the earlier "both tabs believe they are the creator / both show Start" reading was wrong.
+    The **cause and the remedy stand:** a reclaim is honoured only for a seat currently
+    **HELD/disconnected** for that identity; a ticket naming a still-connected seat is refused and the
+    client **joins FRESH** as a new seat; the ticket store is **per browsing context**
+    (`sessionStorage` / a non-colliding key) so a second same-browser tab is a **second player**, not
+    a refused reclaim. Confirmed by a two-net-client test (the "pure function passes, wiring is broken"
+    pattern). The seat-row `is-ready` display fix rode with it (below).
+  - **NOTE — the lobby seat-row `is-ready` marker read the wrong list (fixed PR #86).** `seatRows`
+    had marked a seat "ready" off `lobby.ready` (seats that finished **PICKING**), not `readied`
+    (seats that **readied**). Corrected to read `readied`.
 - **RULED — A networked match starts when the room is FULL, with an explicit "start now" escape
   hatch for short rooms (M3; Builder OQ 2026-08-16 #3, decision 8).** Auto-starting on "both teams
   have someone" deals characters before the later players arrive and seats them controlling nothing,

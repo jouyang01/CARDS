@@ -4408,3 +4408,123 @@ the CORS header stamped on its way through for the same reason. Regression suite
 `test/quota-runaway.test.ts`. Operational note: the daily allowance resets at midnight UTC —
 until then production creates fail even with this fix deployed, since the fix stops the burn
 but cannot un-spend the day's budget.
+---
+
+## 2026-09-21 — Builder, session 5 (HUD-LAYOUT → HARNESS-HOTSEAT)
+
+**The HUD's re-layout is a move, and the board's growth is a consequence rather than a setting.**
+`sizeToViewport` already measures the HUD and the top chrome and hands the camera what is left, so
+AC 5 ("the board expands") needed no board code at all: the centre column went from five stacked
+rows to three (the catalysts left, the movement right), and the top band went from two rows to one
+(the score beside the title rather than under it). Both are height the board takes back
+automatically. Nothing about the board's sizing was touched, which is the property worth keeping —
+a re-layout that also tuned the camera would have two places to disagree.
+
+**The score band is a row, not a stack, and the top inset is measured off the band.**
+`#topchrome` holds the dev chrome on the left and the match readout filling the rest. The inset used
+to be read off the scoreboard alone; side by side, whichever of the two is taller sets the bottom
+edge, so it is read off the band. Reading the score alone would frame the board under the status
+line whenever the status line ran longer than the readout.
+
+**The small-screen rule now hides the character panel's children, not the left column.**
+`.hud-left { display: none }` below 820px was correct when the column held only the portrait and the
+bars, whose HP and energy are also on the unit's own billboarded bars. With the catalyst strip moved
+in, the same rule would have deleted three once-per-match controls from every narrow screen as a
+side effect of moving them — a control with no second home cannot be dropped the way a duplicated
+readout can.
+
+**Skip is `hud-skip` (OQ 2026-09-20 #5, folded in).** It styles identically to Lock In because it
+plays the same role — the one button that ends what you are watching — but it is a different control
+and a selector must be able to name one without catching the other. The old `.hud-lockrow .hud-lock`
+qualifier stays in the harness anyway: it says *which* control this is rather than relying on there
+happening to be only one.
+
+**The next socket id is derived from the room's seats, not persisted separately.** A socket id
+becomes a seat id on join, so the seats are already the authoritative record of which ids are spoken
+for, and they are written after every frame. A stored counter beside them would be a second field to
+keep in step and the one that goes stale. It takes the **highest** id rather than the count, because
+`leave` deletes a lobby seat outright and the list is not a dense range.
+
+**The tooltip sweep is delegated, and that is load-bearing rather than tidy.** The HUD's nodes are
+keyed and re-filled every update (UI3) and the topbar strip is rebuilt wholesale every render, so a
+listener attached at build time reads stale text and one attached per update stacks. `data-tip` is
+written by the update that already writes the text, and one listener per region reads it.
+
+**`?chars=` now errors instead of falling back, reversing DEV-CHARSELECT.** Shipped as
+fallback-with-a-notice (the original AC), flagged by me the same session, and the Analyzer settled
+it the other way. Every neighbouring parameter refuses to load on a typo, and a notice beside a
+board that is already running is a notice you play past. The `.setup-note` mechanism and
+`MatchSetup.notes` were deleted with it rather than left as dead code that looks like a feature.
+
+**The inspect panel's catalyst chips cannot show a tooltip, and never could.** `.inspect` is
+`pointer-events: none` — it follows the pointer, so a panel you could hover would chase itself off
+the unit it describes — so no pointer event has ever reached those chips and the `title` there was
+already dead. TOOLTIP-SWEEP carries the text as `data-tip` so the panel's record is complete and one
+`delegateTooltips` call is the whole of the work if the panel ever gains a pinned mode. I did not
+make the panel interactive to reach it: that is a behaviour change nothing asked for.
+
+## Open Questions for the Analyzer — 2026-09-21
+
+1. **HUD-LAYOUT's AC 4 was read as "beside the title", not "instead of it".** The owner's line is
+   *"SCore and teams move to the top of the window"* and I could not see the annotated screenshot.
+   I put the score in a top band **sharing a row with** the existing title/status chrome, which puts
+   it at the top and costs a title's height less than the old stack. The alternative reading is that
+   the dev chrome should move or go entirely and the score should own the top strip. If the
+   screenshot says the latter, it is a small follow-up — confirm against the image.
+
+2. **The e2e's "the board got the space" thresholds are mine, not the owner's.** `render.spec.ts`
+   now asserts the HUD is under 25% of a 900px window and the clear band between the top band and
+   the HUD is over 66%. Both pass comfortably today. They are the only numeric statement of "the
+   board dominates the screen" anywhere, so if the owner wants a specific proportion, that is where
+   to put it.
+
+3. **`.inspect` is `pointer-events: none`, so TOOLTIP-SWEEP's fourth site is unreachable** (see
+   above). The AC is satisfied in the sense that no `title` remains and the text is carried, but
+   nothing new became visible there. If the intent was that those chips *become* hoverable, that is
+   a separate item and it needs a ruling on how a pointer-following panel stops chasing itself —
+   probably a pinned mode, which is a design question.
+
+4. **A DO whose room record predates SOCKET-ID-STABLE is still fine, but only by luck of naming.**
+   `nextSocketIndex` skips seat ids that are not `seat-<n>`, so a record from an older build seats
+   new sockets from 0 again if none of its ids match the pattern. Every shipped build has used
+   `seat-<n>`, so this is theoretical — but it is the one input that would put the collision back,
+   and it is worth knowing before the next production playtest rather than after.
+
+5. **Nothing else in the client uses `title` now, and there is a test that keeps it that way.**
+   `tooltip-sweep.test.ts` reads the sources and fails if `hud.ts`, `app.ts`, `inspect-panel.ts` or
+   `lobby-screen.ts` grows a new `.title =`. `main.ts` still sets one on the `<h1>` — that is the
+   page heading naming the loaded setup, not a control tooltip, and I left it. Say if you would
+   rather that were in the sweep too.
+
+6. **The harness is now complete against `startHotSeat` as far as I can see.** Networked seats,
+   hot-seat handover, aiming, catalysts, free actions, the chase and playback all have specs driving
+   the real controller. The remaining untested-by-harness surface is the **lobby → match transition**
+   in `main.ts` (`joinRoom`'s subscribe handler tearing down the lobby screen and calling
+   `startNetworkedMatch`), which is real wiring with no test. Not blocking anything; worth an item
+   if you want the class of bug closed rather than reduced.
+
+## 2026-08-17 — AIM-PREVIEW-TRUE: the preview shape becomes the predicate (Designer)
+
+The owner reported that the aim preview "feels like the highlight preview plus the squares
+that get affected" — two different things. The diagnosis: they ARE two different things.
+The smooth AIM2 graphic draws the ability's input region; the tiles draw the answer; and
+under HITBOX1 (hit = the region touches the tile's central ½-circle) those disagree at
+every edge by up to half a tile, at every rotation. My first suggestion was to delete the
+smooth graphic and let the tile set be the preview; the owner pushed back wanting the
+smooth shape kept and the tiles true to it — and the push-back found the better design.
+The key identity: "region touches a ½-circle at p" ⟺ "p is inside the region inflated by
+½" — so there EXISTS a continuous shape against which "tile lights iff its centre is
+inside" holds exactly: the Minkowski sum of the region with the half-tile disc. Drawing
+that instead of the raw region makes the graphic the rule rather than a picture of the
+input. Per shape it is even cleaner than the general statement: circles draw at exactly
+their authored radius (CIRCLE-FIX already folded the hitbox into the number — graphic,
+data value and tile set all agree), while cones, beams and lines draw their region
+inflated by ½ with rounded corners, matching the shipped `wedgeCovers` "inside the wedge,
+or within half a tile of it" predicate verbatim. The keystone acceptance criterion is a
+congruence sweep — lit tiles equal tiles-with-centres-inside-the-boundary for every shape
+at every quantized rotation — which is simultaneously the feature's proof and a standing
+regression guard on the whole aiming geometry stack. Client-only; the engine's integer
+tile selection is untouched, and the float outline is presentation, per the AIM2
+precedent. This closes the last surface where the client draws something the engine never
+promised — the same trust rule as PREVIEW-NUMBERS and PREVIEW-FOG, applied to the most
+used UI surface in the game.
