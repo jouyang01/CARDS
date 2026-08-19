@@ -140,6 +140,7 @@ export class RoomDurableObject {
    */
   #saved: string | undefined;
   #armedFor: number | null | undefined;
+  /**
    * A monotonic counter, so two sockets never share a seat id — **seeded from
    * the restored room**, so it does not restart at zero under a room that has
    * already used the low numbers (SOCKET-ID-STABLE).
