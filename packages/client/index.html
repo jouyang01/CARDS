@@ -361,15 +361,37 @@
          flow layout: a lobby is a form, and the board's absolute positioning
          buys it nothing. */
       .lobby { position: relative; z-index: 1; max-width: 860px; margin: 0 auto;
-        padding: 72px 20px 40px; overflow-y: auto; max-height: 100vh; }
+        padding: 72px 20px 40px; overflow-y: auto; max-height: 100vh;
+        /* LOBBY-BOUNDS: the panel is the boundary. Vertical scrolling is the
+           lobby's own; horizontal scrolling would mean something inside had
+           already escaped, and hiding it is the last line of defence behind
+           the wrapping rules rather than the mechanism. */
+        overflow-x: hidden; box-sizing: border-box; }
       .lobby h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
         opacity: 0.6; margin: 20px 0 8px; }
       .lobby h3 { font-size: 12px; opacity: 0.6; margin: 16px 0 6px; font-weight: 500; }
       .lobby-status { font-size: 14px; margin: 0 0 4px; }
       .lobby-error { color: var(--spawn1); font-size: 13px; margin: 0 0 8px; }
-      .lobby-seat { display: flex; justify-content: space-between; gap: 12px;
+      /* LOBBY-BOUNDS (Dev Note #1): the row clips inside its panel.
+         A seat line is a name on the left and a pick list on the right, and at
+         8 seats with three-character names the pick list is the longest string
+         on the screen. `space-between` on a flex row does not shrink anything —
+         the row simply grew past the panel and ran into the log beside it.
+         Three rules, and the reason for each:
+           • `flex-wrap` lets the picks drop under the name instead of pushing
+             the row wider, which is the behaviour at the narrowest sizes;
+           • `min-width: 0` on the children, because a flex item's default
+             `min-width: auto` refuses to shrink below its content and is what
+             makes "it overflows anyway" the usual outcome of trying this;
+           • `overflow-wrap: anywhere` so a single unbroken token — a long
+             player name pasted in — breaks rather than being the exception
+             that defeats all of the above. */
+      .lobby-seat { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px;
         padding: 8px 12px; border: 1px solid var(--grid-line); border-radius: 6px;
-        margin-bottom: 6px; background: var(--panel); font-size: 13px; }
+        margin-bottom: 6px; background: var(--panel); font-size: 13px;
+        max-width: 100%; overflow-wrap: anywhere; }
+      .lobby-seat-name { min-width: 0; overflow-wrap: anywhere; }
+      .lobby-team { max-width: 100%; }
       /* Your own row is the one carrying the controls below it, so it is the one
          that has to be findable at a glance. */
       .lobby-seat.is-mine { border-color: var(--team0); }
@@ -389,7 +411,9 @@
         background: rgb(255 255 255 / 0.06); color: #cbd2e0;
         border: 1px solid rgb(255 255 255 / 0.15); cursor: pointer; }
       .hud-mode.sel { background: var(--team0); color: #0b0d12; border-color: var(--team0); }
-      .lobby-seat-picks { opacity: 0.7; }
+      /* Right-aligned so the two halves still read as columns when the row is
+         wide enough not to wrap; `min-width: 0` for the reason above. */
+      .lobby-seat-picks { opacity: 0.7; min-width: 0; overflow-wrap: anywhere; text-align: right; }
       /* The enemy is a count and never a name (BLIND-PICK) — there is nothing
          here to style because there is nothing here to show. */
       .lobby-enemy-count { font-size: 13px; opacity: 0.7; margin: 0; }
