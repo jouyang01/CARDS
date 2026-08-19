@@ -4384,6 +4384,30 @@ and two copies of a rule is one copy that is wrong.
    still untested at the controller level. It is the one flow in `startHotSeat` a harness can reach
    and does not. Cheap follow-on if you want the coverage completed.
 
+## 2026-08-19 — QUOTA-RUNAWAY: the production outage, and what a decision window is for (Builder + owner)
+
+Room creation died in production with `Exceeded allowed rows written in Durable Objects free
+tier` — surfaced in the browser as `could not reach the server (TypeError: Failed to fetch)`,
+because the runtime's 1101 error page carries no CORS header and a cross-origin browser may not
+read it. Root cause: `#sendDecision` reopened a decision window after **every** resolve of an
+active match, sinks or no sinks, and hold-position turns never score the kill sudden death needs
+to end — so every abandoned mid-match room became an alarm loop, each tick a persist plus a
+`setAlarm`, each of those a metered row write, until the account's daily allowance was gone and
+every room in it broke. Three rulings, one per layer. **(1) A decision window exists for people:
+no attached sockets, no window, no alarm.** The match freezes; `#reclaim` and `start` both run
+`#sendDecision`, so the first returning player resumes the clock at a full window. The window
+open at the moment of the last drop deliberately survives it — one trailing alarm fire resolves
+it for nobody and then the room is silent, which also self-heals every already-stuck production
+room the first time its alarm fires after this deploys. **(2) A write that changes nothing is
+not written.** The DO keeps the serialized form of the last record persisted and the alarm time
+last armed, and skips the storage call when either is unchanged — pings and spurious wakes now
+cost nothing; rows written are the budget the free tier meters. **(3) The Worker may not throw.**
+`fetch` is wrapped so any exception returns CORS'd JSON naming the cause — an outage must arrive
+in the client's error path as a sentence, not as "Failed to fetch"; the room-record lookup gets
+the CORS header stamped on its way through for the same reason. Regression suite:
+`test/quota-runaway.test.ts`. Operational note: the daily allowance resets at midnight UTC —
+until then production creates fail even with this fix deployed, since the fix stops the burn
+but cannot un-spend the day's budget.
 ---
 
 ## 2026-09-21 — Builder, session 5 (HUD-LAYOUT → HARNESS-HOTSEAT)

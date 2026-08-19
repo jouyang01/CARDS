@@ -488,8 +488,17 @@ export class RoomHub {
     // runs out. `resolveNow` is the only thing that clears it, so exactly one
     // window exists per turn. A finished match has nothing to decide and so has
     // no window at all.
+    //
+    // QUOTA-RUNAWAY: a window opens only while somebody is *attached*. A match
+    // everyone has abandoned used to reopen a window after every timed-out
+    // resolve, so the DO's alarm ticked hold-position turns forever (sudden
+    // death has no exit without a kill) — each tick a storage write, until the
+    // free tier's daily row-write allowance was gone and every room in the
+    // account failed to create. With no sinks the match simply freezes with no
+    // window and no alarm; the next connect runs this method again (`#reclaim`
+    // and `start` both do) and the clock resumes.
     if (state.status !== 'active') this.#room = withDeadline(this.#room, undefined);
-    else if (this.deadline === undefined) {
+    else if (this.deadline === undefined && this.#sinks.size > 0) {
       this.#room = withDeadline(this.#room, this.#now() + DECISION_SECONDS * 1000);
     }
     const open = this.deadline;
