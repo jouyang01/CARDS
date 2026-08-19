@@ -44,6 +44,58 @@ export interface Tooltip {
 }
 
 /**
+ * TOOLTIP-SWEEP — the attribute a delegated tooltip reads.
+ *
+ * `data-tip` rather than `title`, which is the whole item: `title` hands the
+ * reveal to the browser, and the browser waits about a second.
+ */
+export const TIP_ATTR = 'data-tip';
+
+/**
+ * Show `tip` for any `[data-tip]` under `root`, instantly, for as long as the
+ * pointer is on it. Returns a teardown.
+ *
+ * **Delegated**, which is not an optimisation — it is what makes this usable on
+ * the HUD at all. Those nodes are keyed and reconciled (UI3): a status chip is
+ * created once and re-filled on every update, so a listener attached at build
+ * time would have to read the text at hover time anyway, and one attached on
+ * each update would stack. One listener on the region, and the text is an
+ * attribute the update already writes — so "what does this say" and "when does
+ * it appear" stop being two separate pieces of bookkeeping.
+ *
+ * `mouseover`/`mouseout` rather than `mouseenter`/`mouseleave`, because only the
+ * first pair bubbles and delegation is the point.
+ */
+export function delegateTooltips(root: HTMLElement, tip: Tooltip): () => void {
+  const target = (event: Event): HTMLElement | null => {
+    const node = event.target;
+    return node instanceof Element ? node.closest<HTMLElement>(`[${TIP_ATTR}]`) : null;
+  };
+  const over = (event: MouseEvent): void => {
+    const node = target(event);
+    const text = node?.dataset['tip'];
+    // An empty `data-tip` is "nothing to say", not an empty box: a chip whose
+    // text is conditional sets it to '' rather than juggling the attribute.
+    if (node === null || text === undefined || text === '') return tip.hide();
+    tip.show(text, { x: event.clientX, y: event.clientY });
+  };
+  const out = (event: MouseEvent): void => {
+    // Moving *within* the same tipped node fires mouseout for its children;
+    // only leaving the node itself should close the tip.
+    const to = (event as MouseEvent & { relatedTarget: EventTarget | null }).relatedTarget;
+    const from = target(event);
+    if (from !== null && to instanceof Node && from.contains(to)) return;
+    tip.hide();
+  };
+  root.addEventListener('mouseover', over);
+  root.addEventListener('mouseout', out);
+  return () => {
+    root.removeEventListener('mouseover', over);
+    root.removeEventListener('mouseout', out);
+  };
+}
+
+/**
  * Build a tooltip and attach it to `document.body`.
  *
  * On the body rather than inside the panel it describes, exactly as the inspect

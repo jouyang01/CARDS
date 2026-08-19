@@ -103,6 +103,7 @@ import {
 } from './scoreboard.js';
 import { FRONT_DOOR, HOT_SEAT_DOOR, endHeadline, exitLabel, outcomeFor } from './end-screen.js';
 import { AWAY_LABEL, NO_PRESENCE, type Presence } from './presence.js';
+import { createTooltip, delegateTooltips } from './tooltip.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -557,6 +558,10 @@ export function startHotSeat(
   const topChrome = document.getElementById('topchrome');
   if (topChrome !== null) topChrome.appendChild(scoreEl);
   else ui.status.after(scoreEl);
+  // TOOLTIP-SWEEP: the portraits' tooltips. Delegated on `scoreEl`, which is
+  // built once, because the strip inside it is rebuilt wholesale on every
+  // render — per-node listeners would be re-attached every turn.
+  delegateTooltips(scoreEl, createTooltip());
 
   const sizeToViewport = (): void => {
     // UI-VIEWPORT: the canvas IS the viewport. The board used to be the app
@@ -1265,7 +1270,9 @@ export function startHotSeat(
     for (const p of portraits) {
       const cell = document.createElement('div');
       cell.className = p.alive ? 'topbar-portrait' : 'topbar-portrait dead';
-      cell.title = p.alive ? `${p.name} — ${p.hp}/${p.maxHp}` : `${p.name} — down, back in ${p.respawnIn}`;
+      // TOOLTIP-SWEEP: `data-tip`, read by the delegated tooltip on `scoreEl`,
+      // rather than `title` and the browser's second-long delay.
+      cell.dataset['tip'] = p.alive ? `${p.name} — ${p.hp}/${p.maxHp}` : `${p.name} — down, back in ${p.respawnIn}`;
       // NET-PRESENCE-UI: two marks, and they are different facts. `away` says
       // this character's *player* is gone (the seat is held for them); `borrowed`
       // says the handoff has put them in your hands. A character can be both,
@@ -1273,12 +1280,12 @@ export function startHotSeat(
       if (p.away) {
         cell.classList.add('away');
         cell.dataset['away'] = 'true';
-        cell.title = `${p.name} — ${AWAY_LABEL}`;
+        cell.dataset['tip'] = `${p.name} — ${AWAY_LABEL}`;
       }
       if (p.borrowed) {
         cell.classList.add('borrowed');
         cell.dataset['borrowed'] = 'true';
-        cell.title = `${cell.title} · you are ordering them`;
+        cell.dataset['tip'] = `${cell.dataset['tip']} · you are ordering them`;
       }
 
       const face = document.createElement('div');

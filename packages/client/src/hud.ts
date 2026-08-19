@@ -21,6 +21,7 @@ import type { StatusChip } from './status-pips.js';
 import { ULT_MARK } from './hud-marks.js';
 import type { InspectPanel } from './inspect.js';
 import { renderInspectPanel } from './inspect-panel.js';
+import { createTooltip, delegateTooltips } from './tooltip.js';
 import type { TimerView } from './timer.js';
 import type { ModeOption } from './targeting.js';
 
@@ -345,6 +346,18 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   inspectPanel.style.display = 'none';
   document.body.appendChild(inspectPanel);
 
+  /**
+   * TOOLTIP-SWEEP — instant tooltips for the HUD's `data-tip` nodes (the Time
+   * Bank pip and the status chips), replacing native `title`.
+   *
+   * Delegated over the whole HUD rather than wired per node, because these
+   * nodes are keyed and re-filled on every update (UI3): the text changes every
+   * turn while the element stays, so an attribute the update already writes is
+   * the natural carrier and one listener on the root is the natural reader.
+   */
+  const tip = createTooltip();
+  delegateTooltips(root, tip);
+
   return {
     setBanner(text) {
       banner.textContent = text ?? '';
@@ -371,7 +384,10 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
       // socket rather than as nothing, so the resource is still legible after
       // it is gone.
       bankBtn.textContent = view.charges > 0 ? '●' : '○';
-      bankBtn.title = view.charges > 0
+      // TOOLTIP-SWEEP: `data-tip`, not `title` — the browser's reveal delay is
+      // about a second, and this is the button a player reaches for with eight
+      // seconds on the clock.
+      bankBtn.dataset['tip'] = view.charges > 0
         ? `Time Bank — add ${TIMEBANK_SECONDS} seconds (${view.charges} left)`
         : 'Time Bank — spent';
       bankBtn.disabled = !view.canExtend;
@@ -435,7 +451,9 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
         turns.textContent = `${status.remaining}t`;
         node.appendChild(turns);
         node.classList.toggle('harm', status.harmful);
-        node.title = `${status.label} — ${status.blurb} ${status.remaining} turn${status.remaining === 1 ? '' : 's'} left.`;
+        // TOOLTIP-SWEEP: what a status actually does is the thing a player
+        // most often does not know, so it is the worst place for a delay.
+        node.dataset['tip'] = `${status.label} — ${status.blurb} ${status.remaining} turn${status.remaining === 1 ? '' : 's'} left.`;
       }
       for (const [kind, node] of statusNodes) {
         if (!statuses.some((s) => s.kind === kind)) { node.remove(); statusNodes.delete(kind); }
