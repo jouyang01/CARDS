@@ -454,14 +454,38 @@
          lobby scrolls on its own and a panel that scrolled with the character
          grid would leave the screen exactly while you were reading it.
 
-         It hides below the width where that margin stops existing: overlapping
-         the pick screen with a description of it would be worse than the
-         tooltip alone, which still works at every size. */
+         Below the width where that margin stops existing it COLLAPSES — see
+         LOBBY-PANEL-RESPONSIVE below. */
       .lobby-detail { position: fixed; left: 20px; top: 72px; width: 300px;
         max-height: calc(100vh - 96px); overflow-y: auto; z-index: 2;
         padding: 14px 16px; border: 1px solid var(--grid-line); border-radius: 8px;
         background: var(--panel); box-sizing: border-box; }
-      @media (max-width: 1320px) { .lobby-detail { display: none !important; } }
+
+      /* LOBBY-PANEL-RESPONSIVE: collapsed, not gone (Builder OQ 2026-09-19 #7).
+
+         The panel used to be `display: none !important` under 1320px, so a
+         player windowed at 1280 never saw a kit and had no way to ask for one.
+         Hiding it was right about the *space* — there is no empty left third to
+         put it in down there, and a panel overlapping the character grid you are
+         reading it about is worse than no panel. It was wrong about the
+         *choice*: a reader who wants the kit more than the grid for a moment
+         should be able to say so.
+
+         So below the breakpoint it is a button, and the panel is what the button
+         opens — laid over the lobby deliberately, because at that width there is
+         nowhere else for it to be. Above the breakpoint the button is not there
+         at all: nothing to collapse when it already fits. */
+      .lobby-detail-toggle { display: none; position: fixed; left: 20px; top: 72px;
+        z-index: 3; pointer-events: auto; font-size: 12px; padding: 6px 10px;
+        max-width: calc(100vw - 40px); overflow: hidden; text-overflow: ellipsis;
+        white-space: nowrap; }
+      @media (max-width: 1320px) {
+        .lobby-detail { display: none; }
+        .lobby-detail.is-open { display: block; top: 108px;
+          width: min(340px, calc(100vw - 40px)); max-height: calc(100vh - 132px);
+          box-shadow: 0 12px 32px rgb(0 0 0 / 0.6); }
+        .lobby-detail-toggle { display: inline-block; }
+      }
       .lobby-detail-head { border-bottom: 1px solid var(--grid-line); padding-bottom: 8px; }
       .lobby-detail-name { font-size: 16px; margin: 0; text-transform: none; letter-spacing: 0; opacity: 1; }
       .lobby-detail-role { font-size: 11px; opacity: 0.6; margin: 2px 0 0; }

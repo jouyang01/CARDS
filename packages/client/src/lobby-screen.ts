@@ -127,11 +127,51 @@ export function createLobbyScreen(
   detailPanel.style.display = 'none';
   document.body.appendChild(detailPanel);
 
+  /**
+   * LOBBY-PANEL-RESPONSIVE (Builder OQ 2026-09-19 #7) — the panel's handle
+   * below the breakpoint.
+   *
+   * The panel was `display: none` under 1320px, so a player windowed at 1280
+   * never saw a kit and had no way to ask for one. This is the "ask for one":
+   * a button that is in the DOM at every width and shown by CSS only where the
+   * panel does not fit, because *whether it fits* is a question about the
+   * viewport and CSS is what knows the answer. A JS breakpoint here would be a
+   * second copy of the 1320 with no way to keep the two in step.
+   *
+   * Closed by default even once a character is chosen: at that width opening it
+   * covers the grid, and a panel that appeared over what you were pointing at
+   * because you pointed at it is the tooltip's job done badly.
+   */
+  let detailOpen = false;
+  const detailToggle = el('button', 'lobby-detail-toggle');
+  detailToggle.dataset['action'] = 'toggle-detail';
+  detailToggle.addEventListener('click', () => {
+    detailOpen = !detailOpen;
+    syncToggle();
+  });
+  document.body.appendChild(detailToggle);
+
+  /** Name what the button opens, and whether it is open. */
+  const syncToggle = (): void => {
+    const character = catalog.find((c) => c.id === detailId);
+    // Disabled rather than hidden when there is nothing chosen: a control that
+    // came and went as the pointer moved would be a moving target, and "why is
+    // there no kit button" is a worse question than a greyed one answers.
+    detailToggle.disabled = character === undefined;
+    detailToggle.textContent = character === undefined
+      ? 'Character kit'
+      : `${character.name}’s kit ${detailOpen ? '▾' : '▸'}`;
+    detailToggle.dataset['open'] = String(detailOpen && character !== undefined);
+    detailPanel.classList.toggle('is-open', detailOpen && character !== undefined);
+  };
+  syncToggle(); // label it before anything has been pointed at
+
   /** Repaint the side panel for `detailId`, or hide it when nothing is chosen. */
   const renderDetail = (): void => {
     const character = catalog.find((c) => c.id === detailId);
     if (character === undefined) {
       detailPanel.style.display = 'none';
+      syncToggle();
       return;
     }
     const detail = characterDetail(character);
@@ -160,7 +200,12 @@ export function createLobbyScreen(
       list.append(row);
     }
     detailPanel.append(list);
+    // Cleared rather than set to `block`, so the stylesheet decides. That is
+    // what lets LOBBY-PANEL-RESPONSIVE's media query keep the panel collapsed
+    // at a narrow width — an inline `block` here would beat it, and the toggle
+    // would be a button with nothing to do.
     detailPanel.style.display = '';
+    syncToggle();
   };
 
   /** Point at or pick a character: the side panel follows, and stays. */
@@ -359,6 +404,7 @@ export function createLobbyScreen(
       // The hover panel lives outside the lobby's root, so tearing the lobby
       // down does not take it with it. Removed explicitly, or it would hang
       // over the board the match starts on.
+      detailToggle.remove();
       hoverPanel.remove();
       tip.destroy();
     },
