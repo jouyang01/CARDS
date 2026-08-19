@@ -161,3 +161,84 @@ describe('AIM-PREVIEW-TRUE: the controller draws the boundary it computes', () =
     expect(shapes(b.renderer).filter((s) => s.length > 0)).toEqual([]);
   });
 });
+
+describe('AIM-PREVIEW-TRUE: a locked order keeps its shape on the board (AC #5)', () => {
+  /** A 2v2 hot-seat where one seat runs both characters, so it can lock one. */
+  const pair = () => {
+    const ui = mountUI();
+    const teams: [CharacterDef[], CharacterDef[]] = [[VEX, BASTION], [AEGIS, AEGIS]];
+    const opening: GameState = createMatch(OPEN_MAP, '2v2', teams);
+    opening.units.filter((u) => u.owner === 0).forEach((u, i) => { u.pos = { x: 8, y: 9 + i * 2 }; });
+    opening.units.filter((u) => u.owner === 1).forEach((u, i) => { u.pos = { x: 13, y: 9 + i * 2 }; });
+    // `[1, 1]` puts each team on ONE seat, so seat 0 orders both of its
+    // characters — which is the case a locked plan is drawn for.
+    startHotSeat(ui.ui, OPEN_MAP, buildRoster([VEX, BASTION, AEGIS]), teams, '2v2', [1, 1],
+      POOL, undefined, undefined, opening);
+    return ui;
+  };
+
+  const lockIn = (controls: HTMLElement): void => {
+    (controls.querySelector('.hud-lockrow .hud-lock') as HTMLButtonElement).click();
+  };
+
+  it('nothing is locked at the start of a turn, so nothing is drawn for it', () => {
+    const b = pair();
+    expect(b.renderer.draw.highlights.get('locked') ?? []).toEqual([]);
+  });
+
+  it('locking one character draws its committed shape while the other is ordered', () => {
+    // "Preview, confirmation and resolution all draw from one derivation." A
+    // locked plan showed only as a badge over the unit's head until now, so a
+    // player ordering their second character could not see the first's shot.
+    const b = pair();
+    armAbility(b.controls, VEX.abilities.find((a) => a.id === 'rail_shot')!.name);
+    aimAt(b.board, { x: 14, y: 9 }, 'mousemove');
+    aimAt(b.board, { x: 14, y: 9 }, 'click');
+    lockIn(b.controls);
+
+    const tiles = b.renderer.draw.highlights.get('locked') ?? [];
+    expect(tiles.length, 'the locked plan still covers tiles').toBeGreaterThan(0);
+    // …and its boundary is drawn from the same module, so the two agree.
+    const drawn = b.renderer.draw.shapes.filter((s) => s.length > 0);
+    expect(drawn.length, 'a shape for the locked order').toBeGreaterThan(0);
+    for (const p of tiles) {
+      expect(drawn.some((poly) => boundaryContains(poly, p)), `${p.x},${p.y}`).toBe(true);
+    }
+  });
+
+  it('and it is the SAME derivation, not a second drawing of the same idea', () => {
+    // The point of AC #5 is one derivation. The locked tiles must be exactly
+    // what `expandShape` returns for that unit's committed aim — not a
+    // re-approximation that happens to look similar.
+    const b = pair();
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    const at: Vec2 = { x: 14, y: 9 };
+    armAbility(b.controls, rail.name);
+    aimAt(b.board, at, 'mousemove');
+    aimAt(b.board, at, 'click');
+    lockIn(b.controls);
+
+    const drawnTiles = (b.renderer.draw.highlights.get('locked') ?? [])
+      .map((p) => `${p.x},${p.y}`).sort();
+    const fromEngine = expandShape(BOARD, rail, { x: 8, y: 9 }, [at])
+      .map((p) => `${p.x},${p.y}`).sort();
+    expect(fromEngine.length, 'the committed shot covers tiles').toBeGreaterThan(0);
+    expect(drawnTiles).toEqual(fromEngine);
+  });
+
+  it('the enemy seat never sees it, however the hot-seat hands over', () => {
+    // The hazard the filter exists for: `drafts` outlives the seat handover, so
+    // an unfiltered read would show the previous seat's committed shot to the
+    // player it is aimed at. Hidden information is team vs team.
+    const b = pair();
+    armAbility(b.controls, VEX.abilities.find((a) => a.id === 'rail_shot')!.name);
+    aimAt(b.board, { x: 14, y: 9 }, 'mousemove');
+    aimAt(b.board, { x: 14, y: 9 }, 'click');
+    lockIn(b.controls); // Vex locked; Bastion is up, same seat
+    expect((b.renderer.draw.highlights.get('locked') ?? []).length, 'a teammate sees it')
+      .toBeGreaterThan(0);
+    lockIn(b.controls); // Bastion locked; the device passes to team 1
+    expect(b.status.textContent, 'the other side is on the clock').toContain('t1-p0');
+    expect(b.renderer.draw.highlights.get('locked') ?? [], 'and sees nothing of it').toEqual([]);
+  });
+});

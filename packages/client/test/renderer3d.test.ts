@@ -80,8 +80,11 @@ describe('tile overlays clear the terrain they are drawn over', () => {
   });
 
   it('keeps its bottom-up stacking order, which is the draw order', () => {
+    // AIM-PREVIEW-TRUE put `locked` between the move envelope and the live aim:
+    // a plan already committed is context for the one being composed, so it
+    // must read under it and over the envelopes.
     const order: (keyof typeof LAYER_LIFT)[] =
-      ['fog', 'camo', 'range', 'reach', 'aim', 'band', 'impact', 'free', 'catalyst', 'waypoint', 'chase', 'select'];
+      ['fog', 'camo', 'range', 'reach', 'locked', 'aim', 'band', 'impact', 'free', 'catalyst', 'waypoint', 'chase', 'select'];
     expect(LAYERS.length).toBe(order.length); // a new layer must be placed deliberately
     for (let i = 1; i < order.length; i++) {
       expect(LAYER_LIFT[order[i]!], `${order[i]} must sit above ${order[i - 1]}`)

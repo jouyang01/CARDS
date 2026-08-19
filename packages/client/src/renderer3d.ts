@@ -113,7 +113,10 @@ const PAD_SIZE = 0.62;
  */
 export type HighlightLayer =
   | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'band' | 'impact' | 'free' | 'catalyst'
-  | 'waypoint' | 'chase' | 'select';
+  | 'waypoint' | 'chase' | 'select'
+  // AIM-PREVIEW-TRUE: a character on this side that has already locked in. Its
+  // own layer so it can be dimmer than the aim being composed over it.
+  | 'locked';
 
 /**
  * Route lines get their own layers for the same reason the aim overlays do: a
@@ -129,7 +132,7 @@ export type PathLayer = 'path' | 'catalystPath';
  * a dash's impact disc — each a locus of its own engine predicate, so each is
  * drawn rather than left for the eye to infer from a tile wash.
  */
-export type ShapeLayer = 'shape' | 'shapeBand' | 'shapeImpact';
+export type ShapeLayer = 'shape' | 'shapeBand' | 'shapeImpact' | 'shapeLocked';
 
 /**
  * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
@@ -156,6 +159,11 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
   camo: OVERLAY_BASE + 0.002,
   range: OVERLAY_BASE + 0.004,
   reach: OVERLAY_BASE + 0.008,
+  // AIM-PREVIEW-TRUE: a plan already locked in on this side. Under the live
+  // aim, because it is context for the decision being made rather than the
+  // decision itself — and a locked shape that painted over the one you are
+  // composing would be the loudest thing on the board for the least reason.
+  locked: OVERLAY_BASE + 0.010,
   aim: OVERLAY_BASE + 0.014,
   // AUTO-PREVIEW: the subset of an aim that hits *harder* — a cone's axis line
   // (BASIC-AXIS) or a circle's core (BASIC-INNER). Directly above the aim it
@@ -182,7 +190,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, band: 0.62, impact: 0.86, free: 0.8, catalyst: 0.72, waypoint: 0.5, chase: 0.98, select: 0.92,
+  fog: 1, camo: 1, range: 0.92, reach: 0.92, locked: 0.78, aim: 0.92, band: 0.62, impact: 0.86, free: 0.8, catalyst: 0.72, waypoint: 0.5, chase: 0.98, select: 0.92,
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;
