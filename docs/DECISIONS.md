@@ -4092,3 +4092,104 @@ sub-4 repositions including the Shift catalyst; the guard test keeps future kits
 **(6) RESOLVE-PARTIAL is per-character, not per-seat:** locked characters always act,
 never-locked characters hold — no turn ever waits on a player, and the OPEN
 disconnect/timeout question closes the same way.
+
+## 2026-09-18 — Builder: the batch-3 backlog, and where the AC and the code disagreed
+
+Twelve items in one session, so the record here is only the calls the code could not make for
+itself.
+
+**MENDING-RANGE's fix is one rule with no exceptions, and it costs seven abilities a freebie.**
+The aim gate and the r1 area were both correct; the bug was that `applyAreaBoons` applied the
+caster's beneficial effects unconditionally, so Lumen was healed by her own Mending Light from
+anywhere on the board. The caster is now in the area or it is not, exactly like an ally. Every
+self-buff the old exception defended still lands — a `self` shape's area *is* the caster's square,
+a dash ends inside its own path, a range-0 circle is centred on the caster — and what changes is
+the seven abilities aimed *away* from their caster, which stop buffing them for free. Named rather
+than hidden: Mending Light, Sanctuary, Barrier Pulse, Stoke the Flame, Verdant Veil, Overgrowth,
+Radiant Lash.
+
+**RECOIL is a cost of firing, not an area effect.** `selfDamagePct` bills the caster whether or
+not it is standing in its own blast. Seismic Rupture is a `range: 0` circle so the distinction
+never shows on shipped content, but the alternative reading — recoil only when you are in your own
+area — would make an ability aimed away from itself free, and "shattering the earth under your own
+feet" is a description of the cast rather than of the footprint. Implemented as a `fixedDamage`
+hit, which is what makes it bypass cover *and* Might/Weaken: it is the authored number scaled, not
+an attack aimed at yourself. Shields still absorb it, and `killUnit` already credits nobody when
+the killer owns the victim.
+
+**PHASE-STATUS-FIRST puts shields in batch one and heals in batch two.** The AC splits a phase
+into "all statuses" then "all damage/heal". A shield is a status, so it lands before the damage and
+absorbs the volley it was thrown in front of; a heal is named with the damage, so it stays after it
+and a heal arriving alongside a lethal blow is still too late. Both readings are defensible for the
+shield; the status one was taken because that is what a shield *is* in this engine, and because the
+alternative leaves a bodyguard ability that cannot bodyguard.
+
+**A trap's damage is stamped at arming, from the owner's Might or Weaken.** The AC's own example is
+"a Prep Might boosts that unit's Prep-phase trap as it arms", and trap damage was previously flat —
+no modifier, ever, at either end. Stamping at placement makes the example true and keeps the trap
+deterministic three turns later, when its owner's statuses are somebody else's business.
+
+**TRAP-CENTRE: the backlog's "shipped per-team trap cap (4)" does not exist.** There is no count
+cap anywhere in the engine; the shipped 4 is `TRAP_MAX_LIFETIME`, the lifetime ceiling from
+TRAP-LIFETIME-TUNE. The tests pin that. A per-team count cap would be new scope and is flagged
+below rather than invented.
+
+**MODE-BASE-INVARIANT required a data edit the AC implied but did not spell out.** Kestrel's Twin
+Bolts shipped with Spread (cone 2) at index 0 against a line-6 base, so "absent mode = base = mode
+0" was false for the only two-mode ability in the game. Focus now leads. It is an index change, not
+a balance one — both profiles, both numbers and the base geometry are untouched — but it moves
+every test that referenced the old indices, including the client one that asserted an unarmed mode
+previews *mode 1*.
+
+**CASTER-SAFE reaches delayed detonations; traps are left alone.** A grenade you armed two turns
+ago is still your own ability, so the rule applies there too. A trap you laid triggering on you is
+a different question — traps are placements with owners, not effects with casters — and nothing in
+the notes rules on it, so it is untouched and flagged.
+
+**Owner Dev Note, recorded because the backlog contradicts it:** *"The Repo Variable is set
+correctly, I mistyped it in the prompt with the analyzer, multiplayer should be working."* The
+backlog's `🔧 OWNER ACTION` block (and my own OQ 2026-09-17 #6) say `WORKER_ORIGIN` is still
+wrong and multiplayer is blocked on it. Per the owner, it is not: the variable is set and the
+deployed client reaches its server. I cannot edit `BACKLOG.md`, so this is the record — the owner
+action is closed and the block is stale.
+
+## Open Questions for the Analyzer — 2026-09-18
+
+1. **TRAP-CENTRE's AC names a per-team trap cap of 4 that the engine has never had.** I read it as
+   `TRAP_MAX_LIFETIME` and tested that. If a **count** cap was actually intended — "four live traps
+   per team, oldest evicted" or "the fifth placement is refused" — it is unimplemented and needs its
+   own item, because eviction policy is a design decision and I will not guess it. Thorn can now arm
+   two per turn (auto-mine + free Snare Bloom), so the question has teeth it did not have last week.
+
+2. **A trap triggering on the unit that laid it is unruled.** CASTER-SAFE now covers abilities,
+   including delayed ones; traps still fire on anyone who is not on the owner's *team* — which
+   already excludes the owner, so there is no live bug. Flagging because the two rules now look like
+   one rule with a hole in it, and the next trap item will trip over it.
+
+3. **The Dash phase applies no debuffs to its victims at all.** Bramble Stride's Root and Tempest
+   Run's Slow are in the data and reach nobody: `runDash` applies damage and displacement and
+   nothing else. Untouched here — it is neither in the batch nor a simultaneity question — but it is
+   two shipped kits doing less than they say. Worth an item.
+
+4. **Warding Halo's `weaken` now applies to nobody.** Prep has no enemy-facing branch, so before
+   CASTER-SAFE its only recipient was ever Aegis himself; after it, none. The ability is a shield
+   with a dead rider. Either the Weaken wants an enemy-facing Prep path (a real engine ask) or it
+   should come out of the data — Designer's call, not mine.
+
+5. **PHASE-STATUS-FIRST does not re-check Untargetable.** The gather loop reads `isUntargetable` at
+   gather time, i.e. before batch one lands, so an Untargetable applied in the same phase does not
+   protect against that phase's damage. Left as-is because the AC does not name it and moving it
+   would also move the energy gate that rides on it. Consistent with "damage computes against
+   post-status state"? Probably not. Ruling wanted.
+
+6. **LOBBY-READY excludes disconnected seats from the handshake.** A held seat cannot ready, and
+   waiting on one would let a dropped player freeze a lobby indefinitely — so `everyoneReady`
+   skips them. That means a room can start while a seat is away, and its characters are then run by
+   the reconnect rules. I think that is right (it matches "no turn ever waits on a player") but it
+   is a lobby decision I made rather than one that was ruled.
+
+7. **The lobby has no browser coverage.** LOBBY-BOUNDS is tested by matching the shipped stylesheet
+   against a real rendered lobby in happy-dom, which proves the rules *reach the elements* but
+   computes no layout; LOBBY-INSPECT and LOBBY-READY are unit-tested against a real hub. Actual
+   pixel overflow at 8 seats is still unverified by anything. NET-E2E would close it, as it would
+   the mode toggle and the presence marks (OQ 2026-09-17 #4).
