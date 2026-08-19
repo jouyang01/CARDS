@@ -357,6 +357,15 @@
         border-bottom: 1px solid currentColor; }
       #create-link:hover { opacity: 0.8; }
 
+      /* DEV-CHARSELECT: a `?chars=` that could not be honoured. Loud and
+         permanent — this is the notice that makes falling back to the default
+         deal legitimate rather than a silent mis-seat, so it must not read as
+         decoration. */
+      .setup-note { max-width: 46ch; margin: 0 0 6px; padding: 6px 9px;
+        border-radius: 6px; border-left: 3px solid #ffb84d;
+        background: rgb(40 30 10 / 0.92); color: #ffd79a;
+        font-size: 12px; line-height: 1.45; }
+
       /* ── M3-WAIT-STATE / M3-CONN-STATE: why the board is not taking orders ─
          Beside Lock In, where a player is already looking when they finish a
          turn. Amber rather than red: a locked turn is the normal state of a
