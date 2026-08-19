@@ -91,6 +91,17 @@ describe('CAT1: the pool is content, and it validates', () => {
     }
   });
 
+  it('ABLATIVE-40: Ablative Field shields 40, and says 40', () => {
+    // Owner directive ("Ablative shielding should shield for 40"). The number
+    // and the sentence are edited by hand in the same JSON object, which is
+    // exactly where they drift apart — so both are asserted, and the second one
+    // is the half a suite would otherwise never notice.
+    const field = POOL['ablative_field']!;
+    expect(field.effects.find((e) => e.kind === 'shield')?.amount).toBe(40);
+    expect(field.description).toContain('Shield 40');
+    expect(field.description, 'and the old number is gone from it').not.toContain('35');
+  });
+
   it('needs no new EFFECT_KIND — every effect is one the engine already has', () => {
     // The claim the design rests on: the whole pool, zero engine surface. The
     // list is spelled out rather than checked against `EFFECT_KINDS` so that a
