@@ -919,13 +919,21 @@ function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbi
 }
 
 /**
- * Apply an ability's beneficial effects to every ally standing in its area,
- * **and to the caster exactly once** whether or not it is standing in it.
+ * Apply an ability's beneficial effects to every ally standing in its area —
+ * **the caster included, on the same terms as anybody else** (MENDING-RANGE).
  *
- * The caster is unconditional because an ability's self-effects are not an area
- * question — Untargetable on a dash, Might on an ult, a shield the caster grants
- * itself — while the area half is FF1 polarity: beneficial effects reach your
- * own team only. Both meet in one pass so nobody is shielded twice.
+ * The caster used to be unconditional, on the argument that a self-effect is
+ * "not an area question". It is: Mending Light is a `circle` aimed up to 5 away,
+ * and Lumen was healed by it from anywhere on the board — the owner's report
+ * that it "heals outside its range" (Dev Note #12). The aim gate was working
+ * perfectly; the caster was simply never asked to be inside the area it aimed.
+ *
+ * Every case the old exception defended still works, because the caster is
+ * genuinely in the area for all of them: a `self` shape's area **is** the
+ * caster's square, a dash's area is the path or the landing square it ends on,
+ * and a `circle` with `range: 0` (Warding Halo) is centred on the caster. What
+ * changes is exactly the abilities aimed *away* — and there the boon is now a
+ * targeting decision rather than a freebie, which is what the area was for.
  */
 function applyAreaBoons(
   draft: GameState,
@@ -934,10 +942,13 @@ function applyAreaBoons(
   source: Source,
   events: TurnEvent[],
 ): void {
-  applySelfEffects(draft, caster, a.def.effects, source, events);
+  const area = new Set(a.area.map(vecKey));
+  // Non-beneficial effects on this path are the caster's own business (a `decoy`
+  // spawns at its feet; a self-cast's statuses), so they are applied whenever
+  // the caster is in its own area — which for a self-cast is always.
+  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, a.def.effects, source, events);
   const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
   if (boons.length === 0) return;
-  const area = new Set(a.area.map(vecKey));
   for (const ally of draft.units) {
     if (!ally.alive || ally.owner !== caster.owner || ally.unitId === caster.unitId) continue;
     if (!area.has(vecKey(ally.pos))) continue;
@@ -1247,7 +1258,15 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     }
 
     // Self-statuses (Untargetable, etc.); movement/damage/displacement are skipped.
-    applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
+    //
+    // MENDING-RANGE gates this on the area too, for the same reason as Prep's:
+    // a dash ends inside its own path or on its landing square, and a `self`
+    // shape's area is the caster's square, so every self-buff that was meant to
+    // land still lands — but a `line` never covers the square it was fired from,
+    // so Lumen no longer heals herself off a beam aimed at somebody else.
+    if (a.area.some((p) => vecEq(p, plan.unit.pos))) {
+      applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
+    }
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
     // CAMO-REVEAL / REVEAL-FIX: a dash gives a *concealed* dasher away, whether
     // it landed damage or merely carried a debuff or a shove — and gives an open
