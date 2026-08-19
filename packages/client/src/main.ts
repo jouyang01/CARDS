@@ -43,6 +43,7 @@ import cinder from '../../../data/characters/cinder.json';
 import lumen from '../../../data/characters/lumen.json';
 import ravok from '../../../data/characters/ravok.json';
 import thorn from '../../../data/characters/thorn.json';
+import kestrel from '../../../data/characters/kestrel.json';
 
 /** The first map is the default; the rest are reachable via `?map=<id>`. */
 const MAPS = [duelArena, ironBasin] as unknown as MapDef[];
@@ -50,11 +51,17 @@ const MAPS = [duelArena, ironBasin] as unknown as MapDef[];
 /**
  * The dev draft order. Dealt alternately (`dealTeams`), so the first four give
  * the 2v2 demo this file has always shipped — Vex + Wisp against Bastion +
- * Aegis — and all eight give a 4v4 with a comparable archetype mix on each
- * side. Kestrel is left out: 4v4 needs exactly eight, and picking who plays is
- * the M3 lobby's job, not a constant's.
+ * Aegis — and the first eight give a 4v4 with a comparable archetype mix on
+ * each side.
+ *
+ * **Kestrel is back (BASIC-MODES)** and is deliberately **last**. She was held
+ * out while Twin Bolts had no toggle to aim it with; now that it has one she is
+ * pickable in the lobby, which is what the roster is for. Appended rather than
+ * slotted in because `dealTeams` takes the first `perTeam * 2` entries: at the
+ * end she joins the pool a lobby picks from without moving anybody in the
+ * hot-seat's 2v2 or 4v4 deal.
  */
-const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn] as unknown as CharacterDef[];
+const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn, kestrel] as unknown as CharacterDef[];
 
 /** The nine catalysts (CAT1). Validated here for the same reason the map is. */
 const CATALYSTS = catalystData as unknown as CatalystData;

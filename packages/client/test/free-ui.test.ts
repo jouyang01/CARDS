@@ -218,6 +218,7 @@ const model = (over: Partial<HudModel> = {}): HudModel => ({
   active: character(),
   roster: [character()],
   abilities: [hudAbility('rail_shot'), hudAbility('overwatch_trap')],
+  modes: [],
   catalysts: [],
   move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
   chase: { armed: false, disabled: false },
@@ -228,7 +229,7 @@ const model = (over: Partial<HudModel> = {}): HudModel => ({
 const handlers = () => ({
   selectCharacter: vi.fn(), selectAbility: vi.fn(), selectCatalyst: vi.fn(), hoverAbility: vi.fn(),
   selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
-  toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime: vi.fn(),
+  toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime: vi.fn(), selectMode: vi.fn(),
 });
 
 let root: HTMLElement;

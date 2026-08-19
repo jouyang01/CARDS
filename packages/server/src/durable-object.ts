@@ -26,22 +26,24 @@ import cinder from '../../../data/characters/cinder.json';
 import lumen from '../../../data/characters/lumen.json';
 import ravok from '../../../data/characters/ravok.json';
 import thorn from '../../../data/characters/thorn.json';
+import kestrel from '../../../data/characters/kestrel.json';
 
 /**
  * What every room can be played with — the **pickable roster**, not a deal.
  *
  * Bundled rather than fetched: `data/` is static content and a Worker that had
  * to fetch its own rules before it could start a turn would have a cold-start
- * failure mode for no benefit. It matches the client's default `CATALOG`
- * (Kestrel excluded until BASIC-MODES), so what a lobby offers is what the
- * server will accept.
+ * failure mode for no benefit. It matches the client's default `CATALOG` — now
+ * including Kestrel (BASIC-MODES) — so what a lobby offers is what the server
+ * will accept. The two lists have to move together: a character the client
+ * offers and the server does not is a pick refused at the last moment.
  *
  * **No `teams`** (M3-LOBBY-UI): the interim deal is gone from production, so a
  * networked room gets its characters from the lobby's picks and from nowhere
  * else. A config that still carried a deal would let a player press start and
  * be handed characters nobody chose.
  */
-const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn] as unknown as CharacterDef[];
+const CATALOG = [vex, bastion, wisp, aegis, cinder, lumen, ravok, thorn, kestrel] as unknown as CharacterDef[];
 
 /**
  * The maps a room may be created on (M3-ROOM-CREATE). The first is the default,

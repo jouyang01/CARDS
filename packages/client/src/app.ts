@@ -62,6 +62,7 @@ import {
   commitAim,
   dashRoute,
   draftAbility,
+  modeOptions,
   draftFreeAbility,
   isFreeAbility,
   draftHasOrder,
@@ -618,6 +619,21 @@ export function startHotSeat(
     selectAbility,
     selectCatalyst,
     selectChase: armChase,
+    /**
+     * BASIC-MODES — flip the armed ability's aim-time profile.
+     *
+     * Re-arms rather than merely re-labels: `selectMode` clears the aim (the two
+     * profiles have different shapes and ranges, so a square legal for one is
+     * often illegal for the other), and the interaction goes back to `aim` so the
+     * player is pointing again immediately instead of at a stale preview.
+     */
+    selectMode: (mode) => {
+      const unit = selectedUnit();
+      if (unit === undefined) return;
+      drafts.set(unit.unitId, nextDraft(draftFor(unit), { type: 'selectMode', mode }, false));
+      interaction = arm('aim');
+      render();
+    },
     hoverAbility: (abilityId, control, def) => {
       if (abilityId === undefined || control === undefined || def === undefined) hideTip();
       else showTip(control, def);
@@ -1340,6 +1356,10 @@ export function startHotSeat(
         free: opt.def.free === true,
         def: opt.def,
       })),
+      // BASIC-MODES: the armed ability's two profiles, or nothing. Derived from
+      // the *resolved* ability (`draftAbility` already applied the mode), so the
+      // row and the preview can never disagree about which one is live.
+      modes: modeOptions(draftAbility(character, draft), draft.mode),
       // Three slots, in phase order, read straight off the unit — `catalystsUsed`
       // is the engine's answer, so a slot can never grey out for the wrong reason.
       catalysts: unit.catalysts.flatMap((id) => {

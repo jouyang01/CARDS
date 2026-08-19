@@ -57,6 +57,7 @@ import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
   AbilityEffect,
+  AbilityProfile,
   AbilityPhase,
   CharacterDef,
   DecoyState,
@@ -90,6 +91,36 @@ export function findAbility(
   if (ability !== undefined) return { def: ability, isUlt: false };
   if (character.ultimate.id === abilityId) return { def: character.ultimate, isUlt: true };
   return undefined;
+}
+
+/**
+ * BASIC-MODES — the ability as this order aims it.
+ *
+ * One function, applied once, at the single place an order becomes a plan. That
+ * is the whole implementation: every consumer downstream — `expandShape`,
+ * `aimIsLegal`, `axisSquares`, `innerSquares`, the client's preview — receives
+ * an ordinary `AbilityDef` and never learns that modes exist. A knob that had to
+ * be threaded through the geometry would be a knob every future shape has to
+ * remember.
+ *
+ * The overlay is the profile's **own keys only** (`AbilityProfile` is spelled
+ * out, so those keys are exactly the aim-time geometry), which means a mode that
+ * omits `radius` inherits the ability's. `id` is untouched on purpose: cooldowns
+ * and energy key off it, and a mode is the same ability aimed differently.
+ *
+ * An absent, non-integer or out-of-range `mode` returns the def unchanged. A
+ * refusal would be the wrong answer to a number: the ability still exists and
+ * still has a default profile, and an order that lost its mode should lose the
+ * *mode*, not the turn.
+ */
+export function abilityProfile(def: AbilityDef, mode: number | undefined): AbilityDef {
+  const modes = def.modes;
+  if (modes === undefined || mode === undefined) return def;
+  if (!Number.isInteger(mode) || mode < 0 || mode >= modes.length) return def;
+  const { name, ...geometry } = modes[mode] as AbilityProfile;
+  // Spread over the def rather than picked out of it: the profile's keys are the
+  // override, and the ones it does not carry stay the ability's own.
+  return { ...def, ...geometry, ...(name === undefined ? {} : { name }) };
 }
 
 // ── Normalised, validated plans ─────────────────────────────────────────────
@@ -563,7 +594,11 @@ function planAbility(
   if (order === undefined) return undefined;
   const found = findAbility(roster, unit.characterId, order.abilityId);
   if (found === undefined) return undefined;
-  const { def, isUlt } = found;
+  const { isUlt } = found;
+  // BASIC-MODES: the one place a mode is applied. Everything below — the
+  // cooldown check, the legality check, the three geometry expansions — sees an
+  // ordinary ability, which is what keeps the knob from spreading.
+  const def = abilityProfile(found.def, order.mode);
   const aim = order.target ?? [];
   if ((unit.cooldowns[def.id] ?? 0) > 0) return undefined;
   if (isUlt && unit.energy < ULT_COST) return undefined;

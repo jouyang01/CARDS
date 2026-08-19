@@ -34,8 +34,13 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
   'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
-  'oncePerMatch', 'impact',
+  'oncePerMatch', 'impact', 'modes',
   'effects', 'description',
+] as const;
+
+/** Every key an `AbilityProfile` may carry (BASIC-MODES) — same argument again. */
+export const PROFILE_KEYS = [
+  'name', 'shape', 'range', 'radius', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
 ] as const;
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
@@ -116,6 +121,40 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
     // rather than a design.
     if (isInt(a.innerRadius) && isInt(a.radius) && a.innerRadius >= a.radius) {
       errs.push(`${path}: innerRadius (${a.innerRadius}) must be smaller than radius (${a.radius}) or there is no ring left`);
+    }
+  }
+  // BASIC-MODES: exactly two aim-time profiles, each a legal ability in its own
+  // right. Checked by **re-validating the merged ability**, not by a second
+  // rulebook: a mode that turns a circle into a cone has to satisfy the cone's
+  // rules, and writing those out again here is how the two copies drift.
+  if (a.modes !== undefined) {
+    if (!Array.isArray(a.modes) || a.modes.length !== 2) {
+      errs.push(`${path}: modes must be an array of exactly 2 profiles`);
+    } else {
+      a.modes.forEach((profile, i) => {
+        const where = `${path}.modes[${i}]`;
+        if (typeof profile !== 'object' || profile === null) {
+          errs.push(`${where}: must be an object`);
+          return;
+        }
+        for (const key of Object.keys(profile)) {
+          if (!(PROFILE_KEYS as readonly string[]).includes(key)) {
+            errs.push(`${where}: unknown key "${key}" (a mode may only change aiming: ${PROFILE_KEYS.join(', ')})`);
+          }
+        }
+        // The merged ability is what the engine will actually resolve, so it is
+        // what gets checked — range caps, shape-specific requirements and every
+        // knob's own rule, for free and in one place.
+        const { name: _label, ...geometry } = profile;
+        errs.push(...validateAbility({ ...a, ...geometry, modes: undefined }, where, isUltimate));
+      });
+      // Two identical profiles is a toggle that does nothing — a data mistake
+      // that looks like a feature, which is the kind this file exists to catch.
+      const [first, second] = a.modes;
+      if (first !== undefined && second !== undefined
+        && JSON.stringify({ ...first, name: undefined }) === JSON.stringify({ ...second, name: undefined })) {
+        errs.push(`${path}: the two modes are identical — the toggle would do nothing`);
+      }
     }
   }
   if (!isInt(a.cooldown) || a.cooldown < 0) errs.push(`${path}: cooldown must be a non-negative integer`);

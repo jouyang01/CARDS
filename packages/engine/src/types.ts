@@ -208,8 +208,53 @@ export interface AbilityDef {
    * exactly one user, and `{ destination: 1 }` says the same thing in data.
    */
   impact?: { origin?: number; destination?: number };
+  /**
+   * BASIC-MODES — two **aim-time profiles** on one ability; the order carries
+   * which (Designer §3.2, adopted from AR's Elle; Kestrel's Twin Bolts).
+   *
+   * Each entry overrides the ability's own **targeting geometry** and nothing
+   * else, so a mode is a shape of attack rather than a second ability: same
+   * damage, same cooldown, same energy, same id — which is what makes the choice
+   * a *positioning* decision instead of a strictly-better button. A wide cone at
+   * range 2 and a thin line at range 6 are two answers to "how far away is
+   * this fight", and the Skirmisher picks one every turn.
+   *
+   * Exactly two, because that is what the ask is and what a toggle is: a third
+   * profile wants a different control and a different design conversation.
+   * `AbilityProfile` names the fields a mode may move, so the type — not a
+   * convention — is what stops a mode changing a number the shape does not own.
+   *
+   * The **index is the identity**: mode 0 is the first entry, always. Order in
+   * `data/` is meaning, so reordering the array reinterprets every order in
+   * flight and every replay. Absent = today's behaviour exactly.
+   */
+  modes?: [AbilityProfile, AbilityProfile];
   effects: AbilityEffect[];
   description: string;
+}
+
+/**
+ * One aim-time profile of a two-mode ability (BASIC-MODES).
+ *
+ * Deliberately a **subset of `AbilityDef`'s geometry**, spelled out rather than
+ * `Partial<AbilityDef>`: a mode may change where an ability reaches and what
+ * footprint it leaves, and may not change what it costs, what it does or how
+ * often. `Partial<AbilityDef>` would permit `modes: [{ cooldown: 0 }, …]`, which
+ * is not a mode — it is two abilities sharing a slot.
+ *
+ * `name` is the only non-geometric field, and it is for the toggle: "Spread" and
+ * "Focus" say more on a button than "mode 1" and "mode 2".
+ */
+export interface AbilityProfile {
+  /** What the toggle calls this mode. Falls back to the ability's own name. */
+  name?: string;
+  shape: TargetShape;
+  range: number;
+  radius?: number;
+  axisBonus?: number;
+  beamWidth?: number;
+  innerRadius?: number;
+  innerAmount?: number;
 }
 
 export type Archetype = 'firepower' | 'frontline' | 'trickster' | 'support';
@@ -438,6 +483,16 @@ export interface AbilityOrder {
    * original click-to-aim behaviour. Ignored by other shapes.
    */
   aimStep?: number;
+  /**
+   * BASIC-MODES — which of a two-mode ability's profiles this order aims with.
+   *
+   * An **index**, because the index is the identity: `modes[0]` is mode 0 in
+   * `data/`, in the order, in the log and in a replay. Absent, out of range or
+   * on an ability with no `modes` all mean the same thing — the ability's own
+   * profile — so an old client, a hand-written order and a mistyped number all
+   * land on the default rather than on a refusal or an exception.
+   */
+  mode?: number;
 }
 
 export interface UnitOrders {

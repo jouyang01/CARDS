@@ -3969,6 +3969,103 @@ engine does not need.
    it is arguably useful and arguably an information change, so I left it. **A one-line ruling** would
    settle it either way.
 
+## 2026-09-17 — Builder: the turn survives an eviction, the enemy has a count, and Kestrel gets her toggle
+
+1. **SUBMISSIONS-PERSIST finishes the pattern TIMER-PERSIST started, and finishes it the same way.**
+   The record is the single copy and the in-memory `Map` is **gone** rather than mirrored — a cache
+   beside the authority is two copies of one fact, which is the lesson the last item recorded.
+   `submissionsOf` builds a `Map` on demand for the two callers that want lookup semantics; a room has
+   at most eight seats, so this is not a cost worth a bug.
+
+2. **An absent key, not an empty object.** `clearSubmissions` removes `submissions` entirely, matching
+   `withDeadline`'s closed window: `{}` and absent round-trip through JSON identically, and only one of
+   them is the shape a fresh room has. Stated as a test rather than left to a convention, because the
+   difference is invisible in storage and loud under `exactOptionalPropertyTypes`.
+
+3. **Stored orders are copied on the way in.** `withSubmission` shallow-copies each order, so a caller
+   that keeps its array cannot edit a plan that is already locked. Cheap, and it closes the one way a
+   "committed" turn could still change.
+
+4. **The enemy present count only appears when somebody is missing.** "2 of 2 present" on a healthy
+   lobby is reassurance nobody asked for, and a line that is always on is a line the eye learns to
+   skip — which would cost exactly the moment it exists for. Same instinct as NET-PRESENCE-UI's marks,
+   which also appear only on an absence.
+
+5. **The count is over THEIR seats, and it lies toward silence.** Filtering the whole room for
+   disconnects would report the other side short because *you* blinked; and before this client has a
+   seat to compare against it reports everybody present, because claiming an absence you cannot see is
+   worse than not mentioning presence at all.
+
+6. **BASIC-MODES is one function at one place, on both sides.** `abilityProfile` overlays the chosen
+   profile; `planAbility` calls it once and `draftAbility` calls **the same function** once. Every
+   consumer downstream sees an ordinary `AbilityDef`. A knob threaded through the geometry would be a
+   knob every future shape has to remember, and a client with its own overlay could draw a cone the
+   server resolves as a line.
+
+7. **`AbilityProfile` is spelled out rather than `Partial<AbilityDef>`.** A mode may change where an
+   ability reaches and what footprint it leaves; it may not change what it costs, what it does or how
+   often. `Partial<AbilityDef>` would permit `modes: [{ cooldown: 0 }, …]`, which is not a mode but two
+   abilities sharing a slot. The type carries the rule so no future kit has to be trusted with it.
+
+8. **A malformed mode is checked by re-validating the MERGED ability.** A mode that turns a line into a
+   circle has to satisfy the circle's rules, and the range cap has to hold for both profiles. Writing
+   those rules out a second time inside the `modes` branch is how two copies drift, so the branch calls
+   `validateAbility` on the merge instead — every knob's own rule, for free. Two identical profiles are
+   also refused: a toggle that does nothing is a data mistake that looks like a feature.
+
+9. **The index is the identity, and an impossible index is not a refusal.** `modes[0]` is mode 0 in
+   `data/`, in the order, in the log and in a replay — so reordering the array reinterprets every order
+   in flight, which is why the doc comment says so. Absent, negative, fractional and out-of-range all
+   resolve to the ability's own profile: the ability still exists and still has a default, and an order
+   that lost its mode should lose the *mode*, not the turn.
+
+10. **Flipping the toggle clears the aim.** The two profiles have different shapes and ranges, so a
+    square that was a legal aim for one is very often not one for the other. Keeping it would leave a
+    preview drawn for an order the server refuses — the worst of the three outcomes, because it looks
+    like it worked. The **move** is kept: a mode is a targeting choice, and the walk beside it is a
+    decision the player already made (MS1).
+
+11. **Kestrel's base profile IS mode 1, deliberately.** An order from a client that has never heard of
+    modes resolves exactly as it did before this existed, and the toggle's initial highlight (mode 0)
+    is only honest because of it. That is a rule about *content* rather than about the engine, recorded
+    beside `DEFAULT_MODE` where the dependency lives.
+
+12. **Kestrel is appended LAST to both catalogues.** `dealTeams` takes the first `perTeam * 2` entries,
+    so at the end she joins the pool a lobby picks from without moving anybody in the hot-seat's 2v2 or
+    4v4 deal — every existing test and every render screenshot keeps its cast. The client's and the
+    server's lists have to move together, or a character the lobby offers is a pick refused at the last
+    moment.
+
+## Open Questions for the Analyzer — 2026-09-17
+
+1. **`AbilityProfile` deliberately cannot change `effects`, `cooldown` or `energyGain`** — a mode is
+   aim-time geometry only (`types.ts`; validator enforces it for hand-written data). The Designer's
+   spec for Twin Bolts is shape+range only, so nothing shipped needs more. **Confirm the boundary** —
+   if a future two-mode ability is meant to trade damage for reach, that is a different (larger) knob
+   and wants its own item, not a widened `AbilityProfile`.
+
+2. **A content rule is load-bearing and unenforced: mode 1 must equal the ability's own profile.**
+   (`targeting.ts` `DEFAULT_MODE`.) The engine treats an absent mode as the base profile and the client
+   highlights mode 0, so the two agree only because Kestrel's base *is* Focus. If that is meant to be a
+   rule, it belongs in `validateAbility`; if it is meant to be a coincidence, the client should send
+   `DEFAULT_MODE` explicitly instead of relying on it. **I did neither — please rule.**
+
+3. **`modes` is only reachable on a normal ability, not on a catalyst.** Catalysts are `AbilityDef`s
+   and `abilityProfile` would work on one, but `order.catalyst`/`order.freeAbility` carry no `mode` and
+   the client offers no toggle for them. Deliberate (the ask is one ability), and cheap to extend if
+   ever wanted. Flagging so it is not discovered as a bug.
+
+4. **The mode toggle is not in the Playwright suite.** The render harness drives the hot-seat's default
+   2v2 (Vex + Wisp vs Bastion + Aegis), and Kestrel is not in it — reaching her needs `?map=…&format=…`
+   plumbing the harness does not have, or the lobby. Unit-covered (19 client tests incl. the real HUD
+   row). Same coverage boundary as the presence marks; NET-E2E would close both.
+
+5. **SUBMISSIONS-PERSIST closes the eviction gap I flagged; nothing in-memory is load-bearing now**
+   except `#sinks`, `#joined` and `#bound`, which are *sockets* and cannot survive by definition.
+   Recording it as done rather than leaving OQ 2026-09-16 #2 open.
+
+6. **`WORKER_ORIGIN` is still the one owner action** (backlog's own note). Nothing in this session
+   depends on it, but the deployed client still reaches no server until it is set.
 ## 2026-08-16 — Dev Notes batch 3: 21 owner notes triaged and ruled (Designer)
 
 Full triage in `docs/design/dev-notes-batch-3.md` — lobby/flow (client), kit changes (data
