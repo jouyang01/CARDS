@@ -59,8 +59,12 @@ import {
 const MIN_DISTINCT_COLOURS = 12;
 
 const boardCanvas = (page: Page): Locator => page.locator('#board canvas');
-/** Lock In specifically — the playback Skip button shares its class. */
-const lockIn = (page: Page): Locator => page.locator('.hud-right .hud-lock');
+/**
+ * Lock In specifically — the playback Skip button shares its class. Since
+ * TIMER-BAR it lives in `.hud-lockrow`, joined to the draining bar it ends,
+ * rather than in the right-hand column under a numeric countdown.
+ */
+const lockIn = (page: Page): Locator => page.locator('.hud-lockrow .hud-lock');
 
 /**
  * The composited board, as PNG bytes — the only honest view of the render.

@@ -184,12 +184,28 @@ describe('UI3: controls are wired to handlers, and Lock In sits right of the hot
     expect(h.hoverAbility).toHaveBeenLastCalledWith(undefined);
   });
 
-  it('Lock In is the last element of the HUD, immediately right of the hotbar', () => {
+  it('Lock In is joined to the timer bar, above the hotbar', () => {
+    // TIMER-BAR moved it. Lock In used to sit in the right-hand column under
+    // the countdown; the two things a player watches in the last ten seconds
+    // are now one object across the top of the hotbar, so the button lives in
+    // `hud-lockrow` beside the bar it ends.
     const hud = createHud(root, handlers());
     hud.update(model());
     const order = [...root.children].map((c) => c.className);
     expect(order.indexOf('hud-centre')).toBeLessThan(order.indexOf('hud-right'));
-    expect(root.querySelector('.hud-right')!.contains(root.querySelector('.hud-lock'))).toBe(true);
+    const row = root.querySelector('.hud-lockrow')!;
+    expect(row.contains(root.querySelector('.hud-lock'))).toBe(true);
+    expect(row.contains(root.querySelector('.hud-timer'))).toBe(true);
+    expect(root.querySelector('.hud-centre')!.contains(row), 'over the hotbar it times').toBe(true);
+  });
+
+  it('and the bar is the first thing in the centre column, above the abilities', () => {
+    // "A draining bar above the skills" (Dev Note #6) — the order is the design.
+    const hud = createHud(root, handlers());
+    hud.update(model());
+    const centre = [...root.querySelector('.hud-centre')!.children].map((c) => c.className);
+    expect(centre[0]).toBe('hud-lockrow');
+    expect(centre.indexOf('hud-lockrow')).toBeLessThan(centre.indexOf('hud-hotbar'));
   });
 
   it('sprint is disabled once an ability is chosen (GAME_SPEC §2)', () => {

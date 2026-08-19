@@ -18,7 +18,9 @@
 import { TIMEBANK_SECONDS, type AbilityDef } from '@cards/engine';
 import type { CatalystCost } from './targeting.js';
 import type { StatusChip } from './status-pips.js';
+import { ULT_MARK } from './hud-marks.js';
 import type { InspectPanel } from './inspect.js';
+import { renderInspectPanel } from './inspect-panel.js';
 import type { TimerView } from './timer.js';
 import type { ModeOption } from './targeting.js';
 
@@ -160,7 +162,7 @@ export interface Hud {
   clear(): void;
 }
 
-const ULT_MARK = '★';
+
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string): HTMLElementTagNameMap[K] => {
   const node = document.createElement(tag);
@@ -235,7 +237,6 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   const holdBtn = el('button', 'hud-move');
   holdBtn.textContent = 'Clear';
   moveRow.append(moveBtn, sprintBtn, chaseBtn, holdBtn);
-  centre.append(catalystRow, hotbar, modeRow, moveRow);
 
   moveBtn.onclick = () => handlers.selectMove(false);
   sprintBtn.onclick = () => handlers.selectMove(true);
@@ -246,28 +247,46 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
     btn.addEventListener('mouseleave', () => handlers.hoverMove(undefined));
   }
 
-  // ── bottom-right: Lock In, immediately right of the hotbar ────────────────
-  const right = el('div', 'hud-right');
-  // ── UI-TIMER: the countdown, immediately above Lock In ───────────────────
-  // Beside the button it is a deadline for, so the two are read together.
+  // ── TIMER-BAR: the clock is a draining bar across the top of the hotbar,
+  //    running into an enlarged Lock In at its right end ─────────────────────
+  //
+  // Dev Notes #6+#7, one redesign rather than two. The countdown used to be a
+  // number stacked above the button in the right-hand column, which put the two
+  // things a player watches in the last ten seconds — how long is left, and the
+  // button that ends it — in a corner, at the size of everything else in that
+  // corner. AR puts the deadline *across the abilities it applies to* and makes
+  // the button the largest thing on the bar, and that is what this is.
+  //
+  // The row survives the timer being hidden. `setTimer(undefined)` hides the
+  // bar during playback (there is no deadline then), and Lock In has to stay —
+  // so the button is a sibling of the bar rather than a child of it.
+  const lockRow = el('div', 'hud-lockrow');
   const timerRow = el('div', 'hud-timer');
+  const timerTrack = el('div', 'hud-timer-track');
+  const timerFill = el('div', 'hud-timer-fill');
+  timerTrack.appendChild(timerFill);
   const timerText = el('span', 'hud-timer-text');
   const bankBtn = el('button', 'hud-bank');
   bankBtn.onclick = () => handlers.extendTime();
-  timerRow.append(timerText, bankBtn);
+  timerRow.append(timerTrack, timerText, bankBtn);
+  const lockBtn = el('button', 'hud-lock');
+  lockBtn.onclick = () => handlers.lock();
+  lockRow.append(timerRow, lockBtn);
+  centre.append(lockRow, catalystRow, hotbar, modeRow, moveRow);
+
+  // ── bottom-right: the view toggles and the waiting banner ─────────────────
+  const right = el('div', 'hud-right');
   // Built once and hidden, like every other node here (UI3): a banner created
   // on demand would be a new element under the pointer on the frame it appears.
   const banner = el('div', 'hud-banner');
   banner.style.display = 'none';
-  const lockBtn = el('button', 'hud-lock');
-  lockBtn.onclick = () => handlers.lock();
   const viewRow = el('div', 'hud-view');
   const projBtn = el('button', 'hud-small');
   projBtn.onclick = () => handlers.toggleProjection();
   const orbitBtn = el('button', 'hud-small');
   orbitBtn.onclick = () => handlers.toggleOrbit();
   viewRow.append(projBtn, orbitBtn);
-  right.append(viewRow, timerRow, banner, lockBtn);
+  right.append(viewRow, banner);
 
   // ── playback: one Skip, replacing the ordering controls ───────────────────
   const playback = el('div', 'hud-playback');
@@ -307,6 +326,12 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
     setTimer(view) {
       timerRow.style.display = view === undefined ? 'none' : '';
       if (view === undefined) return;
+      // TIMER-BAR: the bar is the primary read and the number is the precise
+      // one. `fraction` is already clamped by `timerView`, so the width is a
+      // straight percentage and the model owns the arithmetic.
+      timerFill.style.width = `${Math.round(view.fraction * 1000) / 10}%`;
+      timerFill.classList.toggle('urgent', view.urgent);
+      timerFill.classList.toggle('expired', view.expired);
       timerText.textContent = view.text;
       timerText.classList.toggle('urgent', view.urgent);
       timerText.classList.toggle('expired', view.expired);
@@ -326,92 +351,10 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
     },
 
     inspect(panel, at) {
-      if (panel === undefined) {
-        inspectPanel.style.display = 'none';
-        return;
-      }
-      inspectPanel.replaceChildren();
-      inspectPanel.classList.toggle('t1', panel.team === 1);
-
-      const head = el('div', 'inspect-head');
-      const title = el('div', 'inspect-name');
-      title.textContent = panel.name;
-      const role = el('div', 'inspect-role');
-      // A frozen panel is a decoy's. The player is never told that — the label
-      // is the archetype either way — but the flag rides along so nothing
-      // downstream mistakes a snapshot for live data.
-      role.textContent = panel.archetype;
-      head.append(title, role);
-
-      const vitals = el('div', 'inspect-vitals');
-      const hp = el('span', 'inspect-hp');
-      hp.textContent = panel.shield > 0
-        ? `${panel.hp}/${panel.maxHp} +${panel.shield}`
-        : `${panel.hp}/${panel.maxHp}`;
-      const energy = el('span', 'inspect-energy');
-      energy.textContent = panel.ult ? `${panel.energy} ULT` : String(panel.energy);
-      energy.classList.toggle('ult', panel.ult);
-      vitals.append(hp, energy);
-
-      const slots = el('div', 'inspect-slots');
-      for (const ability of panel.abilities) {
-        const row = el('div', 'inspect-slot');
-        row.classList.toggle('ult', ability.isUlt);
-        row.classList.toggle('down', !ability.ready);
-        const name = el('span', 'inspect-slot-name');
-        name.textContent = ability.name + (ability.isUlt ? ` ${ULT_MARK}` : '');
-        const note = el('span', 'inspect-slot-note');
-        // The owner's actual question is "can that character do the thing to me
-        // this turn", so a charged ult reads "ready" and an uncharged one reads
-        // its energy gap rather than a bare 0.
-        note.textContent = ability.cooldown > 0
-          ? `${ability.cooldown}t`
-          : ability.ready ? 'ready' : 'energy';
-        row.append(name, note);
-        slots.appendChild(row);
-      }
-
-      inspectPanel.append(head, vitals, slots);
-
-      if (panel.catalysts.length > 0) {
-        const cats = el('div', 'inspect-catalysts');
-        for (const catalyst of panel.catalysts) {
-          const chip = el('span', 'inspect-catalyst');
-          chip.classList.toggle('spent', catalyst.spent);
-          chip.textContent = catalyst.name;
-          chip.title = catalyst.spent ? `${catalyst.name} — spent` : `${catalyst.name} — ${catalyst.phase}`;
-          cats.appendChild(chip);
-        }
-        inspectPanel.appendChild(cats);
-      }
-
-      if (panel.statuses.length > 0) {
-        const row = el('div', 'inspect-statuses');
-        for (const status of panel.statuses) {
-          const chip = el('span', 'hud-status');
-          chip.classList.toggle('harm', status.harmful);
-          const dot = el('span', 'hud-status-dot');
-          dot.innerHTML = status.glyph;
-          const name = el('span', 'hud-status-name');
-          name.textContent = status.label;
-          const turns = el('span', 'hud-status-turns');
-          turns.textContent = `${status.remaining}t`;
-          chip.append(dot, name, turns);
-          row.appendChild(chip);
-        }
-        inspectPanel.appendChild(row);
-      }
-
-      inspectPanel.style.display = 'block';
-      if (at !== undefined) {
-        // Kept inside the viewport, and flipped to the pointer's left when it
-        // would otherwise run off the right edge.
-        const box = inspectPanel.getBoundingClientRect();
-        const left = at.x + 18 + box.width > globalThis.innerWidth ? at.x - 18 - box.width : at.x + 18;
-        const top = Math.min(at.y + 12, Math.max(8, globalThis.innerHeight - box.height - 8));
-        inspectPanel.style.left = `${Math.round(Math.max(8, left))}px`;
-        inspectPanel.style.top = `${Math.round(Math.max(8, top))}px`;
-      }
+      // LOBBY-INSPECT moved the drawing into `inspect-panel.ts` so the lobby
+      // can show the same panel. The HUD keeps the node — built once, never
+      // recreated (UI3) — and hands it over.
+      renderInspectPanel(inspectPanel, panel, at);
     },
 
     update(model) {

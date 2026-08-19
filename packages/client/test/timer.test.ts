@@ -218,4 +218,64 @@ describe('UI-TIMER: the HUD readout', () => {
     hud.setTimer(undefined);
     expect(root.querySelector<HTMLElement>('.hud-timer')!.style.display).toBe('none');
   });
+
+/**
+ * TIMER-BAR (Dev Notes #6+#7) — the countdown becomes a draining bar across the
+ * hotbar, running into an enlarged Lock In at its right end.
+ *
+ * The number, the tenths, the colour shift and the Time Bank pip are all
+ * carried over unchanged — the tests above still pass and are the proof. What
+ * is new is the bar, and the one thing that can go wrong with a bar is that it
+ * does not track the thing it is a bar for.
+ */
+describe('TIMER-BAR: the bar drains with the clock', () => {
+  const built = () => {
+    const hud = createHud(root, handlers);
+    hud.update(model());
+    return hud;
+  };
+  const fill = () => root.querySelector<HTMLElement>('.hud-timer-fill')!;
+  const width = () => Number.parseFloat(fill().style.width);
+
+  it('is full at the top of the window and empty at the bottom', () => {
+    const hud = built();
+    hud.setTimer(timerView(DECISION_MS, 1));
+    expect(width()).toBe(100);
+    hud.setTimer(timerView(0, 1));
+    expect(width()).toBe(0);
+  });
+
+  it('and drains monotonically in between, tracking the fraction', () => {
+    const hud = built();
+    const widths = [DECISION_MS, DECISION_MS * 0.75, DECISION_MS / 2, 4_000, 0].map((ms) => {
+      hud.setTimer(timerView(ms, 1));
+      return width();
+    });
+    expect([...widths].sort((a, b) => b - a), 'never goes back up').toEqual(widths);
+    expect(widths[2], 'half a window is half a bar').toBeCloseTo(50, 1);
+  });
+
+  it('takes the urgency cue the number takes, so the read works peripherally', () => {
+    const hud = built();
+    hud.setTimer(timerView(20_000, 1));
+    expect(fill().classList.contains('urgent')).toBe(false);
+    hud.setTimer(timerView(4_000, 1));
+    expect(fill().classList.contains('urgent')).toBe(true);
+    hud.setTimer(timerView(0, 1));
+    expect(fill().classList.contains('expired')).toBe(true);
+  });
+
+  it('the bar hides with the timer, and Lock In does NOT', () => {
+    // The reason the button is a sibling of the bar rather than a child of it:
+    // playback has no deadline, and a HUD that hid Lock In with the clock would
+    // be unusable the moment the timer went away.
+    const hud = built();
+    hud.setTimer(timerView(20_000, 1));
+    hud.setTimer(undefined);
+    expect(root.querySelector<HTMLElement>('.hud-timer')!.style.display).toBe('none');
+    const lock = root.querySelector<HTMLElement>('.hud-lockrow .hud-lock')!;
+    expect(lock, 'still there').toBeTruthy();
+    expect(lock.style.display).not.toBe('none');
+  });
+});
 });
