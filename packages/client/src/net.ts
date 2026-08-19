@@ -220,6 +220,7 @@ export const frames = {
   }),
   pick: (picks: Pick[]): ClientMessage => ({ type: 'pick', picks }),
   start: (): ClientMessage => ({ type: 'start' }),
+  ready: (ready: boolean): ClientMessage => ({ type: 'ready', ready }),
   submit: (orders: UnitOrders[]): ClientMessage => ({ type: 'submit', orders }),
   extend: (): ClientMessage => ({ type: 'extend' }),
   ping: (): ClientMessage => ({ type: 'ping' }),
@@ -294,6 +295,13 @@ export class RoomClient {
   join(name?: string, seatId?: string): void { this.send(frames.join(name, seatId)); }
   pick(picks: Pick[]): void { this.send(frames.pick(picks)); }
   start(): void { this.send(frames.start()); }
+  /**
+   * LOBBY-READY — say this seat is happy to start, or take it back.
+   *
+   * Carries the value rather than toggling, so a re-sent frame is idempotent
+   * and two clicks racing each other cannot land on the wrong answer.
+   */
+  ready(ready: boolean): void { this.send(frames.ready(ready)); }
   submit(orders: UnitOrders[]): void { this.send(frames.submit(orders)); }
   /**
    * Ask for the Time Bank (M3-TIMER). Nothing is applied locally: the charge is

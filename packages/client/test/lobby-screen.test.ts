@@ -162,6 +162,12 @@ describe('M3-LOBBY-UI: the start button', () => {
     expect(startButton(root).disabled, 'the other side has not').toBe(true);
 
     b.client.pick([{ characterId: 'bastion' }, { characterId: 'aegis' }]);
+    expect(startButton(root).disabled, 'picked, but not yet readied').toBe(true);
+
+    // LOBBY-READY: picking is not agreeing to go. `lobby-ready.test.ts` owns
+    // the handshake; here it is the last thing standing between the room and
+    // the button.
+    b.client.ready(true);
     expect(startButton(root).disabled, 'now it is live').toBe(false);
   });
 
@@ -170,6 +176,7 @@ describe('M3-LOBBY-UI: the start button', () => {
     const { hub, root, a, b } = mounted();
     a.client.pick([{ characterId: 'vex' }, { characterId: 'wisp' }]);
     b.client.pick([{ characterId: 'bastion' }, { characterId: 'aegis' }]);
+    b.client.ready(true); // LOBBY-READY
     expect(hub.room.state, 'complete, and still not started').toBeUndefined();
 
     startButton(root).click();
@@ -181,6 +188,7 @@ describe('M3-LOBBY-UI: the start button', () => {
     const { hub, root, a, b } = mounted();
     a.client.pick([{ characterId: 'vex' }, { characterId: 'wisp' }]);
     b.client.pick([{ characterId: 'bastion' }, { characterId: 'aegis' }]);
+    b.client.ready(true); // LOBBY-READY
     startButton(root).click();
     expect(hub.room.state!.units.map((u) => u.characterId).sort())
       .toEqual(['aegis', 'bastion', 'vex', 'wisp']);
@@ -194,6 +202,7 @@ describe('M3-LOBBY-UI: picks → start → a turn, over the socket', () => {
     const { hub, root, a, b } = mounted();
     a.client.pick([{ characterId: 'vex' }, { characterId: 'wisp' }]);
     b.client.pick([{ characterId: 'bastion' }, { characterId: 'aegis' }]);
+    b.client.ready(true); // LOBBY-READY
     startButton(root).click();
 
     // A decision arrived, fogged for each side (M3-HIDDEN).

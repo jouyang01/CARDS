@@ -48,16 +48,20 @@ const lobbied = (over: {
   enemyReady?: number;
   enemyOf?: number;
   canStart?: boolean;
+  /** LOBBY-READY: own-team seats that have said they are happy to start. */
+  readied?: string[];
+  /** LOBBY-READY: the seat holding the Start button. */
+  creator?: string;
 } = {}): NetState => {
   const seatId = over.seatId ?? 'a';
   const team = over.team ?? 0;
   const seats = over.seats ?? [{ seatId: 'a', team: 0, name: 'Ada' }, { seatId: 'b', team: 1, name: 'Bo' }];
   const joined = applyServerMessage(initialNet(), {
     type: 'joined',
-    seat: { seatId, team, name: 'Ada', unitIds: [], picks: [], connected: true, missedTurns: 0 },
+    seat: { seatId, team, name: 'Ada', unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0 },
     room: {
       code: 'WXYZ', format: '2v2', turn: 0, canStart: false, started: false, locked: [],
-      seats: seats.map((s) => ({ ...s, unitIds: [], picks: [], connected: true, missedTurns: 0 })),
+      seats: seats.map((s) => ({ ...s, unitIds: [], picks: [], ready: false, connected: true, missedTurns: 0 })),
     },
   });
   return applyServerMessage(joined, {
@@ -70,6 +74,8 @@ const lobbied = (over: {
       enemyReady: over.enemyReady ?? 0,
       enemyOf: over.enemyOf ?? 1,
       canStart: over.canStart ?? false,
+      readied: over.readied ?? [],
+      ...(over.creator === undefined ? {} : { creator: over.creator }),
     },
   });
 };

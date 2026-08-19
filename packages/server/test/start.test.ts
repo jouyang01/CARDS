@@ -95,10 +95,14 @@ describe('M3-START: the message', () => {
   });
 
   it('the deal is deterministic — the same joins give the same seating', () => {
+    // Both presses come from `s0` now: LOBBY-READY put the button in the
+    // creator's hands, so "whoever pressed it" is no longer a variable this
+    // test can vary. The determinism it is about — the same joins producing the
+    // same seating — is unaffected, and `lobby-ready.test.ts` owns the refusal.
     const a = room(2);
     a.hub.receive('s0', START);
     const b = room(2);
-    b.hub.receive('s1', START);
+    b.hub.receive('s0', START);
     expect(b.hub.room.seats).toEqual(a.hub.room.seats);
   });
 

@@ -77,8 +77,19 @@ export interface LobbyView {
   /** Enemy seats that have finished choosing — a count, never ids. */
   enemyReady: number;
   enemyOf: number;
-  /** Whether the whole lobby could start now (`lobbyReady`). */
+  /** Whether the whole lobby could start now (`lobbyReady` + LOBBY-READY). */
   canStart: boolean;
+  /**
+   * LOBBY-READY — which own-team seats have said they are happy to start.
+   *
+   * Own team only, like `picks` above and for the same reason: whether the
+   * other side has readied is theirs to know. The creator is not listed — it
+   * holds the Start button instead, and `creator` names it so the screen knows
+   * which control to show.
+   */
+  readied: string[];
+  /** The seat that may press Start: the room's creator (LOBBY-READY). */
+  creator?: string;
 }
 
 /** Client → server. */
@@ -106,6 +117,12 @@ export type ClientMessage =
    * and the message M3-LOBBY's start button will send.
    */
   | { type: 'start' }
+  /**
+   * LOBBY-READY (Dev Note #4) — this seat is happy to start, or has changed its
+   * mind. Revocable until the match begins, which is why it carries the value
+   * rather than being a one-way "ready" ping.
+   */
+  | { type: 'ready'; ready: boolean }
   /**
    * Choose this seat's characters and their triads (M3-LOBBY). One message for
    * the whole seat rather than one per character: the rules being checked
@@ -282,6 +299,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | undefined {
   if (msg['type'] === 'ping') return { type: 'ping' };
   if (msg['type'] === 'start') return { type: 'start' };
   if (msg['type'] === 'extend') return { type: 'extend' };
+  if (msg['type'] === 'ready' && typeof msg['ready'] === 'boolean') {
+    return { type: 'ready', ready: msg['ready'] };
+  }
   // Picks are checked for *shape* only — whether the ids name real characters,
   // add up to what the seat owes, or clash under R3 is `setPicks`' business, and
   // a second copy of those rules here is a second copy to keep in step.

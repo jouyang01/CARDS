@@ -258,14 +258,33 @@ function enemyPresent(net: NetState, of: number): number {
 }
 
 /**
- * Whether the start button is live — the server's own `lobbyReady`, forwarded.
+ * Whether the start button is live — the server's own gate, forwarded.
  *
  * Not recomputed from the rows above, and that is the point: this client cannot
  * see the enemy's picks, so it is structurally incapable of deciding whether the
- * *room* is ready. Only the server can, and it says so in one boolean.
+ * *room* is ready. Only the server can, and it says so in one boolean — which
+ * since LOBBY-READY also carries the handshake.
  */
 export function canStart(net: NetState): boolean {
   return net.lobby?.canStart === true;
+}
+
+/**
+ * LOBBY-READY — is this seat the room's creator, and so the one holding Start?
+ *
+ * The server names the creator rather than the client assuming "seat 0 is the
+ * first row I was sent": a reconnecting client sees the room in whatever order
+ * the server lists it, and guessing would put the button under the wrong player
+ * exactly when somebody has just dropped.
+ */
+export function isCreator(net: NetState): boolean {
+  const creator = net.lobby?.creator;
+  return creator !== undefined && creator === net.seat?.seatId;
+}
+
+/** LOBBY-READY — has this seat said it is happy to start? */
+export function isReady(net: NetState): boolean {
+  return net.seat !== undefined && (net.lobby?.readied ?? []).includes(net.seat.seatId);
 }
 
 /** What the lobby says it is waiting for, in one line. */

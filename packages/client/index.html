@@ -430,6 +430,15 @@
       .lobby-catalyst.is-chosen { border-color: var(--aim); color: var(--aim); }
       .lobby-start { margin-top: 24px; padding: 10px 20px; font-size: 14px; }
       .lobby-start:disabled { opacity: 0.4; cursor: not-allowed; }
+      /* LOBBY-READY: the control a non-creator seat holds instead of Start.
+         Same size, because it is the same decision from the other side of the
+         table — and it goes green once taken, so a room can see itself fill up
+         in the seat rows above. */
+      .lobby-ready { margin-top: 24px; padding: 10px 20px; font-size: 14px; }
+      .lobby-ready.is-ready { border-color: var(--hp); color: var(--hp); }
+      /* What the room is waiting for, under whichever button this seat holds.
+         A greyed button says "not yet"; this says what "yet" means. */
+      .lobby-wait { font-size: 12px; opacity: 0.6; margin: 6px 0 0; }
 
       /* ── M3-ROOM-CREATE: the host's form, inside the same .lobby column ──── */
       .create-hint { font-size: 12px; opacity: 0.6; margin: 0 0 16px; max-width: 46em; }

@@ -82,6 +82,8 @@ const room = (ids: string[], format: '2v2' | '4v4' = '2v2'): { hub: RoomHub; soc
 };
 const pickFrame = (...ids: string[]) =>
   JSON.stringify({ type: 'pick', picks: ids.map((characterId) => ({ characterId, catalysts: TRIAD })) });
+/** LOBBY-READY: a seat saying it is happy to start, or taking it back. */
+const readyFrame = (ready: boolean) => JSON.stringify({ type: 'ready', ready });
 
 describe('M3-LOBBY: a pick is answered to its own team and nobody else', () => {
   it('the picker and its teammate see the pick; the enemy sees only a count', () => {
@@ -176,10 +178,14 @@ describe('M3-LOBBY: what the lobby payload tells a seat', () => {
   it('whether the whole lobby could start — including the enemy half it cannot see', () => {
     // `canStart` is the one thing a seat needs to know about the other team's
     // progress, and it is a boolean: it says "we could go", never who chose what.
+    // Since LOBBY-READY it carries the handshake too, so `b` has to ready as
+    // well as pick — `a` is the creator and readies by pressing the button.
     const { hub, sock } = room(['a', 'b']);
     hub.receive('a', pickFrame('ash', 'bry'));
     expect(sock['a']!.last('lobby')!.lobby.canStart, 'the enemy has not picked').toBe(false);
     hub.receive('b', pickFrame('cyn', 'dex'));
+    expect(sock['a']!.last('lobby')!.lobby.canStart, 'picked, not yet readied').toBe(false);
+    hub.receive('b', readyFrame(true));
     expect(sock['a']!.last('lobby')!.lobby.canStart).toBe(true);
   });
 
@@ -187,6 +193,7 @@ describe('M3-LOBBY: what the lobby payload tells a seat', () => {
     const { hub, sock } = room(['a', 'b']);
     hub.receive('a', pickFrame('ash', 'bry'));
     hub.receive('b', pickFrame('cyn', 'dex'));
+    hub.receive('b', readyFrame(true));
     const before = sock['a']!.of('lobby').length;
     hub.receive('a', JSON.stringify({ type: 'start' }));
     expect(sock['a']!.of('matchStarted').length).toBe(1);
@@ -202,6 +209,7 @@ describe('M3-LOBBY: the start button plays what was picked', () => {
       picks: [{ characterId: 'ash', catalysts: TRIAD }, { characterId: 'bry' }],
     }));
     hub.receive('b', pickFrame('cyn', 'dex'));
+    hub.receive('b', readyFrame(true)); // LOBBY-READY: the creator waits on it
     hub.receive('a', JSON.stringify({ type: 'start' }));
 
     // The authoritative state, not the seat's copy — `matchStarted.state` is
@@ -242,6 +250,9 @@ describe('M3-LOBBY: the start button plays what was picked', () => {
     for (const [seat, id] of [['a', 'ash'], ['c', 'bry'], ['b', 'cyn'], ['d', 'dex']] as const) {
       hub.receive(seat, pickFrame(id));
     }
+    // LOBBY-READY: picking is not the same as agreeing to go, so everybody but
+    // the creator says so before the button lights.
+    for (const seat of ['b', 'c', 'd']) hub.receive(seat, readyFrame(true));
     expect(sock['a']!.last('lobby')!.lobby.canStart, 'the button lights up').toBe(true);
     expect(sock['a']!.of('matchStarted'), 'and waits to be pressed').toEqual([]);
 

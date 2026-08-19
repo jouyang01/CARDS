@@ -23,6 +23,8 @@ import {
   draftPicks,
   emptyDraft,
   enemyProgress,
+  isCreator,
+  isReady,
   lobbyStatus,
   resizeDraft,
   seatRows,
@@ -221,14 +223,41 @@ export function createLobbyScreen(
       ui.root.append(loadout);
     }
 
-    // ── start ──────────────────────────────────────────────────────────────
-    const start = el('button', 'lobby-start', 'Start match');
-    start.dataset['action'] = 'start';
-    // Live only when the *server* says the whole room is ready — this client
-    // cannot see the other side's picks and so cannot answer that itself.
-    start.disabled = !canStart(net);
-    start.addEventListener('click', () => { client.start(); });
-    ui.root.append(start);
+    // ── ready / start (LOBBY-READY, Dev Note #4) ───────────────────────────
+    //
+    // Two controls, and a seat gets exactly one of them. The room's creator
+    // holds Start; everybody else holds Ready and waits. That is the whole
+    // mechanic: a lobby where any seat can start is a lobby where the last
+    // person to finish picking decides for everyone.
+    if (isCreator(net)) {
+      const start = el('button', 'lobby-start', 'Start match');
+      start.dataset['action'] = 'start';
+      // Live only when the *server* says so — this client cannot see the other
+      // side's picks or readiness, so it is structurally unable to answer.
+      start.disabled = !canStart(net);
+      start.addEventListener('click', () => { client.start(); });
+      ui.root.append(start);
+      // Named so the wait is a fact rather than a guess about a greyed button.
+      if (!canStart(net)) {
+        ui.root.append(el('p', 'lobby-wait', 'Waiting for the room to be ready…'));
+      }
+    } else {
+      const ready = isReady(net);
+      const button = el('button', 'lobby-ready', ready ? 'Ready ✓' : 'Ready up');
+      button.dataset['action'] = 'ready';
+      button.dataset['ready'] = String(ready);
+      if (ready) button.classList.add('is-ready');
+      // Revocable until the match starts: a player who readies and then sees a
+      // teammate pick the wrong character has to be able to say so, and this is
+      // the only signal they have.
+      button.addEventListener('click', () => { client.ready(!ready); });
+      ui.root.append(button);
+      ui.root.append(el(
+        'p',
+        'lobby-wait',
+        ready ? 'Waiting for the host to start…' : 'Tell the host you are ready.',
+      ));
+    }
   };
 
   const unsubscribe = client.subscribe(() => { render(); });
