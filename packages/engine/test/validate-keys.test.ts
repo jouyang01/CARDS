@@ -87,7 +87,7 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     // cone-only or circle-only keys above.
     const twin: AbilityDef = {
       id: 'w', name: 'W', phase: 'blast', shape: 'line', range: 6, cooldown: 0, energyGain: 8,
-      modes: [{ name: 'Spread', shape: 'cone', range: 2 }, { name: 'Focus', shape: 'line', range: 6 }],
+      modes: [{ name: 'Focus', shape: 'line', range: 6 }, { name: 'Spread', shape: 'cone', range: 2 }],
       effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
     expect(validateAbility(charge, 'x')).toEqual([]);

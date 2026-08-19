@@ -156,13 +156,23 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
         && JSON.stringify({ ...first, name: undefined }) === JSON.stringify({ ...second, name: undefined })) {
         errs.push(`${path}: the two modes are identical — the toggle would do nothing`);
       }
+      // MODE-BASE-INVARIANT (Builder OQ 2026-09-17 #2): mode 0 IS the base
+      // profile. An order with no `mode`, an order naming mode 0, and an old
+      // client that has never heard of modes all resolve through the ability's
+      // own `shape`+`range` — so if `modes[0]` disagrees with those, "absent
+      // mode = base = mode 0" quietly stops being true and the same ability aims
+      // two different ways depending on which client sent the order. Cheaper to
+      // refuse the content than to reconcile the three paths.
+      if (first !== undefined) {
+        if (first.shape !== undefined && first.shape !== a.shape) {
+          errs.push(`${path}: modes[0] shape "${first.shape}" must match the ability's own "${a.shape}" — mode 0 is the base profile`);
+        }
+        if (first.range !== undefined && first.range !== a.range) {
+          errs.push(`${path}: modes[0] range ${first.range} must match the ability's own ${a.range} — mode 0 is the base profile`);
+        }
+      }
     }
   }
-  // RECOIL: a percentage of damage the caster takes. Meaningless without damage
-  // to take a fraction of — an ability with none would carry a number the engine
-  // reads and then has nothing to multiply, which is the silent-nothing this
-  // file exists to prevent. Bounded 1..100: 0 is "no recoil" (say nothing
-  // instead) and above 100 is a self-hit harder than the blow itself.
   // ALLY-SAFE: the flag says "skip friendly fire", so an ability with nothing
   // harmful to skip is carrying a decision it can never act on.
   if (a.noFriendlyFire !== undefined) {
@@ -172,6 +182,11 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
       errs.push(`${path}: noFriendlyFire needs a harmful effect to spare the caster's team`);
     }
   }
+  // RECOIL: a percentage of damage the caster takes. Meaningless without damage
+  // to take a fraction of — an ability with none would carry a number the engine
+  // reads and then has nothing to multiply, which is the silent-nothing this
+  // file exists to prevent. Bounded 1..100: 0 is "no recoil" (say nothing
+  // instead) and above 100 is a self-hit harder than the blow itself.
   if (a.selfDamagePct !== undefined) {
     if (!isInt(a.selfDamagePct) || a.selfDamagePct < 1 || a.selfDamagePct > 100) {
       errs.push(`${path}: selfDamagePct must be an integer 1..100 when present`);

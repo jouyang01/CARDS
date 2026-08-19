@@ -9,6 +9,16 @@ export const VISION_RANGE = 6;
  * this would silently reintroduce the turn-1 spawn hit. Ultimates are exempt.
  */
 export const MAX_ABILITY_RANGE = 8;
+/**
+ * DASH-FLOOR-GUARD — the shortest a Dash-phase reposition may be (Dev Note #20,
+ * ruled in edge-cases).
+ *
+ * A dash that moves you less than a walk does is not a mobility tool; it is a
+ * turn spent going nowhere. The shipped five (Combat Roll, Backdraft, Glimmer
+ * Step, Bramble Stride, Shift) all sit exactly here, and a content test refuses
+ * anything under it — a floor is only a floor if something checks.
+ */
+export const DASH_RANGE_FLOOR = 4;
 /** Percent damage reduction behind cover (applied round-down). */
 export const COVER_REDUCTION_PCT = 50;
 export const PASSIVE_ENERGY = 5;

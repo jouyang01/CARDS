@@ -41,10 +41,10 @@ const armed = (mode?: number) => {
 
 describe('BASIC-MODES: the draft resolves through the engine\'s own overlay', () => {
   it('an armed mode changes the shape the client thinks it has', () => {
-    expect(draftAbility(KESTREL, armed(0))?.shape).toBe('cone');
-    expect(draftAbility(KESTREL, armed(0))?.range).toBe(2);
-    expect(draftAbility(KESTREL, armed(1))?.shape).toBe('line');
-    expect(draftAbility(KESTREL, armed(1))?.range).toBe(6);
+    expect(draftAbility(KESTREL, armed(1))?.shape).toBe('cone');
+    expect(draftAbility(KESTREL, armed(1))?.range).toBe(2);
+    expect(draftAbility(KESTREL, armed(0))?.shape).toBe('line');
+    expect(draftAbility(KESTREL, armed(0))?.range).toBe(6);
   });
 
   it('and it is byte-for-byte what the engine will resolve', () => {
@@ -76,20 +76,23 @@ describe('BASIC-MODES: the preview follows the mode', () => {
     // and the range bounds the depth rather than the click. Spread still draws
     // its eight tiles near the caster — it just does not arrive.
     const far = { x: 15, y: 10 };
-    expect(reaches(1, far), 'Focus arrives').toBe(true);
-    expect(reaches(0, far), 'Spread does not').toBe(false);
-    expect(covered(0, far).length, 'though it still draws its own footprint').toBeGreaterThan(0);
+    expect(reaches(0, far), 'Focus arrives').toBe(true);
+    expect(reaches(1, far), 'Spread does not').toBe(false);
+    expect(covered(1, far).length, 'though it still draws its own footprint').toBeGreaterThan(0);
   });
 
   it('the short mode draws a wider footprint where both reach', () => {
     // A cone at 2 covers more squares than a line at 6 does *near* the caster,
     // which is the trade the toggle is for.
-    expect(covered(0, { x: 12, y: 10 }).length)
-      .toBeGreaterThan(covered(1, { x: 12, y: 10 }).length);
+    expect(covered(1, { x: 12, y: 10 }).length)
+      .toBeGreaterThan(covered(0, { x: 12, y: 10 }).length);
   });
 
-  it('and an unarmed mode previews the default profile', () => {
-    expect(covered(undefined, { x: 15, y: 10 })).toEqual(covered(1, { x: 15, y: 10 }));
+  it('and an unarmed mode previews the default profile — which is mode 0', () => {
+    // MODE-BASE-INVARIANT makes this an engine-enforced fact rather than a
+    // convention the data happened to follow: `modes[0]` must equal the base
+    // profile, so the client can show mode 0 as live before anyone chooses.
+    expect(covered(undefined, { x: 15, y: 10 })).toEqual(covered(0, { x: 15, y: 10 }));
   });
 });
 
@@ -141,7 +144,7 @@ describe('BASIC-MODES: flipping the toggle re-aims', () => {
 describe('BASIC-MODES: the toggle', () => {
   it('offers both profiles, labelled, with the armed one selected', () => {
     const options = modeOptions(draftAbility(KESTREL, armed(0)), 0);
-    expect(options.map((o) => o.label)).toEqual(['Spread', 'Focus']);
+    expect(options.map((o) => o.label)).toEqual(['Focus', 'Spread']);
     expect(options.map((o) => o.selected)).toEqual([true, false]);
     expect(modeOptions(draftAbility(KESTREL, armed(1)), 1).map((o) => o.selected))
       .toEqual([false, true]);
@@ -195,7 +198,7 @@ describe('BASIC-MODES: the HUD row', () => {
   it('draws a button per profile, marking the armed one', () => {
     hud().update(model(modeOptions(TWIN, 0)));
     const buttons = [...root.querySelectorAll<HTMLButtonElement>('.hud-mode')];
-    expect(buttons.map((b) => b.textContent)).toEqual(['Spread', 'Focus']);
+    expect(buttons.map((b) => b.textContent)).toEqual(['Focus', 'Spread']);
     expect(buttons.map((b) => b.classList.contains('sel'))).toEqual([true, false]);
     expect(buttons.map((b) => b.dataset['mode'])).toEqual(['0', '1']);
   });

@@ -34,9 +34,11 @@ const OPEN: MapDef = {
 /** A two-mode auto: a wide short cone, or a thin long line. Kestrel's shape. */
 const TWIN: AbilityDef = {
   id: 'twin', name: 'Twin', phase: 'blast', shape: 'line', range: 6,
+  // MODE-BASE-INVARIANT: mode 0 IS the base profile, so Focus (line 6) leads and
+  // Spread is the alternative. The validator refuses any other arrangement.
   modes: [
-    { name: 'Spread', shape: 'cone', range: 2 },
     { name: 'Focus', shape: 'line', range: 6 },
+    { name: 'Spread', shape: 'cone', range: 2 },
   ],
   cooldown: 0, energyGain: 8,
   effects: [{ kind: 'damage', amount: 24 }],
@@ -56,7 +58,7 @@ const roster: Roster = { shooter: SHOOTER, dummy: DUMMY };
 
 describe('BASIC-MODES: the overlay is the geometry and nothing else', () => {
   it('a mode replaces shape and range, and keeps the ability its own', () => {
-    const spread = abilityProfile(TWIN, 0);
+    const spread = abilityProfile(TWIN, 1);
     expect(spread.shape).toBe('cone');
     expect(spread.range).toBe(2);
     expect(spread.id, 'the same ability — cooldowns key off this').toBe(TWIN.id);
@@ -66,8 +68,8 @@ describe('BASIC-MODES: the overlay is the geometry and nothing else', () => {
     expect(spread.phase, 'and it resolves in the same phase').toBe(TWIN.phase);
   });
 
-  it('the other mode is the other profile', () => {
-    const focus = abilityProfile(TWIN, 1);
+  it('the other mode is the other profile — and it is the base one', () => {
+    const focus = abilityProfile(TWIN, 0);
     expect(focus.shape).toBe('line');
     expect(focus.range).toBe(6);
     expect(focus.name).toBe('Focus');
@@ -128,8 +130,8 @@ describe('BASIC-MODES: each mode resolves its own profile', () => {
   it('the short mode cannot reach what the long mode can', () => {
     // The whole point of the toggle, as one assertion: same ability, same
     // target, same turn — and only one of the two arrives.
-    expect(shootAt(1, 5), 'Focus reaches 5 squares').toBeGreaterThan(0);
-    expect(shootAt(0, 5), 'Spread does not').toBe(0);
+    expect(shootAt(0, 5), 'Focus reaches 5 squares').toBeGreaterThan(0);
+    expect(shootAt(1, 5), 'Spread does not').toBe(0);
   });
 
   it('and both hit at a range they share', () => {
@@ -141,10 +143,12 @@ describe('BASIC-MODES: each mode resolves its own profile', () => {
     expect(shootAt(0, 2)).toBe(shootAt(1, 2));
   });
 
-  it('no mode resolves as the ability\'s own profile', () => {
-    // Kestrel's base profile IS mode 1, so an order from a client that has never
-    // heard of modes behaves exactly as it did before this existed.
-    expect(shootAt(undefined, 5)).toBe(shootAt(1, 5));
+  it('no mode resolves as the ability\'s own profile — which is mode 0', () => {
+    // MODE-BASE-INVARIANT is exactly this sentence made unbreakable: an order
+    // with no mode, an order naming mode 0, and a client that has never heard of
+    // modes all aim the same way, and the validator refuses content where they
+    // would not.
+    expect(shootAt(undefined, 5)).toBe(shootAt(0, 5));
     expect(shootAt(undefined, 5)).toBeGreaterThan(0);
   });
 
@@ -176,8 +180,8 @@ describe('BASIC-MODES: each mode resolves its own profile', () => {
       ], roster).state;
       return fresh.units[1]!.hp - after.units[1]!.hp;
     };
-    expect(fire(0), 'the cone spreads onto the off-axis square').toBeGreaterThan(0);
-    expect(fire(1), 'the line does not').toBe(0);
+    expect(fire(1), 'the cone spreads onto the off-axis square').toBeGreaterThan(0);
+    expect(fire(0), 'the line does not').toBe(0);
   });
 });
 
@@ -220,6 +224,48 @@ describe('BASIC-MODES: the validator refuses a malformed modes array', () => {
     expect(errs).toMatch(/modes\[0\].*non-ultimate range must be <= /);
   });
 
+  // MODE-BASE-INVARIANT (Builder OQ 2026-09-17 #2) — mode 0 IS the base profile.
+  //
+  // Three paths resolve an order: no `mode` field at all (an old client, or a
+  // player who never touched the toggle), `mode: 0`, and an out-of-range index.
+  // All three land on the ability's own `shape`+`range`. If `modes[0]` says
+  // something else, the same ability aims two different ways depending on which
+  // path the order took — so the content is refused rather than the three paths
+  // reconciled.
+  it('rejects a mode 0 whose SHAPE disagrees with the base', () => {
+    const errs = validateAbility(withModes([
+      { name: 'Spread', shape: 'cone', range: 6 },
+      { name: 'Focus', shape: 'line', range: 6 },
+    ]), 'x').join(' ');
+    expect(errs).toMatch(/modes\[0\] shape "cone" must match the ability's own "line"/);
+  });
+
+  it('rejects a mode 0 whose RANGE disagrees with the base', () => {
+    const errs = validateAbility(withModes([
+      { name: 'Short', shape: 'line', range: 2 },
+      { name: 'Focus', shape: 'line', range: 6 },
+    ]), 'x').join(' ');
+    expect(errs).toMatch(/modes\[0\] range 2 must match the ability's own 6/);
+  });
+
+  it('accepts a mode 0 that names nothing, because it inherits the base', () => {
+    // A profile is a diff. One that changes only the label is mode 0 by
+    // construction, and refusing it would be refusing the clearest way to write
+    // the invariant down.
+    expect(validateAbility(withModes([
+      { name: 'Focus' },
+      { name: 'Spread', shape: 'cone', range: 2 },
+    ]), 'x')).toEqual([]);
+  });
+
+  it('says nothing about mode 1, which is the whole point of having one', () => {
+    const errs = validateAbility(withModes([
+      { name: 'Focus', shape: 'line', range: 6 },
+      { name: 'Spread', shape: 'cone', range: 2 },
+    ]), 'x');
+    expect(errs).toEqual([]);
+  });
+
   it('rejects two identical modes — a toggle that does nothing', () => {
     const errs = validateAbility(withModes([
       { name: 'A', shape: 'line', range: 6 },
@@ -241,8 +287,8 @@ describe('BASIC-MODES: Kestrel is back, and carries it', () => {
   it('Twin Bolts is the wide-cone / thin-line pair the Designer specced', () => {
     const twin = KESTREL.abilities.find((a) => a.id === 'twin_bolts')!;
     expect(twin.modes).toEqual([
-      { name: 'Spread', shape: 'cone', range: 2 },
       { name: 'Focus', shape: 'line', range: 6 },
+      { name: 'Spread', shape: 'cone', range: 2 },
     ]);
   });
 
@@ -257,12 +303,14 @@ describe('BASIC-MODES: Kestrel is back, and carries it', () => {
     expect(twin.energyGain).toBe(8);
   });
 
-  it('the base profile and mode 1 agree, so an order with no mode is unchanged', () => {
-    // This is a content rule rather than an engine one, and it is why the
-    // client can show mode 1 as live for a draft that has not chosen.
+  it('the base profile and mode 0 agree, so an order with no mode is unchanged', () => {
+    // MODE-BASE-INVARIANT turned this from a content convention nobody enforced
+    // into a rule `validateAbility` refuses to let content break — which is what
+    // lets the client show mode 0 as live for a draft that has not chosen.
     const twin = KESTREL.abilities.find((a) => a.id === 'twin_bolts')!;
-    const focus = abilityProfile(twin, 1);
+    const focus = abilityProfile(twin, 0);
     expect(focus.shape).toBe(twin.shape);
     expect(focus.range).toBe(twin.range);
+    expect(validateAbility(twin, 'kestrel.twin_bolts')).toEqual([]);
   });
 });
