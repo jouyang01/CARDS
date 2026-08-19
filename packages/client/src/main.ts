@@ -18,20 +18,17 @@ import {
   validateCatalysts,
   type CatalystData,
   type CharacterDef,
-  type GameState,
   type MapDef,
-  type TurnEvent,
 } from '@cards/engine';
 import { startHotSeat, type HotSeatUI } from './app.js';
+import { watchForMatch, type NetBootConfig } from './net-boot.js';
 import { describeSetup, parseSetup } from './match-setup.js';
-import { RoomClient, type NetState } from './net.js';
+import { RoomClient } from './net.js';
 import { lobbyStatus } from './lobby.js';
 import { createLobbyScreen, type CatalystOption } from './lobby-screen.js';
 import { parseRoomLink, roomSocketUrl, workerUrl, type RoomLink } from './room-url.js';
 import { createCreateScreen } from './create-screen.js';
-import { connectionLabel, waitingLabel } from './waiting.js';
 import { reconnectDelayMs, shouldReconnect, ticketsFor } from './reconnect.js';
-import { NO_PRESENCE, coverNotice, presenceOf, type Presence } from './presence.js';
 import catalystData from '../../../data/catalysts.json';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
@@ -77,6 +74,9 @@ const CATALYSTS = catalystData as unknown as CatalystData;
  * Empty in development and in the hot-seat, where the page *is* the server.
  */
 const WORKER_ORIGIN = import.meta.env.VITE_WORKER_ORIGIN ?? '';
+
+/** What a networked match is played with, gathered in one place (NetBootConfig). */
+const netConfig = (): NetBootConfig => ({ maps: MAPS, catalog: CATALOG, catalysts: CATALYSTS });
 
 const app = document.getElementById('app')!;
 
@@ -195,7 +195,6 @@ function joinRoom(link: RoomLink): void {
   board.replaceChildren(root);
   const screen = createLobbyScreen({ root }, client, CATALOG, catalystOptions);
 
-  let inMatch = false;
   client.subscribe((net) => {
     status.textContent = net.error?.message ?? lobbyStatus(net);
     // M3-RECONNECT: remember the seat the moment the server names it, and forget
@@ -203,128 +202,11 @@ function joinRoom(link: RoomLink): void {
     // take is worse than none — it is what a retry loop would spin on.
     if (net.seat !== undefined) tickets.put(link.code, net.seat.seatId);
     if (net.error?.code === 'unknownSeat' || net.error?.code === 'seatTaken') tickets.clear(link.code);
-    if (net.phase !== 'match' || inMatch) return;
-    inMatch = true;
-    screen.destroy();
-    board.replaceChildren();
-    startNetworkedMatch(client, net);
   });
-}
-
-/**
- * M3-NET-BOARD — hand the started match to the board controller.
- *
- * The seat, its characters and the opening state all come from `matchStarted`,
- * which is already filtered for this team; the controller renders that and
- * **never resolves anything**. Lock-in calls `submit`, and the server's
- * `turnResolved` — which `RoomClient` has already folded, filtered — is fed back
- * through `onResolved` into the same playback the hot-seat uses.
- */
-function startNetworkedMatch(client: RoomClient, started: NetState): void {
-  const seat = started.seat;
-  const opening = started.state;
-  if (seat === undefined || opening === undefined) return;
-
-  const ui: HotSeatUI = {
-    board: document.getElementById('board')!,
-    status: document.getElementById('status')!,
-    controls: document.getElementById('controls')!,
-    log: document.getElementById('log') ?? undefined,
-  };
-
-  let onResolved: ((state: GameState, events: TurnEvent[]) => void) | undefined;
-  let onStatus: ((banner: string | undefined) => void) | undefined;
-  let onTimer: ((remainingMs: number | undefined, charges: number) => void) | undefined;
-  // M3-TIMER: only a frame that actually carried a window is forwarded. The
-  // reducer keeps the last `remainingMs` across every other message type, so
-  // re-sending it on (say) a `pong` would silently rewind the countdown to
-  // whatever it was when the last `decision` arrived.
-  // TIMER-EVERY-PHASE: the countdown re-anchors on every Decision payload, and
-  // `windowSeq` is what identifies one. This used to compare `remainingMs` and
-  // `bank` for a change — but turn 2 opens with the *same* full window and the
-  // same charge count as turn 1, so the comparison was false and turn 2's clock
-  // was never started after playback stopped turn 1's.
-  let windowSeq = -1;
-  let onControl: ((unitIds: string[]) => void) | undefined;
-  // M3-RECONNECT: the control map, forwarded only when it actually moved. It
-  // changes rarely (a teammate dropping, a teammate returning) and rebuilding a
-  // seat on every frame would throw away the drafts the player is mid-way
-  // through composing.
-  let control = started.unitIds.join(',');
-  // Only *this* turn's resolution counts: the reducer keeps the last one, so a
-  // repaint for some other reason must not replay a turn already animated.
-  let played = opening.turn;
-  let shown: string | undefined;
-  let onPresence: ((presence: Presence) => void) | undefined;
-  // NET-PRESENCE-UI: forwarded on change, like the control map and for the same
-  // reason — it moves only when somebody drops or returns, and the topbar is
-  // rebuilt wholesale when it does.
-  let presence = NO_PRESENCE;
-  const key = (p: Presence): string => `${p.awaySeatIds.join(',')}|${p.borrowedUnitIds.join(',')}`;
-  client.subscribe((now) => {
-    const seen = now.seat === undefined || now.room === undefined
-      ? NO_PRESENCE
-      : presenceOf({ seats: now.room.seats, mySeatId: now.seat.seatId, controls: now.unitIds });
-    if (key(seen) !== key(presence)) {
-      presence = seen;
-      onPresence?.(seen);
-    }
-    // M3-CONN-STATE first: a dead socket outranks whose turn it is, and the
-    // reason it outranks it is that nothing else is going to arrive. The cover
-    // notice is last of the three: it explains a *standing* situation, so it is
-    // the one worth saying while nothing more urgent is happening — and the
-    // portrait marks say it too, and they are always on screen.
-    const next = connectionLabel(now.phase) ?? waitingLabel(
-      now.seat === undefined ? undefined : {
-        seatId: now.seat.seatId,
-        own: now.locked,
-        ownOf: now.of,
-        enemyReady: now.enemyLocked,
-        enemyOf: now.enemyOf,
-      },
-    ) ?? coverNotice(seen);
-    if (next !== shown) {
-      shown = next;
-      onStatus?.(next);
-    }
-    if (now.unitIds.join(',') !== control) {
-      control = now.unitIds.join(',');
-      onControl?.([...now.unitIds]);
-    }
-    if (now.windowSeq !== windowSeq) {
-      windowSeq = now.windowSeq;
-      onTimer?.(now.remainingMs, now.bank);
-    }
-    if (now.state === undefined || now.state.turn <= played) return;
-    played = now.state.turn;
-    onResolved?.(now.state, now.events);
-  });
-
-  startHotSeat(
-    ui,
-    // The map is the room's, and the room is the server's — the format comes
-    // from the state it sent rather than from anything this client chose.
-    MAPS.find((m) => m.id === started.room?.mapId) ?? MAPS[0]!,
-    buildRoster(CATALOG),
-    [[], []], // unused: the opening state is handed in, not created here
-    opening.format,
-    [1, 1],
-    buildCatalystPool(CATALYSTS),
-    undefined,
-    {
-      seatId: seat.seatId,
-      team: seat.team,
-      unitIds: started.unitIds,
-      submit: (orders) => { client.submit(orders); },
-      onResolved: (handler) => { onResolved = handler; },
-      onStatus: (handler) => { onStatus = handler; },
-      onTimer: (handler) => { onTimer = handler; },
-      onControl: (handler) => { onControl = handler; },
-      onPresence: (handler) => { onPresence = handler; },
-      extend: () => { client.extend(); },
-    },
-    opening,
-  );
+  // HARNESS-LOBBY-MATCH: the lobby→match handoff lives in `net-boot.ts` now, so
+  // it can be driven by a test. This file's job is the page — the query string,
+  // the socket, the ids — and none of that is reachable from one.
+  watchForMatch(client, screen, board, netConfig());
 }
 
 /** The local hot-seat, unchanged: MAPTOGGLE's query, `startHotSeat`, no socket. */
