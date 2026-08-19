@@ -138,8 +138,12 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 >   TRAP-HALT), and the **range-4 dash floor** (Combat Roll, Backdraft, Glimmer Step, Bramble
 >   Stride, Shift — Builder: add the ≥4 content-test guard).
 
-> **⚠ NOT YET FOLDED IN — `AIM-PREVIEW-TRUE`, 2026-08-17 (Designer; owner-flagged VERY
-> IMPORTANT).** Full spec with acceptance criteria: `docs/design/aim-preview-true.md`.
+> **✅ SCHEDULED (Analyzer, 2026-09-21) — `AIM-PREVIEW-TRUE`, 2026-08-17 (Designer; owner-flagged
+> VERY IMPORTANT).** Backlogged HIGH as the top item; it is the fix for the owner's live preview
+> reports — **Bastion's Crushing Slam centre (Dev Note 2026-09-21 #1)** and **Aegis's Shield Bash
+> drawing a cone instead of the 3-wide lane (Dev Note #2)**. Sub-band note added in the backlog: the
+> axis/inner tells (`axisSquares`/`innerSquares`) draw congruently from the engine predicate too,
+> not only the outer boundary. Full spec with acceptance criteria: `docs/design/aim-preview-true.md`.
 > The aim preview currently draws two objects that cannot agree — the smooth AIM2 shape
 > (the *input region*) and the `expandShape` tile fill (the *answer*) — because HITBOX1
 > hits any tile whose central ½-circle the region touches, so tiles rightly light up
