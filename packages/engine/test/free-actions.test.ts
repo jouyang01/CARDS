@@ -208,11 +208,13 @@ describe('FREE1: the shipped roster', () => {
   const characters = readdirSync(dir).filter((f) => f.endsWith('.json'))
     .map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as CharacterDef);
 
-  it('marks exactly the three setup kits free, and every one of them validates', () => {
+  it('marks exactly the four designated kits free, and every one of them validates', () => {
     const free = characters.flatMap((c) => [...c.abilities, c.ultimate].filter((a) => a.free === true));
-    // Vex Overwatch Trap, Thorn Snare Bloom, Wisp Veil & Decoy — the three the
-    // ruling derived from the "Prep, no immediate payoff" rule.
-    expect(free.map((a) => a.id).sort()).toEqual(['overwatch_trap', 'snare_bloom', 'veil_decoy']);
+    // Vex Overwatch Trap, Thorn Snare Bloom, Wisp Veil & Decoy — from the
+    // "Prep, no immediate payoff" rule — plus Cinder's Stoke the Flame, the
+    // owner-designated exception (Dev Note #13, dev-notes-batch-3 §B): the
+    // rule is now "…deferred-or-conditional payoff, OR owner-designated".
+    expect(free.map((a) => a.id).sort()).toEqual(['overwatch_trap', 'snare_bloom', 'stoke_the_flame', 'veil_decoy']);
     for (const a of free) expect(validateAbility(a, a.id)).toEqual([]);
   });
 

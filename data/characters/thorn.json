@@ -37,18 +37,18 @@
           "lifetime": 3
         },
         {
-          "kind": "root",
-          "duration": 1
+          "kind": "slow",
+          "duration": 2
         }
       ],
-      "description": "FREE ACTION \u2014 costs no ability, so Thorn still slings this turn. Plants a hidden snare: 12 damage and Root on entry in any phase. A rooted victim loses their Move and stands in Barbed Sling range."
+      "description": "FREE ACTION \u2014 costs no ability, so Thorn still slings this turn. Plants a hidden snare: 12 damage on entry and a Slow that lasts through the next turn. (Movement-halt on trigger lands with TRAP-HALT.)"
     },
     {
       "id": "bramble_stride",
       "name": "Bramble Stride",
       "phase": "dash",
       "shape": "path",
-      "range": 3,
+      "range": 4,
       "cooldown": 3,
       "energyGain": 5,
       "effects": [
@@ -61,7 +61,7 @@
           "duration": 1
         }
       ],
-      "description": "Thorn surges through the undergrowth up to 3 squares; the first unit crossed takes 10 damage and is Rooted for a turn. The escape that still leaves someone stuck to the floor."
+      "description": "Thorn surges through the undergrowth up to 4 squares; the first unit crossed takes 10 damage and is Rooted for a turn. The escape that still leaves someone stuck to the floor."
     },
     {
       "id": "verdant_veil",
