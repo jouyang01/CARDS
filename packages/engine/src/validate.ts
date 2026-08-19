@@ -34,7 +34,7 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
   'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
-  'oncePerMatch', 'impact', 'modes',
+  'oncePerMatch', 'impact', 'modes', 'selfDamagePct',
   'effects', 'description',
 ] as const;
 
@@ -155,6 +155,19 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
         && JSON.stringify({ ...first, name: undefined }) === JSON.stringify({ ...second, name: undefined })) {
         errs.push(`${path}: the two modes are identical — the toggle would do nothing`);
       }
+    }
+  }
+  // RECOIL: a percentage of damage the caster takes. Meaningless without damage
+  // to take a fraction of — an ability with none would carry a number the engine
+  // reads and then has nothing to multiply, which is the silent-nothing this
+  // file exists to prevent. Bounded 1..100: 0 is "no recoil" (say nothing
+  // instead) and above 100 is a self-hit harder than the blow itself.
+  if (a.selfDamagePct !== undefined) {
+    if (!isInt(a.selfDamagePct) || a.selfDamagePct < 1 || a.selfDamagePct > 100) {
+      errs.push(`${path}: selfDamagePct must be an integer 1..100 when present`);
+    }
+    if (!a.effects.some((e) => e.kind === 'damage')) {
+      errs.push(`${path}: selfDamagePct needs a damage effect to take a fraction of`);
     }
   }
   if (!isInt(a.cooldown) || a.cooldown < 0) errs.push(`${path}: cooldown must be a non-negative integer`);

@@ -229,6 +229,26 @@ export interface AbilityDef {
    * flight and every replay. Absent = today's behaviour exactly.
    */
   modes?: [AbilityProfile, AbilityProfile];
+  /**
+   * RECOIL — the caster takes `floor(amount × selfDamagePct / 100)` of this
+   * ability's damage (Designer §B #17; Ravok's Seismic Rupture carries 50).
+   *
+   * The **deliberate exception** to CASTER-SAFE, which is why it is opt-in data
+   * rather than a rule: no kit wants accidental self-harm, but shattering the
+   * earth under your own feet should cost something, and it prices a 38-damage
+   * radius-3 ult honestly.
+   *
+   * **Bypasses cover** — there is no taking cover from the ground you are
+   * standing on — and equally bypasses Might and Weaken: the recoil is the
+   * ability's authored number scaled, not an attack the caster aimed at itself,
+   * so a buff that sharpens your blows does not sharpen the ground. **Shields
+   * absorb it normally**, because a shield is a thing between you and harm
+   * whatever the harm's direction.
+   *
+   * Meaningless without damage to take a fraction of, so `validateAbility`
+   * rejects it on an ability with none.
+   */
+  selfDamagePct?: number;
   effects: AbilityEffect[];
   description: string;
 }

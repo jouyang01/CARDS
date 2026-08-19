@@ -33,7 +33,12 @@ describe('FF1: friendly fire — harmful hits everyone, beneficial stays own-tea
     expect(unit(state, 'E').hp).toBe(80); // enemy took 20 damage, no heal
     // The ally is now hit by the same AoE: 50 - 20 damage + 15 heal = 45.
     expect(unit(state, 'A2').hp).toBe(45);
-    expect(unit(state, 'A1').hp).toBe(95); // the caster splashes itself too: 100 - 20 damage + 15 heal
+    // CASTER-SAFE: the caster does NOT splash itself. FF1's "ally or enemy" is
+    // about the people around you — the one unit that is never a target of your
+    // own harmful effects is you. The heal still reaches him (it is beneficial
+    // and he is in the area); he is simply already full. `caster-safe.test.ts`
+    // carries the rule in full, including the ally half that this test pins.
+    expect(unit(state, 'A1').hp).toBe(100);
     expect(unit(state, 'A1').energy).toBe(13); // hit an enemy → 8 on hit + 5 passive
   });
 

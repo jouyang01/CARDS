@@ -213,6 +213,28 @@ export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
 ]);
 
 /**
+ * CASTER-SAFE — the effects of an ability that may land on the unit that fired
+ * it: everything except the harmful half.
+ *
+ * FF1 says a harmful effect reaches every unit standing in the area, "ally or
+ * enemy". It was never meant to read *including yourself*: Ravok's Whirling
+ * Cleave is a `circle` with `range: 0`, so its area is centred on him and he
+ * took the full 22 off his own swing; Shockwave hit him for 12 and slowed him
+ * as well. No kit wants accidental self-harm, so the rule is global rather
+ * than a flag per ability — a unit is never a target of its own ability's
+ * harmful effects (Dev Notes #16 + #18, `dev-notes-batch-3.md` §B).
+ *
+ * The one way back in is deliberate: `selfDamagePct` (RECOIL), which is priced
+ * into the ability rather than suffered by accident. Note the asymmetry is
+ * only about *harm* — a self-cast's shields, heals and buffs are untouched,
+ * and an ALLY standing in your own area is still hit, because CASTER-SAFE
+ * excludes the caster and nobody else (that is ALLY-SAFE, a separate item).
+ */
+function casterSafe(effects: readonly AbilityEffect[]): readonly AbilityEffect[] {
+  return effects.filter((e) => !HARMFUL_KINDS.has(e.kind));
+}
+
+/**
  * UNTGT1 — Untargetable is "cannot be hit this phase/turn" (GAME_SPEC §6), and
  * until now it was the one status that changed no resolved outcome: Fade and
  * Shadowstep applied it, nothing read it back except `fireCatalyst`.
@@ -945,8 +967,10 @@ function applyAreaBoons(
   const area = new Set(a.area.map(vecKey));
   // Non-beneficial effects on this path are the caster's own business (a `decoy`
   // spawns at its feet; a self-cast's statuses), so they are applied whenever
-  // the caster is in its own area — which for a self-cast is always.
-  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, a.def.effects, source, events);
+  // the caster is in its own area — which for a self-cast is always. Minus the
+  // harmful ones: CASTER-SAFE means your own Weaken or Root never lands on you,
+  // however faithfully the area covers your square.
+  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, casterSafe(a.def.effects), source, events);
   const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
   if (boons.length === 0) return;
   for (const ally of draft.units) {
@@ -1264,8 +1288,10 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // shape's area is the caster's square, so every self-buff that was meant to
     // land still lands — but a `line` never covers the square it was fired from,
     // so Lumen no longer heals herself off a beam aimed at somebody else.
+    // CASTER-SAFE trims the harmful half here as it does in Prep: a dash's own
+    // Slow is for whoever it ran through, not for the unit that ran.
     if (a.area.some((p) => vecEq(p, plan.unit.pos))) {
-      applySelfEffects(draft, plan.unit, a.def.effects, sourceOf(plan.unit, a.def.id), events);
+      applySelfEffects(draft, plan.unit, casterSafe(a.def.effects), sourceOf(plan.unit, a.def.id), events);
     }
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
     // CAMO-REVEAL / REVEAL-FIX: a dash gives a *concealed* dasher away, whether
@@ -1493,9 +1519,11 @@ function runBlast(
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
       const enemy = target.owner !== plan.unit.owner;
+      const self = target.unitId === plan.unit.unitId; // CASTER-SAFE
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of a.def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
+          if (self) continue; // CASTER-SAFE — see `casterSafe`; RECOIL is below
           if (untargetable) continue; // the whole harmful half is skipped, energy included
           // Energy stays enemy-only, so splashing an ally pays nothing.
           if (enemy) hitEnemy = true;
@@ -1513,6 +1541,32 @@ function runBlast(
         }
       }
     }
+    // RECOIL — the one deliberate way back through CASTER-SAFE. `selfDamagePct`
+    // charges the caster a fraction of the ability's own damage, gathered into
+    // the same simultaneous list as everything else so a caster the recoil kills
+    // still dealt every blow it swung.
+    //
+    // Three properties, each load-bearing:
+    //   • `fixedDamage` — the recoil bypasses cover (there is none between you
+    //     and the ground under your feet) and, for the same reason, Might and
+    //     Weaken: it is the authored number scaled, not an attack you aimed at
+    //     yourself. Shields still absorb it, because `applyDamage` is where the
+    //     shield pool lives and a shield is a shield whatever broke it.
+    //   • It is a **cost of firing**, not an area effect. Ravok's own Seismic
+    //     Rupture is a `range: 0` circle so the distinction never shows on live
+    //     content, but an ability aimed away from its caster would still recoil
+    //     — you paid for the earthquake either way (DECISIONS 2026-09-18).
+    //   • `killUnit` credits nobody when the killer owns the victim, so blowing
+    //     yourself up hands the enemy team no point.
+    const recoilPct = a.def.selfDamagePct;
+    if (recoilPct !== undefined) {
+      const base = a.def.effects.find((e) => e.kind === 'damage')?.amount ?? 0;
+      const recoil = Math.floor((base * recoilPct) / 100);
+      if (recoil > 0) {
+        hits.push({ attacker: plan.unit, victim: plan.unit, abilityId: a.def.id, raw: recoil, range: a.def.range, fixedDamage: recoil });
+      }
+    }
+
     // A decoy in a damaging ability's area is destroyed (R2) — no energy, no
     // riders; it never counts as an enemy hit, so `hitEnemy` stays units-only.
     if (a.def.effects.some((e) => e.kind === 'damage')) {
@@ -1629,6 +1683,9 @@ function detonateDelayedBlasts(
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
+          // CASTER-SAFE reaches here too: a grenade you armed two turns ago is
+          // still your own ability, and standing on it should not blow you up.
+          if (target.unitId === caster.unitId) continue;
           if (untargetable) continue;
           if (enemy) hitEnemy = true; // energy stays enemy-only
           if (e.kind === 'damage') hits.push({ attacker: caster, victim: target, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
