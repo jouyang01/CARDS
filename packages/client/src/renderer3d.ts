@@ -124,6 +124,14 @@ export type HighlightLayer =
 export type PathLayer = 'path' | 'catalystPath';
 
 /**
+ * AIM-PREVIEW-TRUE's boundary layers. Three families, three colours: the
+ * ability's own shape, the sub-band inside it that pays a different number, and
+ * a dash's impact disc — each a locus of its own engine predicate, so each is
+ * drawn rather than left for the eye to infer from a tile wash.
+ */
+export type ShapeLayer = 'shape' | 'shapeBand' | 'shapeImpact';
+
+/**
  * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
  * its top surface the floor every tile overlay has to clear (FOG-ZORDER).
  */
@@ -348,7 +356,13 @@ export interface Renderer {
    * on the ground plane — the continuous cone/beam/disk the covered tiles
    * approximate. Empty clears it.
    */
-  drawShape(outline: readonly Vec2[], color: number, opacity?: number): void;
+  /**
+   * AIM-PREVIEW-TRUE: a **list** of closed outlines, because one armed ability
+   * now draws more than one locus — the outer shape, and the sub-band (Bastion's
+   * axis, Cinder's core) that pays a different number inside it. `layer` keeps
+   * each family in its own group so they can carry their own colour.
+   */
+  drawShape(outlines: readonly (readonly Vec2[])[], color: number, opacity?: number, layer?: ShapeLayer): void;
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
@@ -532,6 +546,32 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   /** A bar's fill is scaled from its left edge, so width reads as a fraction. */
   // ── Highlight layers ──────────────────────────────────────────────────────
+  /**
+   * One closed outline, filled on the ground plane.
+   *
+   * Built in the XY plane from board coordinates and then laid flat — the same
+   * `squareToWorldXZ` mapping picking uses, so the fiction and the truth are
+   * registered to the same grid and a clipped corner reads as geometry rather
+   * than as a bug.
+   */
+  const drawOneShape = (g: Group, outline: readonly Vec2[], color: number, opacity: number): void => {
+    if (outline.length < 3) return;
+    const shape = new Shape();
+    outline.forEach((p, i) => {
+      const w = squareToWorldXZ(map, p);
+      if (i === 0) shape.moveTo(w.x, w.z);
+      else shape.lineTo(w.x, w.z);
+    });
+    shape.closePath();
+    const mesh = new Mesh(
+      new ShapeGeometry(shape),
+      new MeshBasicMaterial({ color, transparent: true, opacity, side: DoubleSide, depthWrite: false }),
+    );
+    mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
+    mesh.position.y = SHAPE_LIFT;
+    g.add(mesh);
+  };
+
   const layers = new Map<string, Group>();
   const layerGroup = (name: string): Group => {
     let g = layers.get(name);
@@ -1131,28 +1171,10 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       g.add(marker);
     },
 
-    drawShape(outline, color, opacity = 0.18) {
-      const g = layerGroup('shape');
+    drawShape(outlines, color, opacity = 0.18, layer = 'shape') {
+      const g = layerGroup(layer);
       disposeChildren(g);
-      if (outline.length < 3) return;
-      // Built in the XY plane from board coordinates, then laid flat — the same
-      // squareToWorldXZ mapping picking uses, so the fiction and the truth are
-      // registered to the same grid and a clipped corner reads as geometry
-      // rather than as a bug.
-      const shape = new Shape();
-      outline.forEach((p, i) => {
-        const w = squareToWorldXZ(map, p);
-        if (i === 0) shape.moveTo(w.x, w.z);
-        else shape.lineTo(w.x, w.z);
-      });
-      shape.closePath();
-      const mesh = new Mesh(
-        new ShapeGeometry(shape),
-        new MeshBasicMaterial({ color, transparent: true, opacity, side: DoubleSide, depthWrite: false }),
-      );
-      mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
-      mesh.position.y = SHAPE_LIFT;
-      g.add(mesh);
+      for (const outline of outlines) drawOneShape(g, outline, color, opacity);
     },
 
     onFrame(cb) {
