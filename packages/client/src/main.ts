@@ -234,7 +234,12 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
   // reducer keeps the last `remainingMs` across every other message type, so
   // re-sending it on (say) a `pong` would silently rewind the countdown to
   // whatever it was when the last `decision` arrived.
-  let clock: { remainingMs: number | undefined; bank: number } | undefined;
+  // TIMER-EVERY-PHASE: the countdown re-anchors on every Decision payload, and
+  // `windowSeq` is what identifies one. This used to compare `remainingMs` and
+  // `bank` for a change — but turn 2 opens with the *same* full window and the
+  // same charge count as turn 1, so the comparison was false and turn 2's clock
+  // was never started after playback stopped turn 1's.
+  let windowSeq = -1;
   let onControl: ((unitIds: string[]) => void) | undefined;
   // M3-RECONNECT: the control map, forwarded only when it actually moved. It
   // changes rarely (a teammate dropping, a teammate returning) and rebuilding a
@@ -281,8 +286,8 @@ function startNetworkedMatch(client: RoomClient, started: NetState): void {
       control = now.unitIds.join(',');
       onControl?.([...now.unitIds]);
     }
-    if (clock === undefined || clock.remainingMs !== now.remainingMs || clock.bank !== now.bank) {
-      clock = { remainingMs: now.remainingMs, bank: now.bank };
+    if (now.windowSeq !== windowSeq) {
+      windowSeq = now.windowSeq;
       onTimer?.(now.remainingMs, now.bank);
     }
     if (now.state === undefined || now.state.turn <= played) return;

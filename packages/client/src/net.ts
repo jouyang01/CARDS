@@ -80,6 +80,22 @@ export interface NetState {
   remainingMs?: number;
   /** This seat's Time Bank charges left, from the server. */
   bank: number;
+  /**
+   * TIMER-EVERY-PHASE — how many Decision payloads have arrived. Bumped by
+   * `decision` and by nothing else.
+   *
+   * The countdown must re-anchor whenever the server sends a fresh measurement,
+   * and "a fresh measurement arrived" is an **event**, not a change of value:
+   * turn 2 opens with exactly the same `remainingMs` and `bank` as turn 1 did,
+   * because both are a full window measured the instant it opened. A controller
+   * watching those two numbers for a change therefore never heard about turn 2
+   * — which is the whole of the reported bug (Dev Note #5, "lock-in timer
+   * disappears after turn 1"): the timer is stopped for playback, and nothing
+   * ever started it again.
+   *
+   * A counter says the thing the values cannot: *this frame carried a window*.
+   */
+  windowSeq: number;
   /** The last resolved turn's filtered event log, for playback. */
   events: TurnEvent[];
   /** Both teams' orders, revealed with the resolution. */
@@ -92,7 +108,7 @@ export function initialNet(): NetState {
   return {
     phase: 'connecting', visibleSquares: [], unitIds: [], orders: {},
     locked: [], of: 0, enemyLocked: 0, enemyOf: 0, submitted: false,
-    events: [], revealed: {}, bank: TIMEBANK_CHARGES,
+    events: [], revealed: {}, bank: TIMEBANK_CHARGES, windowSeq: 0,
   };
 }
 
@@ -163,6 +179,10 @@ export function applyServerMessage(net: NetState, msg: ServerMessage): NetState 
         // back on return — so it is re-read from every Decision phase rather
         // than kept from `matchStarted`.
         unitIds: msg.unitIds,
+        // TIMER-EVERY-PHASE: the one place this is bumped. Every other frame
+        // carries the last window's numbers forward unchanged, which is exactly
+        // why a value comparison could not tell a new window from an old one.
+        windowSeq: net.windowSeq + 1,
       };
     case 'submitted':
       return { ...clean, submitted: true };
