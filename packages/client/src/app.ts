@@ -544,11 +544,19 @@ export function startHotSeat(
    * The board's own container is still never measured — the canvas is its only
    * child, so that would feed the canvas its own width back and pin it.
    */
-  // SCORE1's readout lives in its own element under the status line, so the
-  // HUD's in-place update never has to know about it and vice versa.
+  // SCORE1's readout lives in its own element, so the HUD's in-place update
+  // never has to know about it and vice versa.
+  //
+  // HUD-LAYOUT (owner AC 4): it goes in the page's **top band** — beside the
+  // title block rather than under it — so the score and team pips are at the
+  // top of the window. `#topchrome` is `index.html`'s; when it is absent (the
+  // test harness mounts four bare nodes) it falls back to sitting after the
+  // status line, which is where it always was.
   const scoreEl = document.createElement('div');
   scoreEl.className = 'scoreboard';
-  ui.status.after(scoreEl);
+  const topChrome = document.getElementById('topchrome');
+  if (topChrome !== null) topChrome.appendChild(scoreEl);
+  else ui.status.after(scoreEl);
 
   const sizeToViewport = (): void => {
     // UI-VIEWPORT: the canvas IS the viewport. The board used to be the app
@@ -570,7 +578,12 @@ export function startHotSeat(
       // Measured, not assumed: the scoreboard's strip grows with the format's
       // character count, so a fixed number would frame the board under it in
       // 4v4 and leave a gap in 1v1.
-      top: Math.max(scoreEl.getBoundingClientRect().bottom + 8, TOP_CHROME_FALLBACK_PX),
+      //
+      // HUD-LAYOUT: measured off the **band**, not off the scoreboard alone.
+      // The two are side by side now, so whichever of them is taller sets the
+      // bottom edge — reading only the score would frame the board under the
+      // status line whenever the status line ran longer.
+      top: Math.max((topChrome ?? scoreEl).getBoundingClientRect().bottom + 8, TOP_CHROME_FALLBACK_PX),
       right: logIsColumn ? (logBox?.width ?? 0) : 0,
       bottom: ui.controls.getBoundingClientRect().height + (logIsColumn ? 0 : (logBox?.height ?? 0)),
       left: 0,

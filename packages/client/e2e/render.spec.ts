@@ -60,9 +60,9 @@ const MIN_DISTINCT_COLOURS = 12;
 
 const boardCanvas = (page: Page): Locator => page.locator('#board canvas');
 /**
- * Lock In specifically — the playback Skip button shares its class. Since
- * TIMER-BAR it lives in `.hud-lockrow`, joined to the draining bar it ends,
- * rather than in the right-hand column under a numeric countdown.
+ * Lock In. Since TIMER-BAR it lives in `.hud-lockrow`, joined to the draining
+ * bar it ends, rather than in the right-hand column under a numeric countdown.
+ * (Skip used to share the `hud-lock` class; HUD-LAYOUT renamed it `hud-skip`.)
  */
 const lockIn = (page: Page): Locator => page.locator('.hud-lockrow .hud-lock');
 
@@ -402,7 +402,7 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
   // Every button the HUD ships. `.hud-bank` (UI-TIMER's Time Bank pip) is in
   // the list deliberately: it is small and looks decorative, which is exactly
   // the reasoning that produced the undersized controls this rule exists to fix.
-  const CONTROLS = '.hud-ability, .hud-catalyst, .hud-move, .hud-lock, .hud-small, .hud-bank';
+  const CONTROLS = '.hud-ability, .hud-catalyst, .hud-move, .hud-lock, .hud-skip, .hud-small, .hud-bank';
 
   for (const { map, query } of MAPS) {
     for (const viewport of SIZES) {
@@ -458,6 +458,124 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
       });
     }
   }
+});
+
+/**
+ * HUD-LAYOUT — the owner's re-layout, measured where measuring is possible.
+ *
+ * *"The main game screen is too small in comparison to the buttons… Board
+ * expands and is bigger and covers as much screen as possible where the
+ * timer/lock in bar was."*
+ *
+ * `hud-layout.test.ts` pins which container each block sits in, which is what a
+ * headless DOM can answer. It cannot answer the thing the owner actually asked
+ * for, because happy-dom lays nothing out and every rect there is zero. This
+ * can: a real browser at a real viewport, reading real boxes.
+ *
+ * The board's own growth is measured as **the vertical band the chrome leaves
+ * it** — between the bottom of the top band and the top of the HUD. The canvas
+ * itself has spanned the whole viewport since UI-VIEWPORT (the camera frames the
+ * board inside it), so canvas size cannot answer "did the board get bigger";
+ * the uncovered band is what the camera is actually given.
+ */
+test.describe('HUD-LAYOUT: the blocks moved and the board got the space', () => {
+  const VIEWPORT = { width: 1440, height: 900 };
+
+  const box = async (page: Page, selector: string) => {
+    const found = await page.locator(selector).first().boundingBox();
+    expect(found, `${selector} is not on screen`).not.toBeNull();
+    return found!;
+  };
+  const centreX = (b: { x: number; width: number }): number => b.x + b.width / 2;
+
+  test('catalysts left, movement right, Lock In centred, score at the top', async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await page.goto('./?map=duel-arena');
+    await expect(boardCanvas(page)).toBeVisible();
+    await page.waitForTimeout(700);
+
+    const catalysts = await box(page, '.hud-catalysts');
+    const moves = await box(page, '.hud-moves');
+    const lock = await box(page, '.hud-lockrow');
+    const hotbar = await box(page, '.hud-hotbar');
+    const score = await box(page, '.topbar');
+
+    // AC 1 + 2: opposite corners, and on the correct sides of the midline.
+    expect(centreX(catalysts), 'catalysts are left of centre')
+      .toBeLessThan(VIEWPORT.width / 2);
+    expect(centreX(moves), 'movement is right of centre')
+      .toBeGreaterThan(VIEWPORT.width / 2);
+    expect(centreX(catalysts), 'and they are not on top of each other')
+      .toBeLessThan(centreX(moves));
+
+    // AC 3: the lock/timer bar is the centre column, directly over the hotbar.
+    expect(Math.abs(centreX(lock) - VIEWPORT.width / 2), 'Lock In bar is centred')
+      .toBeLessThan(80);
+    expect(lock.y + lock.height, 'and sits above the abilities it times')
+      .toBeLessThanOrEqual(hotbar.y + 2);
+
+    // AC 4: the score and team pips are in the top band of the window.
+    expect(score.y, 'the score is at the top').toBeLessThan(VIEWPORT.height * 0.12);
+  });
+
+  test('and the board keeps most of the window between them', async ({ page }) => {
+    // AC 5, as the number that matters: how much vertical room the camera is
+    // left with once the fixed chrome has taken its share. Before the re-layout
+    // the centre column stacked five rows — lock bar, catalysts, abilities,
+    // modes, movement — and the HUD ate well over a third of a 900px window.
+    await page.setViewportSize(VIEWPORT);
+    await page.goto('./?map=duel-arena');
+    await expect(boardCanvas(page)).toBeVisible();
+    await page.waitForTimeout(700);
+
+    const hud = await box(page, '#controls');
+    const top = await box(page, '#topchrome');
+    const free = hud.y - (top.y + top.height);
+
+    expect(hud.height, 'the HUD is at most a quarter of the window')
+      .toBeLessThan(VIEWPORT.height * 0.25);
+    expect(free, 'and the board keeps two thirds of it, clear of both')
+      .toBeGreaterThan(VIEWPORT.height * 0.66);
+  });
+
+  test('the top band is one row: dev chrome beside the score, not above it', async ({ page }) => {
+    // AC 4's mechanism. Stacked, the score began a title's height down the
+    // window and the board's top inset followed it down.
+    await page.setViewportSize(VIEWPORT);
+    await page.goto('./?map=duel-arena');
+    await expect(boardCanvas(page)).toBeVisible();
+    await page.waitForTimeout(700);
+
+    const title = await box(page, '#title-block');
+    const score = await box(page, '.scoreboard');
+    expect(score.x, 'the score is to the right of the title block')
+      .toBeGreaterThanOrEqual(title.x + title.width - 1);
+    // Overlapping vertical spans is what "beside" means here.
+    expect(score.y, 'and level with it, not under it').toBeLessThan(title.y + title.height);
+  });
+
+  test('every control is still reachable, including the renamed Skip', async ({ page }) => {
+    // The re-layout must not have pushed anything off the bar or under the log.
+    // UI-VIEWPORT's rule, re-asserted at the one viewport this item retunes.
+    await page.setViewportSize(VIEWPORT);
+    await page.goto('./?map=duel-arena');
+    await expect(boardCanvas(page)).toBeVisible();
+    await page.waitForTimeout(700);
+
+    const controls = page.locator('.hud-ability, .hud-catalyst, .hud-move, .hud-lock, .hud-bank');
+    const count = await controls.count();
+    expect(count, 'no controls found — the HUD moved further than expected').toBeGreaterThan(8);
+    for (let i = 0; i < count; i++) {
+      const el = controls.nth(i);
+      if (!(await el.isVisible())) continue;
+      const b = (await el.boundingBox())!;
+      const label = (await el.textContent())?.trim().slice(0, 24) ?? `#${i}`;
+      expect(b.x, `"${label}" runs off the left`).toBeGreaterThanOrEqual(-1);
+      expect(b.x + b.width, `"${label}" runs off the right`).toBeLessThanOrEqual(VIEWPORT.width + 1);
+      expect(b.y + b.height, `"${label}" runs off the bottom`).toBeLessThanOrEqual(VIEWPORT.height + 1);
+      expect(b.height, `"${label}" is ${Math.round(b.height)}px tall`).toBeGreaterThanOrEqual(44);
+    }
+  });
 });
 
 /**
