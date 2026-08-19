@@ -1391,6 +1391,26 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     harmlessly:** a woken room that sits empty for a turn accrues `missedTurns` for everyone, but a
     disconnected seat controls nothing and a reclaim clears it, so no character is mis-assigned.
     Deterministic; server-side. Ratified.
+  - **PROPOSED — RECLAIM-SCOPE: a reconnect ticket must reclaim only a seat this identity ACTUALLY
+    HOLDS; a fresh client must never reclaim a LIVE seat (leading root-cause of the 2026-09-19
+    ready-button report; backlog LOBBY-READY-FIX).** The reconnect ticket is stored in
+    **`window.localStorage`** keyed by room code (`main.ts:144`) and every connect joins **with** it
+    (`main.ts:167`). Two browser **tabs of the same browser share localStorage**, so a second tab
+    opening the same room reads the first tab's ticket and tries to reclaim **its** seat — the
+    creator's. Symptom (owner, verbatim): *"There is no 'ready' button. Both Seat 0 and seat 1 have a
+    'start game' but it cannot be clicked."* — consistent with **both tabs believing they are the
+    creator** (both show the creator's Start, nobody shows Ready, and Start stays disabled because no
+    distinct second seat ever readies). Proposed ruling: **a reclaim is honoured only for a seat that
+    is currently HELD/disconnected for that identity; a ticket that names a still-connected seat is
+    refused (`seatTaken`) and the client joins FRESH** (a new seat) rather than stealing it — and,
+    client-side, the ticket store should be **per browsing context** (`sessionStorage`, or keyed so
+    two live tabs do not collide) so same-browser two-seat testing works. The Builder must **confirm
+    by driving two real net clients** (this is the "pure function passes, wiring is broken" pattern —
+    Builder OQ 2026-09-19 #6). Also fold in the display fix below.
+  - **NOTE — the lobby seat-row `is-ready` marker reads the wrong list.** `seatRows` marks a seat
+    "ready" off `lobby.ready` (`lobby.ts:210`), which the server fills with seats that have **finished
+    PICKING**, not seats that have **readied** (`readied`). `isReady` correctly reads `readied`. The
+    seat row should read `readied` too, or the checkmark lies. Fix with LOBBY-READY-FIX.
 - **RULED — A networked match starts when the room is FULL, with an explicit "start now" escape
   hatch for short rooms (M3; Builder OQ 2026-08-16 #3, decision 8).** Auto-starting on "both teams
   have someone" deals characters before the later players arrive and seats them controlling nothing,
