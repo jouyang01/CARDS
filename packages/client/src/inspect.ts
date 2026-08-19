@@ -141,6 +141,41 @@ export function inspectUnit(
 }
 
 /**
+ * Inspect a **character**, with no unit behind it — the lobby's case
+ * (LOBBY-INSPECT, Dev Note #2).
+ *
+ * Nobody is on the board yet, so everything a unit would contribute is the
+ * value a fresh one starts at: full health, no energy, nothing on cooldown,
+ * nothing on the body. That is not a lesser panel — "what does this character
+ * do, and how tough is it" is the whole question a player has while picking,
+ * and it is the same panel they will read over that character all match.
+ *
+ * **No vision gate**, deliberately. The board's panel is gated because it
+ * describes a unit somebody might not be able to see; a lobby panel describes
+ * a character in a catalogue that is open to everyone by definition. The gate
+ * is not skipped here so much as absent — there is no unit to hide.
+ */
+export function inspectCharacter(character: CharacterDef, team: TeamId): InspectPanel {
+  return {
+    name: character.name,
+    archetype: character.archetype,
+    team,
+    hp: character.maxHp,
+    maxHp: character.maxHp,
+    shield: 0,
+    energy: 0,
+    ult: false,
+    abilities: slotsOf(character).map((s) => slot(s.def, s.isUlt, {}, 0)),
+    // Empty rather than the seat's draft: a character in the catalogue carries
+    // no triad until somebody gives it one, and the catalyst picker has its own
+    // hover (Dev Note #3) a few rows further down the same screen.
+    catalysts: [],
+    statuses: [],
+    frozen: false,
+  };
+}
+
+/**
  * Inspect a decoy: the impersonated character's kit **at the cast**.
  *
  * Never live and never a refusal — either would un-disguise it instantly, and a

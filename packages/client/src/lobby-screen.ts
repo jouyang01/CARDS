@@ -29,6 +29,8 @@ import {
   type Draft,
 } from './lobby.js';
 import { AWAY_LABEL, AWAY_MARK } from './presence.js';
+import { inspectCharacter } from './inspect.js';
+import { renderInspectPanel } from './inspect-panel.js';
 
 /** One catalyst, as the screen offers it. Named so the pool's shape stays out. */
 export interface CatalystOption {
@@ -75,6 +77,20 @@ export function createLobbyScreen(
   let draft: Draft = emptyDraft(0);
   /** Which slot the character grid is filling. Reset when the draft re-sizes. */
   let active = 0;
+
+  /**
+   * LOBBY-INSPECT (Dev Note #2) — the same panel the board shows, over the
+   * character your pointer is on.
+   *
+   * Built once and re-filled, exactly as the HUD's is, and for exactly the same
+   * reason: the screen below it is rebuilt on every update, and a panel rebuilt
+   * with it would vanish from under the pointer that summoned it. It hangs off
+   * `document.body` rather than off the lobby, so it is not clipped by the
+   * panel it is describing (LOBBY-BOUNDS put a boundary there on purpose).
+   */
+  const hoverPanel = el('div', 'inspect');
+  hoverPanel.style.display = 'none';
+  document.body.appendChild(hoverPanel);
 
   const send = (): void => {
     const picks = draftPicks(draft);
@@ -158,6 +174,20 @@ export function createLobbyScreen(
         button.disabled = option.taken;
         if (option.chosen) button.classList.add('is-chosen');
         if (option.taken) button.classList.add('is-taken');
+        // LOBBY-INSPECT: kit, health and archetype, from the same builder the
+        // board uses. A **disabled** button still answers — "what does the
+        // character my teammate took do" is exactly the question a greyed row
+        // provokes, and `mouseenter` fires on a disabled button where `click`
+        // does not.
+        const def = catalog.find((c) => c.id === option.id);
+        if (def !== undefined) {
+          const team = client.net.seat?.team ?? 0;
+          button.addEventListener('mouseenter', (event) => {
+            const at = event as MouseEvent;
+            renderInspectPanel(hoverPanel, inspectCharacter(def, team), { x: at.clientX, y: at.clientY });
+          });
+          button.addEventListener('mouseleave', () => { renderInspectPanel(hoverPanel, undefined); });
+        }
         button.addEventListener('click', () => {
           draft = chooseCharacter(draft, active, option.id);
           send();
@@ -209,6 +239,10 @@ export function createLobbyScreen(
     destroy: () => {
       unsubscribe();
       ui.root.replaceChildren();
+      // The hover panel lives outside the lobby's root, so tearing the lobby
+      // down does not take it with it. Removed explicitly, or it would hang
+      // over the board the match starts on.
+      hoverPanel.remove();
     },
   };
 }
