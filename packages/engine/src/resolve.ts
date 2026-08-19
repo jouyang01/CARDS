@@ -39,6 +39,8 @@ import {
   computeDamage,
   grantEnergy,
   isBehindCover,
+  outgoingDamagePct,
+  scaleDamage,
 } from './combat.js';
 import {
   PASSIVE_ENERGY,
@@ -900,21 +902,29 @@ function grantUseEnergy(unit: UnitState, def: AbilityDef, hitEnemy: boolean, eve
 function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'prep' });
   runCatalysts(draft, board, plans, 'prep', events);
+  // PHASE-STATUS-FIRST: Prep's two sub-steps. Prep lands no damage of its own —
+  // its only damage-shaped act is **arming a trap**, whose number is stamped
+  // from the owner's Might/Weaken at placement. So the traps wait: every Prep
+  // status in the phase lands first, and a Might an ally threw you a moment ago
+  // is in the mine you just buried. Heals need no such treatment here, having
+  // nothing in this phase to be simultaneous with.
+  const arming: (() => void)[] = [];
   // Free actions resolve next (FREE1). Validation pins them to Prep, so this is
   // the only phase that needs the pass — and going first is the ordering
   // catalysts will need, so there is one rule rather than two.
   for (const plan of orderedPlans(draft, plans)) {
-    if (plan.freeAbility !== undefined) firePrep(draft, board, plan.unit, plan.freeAbility, events);
+    if (plan.freeAbility !== undefined) firePrep(draft, board, plan.unit, plan.freeAbility, events, arming);
   }
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'prep') continue;
-    firePrep(draft, board, plan.unit, a, events);
+    firePrep(draft, board, plan.unit, a, events, arming);
   }
+  for (const arm of arming) arm();
 }
 
-/** Resolve one Prep-phase ability for `unit`: traps place, everything else self-applies. */
-function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbility, events: TurnEvent[]): void {
+/** Resolve one Prep-phase ability for `unit`: traps arm (deferred), everything else self-applies. */
+function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbility, events: TurnEvent[], arming: (() => void)[]): void {
   if (!unit.alive) return;
   events.push({ type: 'abilityFired', unitId: unit.unitId, abilityId: a.def.id, area: a.area });
   markAbilityUsed(unit, a, events);
@@ -927,7 +937,7 @@ function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbi
 
   const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
   if (trapEffect !== undefined) {
-    placeTraps(draft, unit, a, trapEffect, events);
+    arming.push(() => placeTraps(draft, unit, a, trapEffect, events));
   } else {
     // PREP-AOE: a beneficial AREA ability reaches every ally standing in it,
     // not just the caster. This branch used to apply the effects to `unit`
@@ -1057,7 +1067,13 @@ function placeTraps(
       ownerUnitId: owner.unitId,
       abilityId: planned.def.id,
       pos: { x: pos.x, y: pos.y },
-      damage: trapEffect.amount ?? 0,
+      // PHASE-STATUS-FIRST: the number is stamped now, from the Might or Weaken
+      // the owner is carrying as the mine goes in the ground — including one
+      // applied earlier in this same Prep phase, which is why arming is the
+      // phase's second sub-step. A trap that detonates three turns later is not
+      // re-measured against whatever the owner happens to be feeling then; the
+      // charge was set when it was buried.
+      damage: scaleDamage(trapEffect.amount ?? 0, outgoingDamagePct(owner)),
       // TRAP-LIFETIME: stamped at placement, measured exactly like a status
       // `duration` — `lifetime: 2` covers this turn and the next. An omitted
       // lifetime lands on the cap rather than living forever, so a trap can only
@@ -1162,6 +1178,57 @@ function contestedBlinks(plans: readonly UnitPlan[]): ReadonlySet<string> {
  * aimed at (edge-cases: dash immunity scope). Displacement from a dash is queued
  * for end of Blast (BACKLOG item 8); trap triggers attach here (item 9).
  */
+/**
+ * One blow a Dash-phase ability landed, gathered before any of it is applied
+ * (PHASE-STATUS-FIRST). `raw` is the ability's authored number; the attacker's
+ * Might/Weaken is read at apply time, so a buff that landed in this same Dash
+ * is already counted.
+ */
+interface DashHit {
+  attacker: UnitState;
+  victim: UnitState;
+  def: AbilityDef;
+  raw: number;
+  behindCover: boolean;
+  /** The square the blow came from — where a shove that follows it is measured. */
+  from: Vec2;
+  /** DASH-OCCUPIED already shoved this victim out of the landing square. */
+  alreadyShoved: boolean;
+}
+
+/**
+ * Apply the Dash phase's damage, all of it at once, after every dash has moved
+ * and every Dash-phase status has landed (PHASE-STATUS-FIRST, Dev Note #21).
+ *
+ * The batch is what makes the phase simultaneous rather than sequential. Two
+ * charges that kill each other now both connect, because neither victim is dead
+ * while the hits are being gathered; a shield thrown by a bodyguard's dive
+ * absorbs the dive it was thrown in front of, whichever plan the ordering
+ * happened to reach first. Nothing here depends on the order of `hits` beyond
+ * which attacker is credited with an overkill, and that order is the fixed
+ * `orderedPlans` walk.
+ */
+function applyDashHits(
+  draft: GameState,
+  board: Board,
+  hits: readonly DashHit[],
+  pending: Displacement[],
+  events: TurnEvent[],
+): void {
+  for (const h of hits) {
+    if (!h.victim.alive) continue;
+    const res = applyDamage(h.victim, computeDamage(h.raw, h.attacker, h.behindCover));
+    events.push({ type: 'damage', unitId: h.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: h.attacker.unitId, abilityId: h.def.id });
+    onDamageTaken(board, h.victim, h.def.id, events); // CAMO-REVEAL: + reveal if concealed
+    if (res.died) killUnit(draft, h.victim, h.attacker.owner, events);
+    // …unless this dash already shoved them out of its landing square, in which
+    // case they have taken their displacement for this ability.
+    else if (!h.alreadyShoved) {
+      collectDisplacement(pending, h.def.effects, h.victim, h.from, h.attacker.unitId);
+    }
+  }
+}
+
 function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], displaced: Set<string>, events: TurnEvent[]): void {
   events.push({ type: 'phaseStart', phase: 'dash' });
   // Shift resolves before a dash ability the same unit declared. Its Move cost
@@ -1182,6 +1249,10 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     }
   }
   const repositioned: UnitState[] = []; // units that actually moved under their own power (D1-dash)
+  // PHASE-STATUS-FIRST: every blow the phase lands, gathered while the loop
+  // below moves units and applies the phase's statuses, and applied afterwards
+  // in one batch. See `applyDashHits`.
+  const dashHits: DashHit[] = [];
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a === undefined || a.def.phase !== 'dash' || !plan.unit.alive) continue;
@@ -1241,16 +1312,12 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
         const behindCover = a.def.melee === true
           ? false
           : isBehindCover(board, from, victim.pos, a.def.range);
-        const res = applyDamage(victim, computeDamage(dmg.amount ?? 0, plan.unit, behindCover));
-        events.push({ type: 'damage', unitId: victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: plan.unit.unitId, abilityId: a.def.id });
-        onDamageTaken(board, victim, a.def.id, events); // CAMO-REVEAL: + reveal if concealed
+        // PHASE-STATUS-FIRST: gathered, not applied. The Dash phase's statuses
+        // — a bodyguard's shield, a dive's buff — all land in the loop this is
+        // inside; the damage waits for the batch below so that every blow in
+        // the phase is measured against the same finished state.
+        dashHits.push({ attacker: plan.unit, victim, def: a.def, raw: dmg.amount ?? 0, behindCover, from, alreadyShoved: victim.unitId === shovedAside?.unitId });
         if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
-        if (res.died) killUnit(draft, victim, plan.unit.owner, events);
-        // …unless this dash already shoved them out of its landing square, in
-        // which case they have taken their displacement for this ability.
-        else if (victim.unitId !== shovedAside?.unitId) {
-          collectDisplacement(pending, a.def.effects, victim, from, plan.unit.unitId);
-        }
       }
     }
 
@@ -1302,6 +1369,8 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     if (hitEnemy || isHarmfulUse(a.def)) revealIfConcealed(board, plan.unit, origin, a.def.id, events);
     if (!vecEq(plan.unit.pos, origin)) repositioned.push(plan.unit);
   }
+
+  applyDashHits(draft, board, dashHits, pending, events);
 
   // A decoy is destroyed by an enemy ending a *voluntary* reposition on its
   // square — Dash as well as Move (D1-dash, edge-cases 2026-08-20). Only units
@@ -1575,8 +1644,43 @@ function runBlast(
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
   }
 
-  // Apply all damage. Deaths happen here but every hit was gathered first, so a
-  // unit that dies still dealt its damage (edge-cases: mutual damage).
+  // ── Sub-step 1: every status in the phase, both teams at once ──────────────
+  //
+  // PHASE-STATUS-FIRST (Dev Note #21). Statuses used to be applied *after* the
+  // damage, which made a Blast-phase Weaken a promise about next turn: Dazzling
+  // Ray weakened its victim, and the victim's own attack — fired in the same
+  // Blast — landed at full strength anyway. The owner wants it to blunt that
+  // attack. So the phase resolves as two batches: all statuses, then all damage
+  // computed against the state those statuses left behind.
+  //
+  // Both batches are order-independent by construction. `debuffs` and
+  // `benefits` were gathered from every plan before either loop runs, so no
+  // team is privileged by going first, and applying a status is idempotent with
+  // respect to the other statuses landing beside it.
+  //
+  // Beneficial effects split here: a **shield** is a status and lands in this
+  // batch, which is what lets Aegis's shield absorb the very volley he threw it
+  // in front of, regardless of plan order. A **heal** is not — the AC groups it
+  // with damage, and it stays after the damage below so that a heal arriving in
+  // the same phase as a lethal blow is still too late, exactly as today.
+  for (const { victim, effect, source } of debuffs) {
+    if (!victim.alive) continue;
+    applyStatus(victim, effect.kind, effect.duration ?? 1, effect.amount, authorOf(effect.kind, source));
+    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, amount: effect.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
+  }
+  for (const { target, effect, source } of benefits) {
+    if (effect.kind === 'heal' || !target.alive) continue;
+    applySelfEffects(draft, target, [effect], source, events);
+  }
+
+  // ── Sub-step 2: every damage and heal, both teams at once ─────────────────
+  //
+  // Deaths happen here but every hit was gathered first, so a unit that dies
+  // still dealt its damage (edge-cases: mutual damage) and mutual kills land in
+  // full. `computeDamage` reads the attacker's statuses live, which is the whole
+  // point of the ordering above: a Weaken applied moments ago is already in the
+  // number.
+  //
   // Keyed by attacker, valued by the ability that landed — the reveal below is a
   // consequence of a specific attack, and A0-heal makes the log say which.
   const dealtDamage = new Map<string, string>();
@@ -1595,16 +1699,9 @@ function runBlast(
     if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
 
-  // Non-displacement debuffs on surviving enemies.
-  for (const { victim, effect, source } of debuffs) {
-    if (!victim.alive) continue;
-    applyStatus(victim, effect.kind, effect.duration ?? 1, effect.amount, authorOf(effect.kind, source));
-    events.push({ type: 'statusApplied', unitId: victim.unitId, status: effect.kind, duration: effect.duration ?? 1, amount: effect.amount, sourceUnitId: source.unitId, abilityId: source.abilityId });
-  }
-
-  // Beneficial effects (heal / shield / buffs) on surviving allies (item 14).
+  // The other half of sub-step 2: heals, on allies who survived the damage.
   for (const { target, effect, source } of benefits) {
-    if (target.alive) applySelfEffects(draft, target, [effect], source, events);
+    if (effect.kind === 'heal' && target.alive) applySelfEffects(draft, target, [effect], source, events);
   }
 
   // Queue displacement against survivors, to resolve at end of Blast (item 8).
