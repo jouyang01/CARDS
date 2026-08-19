@@ -139,16 +139,22 @@ describe('BUFF-UI: the HUD strip', () => {
   });
 
   it('explains what each one does, on hover', () => {
+    // TOOLTIP-SWEEP changed the carrier, not the claim: the blurb was a `title`
+    // and is now `data-tip`, read by the HUD's own instant tooltip, because the
+    // browser sat on a `title` for about a second. What a status *does* is the
+    // thing a player most often does not know, so it was the worst place for a
+    // delay. The delay itself is `tooltip-sweep.test.ts`.
     hud().update(model(character({ statuses: statusChips([{ kind: 'root', remaining: 1 }]) })));
-    const title = chipsOnScreen()[0]!.title;
-    expect(title).toContain('Rooted');
-    expect(title).toContain(STATUS_BLURBS['root']!);
-    expect(title, 'singular for the last turn').toContain('1 turn left');
+    const tip = chipsOnScreen()[0]!.dataset['tip'] ?? '';
+    expect(tip).toContain('Rooted');
+    expect(tip).toContain(STATUS_BLURBS['root']!);
+    expect(tip, 'singular for the last turn').toContain('1 turn left');
+    expect(chipsOnScreen()[0]!.hasAttribute('title'), 'and not through the browser').toBe(false);
   });
 
   it('pluralises honestly', () => {
     hud().update(model(character({ statuses: statusChips([{ kind: 'root', remaining: 3 }]) })));
-    expect(chipsOnScreen()[0]!.title).toContain('3 turns left');
+    expect(chipsOnScreen()[0]!.dataset['tip']).toContain('3 turns left');
   });
 
   it('shows a shield\'s remaining absorption as well as its duration', () => {

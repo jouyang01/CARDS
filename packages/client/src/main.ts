@@ -356,19 +356,6 @@ function bootHotSeat(): void {
   if (title !== null) title.setAttribute('title', describeSetup(setup));
   ui.status.textContent = `Loading ${describeSetup(setup)}…`;
 
-  // DEV-CHARSELECT: a `?chars=` that could not be honoured falls back to the
-  // ordinary deal — and says so, on screen and permanently. The status line
-  // will not do: the controller rewrites it on the next render, and a warning
-  // that survives one frame is a warning nobody reads. Without this the
-  // fallback would be exactly the silent mis-seat DECISIONS 2026-09-18 rules
-  // out, so the notice is the thing that makes falling back legitimate.
-  for (const note of setup.notes ?? []) {
-    const line = document.createElement('p');
-    line.className = 'setup-note';
-    line.textContent = note;
-    app.prepend(line);
-  }
-
   startHotSeat(
     ui,
     setup.map,
