@@ -167,6 +167,15 @@
         background: rgb(12 14 19 / 0.96); font-size: 11px; line-height: 1.45;
         box-shadow: 0 8px 24px rgb(0 0 0 / 0.5); }
       .inspect.t1 { border-left-color: #ff6b5e; }
+      /* CATALYST-TIP-FAST: the instant tooltip that replaced `title` on the
+         lobby's catalyst buttons. Same fixed, pointer-transparent, above-the-HUD
+         treatment as the inspect panel — it is the same mechanism, carrying one
+         sentence instead of a kit. */
+      .tip { position: fixed; z-index: 8; pointer-events: none;
+        max-width: 260px; padding: 7px 9px;
+        border-radius: 7px; border: 1px solid #2b3140; border-left: 3px solid #c4aef0;
+        background: rgb(12 14 19 / 0.96); font-size: 11px; line-height: 1.45;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.5); }
       .inspect-name { font-size: 13px; font-weight: 700; }
       .inspect-role { font-size: 9px; opacity: 0.55; text-transform: uppercase; letter-spacing: 1px; }
       .inspect-vitals { display: flex; justify-content: space-between; gap: 10px;

@@ -34,6 +34,7 @@ import {
 import { AWAY_LABEL, AWAY_MARK } from './presence.js';
 import { inspectCharacter } from './inspect.js';
 import { renderInspectPanel } from './inspect-panel.js';
+import { createTooltip } from './tooltip.js';
 
 /** One catalyst, as the screen offers it. Named so the pool's shape stays out. */
 export interface CatalystOption {
@@ -94,6 +95,22 @@ export function createLobbyScreen(
   const hoverPanel = el('div', 'inspect');
   hoverPanel.style.display = 'none';
   document.body.appendChild(hoverPanel);
+
+  /**
+   * CATALYST-TIP-FAST (owner Dev Note) — *"Catalyst descriptions on mouseover
+   * appear very slowly, can we speed up how soon they show up?"*
+   *
+   * The catalyst buttons carried their description as a `title`, and the delay
+   * before a native tooltip appears belongs to the browser: about half a second
+   * to a second, with nothing to configure. Nine catalysts is nine waits.
+   *
+   * So it becomes an element, like the character hover beside it — which has
+   * never had a delay, because there was never a timer to have one. Built once
+   * and re-shown, for the same reason `hoverPanel` is: the screen underneath is
+   * rebuilt on every message, and a tip rebuilt with it would vanish from under
+   * the pointer that summoned it.
+   */
+  const tip = createTooltip();
 
   /**
    * LOBBY-DETAIL-PANEL (owner Dev Note) — *"it should also expand into a bigger
@@ -272,7 +289,14 @@ export function createLobbyScreen(
         for (const cat of catalysts.filter((c) => c.phase === phase)) {
           const button = el('button', 'lobby-catalyst', cat.name);
           button.dataset['catalyst'] = cat.id;
-          button.title = cat.description;
+          // CATALYST-TIP-FAST: on `mouseenter`, which is *now*. No `title` —
+          // one description in two places would be one the browser still
+          // delays, over the top of the one that does not.
+          button.addEventListener('mouseenter', (event) => {
+            const at = event as MouseEvent;
+            tip.show(cat.description, { x: at.clientX, y: at.clientY });
+          });
+          button.addEventListener('mouseleave', () => { tip.hide(); });
           if (draft.slots[active]?.catalysts[phase] === cat.id) button.classList.add('is-chosen');
           button.addEventListener('click', () => {
             draft = chooseCatalyst(draft, active, phase, cat.id);
@@ -336,6 +360,7 @@ export function createLobbyScreen(
       // down does not take it with it. Removed explicitly, or it would hang
       // over the board the match starts on.
       hoverPanel.remove();
+      tip.destroy();
     },
   };
 }
