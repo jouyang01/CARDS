@@ -151,6 +151,29 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   whose area, as aimed, no longer contains the dasher's current square. If the aimed
   area covers the dash *destination*, it hits. Prep-phase traps and Dash-phase damage
   can still hit a dasher.
+- **RULED — batch-3 combat rulings verified (SHIPPED PR #82) and four Builder OQs closed
+  (2026-09-18).** PHASE-STATUS-FIRST (statuses batch, then damage batches against post-status state,
+  both teams together — phase order Prep→Dash→Blast→Move intact; mutual Weakens both blunt; mutual
+  kills still land), CASTER-SAFE + RECOIL, TRAP-CENTRE, TRAP-HALT, ALLY-SAFE all verified. The
+  Open-Question corners:
+  - **UNTARGETABLE is GATHER-TIME, not re-checked after batch-1 statuses (OQ #5).** Untargetable is a
+    **targeting-eligibility** property ("can this ability hit that unit at all"), resolved when a
+    phase gathers its targets — **not** a damage modifier. PHASE-STATUS-FIRST governs how damage
+    *computes* against post-status state (Might/Weaken, status riders), **not** who is re-selected as
+    a target mid-phase. So an Untargetable applied in the **same** phase does **not** retroactively
+    dodge that phase's already-gathered damage — consistent with "targeting locks when the ability
+    fires," and it keeps the energy gate that rides on the gather. (Untargetable is a Prep buff that
+    protects in later phases — cross-phase, unchanged and correct.) Ruled as-is; no change.
+  - **TRAP-CENTRE's "per-team cap of 4" was a misreference — there is NO trap COUNT cap; only
+    `TRAP_MAX_LIFETIME` (4 turns) exists (OQ #1).** My AC (echoing the designer note) named a count
+    cap the engine has never had. Ruling: **no count cap in v1** — the lifetime cap and the balance
+    lever the designer already named (the auto-mine's `amount` 8→0-with-reveal, *not* a cap) are the
+    backstops. Thorn arming two traps a turn (auto-mine + free Snare Bloom) is watched in playtest;
+    **if the carpet is oppressive, a per-team count cap with an explicit eviction policy is a
+    Designer decision** (flagged), not a guess. No item now.
+  - **A trap never triggers on its owner's TEAM, which already excludes the owner (OQ #2).** Ratified
+    — CASTER-SAFE (self-only) and the trap's team-exclusion compose without a hole; recorded so the
+    next trap item does not read them as one rule with a gap.
 
 ## Movement
 
@@ -1392,6 +1415,14 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     the temporary `POST /rooms/:code/start` route is deleted **in the same M3-LOBBY-UI slice** that
     adds the button and retires the auto-start — not before, or the networked match is left with no
     reachable start at all.
+    - **RULED — LOBBY-READY: seat 0 (the host) starts once every CONNECTED non-host seat has readied;
+      a disconnected seat is SKIPPED, not waited on (SHIPPED PR #82; ratifies Builder OQ 2026-09-18
+      #6).** The ready handshake gates the host's Start button on the other seats readying, but a
+      **held (disconnected) seat cannot ready**, and waiting on one would let a dropped player freeze
+      a lobby forever. So `everyoneReady` **skips disconnected seats** — a room may start with a seat
+      away, and that seat's characters are then run by the reconnect/HANDOFF rules. This matches the
+      standing principle **"no turn ever waits on a player"** applied one layer earlier, to the lobby.
+      Ratified. (Readying is revocable until start; a late/returning seat is un-readied.)
 - **RULED — BLIND-PICK: lobby picks are hidden across teams — a team sees its own picks in full and
   the enemy only as a count of finished seats (Builder OQ 2026-09-11 #3; golden rule #5; ratifies the
   shipped `LobbyView` split, Decision 9).** The R3 ruling's "blind-pick mirrors are legal" only means
