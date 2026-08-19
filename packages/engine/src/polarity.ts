@@ -24,6 +24,7 @@ export const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'pull',
   'reveal',
   'damageOverTime', // DOT-HOT: it damages, so FF1 reaches allies in the area too
+  'brushBroken', // BRUSH-BREAK: having your cover blown is done *to* you
 ]);
 export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'heal',

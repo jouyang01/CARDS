@@ -14,7 +14,10 @@
  * - a unit in brush is hidden from enemies that are neither standing in the
  *   same brush patch nor adjacent to *the unit itself* (standing beside the
  *   thicket is not the same as standing beside whoever is in it);
- * - Stealth hides a unit anywhere; Reveal defeats both brush and Stealth.
+ * - Stealth hides a unit anywhere; Reveal defeats both brush and Stealth;
+ * - **brush-break** (BRUSH-BREAK) defeats brush alone: a unit hit while a
+ *   thicket was hiding it is drawn for two turns wherever it stands, but
+ *   Stealth still covers it.
  *
  * GAME_SPEC §3 "vision is mutual" is implemented at the range + line-of-sight
  * layer, both of which are symmetric by construction. Concealment is
@@ -230,6 +233,13 @@ export function isAdjacent(a: Vec2, b: Vec2): boolean {
 export function isConcealedFrom(vision: Vision, target: UnitState, observerPos: Vec2): boolean {
   if (hasStatus(target, 'reveal')) return false;
   if (hasStatus(target, 'stealth')) return true;
+  // BRUSH-BREAK (Dev Note #19): a unit that was hit while a thicket was hiding
+  // it is drawn for the enemy even while it stands in one, for this turn and
+  // the next. Below the Stealth check on purpose — brush-break removes one
+  // veil, not both, so a unit that has since gone Stealthed is hidden again.
+  // Unit-scoped rather than patch-scoped: walking into a *fresh* thicket next
+  // turn does not help either, because the marker travels with the unit.
+  if (hasStatus(target, 'brushBroken')) return false;
   if (brushPatchAt(vision, target.pos) === undefined) return false;
   if (inSameBrushPatch(vision, observerPos, target.pos)) return false;
   return !isAdjacent(observerPos, target.pos);

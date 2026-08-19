@@ -75,14 +75,18 @@ const IN_OPEN = { x: 2, y: BRUSH_ROW };
 const AIM = [{ x: 10, y: BRUSH_ROW }];
 
 describe('CAMO-REVEAL: acting from a camouflage tile gives you away', () => {
-  it('a brush-hidden unit that TAKES damage is revealed into next turn', () => {
-    // The reported gap: taking a hit only ever broke Stealth, so a unit hidden
-    // by *brush* (carrying no `stealth` status at all) kept its concealment.
+  it('a brush-hidden unit that TAKES damage loses the BUSH, not everything', () => {
+    // The reported gap was that taking a hit only ever broke Stealth, so a unit
+    // hidden by *brush* kept its concealment. CAMO-REVEAL closed it with a
+    // Reveal; BRUSH-BREAK narrows the punishment to fit the crime, because
+    // Reveal pierces everywhere and what being seen in a bush should cost you
+    // is the bush. `brush-break.test.ts` carries the rule in full.
     const { state } = run(board(), [], [{ unitId: 'e', ability: { abilityId: 'shot', target: [{ x: 0, y: BRUSH_ROW }] } }]);
-    expect(revealed(state, 'a')).toBe(true);
-    // Applied at 2, ticked once at end of turn — so it is still up next turn.
-    expect(unit(state, 'a').statuses.find((s) => s.kind === 'reveal')!.remaining)
-      .toBe(REVEAL_ON_ATTACK_TURNS - 1);
+    expect(revealed(state, 'a'), 'not lit up across the board').toBe(false);
+    const marker = unit(state, 'a').statuses.find((s) => s.kind === 'brushBroken')!;
+    // Applied at 2, ticked once at end of turn — so it is still up next turn,
+    // exactly as the Reveal it replaced was.
+    expect(marker.remaining).toBe(REVEAL_ON_ATTACK_TURNS - 1);
   });
 
   it('a brush-hidden unit that fires a CATALYST is revealed', () => {

@@ -45,6 +45,7 @@ import {
 import {
   PASSIVE_ENERGY,
   RESPAWN_TURNS,
+  BRUSH_BREAK_TURNS,
   REVEAL_ON_ATTACK_TURNS,
   TRAP_MAX_LIFETIME,
   ULT_COST,
@@ -292,20 +293,41 @@ function revealIfConcealed(
 }
 
 /**
- * Taking damage: Stealth always breaks (GAME_SPEC §6), and a unit that was
- * *concealed* when it was hit is additionally revealed (CAMO-REVEAL) — a
- * brush-hidden unit that takes a hit used to keep its concealment next turn,
- * which is the half of the owner's rule the engine was missing.
+ * Taking damage: Stealth always breaks (GAME_SPEC §6), and being hit while
+ * hidden costs you the hiding place.
  *
- * Order matters: concealment is read **before** `breakStealth`, or a stealthed
- * unit standing in the open would have its own gate cleared out from under it.
+ * BRUSH-BREAK (Dev Note #19) splits that second half by *which* veil was doing
+ * the work. Being shot in a thicket used to apply **Reveal**, which is far too
+ * much: Reveal pierces everything, everywhere, so a unit clipped once in brush
+ * was lit up across the whole board for two turns including on open ground it
+ * later ran to. What being seen in a bush should cost you is the bush.
+ *
+ *   • hit **in brush** → `brushBroken` for two turns. The thicket stops working
+ *     for this unit — any thicket, because the marker rides the unit rather
+ *     than the patch — and nothing else about its concealment changes.
+ *   • hit while **Stealthed** → unchanged: the Stealth breaks and the Reveal
+ *     lands, exactly as CAMO-REVEAL had it. Stealth is the stronger veil and it
+ *     is paid for; losing it is meant to hurt.
+ *
+ * Order matters: both are read **before** `breakStealth`, or a stealthed unit
+ * would have its own gate cleared out from under it.
  */
 function onDamageTaken(
   board: Board, victim: UnitState, abilityId: string, events: TurnEvent[],
 ): void {
-  const concealed = isConcealed(board, victim, victim.pos);
+  const stealthed = hasStatus(victim, 'stealth');
+  const inBrush = terrainAt(board, victim.pos) === 'brush';
   breakStealth(victim, events);
-  if (concealed) applyReveal(victim, abilityId, events);
+  if (stealthed) {
+    applyReveal(victim, abilityId, events);
+    return;
+  }
+  if (!inBrush) return;
+  applyStatus(victim, 'brushBroken', BRUSH_BREAK_TURNS);
+  events.push({
+    type: 'statusApplied', unitId: victim.unitId, status: 'brushBroken',
+    duration: BRUSH_BREAK_TURNS, sourceUnitId: victim.unitId, abilityId,
+  });
 }
 
 /** Does this ability count as "an offensive ability" for CAMO-REVEAL? */

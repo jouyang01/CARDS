@@ -67,6 +67,11 @@ export const EFFECT_KINDS = [
   // "something that lasts N turns" already has one implementation here.
   'damageOverTime',
   'healOverTime',
+  // BRUSH-BREAK (Dev Note #19): the marker a unit gets for being hit while a
+  // thicket was hiding it. Engine-applied only — no ability authors it — but it
+  // lives on `unit.statuses` and ticks like everything else there, because
+  // "something that lasts N turns" already has one implementation.
+  'brushBroken',
 ] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 

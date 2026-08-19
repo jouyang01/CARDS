@@ -45,6 +45,9 @@ const STATUS_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   // shield does — so nothing about the tick, the refresh or the expiry is new.
   'damageOverTime',
   'healOverTime',
+  // BRUSH-BREAK: a timed marker like the rest. Nothing about the tick, the
+  // refresh or the expiry is new.
+  'brushBroken',
 ]);
 
 /** Is `kind` something that lives on `unit.statuses` (vs. an instant effect)? */
@@ -109,6 +112,9 @@ export function applyStatus(
 export const OVER_TIME_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'damageOverTime',
   'healOverTime',
+  // BRUSH-BREAK: a timed marker like the rest. Nothing about the tick, the
+  // refresh or the expiry is new.
+  'brushBroken',
 ]);
 
 /**
