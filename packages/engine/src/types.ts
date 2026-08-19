@@ -83,6 +83,17 @@ export interface AbilityEffect {
    * data omits it, so no trap can outlive the cap by being under-specified.
    */
   lifetime?: number;
+  /**
+   * TRAP-HALT — `trap` only. A unit that **enters** this trap ends its movement
+   * on that square: the rest of its path, or the rest of its charge, is simply
+   * dropped.
+   *
+   * It is a stop, not a displacement — nothing is pushed, nothing is cancelled
+   * beyond the steps that never happened, so a halted unit keeps whatever else
+   * its turn had. **Unstoppable ignores it**, exactly as it already ignores the
+   * Slow such traps carry (Dev Note #10b).
+   */
+  halt?: boolean;
 }
 
 export interface AbilityDef {
@@ -394,6 +405,8 @@ export interface TrapState {
    * a `duration: N` status is measured by.
    */
   expiresOnTurn: number;
+  /** TRAP-HALT: entering it ends the mover's movement (Unstoppable excepted). */
+  halt?: boolean;
   /** Applied to whoever triggers it. */
   onTrigger: AbilityEffect[];
 }

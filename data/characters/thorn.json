@@ -39,14 +39,15 @@
         {
           "kind": "trap",
           "amount": 12,
-          "lifetime": 3
+          "lifetime": 3,
+          "halt": true
         },
         {
           "kind": "slow",
           "duration": 2
         }
       ],
-      "description": "FREE ACTION \u2014 costs no ability, so Thorn still slings this turn. Plants a hidden snare: 12 damage on entry and a Slow that lasts through the next turn. (Movement-halt on trigger lands with TRAP-HALT.)"
+      "description": "FREE ACTION \u2014 costs no ability, so Thorn still slings this turn. Plants a hidden snare: 12 damage on entry, a Slow that lasts through the next turn, and whoever steps in stops dead on that square."
     },
     {
       "id": "bramble_stride",

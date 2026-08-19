@@ -722,10 +722,21 @@ const sourceOf = (unit: UnitState, abilityId: string): Source => ({ unitId: unit
  * not apply (see DECISIONS.md) — and the trap's non-trap effects (e.g. Reveal)
  * hit the victim. A trap is one-shot: it is consumed when it fires. A unit that
  * merely *starts* on a freshly-placed trap never calls this, so it is safe until
- * it re-enters. Returns true if the victim died.
+ * it re-enters.
+ *
+ * Returns **true when the unit's movement ends here** — because it died, or
+ * because the trap was a halting one (TRAP-HALT, Dev Note #10b). Every caller
+ * already treated the return value as "stop walking", so the two reasons need
+ * only one channel: a Move step discards the rest of the path, a charge stops
+ * where it stands. It is a stop, not a displacement — nothing is pushed and
+ * nothing else about the turn is cancelled.
+ *
+ * **Unstoppable ignores the halt**, exactly as it already ignores the Slow these
+ * traps carry: the damage still lands, the walk simply does not stop.
  */
 function triggerTrapsOnEntry(draft: GameState, board: Board, unit: UnitState, events: TurnEvent[]): boolean {
   if (!unit.alive) return false;
+  let halted = false;
   for (const trap of draft.traps.filter((t) => t.owner !== unit.owner && vecEq(t.pos, unit.pos))) {
     draft.traps = draft.traps.filter((t) => t.id !== trap.id); // consumed
     events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
@@ -744,8 +755,9 @@ function triggerTrapsOnEntry(draft: GameState, board: Board, unit: UnitState, ev
       killUnit(draft, unit, trap.owner, events);
       return true;
     }
+    if (trap.halt === true && !hasStatus(unit, 'unstoppable')) halted = true;
   }
-  return false;
+  return halted;
 }
 
 // ── Displacement (knockback / pull) ─────────────────────────────────────────
@@ -1092,6 +1104,8 @@ function placeTraps(
     // lifetime lands on the cap rather than living forever, so a trap can only
     // be *shorter* than the rule by being under-specified, never longer.
     expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
+    // TRAP-HALT: carried from the effect, like the lifetime beside it.
+    ...(trapEffect.halt === true ? { halt: true } : {}),
     onTrigger,
   };
   draft.traps.push(trap);
@@ -1430,7 +1444,7 @@ function walkCharge(draft: GameState, board: Board, unit: UnitState, path: reado
     const from = unit.pos;
     unit.pos = { x: step.x, y: step.y };
     events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-    if (triggerTrapsOnEntry(draft, board, unit, events)) return crossed; // died mid-charge
+    if (triggerTrapsOnEntry(draft, board, unit, events)) return crossed; // died or halted (TRAP-HALT)
   }
   return crossed;
 }
@@ -2479,7 +2493,7 @@ function stepMovers(
       const k = vecKey(to);
       entered.set(k, [...(entered.get(k) ?? []), m]);
       events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
-      if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died → path discarded
+      if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died or halted → rest of the path dropped
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
       bounceOffOccupied(draft, movers, m, step, events);

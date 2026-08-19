@@ -44,7 +44,7 @@ export const PROFILE_KEYS = [
 ] as const;
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
-export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime'] as const;
+export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime', 'halt'] as const;
 
 /** Every key a `PowerupPad` may carry (PADS1) — same argument again. */
 export const POWERUP_PAD_KEYS = ['x', 'y', 'type', 'firstTurn', 'everyTurns'] as const;
@@ -245,6 +245,16 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
           errs.push(`${path}.effects[${i}]: lifetime is only meaningful on a "trap" effect`);
         } else if (!isInt(e.lifetime) || e.lifetime < 1 || e.lifetime > TRAP_MAX_LIFETIME) {
           errs.push(`${path}.effects[${i}]: trap lifetime must be an integer 1..${TRAP_MAX_LIFETIME}`);
+        }
+      }
+      // TRAP-HALT: same argument as `lifetime` — a `halt` on anything but a trap
+      // is a field the engine never reads, and `halt: false` is a way of writing
+      // "no halt" that looks like a decision. Only `true` is a value.
+      if (e.halt !== undefined) {
+        if (e.kind !== 'trap') {
+          errs.push(`${path}.effects[${i}]: halt is only meaningful on a "trap" effect`);
+        } else if (e.halt !== true) {
+          errs.push(`${path}.effects[${i}]: halt must be true when present (omit it for no halt)`);
         }
       }
     }
