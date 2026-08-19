@@ -30,14 +30,15 @@ import kestrel from '../../../data/characters/kestrel.json';
  * bug was KESTREL-CONE) reachable only by opening a lobby and finding a second
  * player. `?chars=kestrel,vex` is that, in a URL.
  *
- * The interesting half is the failure. Every other parameter in `match-setup.ts`
- * treats a typo as an **error that refuses to load**, on the stated grounds that
- * silently loading `duel-arena` because you mistyped the map is the one outcome
- * a dev toggle must not have. This one falls back to the ordinary deal instead
- * (the backlog's AC) — and that is only defensible because it **says so, on
- * screen, permanently**. The notice is not decoration around the fallback; it is
- * the thing that makes falling back something other than a silent mis-seat
- * (DECISIONS 2026-09-18).
+ * The interesting half is the failure, and it has been **reversed once**
+ * (DEV-CHARSELECT-ERROR). It shipped falling back to the ordinary deal with a
+ * notice on screen, which was the original AC; the Analyzer took the Builder's
+ * own flag and settled it the other way. Every other parameter in
+ * `match-setup.ts` treats a typo as an error that refuses to load — silently
+ * loading `duel-arena` because you mistyped the map is the one outcome a dev
+ * toggle must not have (DECISIONS 2026-09-18) — and a notice beside a board
+ * that is already running is a notice you play past. `?chars=kestrell` now
+ * stops the page and names the ids that would have worked.
  */
 
 const MAPS = [duelArena, ironBasin] as unknown as MapDef[];
@@ -49,6 +50,10 @@ const setupFor = (search: string) => {
   const result = parseSetup(search, MAPS, CATALOG);
   if ('errors' in result) throw new Error(`expected a setup, got: ${result.errors.join('; ')}`);
   return result.setup;
+};
+const errorsFor = (search: string): string[] => {
+  const result = parseSetup(search, MAPS, CATALOG);
+  return 'errors' in result ? result.errors : [];
 };
 const ids = (team: CharacterDef[]): string[] => team.map((c) => c.id);
 
@@ -104,47 +109,53 @@ describe('DEV-CHARSELECT: the roster comes from the URL', () => {
   });
 });
 
-describe('DEV-CHARSELECT: a bad id falls back, and never quietly', () => {
-  it('an unknown id deals the default roster instead', () => {
-    const setup = setupFor('?chars=kestrell,vex,thorn,lumen');
-    expect(ids(setup.teams[0]), 'the ordinary deal').toEqual(['vex', 'wisp']);
-    expect(setup.chars, 'nothing was chosen').toBeUndefined();
+describe('DEV-CHARSELECT-ERROR: a bad id refuses to load', () => {
+  it('an unknown id is an error, and NO roster is dealt', () => {
+    // The reversal, in its own assertion: the previous behaviour returned a
+    // playable setup on the default deal. A dev who typed a name and got a
+    // board would reasonably assume they got the board they asked for.
+    const result = parseSetup('?chars=kestrell,vex,thorn,lumen', MAPS, CATALOG);
+    expect('errors' in result, 'it refuses to load').toBe(true);
+    expect('setup' in result, 'and seats nobody').toBe(false);
   });
 
   it('and says which one, with the ids that would have worked', () => {
     // "No such character" on its own sends you to the source to find out what
     // is spelled how. The list is the whole usefulness of the message.
-    const setup = setupFor('?chars=kestrell,vex,thorn,lumen');
-    expect(setup.notes).toHaveLength(1);
-    expect(setup.notes![0]).toContain('"kestrell"');
-    expect(setup.notes![0], 'the roster, so the next attempt lands').toContain('kestrel');
-    expect(setup.notes![0]).toContain('ravok');
+    const errors = errorsFor('?chars=kestrell,vex,thorn,lumen');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('"kestrell"');
+    expect(errors[0], 'the roster, so the next attempt lands').toContain('kestrel');
+    expect(errors[0]).toContain('ravok');
   });
 
   it('it is all-or-nothing: one bad id does not seat the three good ones', () => {
-    // A partial substitution would be exactly the outcome this guards against,
-    // with most of the roster right to make it look deliberate.
-    const setup = setupFor('?chars=vex,bastion,thorn,nobody');
-    expect(setup.teams.flat().map((c) => c.id)).toEqual(['vex', 'wisp', 'bastion', 'aegis']);
+    // A partial substitution would be the worst outcome of the three, with most
+    // of the roster right to make it look deliberate.
+    expect(errorsFor('?chars=vex,bastion,thorn,nobody')).toHaveLength(1);
   });
 
   it('too few for the format is the same kind of complaint', () => {
-    const setup = setupFor('?format=4v4&chars=kestrel,vex');
-    expect(setup.notes![0]).toContain('8 characters are needed');
-    expect(setup.teams.flat(), 'and a full 4v4 was dealt anyway').toHaveLength(8);
+    expect(errorsFor('?format=4v4&chars=kestrel,vex')[0]).toContain('needs 8 characters');
   });
 
-  it('a good `chars` carries no note at all', () => {
-    // The control: a notice that appeared on a healthy load would train the eye
-    // to skip the one that matters.
-    expect(setupFor('?format=1v1&chars=kestrel,vex').notes).toBeUndefined();
+  it('a good `chars` produces no error at all', () => {
+    // The control: an error on a healthy load would make the toggle unusable.
+    expect(errorsFor('?format=1v1&chars=kestrel,vex')).toEqual([]);
   });
 
-  it('a bad `map` beside a good `chars` is still an error, not a note', () => {
-    // The fallback is scoped to this one parameter. Everything else in the file
-    // still refuses to load, and this must not have loosened that.
-    const result = parseSetup('?map=nope&chars=kestrel,vex', MAPS, CATALOG);
-    expect('errors' in result).toBe(true);
+  it('and it reads like its neighbours, because it now behaves like them', () => {
+    // The consistency this item bought: a mistyped character and a mistyped map
+    // fail the same way, so nobody has to remember which one is different.
+    const chars = errorsFor('?chars=nobody,vex,thorn,lumen')[0] ?? '';
+    const map = errorsFor('?map=nope')[0] ?? '';
+    expect(chars).toContain('unknown character');
+    expect(map).toContain('unknown map');
+    for (const message of [chars, map]) expect(message).toContain('try one of');
+  });
+
+  it('a bad `map` beside a good `chars` is still an error too', () => {
+    expect(errorsFor('?map=nope&chars=kestrel,vex')).not.toEqual([]);
   });
 });
 
