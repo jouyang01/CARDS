@@ -12,6 +12,7 @@
       "range": 6,
       "cooldown": 0,
       "energyGain": 8,
+      "noFriendlyFire": true,
       "effects": [
         {
           "kind": "damage",

@@ -74,7 +74,7 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     };
     const wedge: AbilityDef = {
       id: 'y', name: 'Y', phase: 'blast', shape: 'cone', range: 3, cooldown: 0, energyGain: 4,
-      melee: true, axisBonus: 8, beamWidth: 3, selfDamagePct: 50,
+      melee: true, axisBonus: 8, beamWidth: 3, selfDamagePct: 50, noFriendlyFire: true,
       effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
     const bomb: AbilityDef = {

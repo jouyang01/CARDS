@@ -53,6 +53,7 @@ import { getFormat } from './formats.js';
 import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
+import { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from './polarity.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import { buildVision, teamCanSee, teamHasSightline, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
@@ -183,36 +184,11 @@ interface UnitPlan {
  * own team. teleport/decoy/trap are neither — they are self/placement effects
  * handled by their own phase, not filtered by area allegiance.
  */
-// Effect polarity (edge-cases: no-friendly-fire + R7). The three sets partition
-// EFFECT_KINDS exactly — every kind sits in one row, so the table is total (a
-// content guardrail test asserts it). Harmful → enemies only; beneficial → own
-// team only; neutral → self/placement, unfiltered by area allegiance.
-export const HARMFUL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
-  'damage',
-  'weaken',
-  'slow',
-  'root',
-  'knockback',
-  'pull',
-  'reveal',
-  'damageOverTime', // DOT-HOT: it damages, so FF1 reaches allies in the area too
-]);
-export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
-  'heal',
-  'shield',
-  'might',
-  'haste',
-  'energized',
-  'unstoppable',
-  'stealth',
-  'untargetable', // R7 (2026-08-19): concealing/protecting a unit is friendly
-  'healOverTime', // DOT-HOT: a heal is a heal, own team only
-]);
-export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
-  'teleport',
-  'decoy',
-  'trap',
-]);
+// Effect polarity lives in `polarity.ts` so `validate.ts` can consult it
+// without importing the resolver (which imports the catalysts, which import
+// the validator — a cycle). Re-exported here because every caller, the client
+// included, has always reached for it through this module.
+export { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from './polarity.js';
 
 /**
  * CASTER-SAFE — the effects of an ability that may land on the unit that fired
@@ -1322,8 +1298,14 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     let hitEnemy = false;
     const struck = new Set<string>(); // each unit is affected at most once
     if (dmg !== undefined) {
+      // ALLY-SAFE trims the charge's own list before `chargeHits` counts it: an
+      // ability that spares its team does not spend its single hit on a
+      // teammate it was never going to damage.
+      const run = a.def.noFriendlyFire === true
+        ? crossed.filter((u) => u.owner !== plan.unit.owner)
+        : crossed;
       const crossedVictims = a.def.shape === 'path'
-        ? (a.def.chargeHits === 'all' ? crossed : crossed.slice(0, 1)).map((u) => ({ unit: u, from: origin }))
+        ? (a.def.chargeHits === 'all' ? run : run.slice(0, 1)).map((u) => ({ unit: u, from: origin }))
         : [];
       const blasted = blasts.flatMap(({ centre, area }) =>
         draft.units
@@ -1623,6 +1605,9 @@ function runBlast(
     const inner = new Set(a.inner.map(vecKey));
     const innerAmount = a.def.innerAmount;
     let hitEnemy = false;
+    // ALLY-SAFE (Dev Note #11): FF1's default is that an attack endangers
+    // whoever is standing in it. An ability may opt out of the friendly half.
+    const allySafe = a.def.noFriendlyFire === true;
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
       const enemy = target.owner !== plan.unit.owner;
@@ -1631,6 +1616,7 @@ function runBlast(
       for (const e of a.def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
           if (self) continue; // CASTER-SAFE — see `casterSafe`; RECOIL is below
+          if (allySafe && !enemy) continue; // ALLY-SAFE — this one spares the team
           if (untargetable) continue; // the whole harmful half is skipped, energy included
           // Energy stays enemy-only, so splashing an ally pays nothing.
           if (enemy) hitEnemy = true;
@@ -1829,6 +1815,7 @@ function detonateDelayedBlasts(
           // CASTER-SAFE reaches here too: a grenade you armed two turns ago is
           // still your own ability, and standing on it should not blow you up.
           if (target.unitId === caster.unitId) continue;
+          if (def.noFriendlyFire === true && !enemy) continue; // ALLY-SAFE
           if (untargetable) continue;
           if (enemy) hitEnemy = true; // energy stays enemy-only
           if (e.kind === 'damage') hits.push({ attacker: caster, victim: target, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });

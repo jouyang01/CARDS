@@ -260,6 +260,23 @@ export interface AbilityDef {
    * rejects it on an ability with none.
    */
   selfDamagePct?: number;
+  /**
+   * ALLY-SAFE — this ability's **harmful** effects skip the caster's own team
+   * (Dev Note #11).
+   *
+   * FF1 stays the global default: an attack endangers whoever is standing in
+   * it, and that is the positioning tax the whole game is built around. This is
+   * the per-ability exception, for the kits where the default is simply wrong —
+   * Lumen's Radiant Lash is a beam that damages enemies and heals allies along
+   * the same line, so a Mender whose healing beam friendly-fires was
+   * self-contradictory.
+   *
+   * Beneficial effects are untouched (they were own-team-only already), and so
+   * is CASTER-SAFE, which excludes the caster from every ability. ALLY-SAFE is
+   * the team-scoped, opt-in version of the same idea. `validateAbility` rejects
+   * it on an ability with no harmful effect to skip.
+   */
+  noFriendlyFire?: boolean;
   effects: AbilityEffect[];
   description: string;
 }

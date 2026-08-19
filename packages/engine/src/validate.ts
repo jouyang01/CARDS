@@ -9,6 +9,7 @@ import {
   TARGET_SHAPES,
 } from './types.js';
 import { MAX_ABILITY_RANGE, TRAP_MAX_LIFETIME } from './constants.js';
+import { HARMFUL_KINDS } from './polarity.js';
 
 /**
  * Content validation for data-driven characters and maps.
@@ -34,7 +35,7 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
   'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
-  'oncePerMatch', 'impact', 'modes', 'selfDamagePct',
+  'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire',
   'effects', 'description',
 ] as const;
 
@@ -162,6 +163,15 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   // reads and then has nothing to multiply, which is the silent-nothing this
   // file exists to prevent. Bounded 1..100: 0 is "no recoil" (say nothing
   // instead) and above 100 is a self-hit harder than the blow itself.
+  // ALLY-SAFE: the flag says "skip friendly fire", so an ability with nothing
+  // harmful to skip is carrying a decision it can never act on.
+  if (a.noFriendlyFire !== undefined) {
+    if (a.noFriendlyFire !== true) {
+      errs.push(`${path}: noFriendlyFire must be true when present (omit it for the FF1 default)`);
+    } else if (!a.effects.some((e) => HARMFUL_KINDS.has(e.kind))) {
+      errs.push(`${path}: noFriendlyFire needs a harmful effect to spare the caster's team`);
+    }
+  }
   if (a.selfDamagePct !== undefined) {
     if (!isInt(a.selfDamagePct) || a.selfDamagePct < 1 || a.selfDamagePct > 100) {
       errs.push(`${path}: selfDamagePct must be an integer 1..100 when present`);
