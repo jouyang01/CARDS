@@ -4988,3 +4988,79 @@ rows, so the next one has to be argued for too.
 5. **Dev Note "Aegis skill set is good"** — taken as confirmation of the WARDING-WALL kit reshape, so
    session-8 OQ #5 (Aegis has no cooldown'd Blast) is closed as intended. No action taken; recording the
    reading in case the Analyzer wants it recorded differently.
+
+---
+
+## 2026-08-20 — Builder, session 10 (the two client bugs, and the grenade that bites back)
+
+**WALL-CAST-FIX: the gate stays a shape gate.** The AC allowed either
+`isRotatable || isPlacedRotatable` or a bare `isAimStep(draft.aimStep)`. I took the first, because
+`targeting.test.ts` asserts a circle sends no step and it is right to — a stale step on the wire is noise
+a reader has to rule out. The bug was not that the gate was a shape gate; it was that the gate knew about
+one kind of rotation and the game had grown two.
+
+**The wall test asserts HP lost, not traps on the board.** `warding_wall` has `lifetime: 1`, so the hazard
+is swept by the same turn's end-of-turn tick — a test reading `traps` after the turn sees zero whether or
+not the cast worked, and would have certified the bug as fixed. The enemy walks into it instead, and
+crosses it **perpendicular**: walking along its length runs over three separate traps for 75, which is
+correct and would make the number a statement about the route rather than about the cast. Verified by
+reverting the gate — four of the six go red.
+
+**`app-harness.ts` now records `show()`.** Every layer it recorded before was a *plan*; the board itself
+was invisible to tests, which is how a correct preview hid a broken cast for a release.
+
+**RAM-LINE-PREVIEW-FIX: the backlog's diagnosis was wrong, and I did not implement it.** The item says
+nothing marks the crossed enemies and no damage number shows. Driving the real controller shows the route
+lit and a `15` on each crossed enemy, and has since BASTION-RAM-LINE. What I found instead, both real:
+(1) **a charge drew no outline at all** — `path` was the only attack shape returning `[]` from
+`tessellate`, so it had tiles and a route line and nothing on the shape layer, which is exactly the
+difference between "an attack covering this lane" and "a way to walk over there"; and (2) **the numbers
+ignored `chargeHits`** — Kestrel's Skim is first-only and the preview was stamping 12 on every enemy on
+the route. The second is a preview that lies, and PREVIEW-NUMBERS-AUDIT could not see it because it
+sweeps one enemy at a fixed aim and one enemy cannot tell "first" from "all".
+
+**The charge outline is one lane per straight run**, not one rectangle: a route may bend (MV4 diagonals,
+waypoints), and a chain of lanes still contains exactly the path's tiles. The boundary memo key gains the
+route for `path` shapes only — it is the one shape whose outline depends on the whole aim rather than on
+`aim[0]`.
+
+**`chargedUnits` / `chargeVictims` are exported from the engine and `runDash` now calls them.** The
+Spec Notes said read the engine's derivation rather than recompute one; there was no exported derivation
+to read, so the inline code in `runDash` became the shared function both sides call.
+
+**FRAG-SELF is a second exit from CASTER-SAFE, not a widening of the first.** `selfHarm` means the caster
+is **just another unit standing in the area**; `selfDamagePct` (RECOIL) is a **cost of firing**. Presence
+versus price — so `selfHarm` costs nothing if you are not in the blast, and RECOIL is charged even on a
+whiff. Validation refuses the pair. Applied at both sites CASTER-SAFE excludes a caster from an *area*
+(`runBlast`, `detonateDelayedBlasts`) so a delayed grenade and an undelayed one agree; the Prep/Dash
+`applySelfEffects` path is untouched, because that is about self-*targeted* effects and the note does not
+ask about them.
+
+## Open Questions for the Analyzer — 2026-08-20
+
+1. **RAM-LINE-PREVIEW-FIX's stated root cause was not the defect** (backlog RAM-LINE-PREVIEW-FIX). The
+   crossed-enemy damage numbers already worked. I fixed the two things that were actually wrong (no
+   outline on the shape layer; `chargeHits` ignored by the numbers). Please confirm this satisfies the
+   dev note *"still not a linear dash/attack preview"* — if the owner meant something else again, the
+   next report wants a screenshot, because the third guess is expensive.
+
+2. **`chargeHits` was previewed wrong for every first-only charge, not just Skim** — Ravok's Bullrush,
+   Thorn's Bramble Stride, any `path` dash without `chargeHits: "all"`. Fixed generally, flagged because
+   it is a behaviour change nobody asked for and playtesters may notice fewer numbers on a charge.
+
+3. **FRAG-SELF reverses a RULED edge case** (`docs/design/edge-cases.md` CASTER-SAFE; dev note 2026-09-27
+   #1). Implemented as a per-ability opt-out so the ruling stands for everything else, and the flipped
+   test ships in the same commit — but the ruling's text needs a sentence saying an ability may opt out,
+   the way TRAP-TRIGGER got one.
+
+4. **Frag Grenade is now materially harder to use and no number moved.** 34 damage in a radius-2 disc
+   that no longer spares its thrower is a real nerf to Vex's zoning, delivered by a rules change rather
+   than a balance pass. I did not rebalance. **Designer/playtest call.**
+
+5. **`selfHarm` applies its riders too.** Frag Grenade is damage-only so nothing turns on it today, but
+   the next ability to take the flag will weaken/slow/root its own caster. Flagging the general rule
+   before content depends on it.
+
+6. **The `.hud-rotate` row and WALL-CAST-FIX close session-9 OQ #4 only half way.** A rotated wall's
+   order is now proven to survive lock-in and resolve in a **hot-seat**; the networked relay is still
+   verified by reading the protocol. NET-E2E remains the real answer.
