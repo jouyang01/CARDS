@@ -312,10 +312,124 @@ export function aimBoundaries(
   covered: readonly Vec2[],
 ): Pt[][] {
   const from = unit.pos;
-  const target = aim[0];
   const dir = aimDirectionOf(from, ability, aim, aimStep);
   const reach = dir === undefined ? 0 : Math.min(ability.range, depthReached(from, dir, covered));
+  return memoised(boundaryKey(unit, ability, aim, dir, reach, covered.length),
+    () => tessellate(from, ability, aim[0], dir, reach, covered.length));
+}
 
+/**
+ * LINE-PREVIEW-SMOOTH — everything the outline is a function of, as one string.
+ *
+ * *"Vex's and other line attack previews seem to be a little laggy, can you make
+ * it more smooth?"*
+ *
+ * The aim follows the mouse continuously and the outline does not: AIM2
+ * quantizes a free-rotation aim to one of `AIM_STEPS` directions, so a hover
+ * that sweeps a hundred pixels across one step produces a hundred identical
+ * polygons. `wedgeBoundary` and `discBoundary` each tessellate a 128-segment
+ * arc to build one, and every one after the first is thrown away — which is the
+ * lag, and it gets worse the longer the shape is.
+ *
+ * So the key is the *quantized* aim rather than the pointer: the direction, the
+ * reach, the aimed tile, and the shape knobs that change the geometry. Nothing
+ * float-valued and nothing per-pixel goes in it. `covered.length` rides along as
+ * a cheap proxy for "the shape is occluded differently now" — `reach` already
+ * carries the depth a wall clipped it to, and the length catches the remaining
+ * case where a wall notches the sides without shortening the axis.
+ *
+ * Deliberately **not** hashing `covered` itself: walking it is the same order of
+ * work as re-deriving, which would spend the saving to measure it.
+ *
+ * The key is a deliberate **superset** of what any one shape reads — a disc
+ * ignores the direction, a lane ignores the aimed tile. Erring that way costs at
+ * worst a miss that recomputes an identical polygon; erring the other way hands
+ * back the wrong outline, which is silent. (It costs nothing in practice:
+ * `aimFor` returns an empty `aim` for `line`/`cone`, so a rotating shape has no
+ * aimed tile in its key to churn on.)
+ */
+function boundaryKey(
+  unit: UnitState,
+  a: AbilityDef,
+  aim: readonly Vec2[],
+  dir: Vec2 | undefined,
+  reach: number,
+  coveredCount: number,
+): string {
+  const t = aim[0];
+  return [
+    unit.unitId, unit.pos.x, unit.pos.y,
+    a.id, a.shape, a.range, a.radius, a.innerRadius, a.beamWidth, a.axisBonus,
+    t?.x, t?.y, dir?.x, dir?.y, reach, coveredCount,
+  ].join('|');
+}
+
+/**
+ * The last few outlines, by key.
+ *
+ * A handful of slots rather than one, because a render draws more than one
+ * boundary: the live aim, plus AC #5's already-locked teammate plans. A
+ * single-slot cache would be evicted by each of them in turn and never hit —
+ * the classic way a memo makes something slower.
+ *
+ * Bounded because the key includes the aim, so an unbounded map would grow by
+ * one entry per square a player has ever hovered over. `CACHE_MAX` is well above
+ * the number of boundaries any one frame draws; entries older than that are
+ * dropped in insertion order.
+ *
+ * The arrays handed back are **shared, and must not be mutated** — every caller
+ * today passes them straight to `renderer.drawShape`, which reads them into
+ * geometry.
+ */
+const CACHE_MAX = 16;
+const cache = new Map<string, Pt[][]>();
+/** Counts real derivations, so a test can assert a hover did not cause one. */
+let derivations = 0;
+
+function memoised(key: string, derive: () => Pt[][]): Pt[][] {
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  derivations += 1;
+  const value = derive();
+  cache.set(key, value);
+  // Insertion-ordered, so the first key is the oldest.
+  if (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next();
+    if (!(oldest.done ?? false)) cache.delete(oldest.value);
+  }
+  return value;
+}
+
+/**
+ * How many outlines have actually been tessellated since the last reset.
+ *
+ * Exported for the LINE-PREVIEW-SMOOTH test, which is the only way to assert
+ * "the derivation is skipped" — the *output* is identical either way, so a test
+ * that only compared polygons could not tell a memo from a re-computation.
+ */
+export const boundaryDerivations = (): number => derivations;
+
+/**
+ * Drop the cache and the counter.
+ *
+ * For the tests, which need a known starting count. Nothing in the app calls it
+ * and nothing needs to: the value is a pure function of the key, so a hit from
+ * an earlier match is the same polygon this one would have derived.
+ */
+export function resetBoundaryCache(): void {
+  cache.clear();
+  derivations = 0;
+}
+
+/** The tessellation itself — the expensive half, run only on a cache miss. */
+function tessellate(
+  from: Vec2,
+  ability: AbilityDef,
+  target: Vec2 | undefined,
+  dir: Vec2 | undefined,
+  reach: number,
+  coveredCount: number,
+): Pt[][] {
   switch (ability.shape) {
     case 'self':
       return [tileBoundary(from)];
@@ -330,9 +444,9 @@ export function aimBoundaries(
         : [outer, discBoundary(target, ability.innerRadius)];
     }
     case 'line':
-      return dir === undefined || covered.length === 0 ? [] : [laneBoundary(from, dir, reach, HALF)];
+      return dir === undefined || coveredCount === 0 ? [] : [laneBoundary(from, dir, reach, HALF)];
     case 'cone': {
-      if (dir === undefined || covered.length === 0) return [];
+      if (dir === undefined || coveredCount === 0) return [];
       // BASIC-BEAM: a constant half-width turns the wedge into a lane. Aegis's
       // Shield Bash drew a cone until now — the beam knob was simply not read
       // here, which is the owner's "it should be the 3 tile wide rectangle".
