@@ -783,6 +783,41 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   **Interim:** `kestrel.json` already carries `"chargeHits": "all"`; until implemented the
   engine ignores it and Tempest Run hits only the first enemy — weaker than designed, never
   stronger, safe to ship.
+  - **RULED — BASTION-RAM-LINE: Ram Charge becomes an all-in-line charge and previews as a line +
+    landing marker (owner Dev Note 2026-09-24 #3; backlog BASTION-RAM-LINE — data + client).** *"Bastion's
+    Ram Charge should be a linear aoe dash that affects all players in a line, not just the first enemy
+    hit; the preview should be like a line attack that also shows the ending dash location."* The engine
+    already supports this via `chargeHits: "all"` (validated, read by `resolve.ts:1347`). Ruling: add
+    **`chargeHits: "all"`** to `bastion.ram_charge` (data) — it hits every enemy its path crosses,
+    keeping its damage 15 + knockback 1 on each (CASTER-SAFE/ALLY-SAFE filter as always); the client
+    **draws the charge as a line** over the tiles the path crosses **plus a marker at the dash landing**
+    (the honest all-hit footprint, not the first-enemy stop). Ram Charge stays a dash — CD-BAND-DASH
+    sets its cooldown to **4** (enemy-facing), which composes with this unchanged. Addresses session-7
+    OQ #3 for this ability: a line charge that hits everyone has no "stopped short by the first body"
+    ambiguity, so its preview is the whole line.
+- **PROPOSED — WARDING-WALL: a Prep line-hazard replacing Aegis's Grounding Strike; a new reusable
+  mechanic (owner Dev Note 2026-09-24 #2; backlog WARDING-WALL — engine + data; ENGINE ASK).** *"Change
+  Aegis's Grounding Strike to be a prep phase, 4 cool down skill named Warding Wall which puts down a 4
+  tile long wall that lasts until the end of this turn that does 25 damage to those who walk through it
+  and weakens them for the next turn."* This **replaces** the Blast ability `grounding_strike` (line,
+  dmg 14 + slow) with a Prep ability. The mechanic is new: a **line of hazard tiles** (a "wall"),
+  placed in Prep, that damages + weakens any unit **entering** any of its tiles this turn, then expires.
+  Proposed ruling / build shape (reusing traps, per golden rule #2's "generic, reusable"): the ability
+  places a **trap on every tile of a line/wall shape** (generalising TRAP-CENTRE's single placement to a
+  wall placement), each trap carrying `onTrigger: [{damage: 25}, {weaken, duration: 2}]` (duration 2 so
+  the weaken bites **next** turn, per the owner), with a **lifetime that covers only the placement turn**
+  (armed in Prep, active through this turn's Dash/Move, gone at end of turn). **It is a HAZARD, not a
+  blocker** — units walk *through* it (taking the hit), so it does **not** change movement pathing or
+  line of sight (simplest reading of "walk through it"). Trap triggers already fire on **dash or move
+  entry** (not on knockback/pull — the v1 rule), and already exclude the owner's team — so Aegis and
+  allies are safe by the existing trap rules. **Design confirmations owed to the Designer/owner:** wall
+  length (owner says **4**); aim (a line from the caster, or freely placed?); whether a dasher crossing
+  it is hit (default **yes** — traps trigger on dash entry); and that Aegis losing a Blast for a Prep
+  wall is intended (it reshapes the kit). Prep cd **4** as directed (a new ability sets its own cd; the
+  CD-BAND prep-freeze is about not retuning *existing* prep cooldowns). **Because grounding_strike is
+  replaced, CD-BAND-BLAST must DROP it from its retune list** (it is no longer a Blast). Ships with a
+  test: a unit entering a wall tile takes 25 and gains weaken(2); the wall is gone next turn; the caster's
+  team is unharmed.
 - **RULED — Knockback/pull do NOT trigger traps in v1 (closes Builder OQ, review
   2026-08-14).** Trap triggers list dash and move (entry under a unit's own power); a unit
   *shoved* onto a trap by knockback or pull does not trigger it. Keeps end-of-Blast
@@ -1394,6 +1429,20 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     `DEFAULT_CATALYSTS` (Second Wind / Shift / Adrenaline). **CAT-SELECT is the prerequisite that
     unblocks M3-LOBBY's data model** — build it first so `room.ts` stores the right shape (the
     Builder correctly stopped rather than guess a wrong model into `room.ts`).
+- **RULED — DOWN-SEAT-SKIP: a seat with no living controllable units is not waited on — the turn
+  resolves as soon as everyone who CAN act has (session-7 OQ #1, 2026-09-22; backlog DOWN-SEAT-SKIP —
+  server, small).** DEATH-HANG made a downed networked seat **hold** (correct — no auto-submit), with
+  "Hold Position" as a one-click resolve; but the room now waits the **full decision window** on a turn
+  the downed player cannot act in, and a player with nothing to do is the one least likely to be
+  watching. Ruling: **`#answering()` (and the lock total) excludes a seat that controls no living units
+  this turn** — such a seat contributes nothing to the merge (its absent units hold), exactly as a
+  disconnected seat already does, so `#allIn` is true once every seat that *can* act has, and the turn
+  resolves without waiting out the clock. This is the standing **"no turn ever waits on a player"**
+  applied to a downed seat: it can neither delay nor be delayed. The "Hold Position" button stays (a
+  seat with *some* units down and some alive still chooses); this only removes the wait for a seat with
+  **zero** living controllable units. Server-side (`hub.ts` `#answering`); deterministic; N-safe (reads
+  `controlledUnits` ∩ alive). Ships with a test: a match where one seat's only unit is down resolves as
+  soon as the other seat locks, and the downed seat's units hold.
 - **RULED — HANDOFF: a teammate covers a disconnected player's characters after ONE fully missed
   turn; the stand-in is the first CONNECTED seat on that team in join order; control is DERIVED, so
   reclaiming un-does the loan with no hand-back step (M3-RECONNECT; SHIPPED PR #75; promotes the
