@@ -50,7 +50,7 @@
       "phase": "blast",
       "shape": "line",
       "range": 7,
-      "cooldown": 2,
+      "cooldown": 3,
       "energyGain": 8,
       "effects": [
         { "kind": "damage", "amount": 16 },

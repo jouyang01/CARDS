@@ -73,7 +73,7 @@
       "shape": "circle",
       "range": 0,
       "radius": 2,
-      "cooldown": 2,
+      "cooldown": 3,
       "energyGain": 8,
       "effects": [
         {
