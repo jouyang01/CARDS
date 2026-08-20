@@ -9,6 +9,7 @@ import {
   dragToAimStep,
   draftHasOrder,
   isRotatable,
+  isPlacedRotatable,
   effectLabel,
   emptyDraft,
   moveEnvelope,
@@ -24,9 +25,11 @@ import {
 } from '../src/targeting.js';
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
+import aegis from '../../../data/characters/aegis.json';
 
 const VEX = vex as unknown as CharacterDef;
 const BASTION = bastion as unknown as CharacterDef;
+const AEGIS = aegis as unknown as CharacterDef;
 const OPEN: MapDef = { id: 't', name: 't', width: 15, height: 15, walls: [], cover: [], brush: [], spawns: [[{ x: 1, y: 7 }], [{ x: 13, y: 7 }]] };
 
 const state = () => createMatch(OPEN, '1v1', [[VEX], [BASTION]]);
@@ -231,6 +234,12 @@ describe('AIM2: free-rotation aiming reaches the engine as an integer step', () 
   });
 
   it('only rotatable shapes carry the step into the order', () => {
+    // WALL-CAST-FIX widened "rotatable" without widening it to everything.
+    // There are two kinds — a `line`/`cone` turned by a drag (`isRotatable`) and
+    // a placed shape turned by the rotate row (`isPlacedRotatable`) — and the
+    // order-build gate knew only about the first, which is why Warding Wall
+    // could not be cast. A circle still sends nothing: the engine would ignore
+    // it, and a stale step on the wire is noise a reader has to rule out.
     expect(isRotatable(rail())).toBe(true);
     expect(isRotatable(VEX.abilities.find((a) => a.id === 'frag_grenade')!)).toBe(false); // circle
 
@@ -239,6 +248,15 @@ describe('AIM2: free-rotation aiming reaches the engine as an integer step', () 
 
     const circle = { ...emptyDraft('vex-t0-0'), abilityId: 'frag_grenade', aim: [{ x: 4, y: 7 }], aimStep: 40 };
     expect(toUnitOrders(VEX, circle).ability?.aimStep).toBeUndefined();
+
+    // The case the gate missed: a wall is placed-rotatable, not drag-rotatable.
+    const wall = AEGIS.abilities.find((a) => a.id === 'warding_wall')!;
+    expect(isRotatable(wall), 'not turned by a drag').toBe(false);
+    expect(isPlacedRotatable(wall), 'turned by the rotate row').toBe(true);
+    const placed = {
+      ...emptyDraft('aegis-t0-0'), abilityId: wall.id, aim: [{ x: 4, y: 7 }], aimStep: 128,
+    };
+    expect(toUnitOrders(AEGIS, placed).ability?.aimStep, 'and its rotation goes out').toBe(128);
   });
 
   it('an illegal step is never sent to the engine', () => {

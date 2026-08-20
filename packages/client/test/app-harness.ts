@@ -22,13 +22,26 @@
 
 import type { MapDef, TeamId, UnitOrders, Vec2 } from '@cards/engine';
 import type { HotSeatUI, NetPlay } from '../src/app.js';
-import type { HighlightLayer, PathLayer, ProjectionName, Renderer } from '../src/renderer3d.js';
+import type {
+  HighlightLayer, PathLayer, ProjectionName, RenderDecoy, RenderTrap, RenderUnit, Renderer,
+} from '../src/renderer3d.js';
 
 /** What the stub renderer was told to draw, by layer. */
 export interface DrawLog {
   highlights: Map<HighlightLayer, Vec2[]>;
   paths: { squares: Vec2[]; layer: PathLayer | undefined }[];
   shapes: Vec2[][];
+  /**
+   * WALL-CAST-FIX — the **board itself**, as of the last `show()`: the units,
+   * decoys and traps the viewing seat can currently see.
+   *
+   * The layers above are all *plans* — what an aim would do. This is what is
+   * actually there, which is the only place a resolved turn shows up. Warding
+   * Wall shipped with a correct preview and a broken cast precisely because
+   * nothing in the harness could tell those two apart; recording `show()` is
+   * what closes that.
+   */
+  board: { units: RenderUnit[]; decoys: RenderDecoy[]; traps: RenderTrap[] };
 }
 
 export interface StubRenderer extends Renderer {
@@ -44,11 +57,20 @@ export interface StubRenderer extends Renderer {
  * else, and the failure would look like a renderer bug rather than a stale stub.
  */
 export function stubRenderer(): StubRenderer {
-  const draw: DrawLog = { highlights: new Map(), paths: [], shapes: [] };
+  const draw: DrawLog = {
+    highlights: new Map(), paths: [], shapes: [],
+    board: { units: [], decoys: [], traps: [] },
+  };
   let orbit = false;
   return {
     draw,
-    show: () => {},
+    show: (units, decoys = [], traps = []) => {
+      draw.board = {
+        units: units.map((u) => ({ ...u })),
+        decoys: decoys.map((d) => ({ ...d })),
+        traps: traps.map((t) => ({ ...t, pos: { ...t.pos } })),
+      };
+    },
     highlight: (layer, squares) => { draw.highlights.set(layer, squares.map((p) => ({ ...p }))); },
     // A board square per client pixel, so a test aims by naming the square.
     squareFromPoint: (clientX, clientY) => ({ x: Math.round(clientX), y: Math.round(clientY) }),
@@ -163,6 +185,26 @@ export const aimAndCommit = (board: HTMLElement, square: Vec2): void => {
   aimAt(board, square, 'mousemove');
   aimAt(board, square, 'click');
 };
+
+/**
+ * WALL-CAST-FIX — the traps standing on the board, as the last `show()` drew
+ * them, sorted `"x,y"`. The resolved state, not a plan.
+ *
+ * Note what this cannot see: a hazard whose `lifetime` covers only the turn it
+ * was placed — Warding Wall — is swept by the end-of-turn tick, so it is gone
+ * from the board a test looks at *after* the turn. Proving that one cast means
+ * proving it did something (see `unitHp`), not that it is still standing.
+ */
+export const boardTraps = (renderer: StubRenderer): string[] =>
+  renderer.draw.board.traps.map((t) => `${t.pos.x},${t.pos.y}`).sort();
+
+/** A unit's HP as the board last drew it — the resolved state, per unit. */
+export const unitHp = (renderer: StubRenderer, unitId: string): number | undefined =>
+  renderer.draw.board.units.find((u) => u.unitId === unitId)?.hp;
+
+/** Where the board last drew a unit. */
+export const unitAt = (renderer: StubRenderer, unitId: string): Vec2 | undefined =>
+  renderer.draw.board.units.find((u) => u.unitId === unitId)?.pos;
 
 /** The tiles the player is looking at: the renderer's own layers. */
 export const layer = (renderer: StubRenderer, name: HighlightLayer): Vec2[] =>
