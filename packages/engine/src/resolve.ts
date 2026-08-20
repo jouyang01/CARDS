@@ -649,12 +649,19 @@ function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonl
       return target !== undefined && aimInRange(unit.pos, target, def.range);
     }
     case 'wall': {
-      // Aimed like a circle — a square inside the Euclidean range — with one
-      // extra refusal: the caster's own square gives no direction to lay the
-      // wall across, exactly as it gives a `line` no direction to point.
+      // The one shape that needs **both** halves of an aim: a square inside the
+      // Euclidean range (where the wall is anchored) and a quantized step (which
+      // way it runs). A `line` accepts either — a step is a direction on its own
+      // and a target implies one — but a wall's position and orientation are
+      // independent, so neither substitutes for the other.
+      //
+      // The old refusal of the caster's own square is gone with the reason for
+      // it: it was there because the orientation used to be derived from
+      // `caster → aim`, which that square cannot supply. A rotation is authored
+      // now, so a wall anchored under your own feet is a legal, if eccentric,
+      // placement.
       const target = aim[0];
-      if (target === undefined || !aimInRange(unit.pos, target, def.range)) return false;
-      return !vecEq(unit.pos, target);
+      return target !== undefined && aimInRange(unit.pos, target, def.range) && isAimStep(aimStep);
     }
     case 'line':
     case 'cone': {

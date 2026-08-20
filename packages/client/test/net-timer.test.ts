@@ -149,6 +149,7 @@ const model: HudModel = {
   roster: [character],
   abilities: [],
   modes: [],
+  rotations: [],
   catalysts: [],
   move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
   chase: { armed: false, disabled: false },
@@ -167,7 +168,7 @@ describe('M3-TIMER: the countdown sits beside the banner, not over it', () => {
   const handlers = {
     selectCharacter: noop, selectAbility: noop, selectCatalyst: noop, hoverAbility: noop,
     selectMove: noop, selectChase: noop, hoverMove: noop, hold: noop, lock: noop,
-    toggleProjection: noop, toggleOrbit: noop, extendTime: noop, selectMode: noop,
+    toggleProjection: noop, toggleOrbit: noop, extendTime: noop, selectMode: noop, selectRotation: noop,
   };
   const timerText = (): HTMLElement | null => root.querySelector('.hud-timer-text');
   const banner = (): HTMLElement | null => root.querySelector('.hud-banner');

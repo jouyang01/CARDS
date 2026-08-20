@@ -182,6 +182,7 @@ describe('BASIC-MODES: the HUD row', () => {
     roster: [character],
     abilities: [],
     modes,
+    rotations: [],
     catalysts: [],
     move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
     chase: { armed: false, disabled: false },
@@ -193,6 +194,7 @@ describe('BASIC-MODES: the HUD row', () => {
     selectCharacter: noop, selectAbility: noop, selectCatalyst: noop, hoverAbility: noop,
     selectMove: noop, selectChase: noop, hoverMove: noop, hold: noop, lock: noop,
     toggleProjection: noop, toggleOrbit: noop, extendTime: noop, selectMode,
+    selectRotation: noop,
   });
 
   it('draws a button per profile, marking the armed one', () => {

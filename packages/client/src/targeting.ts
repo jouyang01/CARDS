@@ -32,6 +32,7 @@ import {
   validateMovePath,
   vecEq,
   vectorToStep,
+  WALL_ROTATIONS,
   type AbilityDef,
   type AbilityEffect,
   type Board,
@@ -175,6 +176,34 @@ export function draftFreeAbility(character: CharacterDef, draft: OrderDraft): Ab
 export const isRotatable = (ability: AbilityDef): boolean => ability.shape === 'line' || ability.shape === 'cone';
 
 /**
+ * WALL-ROTATE — does this ability get the four-way rotate row?
+ *
+ * Separate from {@link isRotatable}, which asks "can a drag spin this". A wall
+ * is placed by a click and turned by a control: the two gestures are different,
+ * and a shape that answered yes to both would be trying to do them at once.
+ */
+export const isPlacedRotatable = (ability: AbilityDef): boolean => ability.shape === 'wall';
+
+/**
+ * The four rotate options for a placed shape, in `WALL_ROTATIONS` order —
+ * east, south, west, north, matching the engine's screen-coordinate convention.
+ *
+ * Arrows rather than words: the row is four buttons wide and the thing it
+ * controls is a direction, so the glyph *is* the label.
+ */
+const ROTATION_ARROWS: readonly string[] = ['→', '↓', '←', '↑'];
+
+export function rotationOptions(ability: AbilityDef | undefined, chosen: number | undefined): ModeOption[] {
+  if (ability === undefined || !isPlacedRotatable(ability)) return [];
+  const current = isAimStep(chosen) ? chosen : WALL_ROTATIONS[0]!;
+  return WALL_ROTATIONS.map((step, i) => ({
+    index: step,
+    label: ROTATION_ARROWS[i] ?? String(step),
+    selected: step === current,
+  }));
+}
+
+/**
  * Turn a pointer drag (in board squares, or any consistent units) into the
  * quantized aim step the engine consumes. The conversion is the engine's own
  * integer projection, so the client and engine can never disagree about which
@@ -286,11 +315,11 @@ export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec
     case 'circle':
       return target !== undefined && aimInRange(unit.pos, target, ability.range);
     case 'wall':
-      // WARDING-WALL: a circle's aim, minus the caster's own square — there is
-      // no direction to lay a wall across from where you are standing.
+      // WALL-ROTATE: both halves, mirroring the engine — a square to anchor it
+      // and a step to point it. Neither substitutes for the other.
       return target !== undefined
         && aimInRange(unit.pos, target, ability.range)
-        && !(target.x === unit.pos.x && target.y === unit.pos.y);
+        && isAimStep(aimStep);
     case 'line':
     case 'cone':
       // A quantized step is a direction on its own — no target square needed (AIM2).
@@ -781,6 +810,17 @@ export function aimFor(
   unit: UnitState,
   ability: AbilityDef,
   target: Vec2,
+  /**
+   * WALL-ROTATE — the rotation a `wall` is currently pointed in, carried on the
+   * draft. Ignored by every other shape: a `line`/`cone` derives its step from
+   * the drag, and a `circle`/`square`/`path` has no direction at all.
+   *
+   * Defaulted to the first of `WALL_ROTATIONS` so a wall aimed before the player
+   * has touched the rotate row still produces a legal, visible placement. A wall
+   * that previewed nothing until you found a control you did not know existed
+   * would read as a broken ability.
+   */
+  rotation?: number,
 ): { aim: Vec2[]; aimStep?: number } {
   switch (ability.shape) {
     case 'self':
@@ -790,10 +830,13 @@ export function aimFor(
       return { aim: [], aimStep: dragToAimStep(unit.pos, target) };
     case 'path':
       return { aim: pathToExact(map, state, unit, target, ability.range) };
-    // WARDING-WALL: a square, like a circle. The wall's *orientation* is derived
-    // from the caster's cardinal toward it, so there is nothing extra to aim —
-    // one click puts the whole segment down.
+    // WALL-ROTATE: the one shape whose aim carries **both** halves — the click
+    // says where the wall is anchored, the rotate row says which way it runs.
     case 'wall':
+      return {
+        aim: [{ ...target }],
+        aimStep: isAimStep(rotation) ? rotation : WALL_ROTATIONS[0]!,
+      };
     case 'circle':
     case 'square':
       return { aim: [{ ...target }] };
@@ -841,6 +884,8 @@ export function commitAim(
   unit: UnitState,
   ability: AbilityDef,
   target: Vec2,
+  /** WALL-ROTATE: the draft's current wall rotation; ignored by other shapes. */
+  rotation?: number,
 ): { aim: Vec2[]; aimStep?: number } | undefined {
   // DASH-OCCUPIED (4): a `line`/`cone` click on your own square is a no-op.
   // `dragToAimStep(pos, pos)` quantizes (0,0) to step 0, which `isAimStep`
@@ -856,7 +901,7 @@ export function commitAim(
   // direction. `isBlockedDashLanding` survives as the *tell* the preview draws
   // (the landing will not be exactly here), not as a gate.
 
-  const resolved = aimFor(map, state, unit, ability, target);
+  const resolved = aimFor(map, state, unit, ability, target, rotation);
   return aimLegal(unit, ability, resolved.aim, resolved.aimStep) ? resolved : undefined;
 }
 

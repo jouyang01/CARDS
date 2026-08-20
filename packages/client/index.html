@@ -442,6 +442,14 @@
         background: rgb(255 255 255 / 0.06); color: #cbd2e0;
         border: 1px solid rgb(255 255 255 / 0.15); cursor: pointer; }
       .hud-mode.sel { background: var(--team0); color: #0b0d12; border-color: var(--team0); }
+      /* WALL-ROTATE: the same row, one size down and square, because its labels
+         are single arrows rather than words. Sitting directly under the modes it
+         is a sibling of, so the two read as one block of qualifiers. */
+      .hud-rotations { display: flex; gap: 6px; justify-content: center; margin-top: 4px; }
+      .hud-rotate { font-size: 13px; line-height: 1; width: 26px; height: 22px;
+        border-radius: 6px; background: rgb(255 255 255 / 0.06); color: #cbd2e0;
+        border: 1px solid rgb(255 255 255 / 0.15); cursor: pointer; }
+      .hud-rotate.sel { background: var(--aim); color: #0b0d12; border-color: var(--aim); }
       /* Right-aligned so the two halves still read as columns when the row is
          wide enough not to wrap; `min-width: 0` for the reason above. */
       .lobby-seat-picks { opacity: 0.7; min-width: 0; overflow-wrap: anywhere; text-align: right; }

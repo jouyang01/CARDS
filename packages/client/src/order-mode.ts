@@ -141,7 +141,10 @@ export function previewAim(
   interaction: Interaction,
 ): { aim: Vec2[]; aimStep?: number } {
   if (ability !== undefined && interaction.mode === 'aim' && interaction.hover.square !== undefined) {
-    return commitAim(map, state, unit, ability, interaction.hover.square) ?? { aim: [] };
+    // WALL-ROTATE: the hover preview is aimed with the draft's current rotation,
+    // so turning the wall re-draws it under a stationary pointer.
+    return commitAim(map, state, unit, ability, interaction.hover.square, draft.aimStep)
+      ?? { aim: [] };
   }
   return { aim: draft.aim, aimStep: draft.aimStep };
 }
@@ -167,10 +170,12 @@ export function refusedAim(
   unit: UnitState,
   ability: AbilityDef | undefined,
   interaction: Interaction,
+  /** WALL-ROTATE: the same rotation `previewAim` uses, so the two agree about refusal. */
+  rotation?: number,
 ): Vec2[] {
   const square = interaction.hover.square;
   if (ability === undefined || interaction.mode !== 'aim' || square === undefined) return [];
-  return commitAim(map, state, unit, ability, square) === undefined ? [{ ...square }] : [];
+  return commitAim(map, state, unit, ability, square, rotation) === undefined ? [{ ...square }] : [];
 }
 
 /**
