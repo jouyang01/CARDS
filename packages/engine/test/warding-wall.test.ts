@@ -43,6 +43,9 @@ const load = (name: string): CharacterDef => JSON.parse(
   readFileSync(join(import.meta.dirname, '../../..', `data/characters/${name}.json`), 'utf8'),
 ) as CharacterDef;
 
+const ALL_CHARACTERS: CharacterDef[] = [
+  'aegis', 'bastion', 'cinder', 'kestrel', 'lumen', 'ravok', 'thorn', 'vex', 'wisp',
+].map(load);
 const AEGIS = load('aegis');
 const VEX = load('vex');
 const RAVOK = load('ravok');
@@ -283,9 +286,21 @@ describe('WARDING-WALL: a shove through it counts', () => {
     expect(hasStatus(victim, 'weaken'), 'and Weakened by the wall').toBe(true);
   });
 
-  it('an ordinary mine still ignores a shove — the RULED v1 behaviour', () => {
-    // The counterpart guard. Same geometry, Vex's Overwatch Trap instead of the
-    // wall: `triggers` unset, so the shove passes over it untouched.
+  it('an ordinary mine now fires on a shove too — TRAP-TRIGGER', () => {
+    // **This assertion is reversed.** It shipped in PR #97 as "an ordinary mine
+    // still ignores a shove — the RULED v1 behaviour", pinning the carve-out
+    // that said a trap only fires on entry under your own power. The owner then
+    // ruled the other way: *"Traps should trigger if an enemy is knocked through
+    // the trap"*, so `DEFAULT_TRAP_ENTRIES` gained `displacement` and every mine
+    // now behaves like the wall did.
+    //
+    // Kept in this file, next to the wall's version, because the pair is the
+    // point: they used to be the two sides of a deliberate difference, and now
+    // they agree. What still separates the wall from a mine is the *other*
+    // arrival — a blink — which the two tests below and above still hold apart.
+    //
+    // Same geometry as before: Ravok's Bullrush shoves the victim east onto the
+    // mine at (12,10).
     const state = createMatch(OPEN, '2v2', [[VEX, RAVOK], [VEX, VEX]]);
     const trapper = state.units.filter((u) => u.owner === 0).find((u) => u.characterId === 'vex')!;
     const ravok = state.units.find((u) => u.characterId === 'ravok')!;
@@ -304,8 +319,67 @@ describe('WARDING-WALL: a shove through it counts', () => {
     const shoved = resolveTurn(armed, OPEN, [
       { team: 0, units: [{ unitId: ravok.unitId, ability: { abilityId: 'bullrush', target: [{ x: 10, y: 10 }] } }] },
       { team: 1, units: [] },
+    ], roster);
+    expect(shoved.state.traps, 'the mine is spent').toHaveLength(0);
+    // More than Bullrush's own 14, so the extra is the mine and not the charge.
+    // Read as an inequality rather than a total, so a balance pass on either
+    // number does not rewrite the claim.
+    expect(hpLost(armed, shoved.state, foes[0]!.unitId), 'the charge AND the mine')
+      .toBeGreaterThan(14);
+    expect(shoved.events.some((e) => e.type === 'trapTriggered'), 'and it really fired')
+      .toBe(true);
+  });
+
+  it('and every shipped mine inherits that default — only the wall opts out', () => {
+    // The resolution test above proves the DEFAULT fires on a shove; this proves
+    // which abilities are on it. Named as a sweep of the data rather than as
+    // three near-identical resolution tests (Vex's Overwatch Trap, Thorn's
+    // Barbed Sling and Snare Bloom), so a fourth trap added tomorrow is covered
+    // the day it lands instead of the day somebody remembers.
+    const trapping = ALL_CHARACTERS.flatMap((c) => [...c.abilities, c.ultimate]
+      .flatMap((a) => a.effects
+        .filter((e) => e.kind === 'trap')
+        .map((e) => ({ where: `${c.id}.${a.id}`, triggers: e.triggers }))));
+    expect(trapping.length, 'the roster really does carry traps').toBeGreaterThanOrEqual(3);
+    for (const { where, triggers } of trapping) {
+      if (where === 'aegis.warding_wall') {
+        expect(triggers, 'the wall is the one authored exception')
+          .toEqual(['move', 'dash', 'displacement']);
+      } else {
+        expect(triggers, `${where} takes the default, so it fires on a shove`).toBeUndefined();
+      }
+    }
+  });
+
+  it('but a blink PAST a mine still leaves it armed', () => {
+    // The other half of the owner's ruling: *"Trap should not trigger if enemy
+    // blinks PAST the trap."* It needs no rule of its own — a teleport calls
+    // `triggerTrapsOnEntry` once, at its landing square, so a mine it flew over
+    // was never offered the chance. Which is exactly why the ruling is about
+    // **crossing** rather than about whose idea the movement was: a shove drags
+    // you over every square in between; a blink occupies only where it lands.
+    const state = createMatch(OPEN, '2v2', [[VEX, RAVOK], [WISP, VEX]]);
+    const trapper = state.units.filter((u) => u.owner === 0).find((u) => u.characterId === 'vex')!;
+    const wisp = state.units.find((u) => u.characterId === 'wisp')!;
+    const spare = state.units.filter((u) => u.owner === 1).find((u) => u.characterId === 'vex')!;
+    trapper.pos = { x: 10, y: 7 };
+    wisp.pos = { x: 14, y: 10 };
+    spare.pos = { x: 20, y: 0 };
+
+    const armed = resolveTurn(state, OPEN, [
+      { team: 0, units: [{ unitId: trapper.unitId, freeAbility: { abilityId: 'overwatch_trap', target: [{ x: 12, y: 10 }] } }] },
+      { team: 1, units: [] },
     ], roster).state;
-    expect(shoved.traps, 'the mine is still armed').toHaveLength(1);
+    expect(armed.traps, 'the mine is down at (12,10)').toHaveLength(1);
+
+    // From (14,10) to (11,10): straight over the mine, landing one square past.
+    const blinked = resolveTurn(armed, OPEN, [
+      { team: 0, units: [] },
+      { team: 1, units: [{ unitId: wisp.unitId, ability: { abilityId: 'blink', target: [{ x: 11, y: 10 }] } }] },
+    ], roster);
+    expect(unit(blinked.state, wisp.unitId).pos, 'landed beyond it').toEqual({ x: 11, y: 10 });
+    expect(blinked.state.traps, 'and the mine is still waiting').toHaveLength(1);
+    expect(hpLost(armed, blinked.state, wisp.unitId), 'untouched').toBe(0);
   });
 });
 
