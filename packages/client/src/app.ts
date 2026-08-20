@@ -53,7 +53,7 @@ import {
 import {
   abilityOptions,
   abilityPreview,
-  previewBands,
+  previewBandSets,
   impactPreview,
   abilityTooltip,
   aimFor,
@@ -1195,12 +1195,15 @@ export function startHotSeat(
     // tiles the aim overlay draws identically, so the ability read as one flat
     // number over one flat shape. Its own layer, directly above the aim it
     // qualifies: it is a reading of those same tiles, not a separate area.
-    renderer.highlight(
-      'band',
-      chosen !== undefined ? previewBands(map, unit, chosen, preview.aim, preview.aimStep) : [],
-      BAND,
-      0.5,
-    );
+    //
+    // PREVIEW-NUMBERS-AUDIT: derived once, as two sets. The highlight wants them
+    // merged (both bands mean "this tile is special") and the numbers need them
+    // apart (`innerAmount` replaces, `axisBonus` adds) — deriving them twice is
+    // how the glow and the figure written on it would come to disagree.
+    const bands = chosen !== undefined
+      ? previewBandSets(map, unit, chosen, preview.aim, preview.aimStep)
+      : { axis: [], inner: [] };
+    renderer.highlight('band', [...bands.axis, ...bands.inner], BAND, 0.5);
 
     // ── DASH-PREVIEW: a dash's impact disc(s) ────────────────────────────────
     // "Shadowstep Strike needs to show what boxes are being hit, not just the
@@ -1315,14 +1318,29 @@ export function startHotSeat(
     // about cover. Built here rather than cached because it is derived from
     // `map`, which never changes for a match — see the memo below it.
     showPreviewNumbers(previewNumbers(state, previewBoard(), unit, [
+      // PREVIEW-NUMBERS-AUDIT: the interior bands ride along with the footprint,
+      // so a tile in Cinder's core is written 22 and one in her ring 14.
       ...(chosen !== undefined
-        ? [{ def: chosen, squares: [...covered, ...impact.origin, ...impact.destination] }]
+        ? [{
+          def: chosen,
+          squares: [...covered, ...impact.origin, ...impact.destination],
+          axis: bands.axis,
+          inner: bands.inner,
+        }]
         : []),
       ...(freeDef !== undefined && freeAim.length > 0
-        ? [{ def: freeDef, squares: abilityPreview(map, unit, freeDef, freeAim) }]
+        ? [{
+          def: freeDef,
+          squares: abilityPreview(map, unit, freeDef, freeAim),
+          ...previewBandSets(map, unit, freeDef, freeAim),
+        }]
         : []),
       ...(catalystDef !== undefined && catalystAim.length > 0
-        ? [{ def: catalystDef, squares: abilityPreview(map, unit, catalystDef, catalystAim) }]
+        ? [{
+          def: catalystDef,
+          squares: abilityPreview(map, unit, catalystDef, catalystAim),
+          ...previewBandSets(map, unit, catalystDef, catalystAim),
+        }]
         : []),
       // PREVIEW-DECOY: the fogged, per-viewer decoy list the board is already
       // drawn from. A decoy renders to the enemy as a real Wisp, so it has to
