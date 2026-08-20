@@ -486,6 +486,49 @@ export function circleSquares(board: Board, center: Vec2, radius: number): Vec2[
 }
 
 /**
+ * WARDING-WALL — a freely placed segment of `length` tiles, laid **across** the
+ * caster's line to the aimed square.
+ *
+ * The owner's words were *"a freely placed, 4 tile line"*. Freely placed is the
+ * load-bearing half and it is what separates this from `line`: a `line` starts
+ * at the caster and runs away from them, so where it lands is decided by where
+ * you stand. A wall is put somewhere — the aim says where, anywhere inside
+ * `range`.
+ *
+ * The orientation is **derived**, not aimed: the wall lies perpendicular to
+ * `caster → aimed square`. That is one aim click rather than a position and a
+ * rotation, and it is the orientation the ability wants nearly always — a wall
+ * is something you put *between* you and them, or across the lane they are
+ * coming down. (Flagged to the Analyzer: the owner said where, not which way.)
+ *
+ * An **even** length has no centre tile, so the segment is laid from
+ * `-(⌊(L-1)/2⌋)` to `+⌊L/2⌋` along the perpendicular — for `L = 4` the aimed
+ * square is the second of the four. Arbitrary, deterministic, and written down.
+ *
+ * Off-board and wall tiles are dropped, exactly as `circleSquares` drops them: a
+ * hazard laid across a doorway covers the floor, not the masonry. Returned in
+ * segment order (one end to the other), which is the order the traps are placed
+ * in and therefore the order their ids run.
+ */
+export function wallSquares(board: Board, centre: Vec2, facing: Vec2, length: number): Vec2[] {
+  if (length < 1) return [];
+  // Perpendicular to the facing cardinal. `dominantCardinal` has already snapped
+  // the facing to an axis, so this is exact integer arithmetic with no rotation.
+  const across: Vec2 = { x: -facing.y, y: facing.x };
+  if (across.x === 0 && across.y === 0) return [];
+  const first = -Math.floor((length - 1) / 2);
+  const out: Vec2[] = [];
+  for (let i = 0; i < length; i++) {
+    const step = first + i;
+    const p: Vec2 = { x: centre.x + across.x * step, y: centre.y + across.y * step };
+    if (!inBounds(board, p)) continue;
+    if (terrainAt(board, p) === 'wall') continue;
+    out.push(p);
+  }
+  return out;
+}
+
+/**
  * Expand an ability's aim into the squares it affects.
  *
  * `aim` is the order's target array (GAME_SPEC §2): the aimed square for
@@ -515,6 +558,15 @@ export function expandShape(
     case 'circle': {
       if (target === undefined) return [];
       return circleSquares(board, target, ability.radius ?? 1);
+    }
+    case 'wall': {
+      // Both halves come from the aim: the target square is *where*, and the
+      // caster's cardinal toward it is *which way across*. A wall aimed at the
+      // caster's own square has no direction and so covers nothing —
+      // `aimIsLegal` refuses that aim for the same reason a `line` refuses it.
+      if (target === undefined) return [];
+      const facing = aimVector(dominantCardinal);
+      return facing === undefined ? [] : wallSquares(board, target, facing, ability.wallLength ?? 1);
     }
     case 'line': {
       const dir = aimVector(direction8);

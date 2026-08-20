@@ -285,6 +285,12 @@ export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec
     case 'square':
     case 'circle':
       return target !== undefined && aimInRange(unit.pos, target, ability.range);
+    case 'wall':
+      // WARDING-WALL: a circle's aim, minus the caster's own square — there is
+      // no direction to lay a wall across from where you are standing.
+      return target !== undefined
+        && aimInRange(unit.pos, target, ability.range)
+        && !(target.x === unit.pos.x && target.y === unit.pos.y);
     case 'line':
     case 'cone':
       // A quantized step is a direction on its own — no target square needed (AIM2).
@@ -416,7 +422,15 @@ export function damageTell(def: AbilityDef): string {
   // Barbed Sling's said 15 while also seeding an 8. A preview that shows nothing
   // for an ability that does something is the worst reading of the three.
   const trap = amount('trap');
-  if (trap?.amount !== undefined) parts.push(`${trap.amount} mine`);
+  // WARDING-WALL: a hazard laid over a footprint is a *wall*, and calling it a
+  // mine would undersell it by a factor of its length — "25 mine" reads as one
+  // tile somewhere, which is the opposite of a four-tile barrier you can see.
+  // Read off `perTile`, the same field that decides how many go down.
+  if (trap?.amount !== undefined) {
+    parts.push(trap.perTile === true
+      ? `${trap.amount} wall${def.wallLength !== undefined ? ` (${def.wallLength} tiles)` : ''}`
+      : `${trap.amount} mine`);
+  }
   return parts.join(' · ');
 }
 
@@ -770,6 +784,10 @@ export function aimFor(
       return { aim: [], aimStep: dragToAimStep(unit.pos, target) };
     case 'path':
       return { aim: pathToExact(map, state, unit, target, ability.range) };
+    // WARDING-WALL: a square, like a circle. The wall's *orientation* is derived
+    // from the caster's cardinal toward it, so there is nothing extra to aim —
+    // one click puts the whole segment down.
+    case 'wall':
     case 'circle':
     case 'square':
       return { aim: [{ ...target }] };
