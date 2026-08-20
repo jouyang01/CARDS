@@ -138,13 +138,34 @@ with Pillow, or Node with canvas to match the client, are both fine.
 
 ## 4. Mixamo (Phase 2 — the human step)
 
+**Mixamo is two separate screens.** Conflating them is the single most confusing thing
+about this step, so they are documented separately here.
+
+### Screen 1 — the Auto-Rigger
+
 1. mixamo.com, free Adobe account.
 2. **Upload Character** → the `.zip` from Phase 1 (FBX + atlas together, so the texture is
    visible in the preview and you can confirm UVs survived).
 3. Drag five markers: chin, both wrists, both elbows, both knees, groin.
 4. Choose the **"No Fingers"** skeleton — fewer bones, smaller file, and fingers are
    invisible at isometric distance.
-5. Download the base character, then each clip.
+5. Confirm the preview walks correctly, then accept the rig.
+
+There are **no animation options on this screen** — no format, no fps, no "In Place".
+Nothing has been animated yet. Accepting the rig moves you to screen 2.
+
+### Screen 2 — the animation library
+
+Your character in a viewport, a searchable animation list down the left. The clip names in
+the table below are **search terms**, not sections or categories.
+
+Selecting a clip opens a **settings panel on the right** with sliders for that clip
+(Overdrive, Character Arm-Space, Trim). **"In Place" is a checkbox in that panel**, and it
+appears only for clips that actually travel — idle, attack and death clips do not offer it,
+because they have no root motion to strip.
+
+Download the base character once (search `T-Pose`, apply, download **With Skin**), then each
+clip **Without Skin** so they all share one skeleton.
 
 | Setting | Base character | Each animation |
 |---|---|---|
@@ -152,7 +173,7 @@ with Pillow, or Node with canvas to match the client, are both fine.
 | Pose / Skin | T-pose, **With Skin** | **Without Skin** |
 | Frames per second | — | 30 |
 | Keyframe Reduction | — | None |
-| In Place | — | **Checked** on all locomotion |
+| In Place | not offered | **Checked**, on travelling clips only |
 
 > **"In Place" is the failure mode that hides.** The engine owns unit positions on the grid.
 > If the animation also translates the character, the two fight and units drift off their
@@ -161,16 +182,19 @@ with Pillow, or Node with canvas to match the client, are both fine.
 
 Clips, mapped onto the cue kinds in `choreograph.ts`:
 
-| Game moment | Mixamo search | In Place |
+| Game moment | Search term | In Place |
 |---|---|---|
-| Resting | `idle` | — |
-| Prep phase | `casting spell` | — |
-| Dash phase | `running` | yes |
-| Blast phase | `shooting` / `sword slash` | — |
-| Move phase | `walking` | yes |
-| Taking damage | `hit reaction` | — |
-| Death | `falling back death` | — |
-| Knockback | `knocked out` | — |
+| Resting | `idle` | not offered |
+| Prep phase | `casting spell` | not offered |
+| Dash phase | `running` | **tick it** |
+| Blast phase | `shooting` / `sword slash` | not offered |
+| Move phase | `walking` | **tick it** |
+| Taking damage | `hit reaction` | not offered |
+| Death | `falling back death` | not offered |
+| Knockback | `knocked out` | not offered |
+
+If a clip you expect to travel offers no In Place checkbox, it has no root motion and needs
+nothing done — that is not a problem.
 
 ## 5. Asset build (Phase 3)
 
