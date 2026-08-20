@@ -7,3 +7,6 @@ dist/
 test-results/
 playwright-report/
 .DS_Store
+
+# Generated art assets — rebuild with tools/art/. Source of truth is data/art/*.json.
+build/art/

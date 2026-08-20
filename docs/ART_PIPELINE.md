@@ -1,6 +1,11 @@
 # ART_PIPELINE.md — from `data/art/*.json` to rigged, armed, animated characters
 
-**Status:** planned, not built. Nothing in this document exists in `packages/` yet.
+**Status:** phase 1 partially built — see `tools/art/`. Aegis is the spike character
+(`data/art/aegis.json`). Nothing in this document exists in `packages/` yet.
+
+`paint_atlas.py` is written and verified — it produces Aegis's atlas today.
+`generate_character.py` is written but **not yet executed**: it needs Blender, which the
+authoring session did not have. First run is on the owner's machine and may need fixes.
 **Owner directive:** characters are to be *generated*, not hand-modelled. The repo owner has
 no Blender, animation or art skills, and the pipeline is designed around that constraint
 rather than in spite of it.

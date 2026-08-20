@@ -1,0 +1,20 @@
+{
+  "_comment": "THE UV CONTRACT. paint_atlas.py paints into these rectangles; generate_character.py assigns UVs against them. Both read this file so they cannot drift apart. Pixel coordinates, origin top-left, in a square atlas of `size`.",
+  "size": 1024,
+  "regions": {
+    "head_front": [0, 0, 256, 256],
+    "head_back":  [256, 0, 512, 256],
+    "head_sides": [512, 0, 768, 256],
+    "crown":      [768, 0, 1024, 256],
+    "torso":      [0, 256, 512, 512],
+    "swatches":   [512, 256, 1024, 512],
+    "door_face":  [0, 512, 512, 1024],
+    "door_back":  [512, 512, 1024, 1024]
+  },
+  "swatchGrid": { "cols": 4, "rows": 3 },
+  "swatchOrder": [
+    "iron", "ironDark", "ironLight", "rust",
+    "rustDeep", "driedBlood", "leather", "skin",
+    "magic_core", "magic_edge", "magic_deep", "skinShadow"
+  ]
+}
