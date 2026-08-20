@@ -1,61 +1,61 @@
 {
   "id": "aegis",
   "thesis": "He doesn't shield you, he takes it. Exhaustion and a little contempt, not devotion. He'd rather eat the hit than trust you to avoid it.",
-
   "build": {
     "height": 1.78,
-    "headScale": 1.42,
-    "shoulderWidth": 1.45,
+    "headScale": 1.36,
+    "shoulderWidth": 1.55,
     "neckLength": 0.55,
     "torsoDepth": 1.15,
-    "limbThickness": 1.2
+    "limbThickness": 1.55
   },
-
   "posture": {
-    "_comment": "APPLIED AFTER RIGGING, never baked into the T-pose mesh. Mixamo's auto-rigger requires left/right symmetry; a lopsided T-pose confuses marker placement and skinning. These are bone offsets the renderer applies on top of every Mixamo clip, so the hunch survives idle, walk, dash and death alike. See docs/ART_PIPELINE.md §3.",
+    "_comment": "APPLIED AFTER RIGGING, never baked into the T-pose mesh. Mixamo's auto-rigger requires left/right symmetry; a lopsided T-pose confuses marker placement and skinning. These are bone offsets the renderer applies on top of every Mixamo clip, so the hunch survives idle, walk, dash and death alike. See docs/ART_PIPELINE.md \u00a73.",
     "dropShoulder": "left",
     "dropShoulderDeg": 9,
     "hunchDeg": 13,
     "headForwardDeg": 7
   },
-
   "garment": {
     "kind": "layered-plate",
     "skirt": "tassets",
     "hood": false,
-    "shoulderPads": { "left": "heavy-riveted", "right": "light" },
+    "shoulderPads": {
+      "left": "heavy-riveted",
+      "right": "light"
+    },
     "collar": "high"
   },
-
   "palette": {
-    "iron":       "#4a5058",
-    "ironDark":   "#31363d",
-    "ironLight":  "#6d757e",
-    "rust":       "#8a4a28",
-    "rustDeep":   "#5e3019",
+    "iron": "#4a5058",
+    "ironDark": "#31363d",
+    "ironLight": "#6d757e",
+    "rust": "#8a4a28",
+    "rustDeep": "#5e3019",
     "driedBlood": "#6b2320",
-    "leather":    "#3b3128",
-    "skin":       "#9c8878",
+    "leather": "#3b3128",
+    "skin": "#9c8878",
     "skinShadow": "#6f5f52"
   },
-
   "magic": {
     "_comment": "Never warm. A paladin's light is given to him; Aegis forces his. Pale, sickly, effortful.",
-    "core":  "#c9d2c4",
-    "edge":  "#8d9c88",
-    "deep":  "#5a6657",
+    "core": "#c9d2c4",
+    "edge": "#8d9c88",
+    "deep": "#5a6657",
     "warmthForbidden": true
   },
-
   "face": {
     "eyes": "narrow-hooded",
     "brow": "heavy-flat",
     "mouth": "set-downturn",
     "underEye": "sunken",
-    "scar": { "side": "left", "from": "brow", "to": "cheek" },
+    "scar": {
+      "side": "left",
+      "from": "brow",
+      "to": "cheek"
+    },
     "stubble": true
   },
-
   "weapon": {
     "mainHand": {
       "kind": "door",
@@ -70,11 +70,13 @@
     },
     "offHand": null
   },
-
   "vfxLanguage": {
     "_comment": "He has exactly one idea and he keeps having it. Every effect is a slab of the same cold light, the same proportion as the door on his arm.",
     "primitive": "slab",
-    "slabAspect": [0.85, 1.55],
+    "slabAspect": [
+      0.85,
+      1.55
+    ],
     "shared": true
   }
 }

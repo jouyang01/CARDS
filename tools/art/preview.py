@@ -19,6 +19,7 @@ Blender versions, and shows the atlas without lighting flattering or hiding it.
 """
 
 import json
+import math
 import pathlib
 import sys
 
@@ -46,12 +47,11 @@ SHOTS = [
 
 
 def place_camera(cam, target, pitch_deg, yaw_deg, radius):
-    import math
     p, y = math.radians(pitch_deg), math.radians(yaw_deg)
     horizontal = math.cos(p) * radius
     cam.location = Vector((
         target.x + math.sin(y) * horizontal,
-        target.y + math.cos(y) * horizontal,
+        target.y - math.cos(y) * horizontal,   # -Y is the character's FRONT
         target.z + math.sin(p) * radius,
     ))
     direction = target - cam.location
@@ -62,17 +62,17 @@ def setup_scene(size):
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_WORKBENCH"
     shading = scene.display.shading
-    shading.light = "STUDIO"
+    shading.light = "FLAT"
     shading.color_type = "TEXTURE"
     shading.show_object_outline = False
-    shading.show_shadows = True
+    shading.show_shadows = False
     scene.render.resolution_x = size
     scene.render.resolution_y = size
     scene.render.film_transparent = False
     scene.render.image_settings.file_format = "PNG"
     world = bpy.data.worlds.new("preview") if not bpy.data.worlds else bpy.data.worlds[0]
     scene.world = world
-    world.color = (0.09, 0.10, 0.12)
+    world.color = (0.16, 0.17, 0.19)
     return scene
 
 
@@ -92,12 +92,33 @@ def main():
     body = gc.build_body(spec)
     gc.attach_material(body, atlas, f"{cid}_preview_mat")
 
+    # Posture: applied here for evaluation only. In the real pipeline these are
+    # bone offsets after rigging (docs/ART_PIPELINE.md §3); baking them into the
+    # T-pose would break Mixamo's symmetry requirement.
+    posture = spec.get("posture", {})
+    if posture:
+        body.rotation_euler[0] = math.radians(posture.get("hunchDeg", 0)) * 0.5
+
+    door_obj = None
+    if (spec.get("weapon") or {}).get("mainHand"):
+        door_obj = gc.build_door(spec)
+        gc.attach_material(door_obj, atlas, f"{cid}_preview_door_mat")
+        w = spec["weapon"]["mainHand"]
+        b = spec["build"]
+        side = -1 if posture.get("dropShoulder", "left") == "left" else 1
+        # Dragged, not carried: low, tilted off vertical, held out from the body.
+        door_obj.location = (side * (b["shoulderWidth"] * 0.30 + w["thickness"] * 2.2),
+                             -b["torsoDepth"] * 0.30,
+                             w["heightTiles"] * 0.34)
+        door_obj.rotation_euler = (math.radians(-6), math.radians(side * -9), math.radians(side * 4))
+
     tris = gc.tri_count(body)
     print(f"\n  {cid}: {tris} tris")
 
     # Frame on the character's real bounds rather than assuming its height.
-    zs = [v.co.z for v in body.data.vertices]
-    xs = [v.co.x for v in body.data.vertices]
+    parts = [body] + ([door_obj] if door_obj else [])
+    zs = [(o.matrix_world @ v.co).z for o in parts for v in o.data.vertices]
+    xs = [(o.matrix_world @ v.co).x for o in parts for v in o.data.vertices]
     lo, hi = min(zs), max(zs)
     target = Vector((0.0, 0.0, (lo + hi) / 2))
     extent = max(hi - lo, (max(xs) - min(xs))) * 1.15

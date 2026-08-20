@@ -54,3 +54,30 @@ construction — clean T-pose, left/right symmetry, limbs separated from the tor
 It deliberately does **not** bake the `posture` block. Aegis's dropped shoulder
 and hunch are applied after rigging as bone offsets, so the T-pose stays
 symmetric for the rigger and the asymmetry still survives every Mixamo clip.
+
+## Running these in a container (CI, or a remote Claude session)
+
+The scripts work headless on Linux, but a bare container needs three things the
+macOS build bundles for you:
+
+```bash
+apt-get install -y blender python3-numpy libegl1 libgl1-mesa-dri libosmesa6
+LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+  blender --background --python tools/art/preview.py -- aegis
+```
+
+`python3-numpy` because the distro Blender uses system Python rather than a
+bundled one, and the GL packages because Workbench needs a rendering context even
+in `--background`. Without the software-GL environment variables you get
+`Couldn't open libEGL.so.1` or `EGL_NOT_INITIALIZED`.
+
+## Verifying
+
+```bash
+python3 tools/art/paint_atlas.py aegis --verify
+```
+
+Checks that every swatch cell samples the colour the mesh expects. The failure
+this catches — the grid here disagreeing with the UV maths in
+`generate_character.py` — renders as a silently wrong-coloured limb, which looks
+like an art problem and is really an index bug.

@@ -209,7 +209,7 @@ def build_body(spec):
     # ── head ──
     # Front face carries the painted face; back, sides and crown each get their
     # own region, because a 360° camera sees all of them constantly.
-    add_box(bm, (0, 0, head_z), (head_r * 1.7, head_r * 1.75, head_r * 2.05), {
+    add_box(bm, (0, 0, head_z), (head_r * 1.9, head_r * 1.8, head_r * 1.72), {
         "front": "head_front", "back": "head_back",
         "left": "head_sides", "right": "head_sides",
         "top": "crown", "bottom": "skinShadow",
@@ -259,11 +259,11 @@ def build_body(spec):
         pads = g.get("shoulderPads", {})
         heavy = pads.get("left" if side < 0 else "right", "light") == "heavy-riveted"
         pad = 1.55 if heavy else 1.12
-        add_box(bm, (side * (gap + 0.03), 0, arm_z + 0.03),
+        add_box(bm, (side * (gap - 0.015), 0, arm_z + 0.03),
                 (limb * 2.4 * pad, limb * 2.4 * pad, limb * 2.2 * pad),
-                {"_default": "ironLight" if heavy else "iron"}, uv)
+                {"_default": "iron" if heavy else "ironDark"}, uv)
         _, upper = add_box(bm, (side * (gap + 0.06 + arm_len * 0.25), 0, arm_z),
-                           (arm_len * 0.5, limb * 2, limb * 2), {"_default": "iron"}, uv)
+                           (arm_len * 0.5, limb * 2.5, limb * 2.5), {"_default": "iron"}, uv)
         segment(bm, upper, "x", 3, uv)
         _, fore = add_box(bm, (side * (gap + 0.06 + arm_len * 0.75), 0, arm_z),
                           (arm_len * 0.5, limb * 1.75, limb * 1.75), {"_default": "leather"}, uv)

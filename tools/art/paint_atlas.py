@@ -33,6 +33,7 @@ import argparse
 import json
 import pathlib
 import random
+import sys
 
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -115,7 +116,7 @@ def weather(atlas: Atlas, region: str, base, dark, light, passes: int = 260) -> 
         atlas.line(region, [(x, y), (x + dx, y + dy)], mix(base, tone, rng.uniform(0.25, 0.8)), width=1)
 
 
-def rust_bloom(atlas: Atlas, region: str, base, rust, blooms: int = 14) -> None:
+def rust_bloom(atlas: Atlas, region: str, base, rust, blooms: int = 14, strength: float = 0.18) -> None:
     """Soft irregular corrosion patches, densest at the edges where water sits."""
     w, h = atlas.size(region)
     rng = atlas.rng
@@ -128,7 +129,7 @@ def rust_bloom(atlas: Atlas, region: str, base, rust, blooms: int = 14) -> None:
             atlas.ellipse(
                 region,
                 (cx - rr, cy - rr * 0.7, cx + rr, cy + rr * 0.7),
-                mix(base, rust, 0.18 * (5 - ring)),
+                mix(base, rust, strength * (5 - ring)),
             )
 
 
@@ -272,7 +273,7 @@ def paint_door(atlas: Atlas, pal: dict, weapon: dict) -> None:
             atlas.ellipse("door_face", (x - 5, y - 5, x + 5, y + 5), mix(iron, light, 0.55))
             atlas.ellipse("door_face", (x - 3, y - 3, x + 2, y + 2), mix(iron, dark, 0.5))
 
-    rust_bloom(atlas, "door_face", iron, rust, blooms=18)
+    rust_bloom(atlas, "door_face", iron, rust, blooms=11, strength=0.11)
     weather(atlas, "door_face", iron, dark, light, passes=420)
 
     # A torn edge along one side: this was cut out of something, badly.
@@ -329,7 +330,7 @@ def paint_door(atlas: Atlas, pal: dict, weapon: dict) -> None:
         for y in (int(bh * 0.2), int(bh * 0.8)):
             atlas.box("door_back", (0, y - 22, 56, y + 22), mix(iron, rust_deep, 0.55))
             atlas.box("door_back", (0, y - 22, 56, y + 22), mix(dark, (0, 0, 0), 0.4), width=4)
-    rust_bloom(atlas, "door_back", mix(iron, dark, 0.5), rust_deep, blooms=20)
+    rust_bloom(atlas, "door_back", mix(iron, dark, 0.5), rust_deep, blooms=12, strength=0.12)
     weather(atlas, "door_back", mix(iron, dark, 0.5), dark, light, passes=300)
 
 
@@ -357,7 +358,7 @@ def paint_torso(atlas: Atlas, pal: dict) -> None:
         atlas.box("torso", (w // 2 + 14, y, w - 14, y + 22), leather)
         atlas.line("torso", [(w // 2 + 14, y + 22), (w - 14, y + 22)], mix(leather, (0, 0, 0), 0.5), width=3)
 
-    rust_bloom(atlas, "torso", mix(iron, dark, 0.3), rust, blooms=10)
+    rust_bloom(atlas, "torso", mix(iron, dark, 0.3), rust, blooms=7, strength=0.10)
     weather(atlas, "torso", mix(iron, dark, 0.3), dark, light, passes=240)
 
 
@@ -401,9 +402,33 @@ def build(spec: dict, seed: int) -> Image.Image:
     return atlas.img.filter(ImageFilter.GaussianBlur(0.4))
 
 
+def verify(spec: dict, path: pathlib.Path) -> int:
+    """Check every swatch cell samples the colour the mesh expects.
+
+    generate_character.py points dull faces at a single pixel per swatch. If the
+    grid here and the UV maths there ever disagree, a limb comes out silently the
+    wrong colour — which looks like an art problem and is really an index bug.
+    """
+    img = Image.open(path).convert("RGB")
+    grid, order = LAYOUT["swatchGrid"], LAYOUT["swatchOrder"]
+    x0, y0, x1, y1 = REGION["swatches"]
+    cw, ch = (x1 - x0) / grid["cols"], (y1 - y0) / grid["rows"]
+    bad = 0
+    for i, name in enumerate(order):
+        r, c = divmod(i, grid["cols"])
+        got = img.getpixel((int(x0 + cw * (c + 0.5)), int(y0 + ch * (r + 0.5))))
+        want = hex_rgb(spec["magic"][name[6:]] if name.startswith("magic_") else spec["palette"][name])
+        if any(abs(a - b) > 6 for a, b in zip(got, want)):
+            print(f"  MISMATCH {name}: want #{want[0]:02x}{want[1]:02x}{want[2]:02x}, got #{got[0]:02x}{got[1]:02x}{got[2]:02x}")
+            bad += 1
+    print(f"  swatches: {len(order) - bad}/{len(order)} correct")
+    return bad
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Paint a character texture atlas.")
     ap.add_argument("character", help="character id, e.g. aegis")
+    ap.add_argument("--verify", action="store_true", help="check swatch cells match the palette")
     ap.add_argument("--out", default=None, help="output PNG path")
     ap.add_argument("--seed", type=int, default=None, help="override the deterministic seed")
     args = ap.parse_args()
@@ -418,6 +443,8 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     build(spec, seed).save(out)
     print(f"{out}  ({out.stat().st_size // 1024} kB, seed {seed})")
+    if args.verify and verify(spec, out):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
