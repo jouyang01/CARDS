@@ -158,6 +158,21 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > generated from engine parameters, never hand-drawn art. The keystone AC: a congruence
 > sweep asserting lit tiles == tiles-with-centres-inside-the-boundary for every shape and
 > rotation — which doubles as a geometry regression guard. Schedule HIGH per the owner.
+>
+> **RULED — AIM-BOUNDARY-CONGRUENCE: congruence (AC #1) wins; the drawn boundary matches the SHIPPED
+> engine predicate, SQUARE ends and all (SHIPPED PR #92; corrects the Designer's §2 table per Builder
+> OQ 2026-09-22 #1).** `aim-preview-true.md` §2's table described **rounded caps** for `line` and
+> `cone`+`beamWidth`, but the shipped `wedgeCovers`/`beamCovers` predicate has **square ends** — a
+> rounded cap would enclose tiles whose centres never light, breaking the one AC that is the point.
+> The Builder correctly drew the square-ended boundary. Ruling: **the boundary is the predicate's
+> locus, exactly — where the predicate has square ends, so does the drawing; the §2 "rounded caps"
+> wording is superseded.** The engine is **not** changed to add rounded caps (that would be a real
+> balance change — an ENGINE ASK nobody has requested). AC #1 (congruence sweep) is the binding form;
+> the prose table serves it, not the reverse. **OQ #3/#4/#5 ratified:** the sweep density (full 512
+> for range ≤ 3 shapes, every 8th for long lines) is accepted; deleting the old `shapeOutline` (one
+> source of truth) is correct; and AC #4's "the outline runs through the boundary tiles' centres, so a
+> lit tile's outer half sits outside the line" is the ruling working as specified — a **playtest note
+> for the owner**, not a defect.
 
 ## Combat simultaneity
 
@@ -172,6 +187,17 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   whose area, as aimed, no longer contains the dasher's current square. If the aimed
   area covers the dash *destination*, it hits. Prep-phase traps and Dash-phase damage
   can still hit a dasher.
+- **RULED — RAVOK-RECOIL: Whirling Cleave takes 50% self (11 of 22), via RECOIL, overriding the pure
+  CASTER-SAFE=0 for that one ability (owner Dev Note 2026-09-22 #3; backlog RAVOK-RECOIL — data).**
+  CASTER-SAFE excludes the caster from its own harmful effects (so Ravok's whirl deals 0 to himself
+  today); the owner wants the whirl to **cost him 11** — the same swing-around-yourself price RECOIL
+  already prices for Seismic Rupture. Ruling: **Whirling Cleave carries `selfDamagePct: 50`** (Ravok
+  takes `floor(22 × 50/100) = 11`, bypassing cover, shields first — the RECOIL mechanic, unchanged).
+  **Shockwave stays CASTER-SAFE (0 self, 12 to enemies)** — no recoil, per the owner. **Seismic
+  Rupture is unchanged (19 self / 38 others)**. This is a per-ability opt-in on top of CASTER-SAFE, not
+  a reversal of it. **Previews must show the self number** (11 on Ravok's own tile for the whirl, 19
+  for Seismic, nothing for Shockwave) — the caster's own square is a previewed victim when
+  `selfDamagePct` is present (backlog PREVIEW-NUMBERS-AUDIT).
 - **RULED — batch-3 combat rulings verified (SHIPPED PR #82) and four Builder OQs closed
   (2026-09-18).** PHASE-STATUS-FIRST (statuses batch, then damage batches against post-status state,
   both teams together — phase order Prep→Dash→Blast→Move intact; mutual Weakens both blunt; mutual
