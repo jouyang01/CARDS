@@ -254,7 +254,14 @@ export function previewNumbers(
           // Ravok stands inside every one of his `range: 0` discs, so without
           // this his own square previewed the enemies' full number. What he
           // actually pays is the recoil, added below.
-          if (target.unitId === caster.unitId) continue;
+          //
+          // FRAG-SELF is the exception the engine now carries, so the preview
+          // carries it too: an ability that opts out numbers its caster like
+          // anyone else standing in the blast. Keeping quiet about the 34 you
+          // are about to take is the exact failure PREVIEW-NUMBERS-AUDIT exists
+          // to prevent — the rule changed, the preview did not, and the player
+          // finds out by dying.
+          if (target.unitId === caster.unitId && def.selfHarm !== true) continue;
           if (allySafe && target.owner === caster.owner) continue;
           // UNTGT1: the whole harmful half is skipped for an untargetable unit.
           if (hasStatus(target, 'untargetable')) continue;

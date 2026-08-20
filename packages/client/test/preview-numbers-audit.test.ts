@@ -321,3 +321,40 @@ describe('PREVIEW-NUMBERS-AUDIT: an ally is numbered by the same rules', () => {
       .toBe(resolved(state, orderFor(me.unitId, lash, aim), ally.unitId, lash));
   });
 });
+
+describe('FRAG-SELF: the preview shows the grenade you are standing in', () => {
+  // *"Vex Frag grenade should hurt yourself too."* The engine now catches its
+  // own caster in a `selfHarm` blast, and PREVIEW-NUMBERS-AUDIT's contract is
+  // that the preview says whatever the resolution does. Keeping quiet about the
+  // 34 you are about to take would be the worst version of this bug: the rule
+  // changed, the preview did not, and the player learns it by dying.
+  const GRENADE = ability('vex', 'frag_grenade');
+  const GRENADE_DAMAGE = GRENADE.effects.find((e) => e.kind === 'damage')!.amount!;
+
+  it('the ability really does opt out of CASTER-SAFE', () => {
+    expect(GRENADE.selfHarm, 'authored, not inferred').toBe(true);
+  });
+
+  it('a caster inside the blast is numbered like anyone else in it', () => {
+    // Aimed at the caster's own feet: legal (range 6 covers 0) and the clearest
+    // possible statement of "you are standing in this".
+    const { state, me } = field(by('vex'), { x: 24, y: 0 });
+    const aim = [{ ...CASTER_AT }];
+    expect(previewed(state, me.unitId, GRENADE, aim, me.unitId)).toBe(GRENADE_DAMAGE);
+  });
+
+  it('and standing clear of it is still previewed as free', () => {
+    // The other half — `selfHarm` is presence, not a cost of throwing.
+    const { state, me } = field(by('vex'), { x: 24, y: 0 });
+    const aim = [{ x: CASTER_AT.x + 5, y: CASTER_AT.y }];
+    expect(previewed(state, me.unitId, GRENADE, aim, me.unitId)).toBe(0);
+  });
+
+  it('an ability that did NOT opt out still previews nothing on its caster', () => {
+    // Ravok's Shockwave is a `range: 0` disc he stands in the middle of, and
+    // carries neither `selfHarm` nor `selfDamagePct`. CASTER-SAFE, undisturbed.
+    const shockwave = ability('ravok', 'shockwave');
+    const { state, me } = field(by('ravok'), { x: 24, y: 0 });
+    expect(previewed(state, me.unitId, shockwave, [{ ...CASTER_AT }], me.unitId)).toBe(0);
+  });
+});

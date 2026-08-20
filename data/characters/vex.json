@@ -30,13 +30,14 @@
       "cooldown": 4,
       "energyGain": 10,
       "delayTurns": 1,
+      "selfHarm": true,
       "effects": [
         {
           "kind": "damage",
           "amount": 34
         }
       ],
-      "description": "Lobbed grenade that detonates at the aimed area NEXT turn. Zone denial \u2014 forces the opponent to move where you want."
+      "description": "Lobbed grenade that detonates at the aimed area NEXT turn \u2014 and it does not care whose boots are on it, yours included. Zone denial \u2014 forces the opponent to move where you want, and you to remember where you put it."
     },
     {
       "id": "combat_roll",

@@ -80,6 +80,9 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     const bomb: AbilityDef = {
       id: 'z', name: 'Z', phase: 'blast', shape: 'circle', range: 6, radius: 2, cooldown: 0,
       energyGain: 4, innerRadius: 0, innerAmount: 22,
+      // FRAG-SELF lives here rather than on `wedge`: it is refused alongside
+      // `selfDamagePct`, which `wedge` carries.
+      selfHarm: true,
       effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
     // BASIC-MODES is a fourth object for the same reason: a mode may change the

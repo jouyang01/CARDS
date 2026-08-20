@@ -1771,7 +1771,10 @@ function runBlast(
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of a.def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
-          if (self) continue; // CASTER-SAFE — see `casterSafe`; RECOIL is below
+          // CASTER-SAFE — see `casterSafe`; RECOIL is below. FRAG-SELF is the
+          // other way back in: an ability that opts out treats its caster as
+          // just another unit standing in the area.
+          if (self && a.def.selfHarm !== true) continue;
           if (allySafe && !enemy) continue; // ALLY-SAFE — this one spares the team
           if (untargetable) continue; // the whole harmful half is skipped, energy included
           // Energy stays enemy-only, so splashing an ally pays nothing.
@@ -1968,9 +1971,11 @@ function detonateDelayedBlasts(
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
-          // CASTER-SAFE reaches here too: a grenade you armed two turns ago is
-          // still your own ability, and standing on it should not blow you up.
-          if (target.unitId === caster.unitId) continue;
+          // CASTER-SAFE reaches here too — unless the ability opted out
+          // (FRAG-SELF). Vex's Frag Grenade does: *"Vex Frag grenade should hurt
+          // yourself too."* You threw it somewhere else, and walking into your
+          // own blast is a mistake the game lets you make.
+          if (target.unitId === caster.unitId && def.selfHarm !== true) continue;
           if (def.noFriendlyFire === true && !enemy) continue; // ALLY-SAFE
           if (untargetable) continue;
           if (enemy) hitEnemy = true; // energy stays enemy-only
