@@ -77,7 +77,7 @@
       "phase": "dash",
       "shape": "path",
       "range": 4,
-      "cooldown": 3,
+      "cooldown": 5,
       "energyGain": 4,
       "effects": [
         {

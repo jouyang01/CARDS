@@ -48,7 +48,7 @@
       "phase": "dash",
       "shape": "square",
       "range": 4,
-      "cooldown": 3,
+      "cooldown": 5,
       "energyGain": 5,
       "effects": [
         {

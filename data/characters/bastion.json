@@ -46,7 +46,7 @@
       "shape": "path",
       "range": 4,
       "chargeHits": "all",
-      "cooldown": 3,
+      "cooldown": 4,
       "energyGain": 8,
       "effects": [
         {

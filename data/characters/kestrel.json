@@ -25,7 +25,7 @@
       "phase": "dash",
       "shape": "path",
       "range": 4,
-      "cooldown": 2,
+      "cooldown": 4,
       "energyGain": 5,
       "effects": [{ "kind": "damage", "amount": 12 }],
       "description": "Glide up to 4 squares; the first enemy passed takes 12 damage. The dodge is also the poke — dodges Blast attacks aimed at your old square."
