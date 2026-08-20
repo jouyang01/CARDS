@@ -4852,3 +4852,76 @@ needs is what the seat may order *now* — the same question `#receiveSubmit` al
 6. **Ram Charge at `chargeHits: "all"` plus cooldown 4 is two buffs and a nerf landing together.** The
    Analyzer sequenced them deliberately and I implemented both as specified; flagging only that the
    playtest note should read them as one change rather than two.
+
+---
+
+## 2026-08-20 — Builder, session 9 (traps catch a shove; the wall is placed and turned)
+
+**TRAP-SHOVE-DEFAULT was one production line, and the interesting part is what it did *not* change.**
+The v1 trap rule was about **whose idea the movement was** — your own power yes, a shove no. TRAP-TRIGGER
+replaces it with a rule about **crossing**: a shove drags you over every square between here and there,
+so it crosses; a blink occupies only its landing square and crosses nothing. That is why blinking *past*
+a mine still leaves it armed while blinking *onto* it sets it off, and it needed no code — the teleport
+path only ever offers the landing square to `triggerTrapsOnEntry`. Pads already worked this way; the two
+rules now agree, and `edge-cases` records that the historical pad-vs-trap difference is gone.
+
+**The wall had to be re-anchored to honour "rotated in 4 directions", and that is a shape change, not a
+control change.** The owner's note is *"placed on a tile and then rotated in 4 directions for
+placement"*. Keeping the shipped geometry — a segment **centred** on the aimed tile, lying **across** a
+facing — and merely letting the player pick the facing would satisfy the words and fail the intent: a
+symmetric segment laid across a facing is identical north and south, so the four buttons would produce
+two walls and a one-tile nudge. Anchoring at the clicked tile and running **along** the chosen cardinal
+makes the tile a pivot and the four rotations four genuinely different arms. Flagged below, because it
+is the one place I changed geometry the owner did not explicitly ask me to change.
+
+**It dissolves session-8 OQ #2.** There is no centre left, so the even-length centring coin-flip (was the
+aimed square 2nd or 3rd of 4?) has no question to answer: the aimed square is always the first tile.
+
+**`wall` is the only shape whose aim needs both halves.** A `line` accepts either a step or a target,
+because for a line each implies the other. A wall's position and orientation are independent, so an aim
+carrying one of them is not an under-specified wall — it is not a wall, and `aimIsLegal` refuses it. The
+old refusal of the caster's own square is gone with the reason for it (there was no direction to derive
+from that square; there is now one authored).
+
+**An off-cardinal aim step snaps rather than being refused.** `AIM_STEPS` is 512 and a wall wants four.
+The client only ever sends one of `WALL_ROTATIONS`; snapping is what makes a hand-rolled or replayed
+order deterministic instead of an error case — the same treatment a cone already gives
+`dominantCardinal`.
+
+**`selectRotation` does not clear the aim, and `selectMode` still does.** A mode change makes the old
+target meaningless (a line's target is often illegal for a cone); a rotation is a change *to* an aim
+about a square the player has already picked. Clearing it would make "turn the wall" mean "put the wall
+away and start again".
+
+**The rotate row is a sibling of the mode row, not an extension of it.** Both qualify the armed ability
+and both are hidden unless one is armed that wants them, so neither costs the board any height in the
+common case — but they answer different questions (*what the ability is* vs *which way this placement
+points*), and an ability could one day want both. `hud-layout`'s exact-list assertion now names four
+rows, so the next one has to be argued for too.
+
+## Open Questions for the Analyzer — 2026-08-20
+
+1. **The wall's geometry changed from centred-across to anchored-along** (Dev Note 2026-09-26 #1;
+   `packages/engine/src/shapes.ts` `wallSquares`, `WALL_ROTATIONS`, `wallDirection`). The owner asked for
+   four rotations; four rotations of a *centred* symmetric segment are two walls, so the anchor moved.
+   The clicked tile is now the **first** tile of the wall rather than the second of four. Please confirm
+   this reading, and close session-8 OQ #2 as moot if you agree.
+
+2. **`aegis.warding_wall`'s range now means something slightly different.** `range: 4` still bounds where
+   the *anchor* may go, but the wall then extends 4 tiles further in the chosen direction, so its far end
+   can sit up to 7 squares from Aegis (it could reach ~5 before). No number changed and I did not
+   rebalance — flagging because the effective reach did move, and it is a Designer call whether `range`
+   should come down.
+
+3. **WALL-BLINK-ONTO is still open and is now the *only* divergence** (backlog flag). After
+   TRAP-SHOVE-DEFAULT every mine bites a blink that lands on it; the wall still does not, per the owner's
+   session-8 *"but not blinks"*. One array entry (`teleport` on the wall's `triggers`) plus flipping the
+   *"nor is a blink that lands ON a wall tile"* test if the owner wants them aligned.
+
+4. **No rotate control exists for a *committed* wall aimed by a different seat's replay.** The rotation
+   rides on `AbilityOrder.aimStep`, which the server already relays, so networked play needs nothing —
+   flagging only that I verified this by reading the protocol rather than by a two-client test.
+
+5. **Dev Note "Aegis skill set is good"** — taken as confirmation of the WARDING-WALL kit reshape, so
+   session-8 OQ #5 (Aegis has no cooldown'd Blast) is closed as intended. No action taken; recording the
+   reading in case the Analyzer wants it recorded differently.
