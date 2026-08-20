@@ -74,7 +74,6 @@ import {
   pathTo,
   remainingMove,
   rangeEnvelope,
-  shapeOutline,
   chaseSprints,
   sprintAllowed,
   toUnitOrders,
@@ -104,6 +103,7 @@ import {
 import { FRONT_DOOR, HOT_SEAT_DOOR, endHeadline, exitLabel, outcomeFor } from './end-screen.js';
 import { AWAY_LABEL, NO_PRESENCE, type Presence } from './presence.js';
 import { createTooltip, delegateTooltips } from './tooltip.js';
+import { aimBoundaries, impactBoundaries } from './aim-boundary.js';
 
 export interface HotSeatUI {
   board: HTMLElement;
@@ -223,6 +223,12 @@ const AIM = 0xff9a3e;
 /** UI2's continuous shape — the same family as the tiles, deliberately paler. */
 const SHAPE = 0xffc98a;
 const SELECT = 0xf0f0f0;
+/**
+ * AIM-PREVIEW-TRUE — a plan on this side that is already locked in. Cooler and
+ * paler than the live aim on purpose: it is a decision that has been made, and
+ * it must never compete with the one still being composed over it.
+ */
+const LOCKED = 0x8fa6c4;
 const IMPACT = 0xffd166;
 /**
  * Fog (VISION1). Near-black rather than a tint: unseen board should read as
@@ -1020,6 +1026,12 @@ export function startHotSeat(
     const freeDef = draftFreeAbility(character, draft);
     const catalystDef = draft.catalystId !== undefined ? catalysts[draft.catalystId] : undefined;
 
+    // AIM-PREVIEW-TRUE: resolved before the envelope, because the envelope now
+    // *reads* it — "where could this go" is a question you stop asking the
+    // moment you have aimed, so the envelope steps back when an aim is live.
+    const preview = previewAim(map, state, unit, chosen, draft, interaction);
+    const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
+
     // ── Layer: the effective-range ENVELOPE (UI1 + AIM-RANGE) ────────────────
     // Where an action *could* go, which is a different question from what a
     // given aim covers — and the one a player asks before selecting anything.
@@ -1037,11 +1049,16 @@ export function startHotSeat(
       : interaction.mode === 'catalyst' ? catalystDef
       : chosen;
     const envelopeAbility = hovered ?? (hover.move === undefined ? armedDef : undefined);
+    // AIM-PREVIEW-TRUE: a **quieter channel**. Two similar fills competing for
+    // the same tiles was the second half of the owner's "it feels like there's
+    // the highlight preview + the squares that get affected" — so once a live
+    // aim exists the envelope fades back to a wash and lets the shape it bounds
+    // be the thing you are looking at.
     renderer.highlight(
       'range',
       envelopeAbility !== undefined ? rangeEnvelope(map, state, unit, envelopeAbility) : [],
       RANGE,
-      0.16,
+      covered.length > 0 ? 0.06 : 0.16,
     );
 
     // ── Layer: the MOVE envelope ─────────────────────────────────────────────
@@ -1056,8 +1073,6 @@ export function startHotSeat(
     // While the pointer is over the board with a mode armed, this previews the
     // HOVERED aim; otherwise it shows what has been committed. Same `aimFor`
     // either way, so the preview and the commit can never disagree.
-    const preview = previewAim(map, state, unit, chosen, draft, interaction);
-    const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
     renderer.highlight('aim', covered, AIM, 0.5);
 
     // ── AUTO-PREVIEW: the tiles inside the aim that hit HARDER ───────────────
@@ -1098,11 +1113,53 @@ export function startHotSeat(
     // the fiction they approximate. Showing only the tiles makes a clipped
     // corner look like a bug; showing only the shape hides what actually gets
     // hit. Both, from the same numbers.
+    // AIM-PREVIEW-TRUE: the boundary is the LOCUS of the engine's own
+    // tile-centre predicate, so a tile lights iff its centre is inside it —
+    // proved for every shape at every rotation by the congruence sweep in
+    // `aim-boundary.test.ts`. The tiles above are still the engine's answer;
+    // this is the same answer drawn as a continuous shape instead of inferred.
+    const boundaries = chosen !== undefined && covered.length > 0
+      ? aimBoundaries(unit, chosen, preview.aim, preview.aimStep, covered)
+      : [];
+    renderer.drawShape(boundaries.slice(0, 1), SHAPE, 0.16);
+    // The sub-band gets its own outline in its own colour (Dev Note #1,
+    // Bastion's centre hit): which tiles carry the bonus is a predicate too,
+    // and it was left as a colour wash for the eye to guess at.
+    renderer.drawShape(boundaries.slice(1), BAND, 0.2, 'shapeBand');
     renderer.drawShape(
-      chosen !== undefined && covered.length > 0 ? shapeOutline(unit, chosen, preview.aim, preview.aimStep, covered) : [],
-      SHAPE,
+      layer.refused ? [] : impactBoundaries(map, chosen, unit.pos, impact.landing),
+      IMPACT,
       0.16,
+      'shapeImpact',
     );
+
+    // ── AIM-PREVIEW-TRUE AC #5: plans already locked in, same derivation ─────
+    //
+    // "Preview, confirmation and resolution all draw from one derivation." A
+    // character that has locked in still has a plan on this board, and until now
+    // it showed only as a badge over its head — so a player ordering their
+    // second character could not see what their first had committed to.
+    //
+    // **Own team only.** `drafts` outlives the seat handover in a hot-seat, so
+    // an unfiltered read would show the previous seat's committed shot to the
+    // player it is aimed at. Same rule `intentBadges` is held to, and the same
+    // reason: hidden information is team vs team.
+    const lockedTiles: Vec2[] = [];
+    const lockedShapes: Vec2[][] = [];
+    for (const other of state.units) {
+      if (other.unitId === unit.unitId || !locked.has(other.unitId)) continue;
+      if (other.owner !== (currentSeat()?.team ?? unit.owner)) continue;
+      const theirs = drafts.get(other.unitId);
+      if (theirs === undefined) continue;
+      const theirDef = draftAbility(characterFor(other), theirs);
+      if (theirDef === undefined) continue;
+      const theirCovered = abilityPreview(map, other, theirDef, theirs.aim, theirs.aimStep);
+      if (theirCovered.length === 0) continue;
+      lockedTiles.push(...theirCovered);
+      lockedShapes.push(...aimBoundaries(other, theirDef, theirs.aim, theirs.aimStep, theirCovered));
+    }
+    renderer.highlight('locked', lockedTiles, LOCKED, 0.28);
+    renderer.drawShape(lockedShapes, LOCKED, 0.1, 'shapeLocked');
 
     // ── FREE-UI: the free ability's own aim, in its own layer ───────────────
     // Same reasoning as the catalyst layer below: a trap being placed and a
@@ -1827,10 +1884,10 @@ export function startHotSeat(
     // The turn stops being a plan the instant it resolves, so the plan-time
     // numbers go with the aim overlays rather than lingering over the playback.
     clearPreviewNumbers();
-    for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'band', 'locked', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
-    renderer.drawShape([], SHAPE);
+    for (const shapeLayer of ['shape', 'shapeBand', 'shapeImpact', 'shapeLocked'] as const) renderer.drawShape([], SHAPE, 0, shapeLayer);
     renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
 
     let skipped = false;
@@ -2037,10 +2094,10 @@ export function startHotSeat(
     clearPreviewNumbers();
     const revealed = revealedView(state, currentSeat()?.team ?? 0);
     renderer.show(toRenderUnits(revealed.units, currentSeat()?.team ?? 0), revealed.decoys, revealed.traps, pads());
-    for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'band', 'locked', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
-    renderer.drawShape([], SHAPE);
+    for (const shapeLayer of ['shape', 'shapeBand', 'shapeImpact', 'shapeLocked'] as const) renderer.drawShape([], SHAPE, 0, shapeLayer);
     renderer.setSpotlight(null);
     renderer.fitBoard();
     stopTimer();

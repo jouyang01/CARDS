@@ -66,7 +66,10 @@ export function stubRenderer(): StubRenderer {
     drawPath: (squares, _color, _dashed, layer) => {
       draw.paths.push({ squares: squares.map((p) => ({ ...p })), layer });
     },
-    drawShape: (outline) => { draw.shapes.push(outline.map((p) => ({ ...p }))); },
+    // AIM-PREVIEW-TRUE: a list of outlines per call, one per locus.
+    drawShape: (outlines) => {
+      for (const outline of outlines) draw.shapes.push(outline.map((p) => ({ ...p })));
+    },
     start: () => {},
     stop: () => {},
     onFrame: () => {},

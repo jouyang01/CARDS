@@ -417,6 +417,13 @@ export function damageTell(def: AbilityDef): string {
 export interface ImpactPreview {
   origin: Vec2[];
   destination: Vec2[];
+  /**
+   * The square the dash is *aimed* to end on, or absent when it has no landing
+   * to preview. Reported so AIM-PREVIEW-TRUE can draw the disc's boundary from
+   * the same landing the tiles were built from — deriving it twice is how the
+   * outline and the fill would come to disagree.
+   */
+  landing?: Vec2;
 }
 
 export function impactPreview(
@@ -441,6 +448,7 @@ export function impactPreview(
   return {
     origin: disc(unit.pos, ability.impact.origin),
     destination: disc(landing, ability.impact.destination),
+    landing,
   };
 }
 
@@ -847,180 +855,13 @@ export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim:
   return target.x === unit.pos.x && target.y === unit.pos.y ? [] : [{ ...target }];
 }
 
-/**
- * A closed polygon in **board coordinates** (fractional squares) outlining the
- * continuous geometric shape an ability projects — UI2's Layer 1.
- *
- * Layer 2 is the truth (`expandShape`'s tiles, binary). Layer 1 is the fiction:
- * the smooth cone/beam/disk the tiles approximate. Drawing only the tiles makes
- * a clipped corner read as a bug; drawing only the shape hides which squares
- * actually take the hit. So both, and **from the same numbers** — every
- * dimension below is the engine's own rule, not an eyeballed silhouette.
- *
- * Under HITBOX1 a tile is covered when the ability's area comes within half a
- * tile of its centre, so each outline is that area pushed out by half a tile —
- * which makes Layer 1 exactly the boundary Layer 2 is testing against:
- *
- * - a **line** is a ray `range` **tile-widths** along its axis (AIM-METRIC), so
- *   the beam draws as a band half a tile to each side of it. The far end is a
- *   plain step along the unit axis — `alongAxis`'s dominant-axis metering is
- *   what used to make a diagonal beam 41% too long.
- * - a **cone** is a 45° wedge from the caster, `range` **tiles** deep (CONE-B —
- *   a distance, not a tile count, which is what stops a rotated cone growing).
- *   Pushing its edges out half a tile widens each row by 0.71 (½ / cos 45°) and
- *   pulls the drawn apex that far back behind the caster.
- * - a **circle** reaches exactly its authored `radius` (CIRCLE-FIX), so `r + 0.5`
- *   is the outer edge of the outermost covered tile — the tile whose centre sits
- *   exactly `r` out.
- *
- * `path` and `self` return no outline: a route already draws as a line (AIM1),
- * and a self-cast has no projected shape.
+/*
+ * (UI2 Layer 1's outline lived here until AIM-PREVIEW-TRUE. It was a hand-drawn
+ * silhouette — a disk of `radius + ½`, a sharp wedge with a pulled-back apex,
+ * and no idea `beamWidth` existed — which is precisely why it and the tiles
+ * "felt different". The derivation is now `aim-boundary.ts`, generated from the
+ * engine's own parameters and held to the tiles by a congruence sweep.)
  */
-export function shapeOutline(
-  unit: UnitState,
-  ability: AbilityDef,
-  aim: readonly Vec2[],
-  aimStep: number | undefined,
-  covered: readonly Vec2[],
-): Vec2[] {
-  const from = unit.pos;
-  const target = aim[0];
-  const dir = directionOf(from, ability, aim, aimStep);
-  // A directional shape is truncated to what it ACTUALLY reached. `lineSquares`
-  // stops at the first wall, so an untruncated beam would carry on through it —
-  // which reads as "the shot goes through walls", the exact disagreement between
-  // the two layers this item exists to prevent. A disk is different: the engine
-  // drops wall tiles from it without shortening it, so the disk stays whole and
-  // the missing tiles beneath it are the point.
-  // Nothing covered means nothing to outline. Asking "is the reach at least a
-  // tile" instead would be wrong now that reach is a projected distance: a beam
-  // that covers exactly one tile can project to 0.9995 of a tile-width.
-  const reach = dir === undefined ? 0 : Math.min(ability.range, depthReached(from, dir, covered));
-
-  switch (ability.shape) {
-    case 'square':
-      return target === undefined ? [] : tileOutline(target);
-    case 'circle':
-      return target === undefined ? [] : diskOutline(target, (ability.radius ?? 1) + HALF_TILE);
-    case 'line': {
-      if (dir === undefined || covered.length === 0) return [];
-      // The far end reaches the OUTER EDGE of the last covered tile, not its
-      // centre — a beam that stopped at the centre would leave the tile it hits
-      // half outside the shape that is supposed to explain it.
-      const axis = unitVector(dir);
-      const far = reach + HALF_TILE;
-      const end = { x: axis.x * far, y: axis.y * far };
-      const n = perpUnit(dir);
-      // A band, not a hairline: the beam covers the tiles whose centres it runs
-      // through, so it is drawn a tile wide.
-      return [
-        { x: from.x - n.x * HALF_TILE, y: from.y - n.y * HALF_TILE },
-        { x: from.x + end.x - n.x * HALF_TILE, y: from.y + end.y - n.y * HALF_TILE },
-        { x: from.x + end.x + n.x * HALF_TILE, y: from.y + end.y + n.y * HALF_TILE },
-        { x: from.x + n.x * HALF_TILE, y: from.y + n.y * HALF_TILE },
-      ];
-    }
-    case 'cone': {
-      if (dir === undefined || covered.length === 0) return [];
-      const axis = unitVector(dir);
-      const n = perpUnit(dir);
-      // The engine's wedge (CONE-B) starts at the caster with 45° edges and is
-      // capped `reach` tiles out — all of it measured in **tiles**, which is why
-      // the far end is a plain step along the unit axis and not `alongAxis`'s
-      // dominant-axis metering. Under HITBOX1 a tile is covered when that wedge
-      // comes within half a tile of its centre, so the silhouette is the wedge
-      // pushed out by half a tile: sliding a 45° edge sideways by ½ moves it
-      // ½/cos 45° = 0.71 across, widening every row by that much and dragging
-      // the drawn apex that far back behind the caster.
-      const grow = HALF_TILE * Math.SQRT2;
-      const apex = { x: from.x - axis.x * grow, y: from.y - axis.y * grow };
-      const far = reach + HALF_TILE;
-      const half = far + grow;
-      return [
-        apex,
-        { x: from.x + axis.x * far - n.x * half, y: from.y + axis.y * far - n.y * half },
-        { x: from.x + axis.x * far + n.x * half, y: from.y + axis.y * far + n.y * half },
-      ];
-    }
-    case 'path':
-    case 'self':
-      return [];
-  }
-}
-
-/**
- * How far a directional shape actually got, in **tile-widths along its axis**
- * (AIM-METRIC). Truncation is the only reason to ask: a beam stopped by a wall
- * must not be drawn carrying on through it.
- *
- * Projecting onto the axis is the honest measure now that reach is a distance —
- * `max(|dx|, |dy|)` was right only while depth was metered on the dominant
- * component, and would over-report a rotated shape's reach by up to √2.
- */
-function depthReached(from: Vec2, dir: Vec2, covered: readonly Vec2[]): number {
-  const len = Math.hypot(dir.x, dir.y);
-  if (len === 0) return 0;
-  let deepest = 0;
-  for (const p of covered) {
-    deepest = Math.max(deepest, ((p.x - from.x) * dir.x + (p.y - from.y) * dir.y) / len);
-  }
-  return deepest;
-}
-
-/** Half a board square, in board units — the distance from tile centre to edge. */
-const HALF_TILE = 0.5;
-/** Segments used to approximate a disk. Enough that the seams do not read. */
-const DISK_SEGMENTS = 48;
-
-/**
- * The direction a directional shape points, resolved exactly as the engine
- * resolves it: a quantized step wins, otherwise the caster→target fallback,
- * which differs between line (`direction8`) and cone (`dominantCardinal`).
- */
-function directionOf(from: Vec2, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number): Vec2 | undefined {
-  if (ability.shape !== 'line' && ability.shape !== 'cone') return undefined;
-  if (isAimStep(aimStep)) return stepToVector(aimStep);
-  const target = aim[0];
-  if (target === undefined) return undefined;
-  const v = ability.shape === 'line' ? direction8(from, target) : dominantCardinal(from, target);
-  return v.x === 0 && v.y === 0 ? undefined : v;
-}
-
-/** `d` tiles along `v`, measured on the dominant axis — the engine's metering. */
-function alongAxis(v: Vec2, d: number): Vec2 {
-  const m = Math.max(Math.abs(v.x), Math.abs(v.y));
-  return m === 0 ? { x: 0, y: 0 } : { x: (d * v.x) / m, y: (d * v.y) / m };
-}
-
-/** `v` scaled to length 1 — for the apex offset, where direction alone matters. */
-function unitVector(v: Vec2): Vec2 {
-  const len = Math.hypot(v.x, v.y);
-  return len === 0 ? { x: 0, y: 0 } : { x: v.x / len, y: v.y / len };
-}
-
-/** The unit normal to `v` — the width direction of a beam or wedge. */
-function perpUnit(v: Vec2): Vec2 {
-  const u = unitVector(v);
-  return { x: -u.y, y: u.x };
-}
-
-/** The four corners of one tile. */
-function tileOutline(p: Vec2): Vec2[] {
-  return [
-    { x: p.x - HALF_TILE, y: p.y - HALF_TILE },
-    { x: p.x + HALF_TILE, y: p.y - HALF_TILE },
-    { x: p.x + HALF_TILE, y: p.y + HALF_TILE },
-    { x: p.x - HALF_TILE, y: p.y + HALF_TILE },
-  ];
-}
-
-/** A regular polygon standing in for a disk of `radius` around `centre`. */
-function diskOutline(centre: Vec2, radius: number): Vec2[] {
-  return Array.from({ length: DISK_SEGMENTS }, (_, i) => {
-    const a = (i / DISK_SEGMENTS) * Math.PI * 2;
-    return { x: centre.x + Math.cos(a) * radius, y: centre.y + Math.sin(a) * radius };
-  });
-}
 
 /** Does this draft carry an actual order, or is the character holding? */
 export function draftHasOrder(draft: OrderDraft): boolean {

@@ -113,7 +113,10 @@ const PAD_SIZE = 0.62;
  */
 export type HighlightLayer =
   | 'fog' | 'camo' | 'range' | 'reach' | 'aim' | 'band' | 'impact' | 'free' | 'catalyst'
-  | 'waypoint' | 'chase' | 'select';
+  | 'waypoint' | 'chase' | 'select'
+  // AIM-PREVIEW-TRUE: a character on this side that has already locked in. Its
+  // own layer so it can be dimmer than the aim being composed over it.
+  | 'locked';
 
 /**
  * Route lines get their own layers for the same reason the aim overlays do: a
@@ -122,6 +125,14 @@ export type HighlightLayer =
  * the first.
  */
 export type PathLayer = 'path' | 'catalystPath';
+
+/**
+ * AIM-PREVIEW-TRUE's boundary layers. Three families, three colours: the
+ * ability's own shape, the sub-band inside it that pays a different number, and
+ * a dash's impact disc — each a locus of its own engine predicate, so each is
+ * drawn rather than left for the eye to infer from a tile wash.
+ */
+export type ShapeLayer = 'shape' | 'shapeBand' | 'shapeImpact' | 'shapeLocked';
 
 /**
  * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
@@ -148,6 +159,11 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
   camo: OVERLAY_BASE + 0.002,
   range: OVERLAY_BASE + 0.004,
   reach: OVERLAY_BASE + 0.008,
+  // AIM-PREVIEW-TRUE: a plan already locked in on this side. Under the live
+  // aim, because it is context for the decision being made rather than the
+  // decision itself — and a locked shape that painted over the one you are
+  // composing would be the loudest thing on the board for the least reason.
+  locked: OVERLAY_BASE + 0.010,
   aim: OVERLAY_BASE + 0.014,
   // AUTO-PREVIEW: the subset of an aim that hits *harder* — a cone's axis line
   // (BASIC-AXIS) or a circle's core (BASIC-INNER). Directly above the aim it
@@ -174,7 +190,7 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
  * of lit seams (VISION1).
  */
 const LAYER_INSET: Record<HighlightLayer, number> = {
-  fog: 1, camo: 1, range: 0.92, reach: 0.92, aim: 0.92, band: 0.62, impact: 0.86, free: 0.8, catalyst: 0.72, waypoint: 0.5, chase: 0.98, select: 0.92,
+  fog: 1, camo: 1, range: 0.92, reach: 0.92, locked: 0.78, aim: 0.92, band: 0.62, impact: 0.86, free: 0.8, catalyst: 0.72, waypoint: 0.5, chase: 0.98, select: 0.92,
 };
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;
@@ -348,7 +364,13 @@ export interface Renderer {
    * on the ground plane — the continuous cone/beam/disk the covered tiles
    * approximate. Empty clears it.
    */
-  drawShape(outline: readonly Vec2[], color: number, opacity?: number): void;
+  /**
+   * AIM-PREVIEW-TRUE: a **list** of closed outlines, because one armed ability
+   * now draws more than one locus — the outer shape, and the sub-band (Bastion's
+   * axis, Cinder's core) that pays a different number inside it. `layer` keeps
+   * each family in its own group so they can carry their own colour.
+   */
+  drawShape(outlines: readonly (readonly Vec2[])[], color: number, opacity?: number, layer?: ShapeLayer): void;
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
@@ -532,6 +554,32 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   /** A bar's fill is scaled from its left edge, so width reads as a fraction. */
   // ── Highlight layers ──────────────────────────────────────────────────────
+  /**
+   * One closed outline, filled on the ground plane.
+   *
+   * Built in the XY plane from board coordinates and then laid flat — the same
+   * `squareToWorldXZ` mapping picking uses, so the fiction and the truth are
+   * registered to the same grid and a clipped corner reads as geometry rather
+   * than as a bug.
+   */
+  const drawOneShape = (g: Group, outline: readonly Vec2[], color: number, opacity: number): void => {
+    if (outline.length < 3) return;
+    const shape = new Shape();
+    outline.forEach((p, i) => {
+      const w = squareToWorldXZ(map, p);
+      if (i === 0) shape.moveTo(w.x, w.z);
+      else shape.lineTo(w.x, w.z);
+    });
+    shape.closePath();
+    const mesh = new Mesh(
+      new ShapeGeometry(shape),
+      new MeshBasicMaterial({ color, transparent: true, opacity, side: DoubleSide, depthWrite: false }),
+    );
+    mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
+    mesh.position.y = SHAPE_LIFT;
+    g.add(mesh);
+  };
+
   const layers = new Map<string, Group>();
   const layerGroup = (name: string): Group => {
     let g = layers.get(name);
@@ -1131,28 +1179,10 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       g.add(marker);
     },
 
-    drawShape(outline, color, opacity = 0.18) {
-      const g = layerGroup('shape');
+    drawShape(outlines, color, opacity = 0.18, layer = 'shape') {
+      const g = layerGroup(layer);
       disposeChildren(g);
-      if (outline.length < 3) return;
-      // Built in the XY plane from board coordinates, then laid flat — the same
-      // squareToWorldXZ mapping picking uses, so the fiction and the truth are
-      // registered to the same grid and a clipped corner reads as geometry
-      // rather than as a bug.
-      const shape = new Shape();
-      outline.forEach((p, i) => {
-        const w = squareToWorldXZ(map, p);
-        if (i === 0) shape.moveTo(w.x, w.z);
-        else shape.lineTo(w.x, w.z);
-      });
-      shape.closePath();
-      const mesh = new Mesh(
-        new ShapeGeometry(shape),
-        new MeshBasicMaterial({ color, transparent: true, opacity, side: DoubleSide, depthWrite: false }),
-      );
-      mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
-      mesh.position.y = SHAPE_LIFT;
-      g.add(mesh);
+      for (const outline of outlines) drawOneShape(g, outline, color, opacity);
     },
 
     onFrame(cb) {
