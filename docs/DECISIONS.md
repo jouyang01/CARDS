@@ -4989,6 +4989,55 @@ rows, so the next one has to be argued for too.
    session-8 OQ #5 (Aegis has no cooldown'd Blast) is closed as intended. No action taken; recording the
    reading in case the Analyzer wants it recorded differently.
 
+## 2026-09-27 — TTK: the HP lever, and why a 1.25× skill ceiling is safe (Analyzer)
+
+The owner asked how our damage, healing, shielding and TTK compare to Atlas Reactor, with the stated goal
+that *"time to kill is similar so that one error doesn't cause an instant death"*, and then directed a
+four-part package. Measured against the AR wiki scrape (31 lancers; HP from `Actual Health`, damage and
+heal and shield values read off ability descriptions; Isadora excluded as incomparable), sustained TTK was
+never really the problem: a basic takes 22.0% of one of our health bars against AR's 17.3%, so we kill in
+4.5 connected hits against their 5.8 — fast, but a tuning nicety. **The fault was burst, and it was
+specific to the 2v2 default.** Our ultimates take 38% of a bar against AR's 23%, and two ults in one turn
+deal exactly 85 damage to Wisp's 85 HP. That is a kill from full with no error required beyond standing in
+line of sight, and it is precisely the failure the owner named. Our 4v4 is fine and matches AR — four
+basics come to 122% of the squishiest bar against AR's 115%, and one-turn focus kills were AR's design
+too. Full working: `docs/reviews/2026-09-27.md`; the numbers ship as TTK-HP-BAND, TTK-SKILL-DAMAGE,
+TTK-LUMEN-HEAL, TTK-TURN-LIMIT and TTK-INVARIANT.
+
+The earlier analysis proposed capping ultimate damage at 35. **The owner chose the HP lever instead and it
+is the better one**, because the problem is a ratio and HP is its denominator: raising the bars fixes it at
+the source rather than shaving five numbers, and it simultaneously restores the archetype ladder AR had and
+we had lost (AR put supports 33% above firepower; we had them 11% above, so Lumen and Thorn were
+firepower-durable while doing a healer's job). At the new bars the double-ult lands at 85% of the squishiest
+against AR's 83%, the basic bite is 16.9% against 17.3%, and TTK is 5.9 hits against 5.8. **No ultimate is
+being nerfed, and the backlog says so explicitly** so a Builder does not apply both fixes.
+
+The interesting result was directive #2. A flat 1.25× skill ceiling would have raised sustained output
+about 10% and clawed back part of the HP gain — the two levers would have fought. **The owner's own two
+ordering rules are what make 1.25× safe:** pulling area skills below single-target ones and ridered skills
+below clean ones drags most of the roster back under the ceiling, and a greedy damage-max simulation over a
+20-turn match puts median sustained output at 22.0/turn — *exactly* today's figure. I added one rule the
+owner did not name, that **displacement is its own rider class below status (0.76 against 0.88)**, on
+`roster-v1.md` §4's own authority that displacement is "the strongest soft-CC in the game" because it
+cancels the victim's Move; it is the reason Ram Charge and Chain Hook land on 23 rather than 26, and
+dropping it is a one-line change. I also **excluded traps from the multiplier entirely** — a trap only pays
+out if an enemy walks into it, which the formula has no term for, and pricing conditional damage as if it
+were guaranteed would have been the wrong kind of tidy. The batch therefore does not touch Aegis at all:
+since PR #97 replaced Grounding Strike with Warding Wall he has no direct-damage skill, and session-8 OQ #5
+already closed that as intended.
+
+Two parts of the package are load-bearing rather than cosmetic, and the backlog marks both as
+must-ship-together. **The turn limit** is arithmetic: at two attackers and §4's 60% hit rate, 2v2 already
+paces to 15.2 turns for four kills against a 16-turn limit, and after a 30% HP raise it is 19.7 — every
+match would end on the clock. AR had slack only because 4v4 supplies four attackers per kill target where
+our default supplies two. **Lumen's heal** is the counterintuitive one: heals are absolute numbers and do
+not scale with a bigger bar, so raising HP alone makes a healer comp *worse* — two attackers net 7.9
+damage per turn through her, which at the new bars is 16.5 turns for a single kill, longer than the match.
+At 20 it is 12.5, and her sustained throughput becomes 11.4% of a bar per turn, inside AR's support band
+(median 9.7%, max 12.5%) for the first time. Only the amount moves; Mending Light stays on `cooldown: 2`,
+so the 2026-09-23 ruling that Prep cooldowns are correct survives intact. Everything else — shields,
+catalysts, `energyGain`, `ULT_COST` — needed no compensating change, because once the bars grow those
+values land in AR's band on their own; the backlog lists them as out of scope for exactly that reason.
 ---
 
 ## 2026-08-20 — Builder, session 10 (the two client bugs, and the grenade that bites back)
