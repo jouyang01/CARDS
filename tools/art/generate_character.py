@@ -109,9 +109,11 @@ def add_box(bm, center, size, uvmap, uv_layer, inset_front=0.0):
         "top":    (4, 7, 6, 5),
     }
 
+    made = []
     for key in FACE_KEYS:
         idx = quads[key]
         face = bm.faces.new([verts[i] for i in idx])
+        made.append(face)
         target = uvmap.get(key, uvmap.get("_default", "iron"))
         if target in LAYOUT["regions"]:
             u0, v0, u1, v1 = uv_rect(target)
@@ -122,7 +124,34 @@ def add_box(bm, center, size, uvmap, uv_layer, inset_front=0.0):
             uv = swatch_uv(target)
             for loop in face.loops:
                 loop[uv_layer].uv = uv
-    return verts
+    return verts, made
+
+
+AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+
+
+def segment(bm, faces, axis, cuts, uv_layer):
+    """Add loop cuts across a limb so it can actually deform.
+
+    A limb built from a single box has vertices only at its ends, so when Mixamo
+    skins it and the elbow bends, the forearm rotates rigidly and shears at the
+    joint. Skin weights need intermediate vertices to blend across. This cuts
+    `cuts` loops perpendicular to `axis`, which is the cheapest possible fix —
+    a few hundred triangles buys every joint in the body.
+    """
+    ai = AXIS_INDEX[axis]
+    edges = set()
+    for f in faces:
+        for e in f.edges:
+            a, b = e.verts
+            delta = [abs(a.co[i] - b.co[i]) for i in range(3)]
+            # Keep only edges running ALONG the limb; those are the ones whose
+            # subdivision produces rings around it.
+            if delta[ai] > 1e-6 and delta[ai] >= max(delta) - 1e-6:
+                edges.add(e)
+    if not edges:
+        return
+    bmesh.ops.subdivide_edges(bm, edges=list(edges), cuts=cuts, use_grid_fill=False)
 
 
 def add_wedge(bm, apex, base_a, base_b, base_c, uv_layer, swatch):
@@ -207,11 +236,13 @@ def build_body(spec):
                 {"_default": "ironDark"}, uv)
 
     # ── torso ──
-    add_box(bm, (0, 0, (chest_z + hip_z) / 2), (shoulder * 1.55, depth * 2, chest_z - hip_z), {
-        "front": "torso", "back": "torso",
-        "left": "ironDark", "right": "ironDark",
-        "top": "ironDark", "bottom": "ironDark",
-    }, uv)
+    _, trunk = add_box(bm, (0, 0, (chest_z + hip_z) / 2),
+                       (shoulder * 1.55, depth * 2, chest_z - hip_z), {
+                           "front": "torso", "back": "torso",
+                           "left": "ironDark", "right": "ironDark",
+                           "top": "ironDark", "bottom": "ironDark",
+                       }, uv)
+    segment(bm, trunk, "z", 3, uv)
 
     if g.get("skirt") == "tassets":
         for side in (-1, 1):
@@ -231,20 +262,24 @@ def build_body(spec):
         add_box(bm, (side * (gap + 0.03), 0, arm_z + 0.03),
                 (limb * 2.4 * pad, limb * 2.4 * pad, limb * 2.2 * pad),
                 {"_default": "ironLight" if heavy else "iron"}, uv)
-        add_box(bm, (side * (gap + 0.06 + arm_len * 0.25), 0, arm_z),
-                (arm_len * 0.5, limb * 2, limb * 2), {"_default": "iron"}, uv)
-        add_box(bm, (side * (gap + 0.06 + arm_len * 0.75), 0, arm_z),
-                (arm_len * 0.5, limb * 1.75, limb * 1.75), {"_default": "leather"}, uv)
+        _, upper = add_box(bm, (side * (gap + 0.06 + arm_len * 0.25), 0, arm_z),
+                           (arm_len * 0.5, limb * 2, limb * 2), {"_default": "iron"}, uv)
+        segment(bm, upper, "x", 3, uv)
+        _, fore = add_box(bm, (side * (gap + 0.06 + arm_len * 0.75), 0, arm_z),
+                          (arm_len * 0.5, limb * 1.75, limb * 1.75), {"_default": "leather"}, uv)
+        segment(bm, fore, "x", 3, uv)
         add_box(bm, (side * (gap + 0.06 + arm_len + 0.045), 0, arm_z),
                 (0.09, limb * 2, limb * 2.2), {"_default": "leather"}, uv)
 
     # ── legs, with a crotch gap for the same reason ──
     for side in (-1, 1):
         leg_x = side * shoulder * 0.52
-        add_box(bm, (leg_x, 0, hip_z * 0.72), (limb * 2.5, limb * 2.5, hip_z * 0.56),
-                {"_default": "ironDark"}, uv)
-        add_box(bm, (leg_x, 0, hip_z * 0.24), (limb * 2.2, limb * 2.2, hip_z * 0.48),
-                {"_default": "leather"}, uv)
+        _, thigh = add_box(bm, (leg_x, 0, hip_z * 0.72), (limb * 2.5, limb * 2.5, hip_z * 0.56),
+                           {"_default": "ironDark"}, uv)
+        segment(bm, thigh, "z", 3, uv)
+        _, shin = add_box(bm, (leg_x, 0, hip_z * 0.24), (limb * 2.2, limb * 2.2, hip_z * 0.48),
+                          {"_default": "leather"}, uv)
+        segment(bm, shin, "z", 3, uv)
         add_box(bm, (leg_x, -0.02, 0.035), (limb * 2.4, limb * 3.4, 0.07),
                 {"_default": "ironDark"}, uv)
 
@@ -274,7 +309,8 @@ def build_door(spec):
 
 def attach_material(obj, atlas_path, name):
     mat = bpy.data.materials.new(name)
-    mat.use_nodes = True
+    if mat.node_tree is None:            # pre-5.x needed the explicit opt-in
+        mat.use_nodes = True
     nodes, links = mat.node_tree.nodes, mat.node_tree.links
     bsdf = nodes["Principled BSDF"]
     bsdf.inputs["Roughness"].default_value = 0.85
