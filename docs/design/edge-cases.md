@@ -408,10 +408,11 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   Its chosen path is discarded, not deferred.
 - **PROPOSED — Root vs locked dash.** Root applied in Prep does not cancel a dash
   locked this turn (dash still executes). Root blocks Move-phase movement only.
-- **RULED — Traps.** Trigger when a unit *enters* the square, in any phase (dash or
-  move). Damage applies immediately; if it kills, remaining path/actions are discarded.
-  A unit that *starts* on a freshly placed trap square does not trigger it until it
-  re-enters.
+- **RULED — Traps.** Trigger when a unit *arrives* on the square — see **TRAP-TRIGGER**
+  below for the full list of arrivals that count (move, dash, blink-landing, and — since
+  2026-09-25 — displacement, each opt-in-able per trap). Damage applies immediately; if it
+  kills, remaining path/actions are discarded. A unit that *starts* on a freshly placed trap
+  square does not trigger it until it re-enters.
 - **RULED — Traps expire; the mechanism (owner directive 2026-09-01, refined 2026-08-16; backlog
   TRAP-LIFETIME shipped PR #45, re-tuned by TRAP-LIFETIME-TUNE).** A placed trap **expires unfired
   at the end of `placedTurn + lifetime − 1`** (a `lifetime: 3` trap covers the turn it is placed
@@ -688,11 +689,15 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     Builder OQ 2026-08-16 third #8.)*
   - **A teleport over a pad takes nothing** — it occupies no square in between; "passing through"
     means passing through.
-  - **Knockback COUNTS as movement for a pad, though it does NOT for a trap (owner "any
-    movement").** A unit dragged across a pad was on the pad → it takes it. This deliberately
-    **differs from the trap rule** one paragraph up (a trap triggers on *entry under a unit's own
-    power*; a shove onto a trap does not trigger it): a trap is something you **walk into**, a pad
-    is something you **are on**. The difference is intentional, not an oversight.
+  - **Knockback COUNTS as movement for a pad (owner "any movement").** A unit dragged across a
+    pad was on the pad → it takes it. **As of 2026-09-25 this now agrees with the trap rule**
+    (TRAP-TRIGGER): a knock-through fires a trap too (`DEFAULT_TRAP_ENTRIES` gained
+    `displacement`), so pads and traps both count a shove. They still agree on the *other* half
+    for the same reason: a **teleport** over a pad takes nothing and a **blink past** a trap
+    fires nothing, because a teleport occupies only its landing square and crosses nothing.
+    *(Historical note: this paragraph used to record a deliberate pad-vs-trap difference — a
+    shove took a pad but not a trap. That difference is gone; the trap rule moved to meet the
+    pad rule.)*
   - **PADS-SPREAD — no two pads within Chebyshev 1 (owner Dev Note: "Powerups should not be next to
     each other").** `validateMap` rejects any pad pair with `max(|dx|,|dy|) ≤ 1` (diagonals
     included). Two touching pads are one double prize taken by standing between them (and, under
@@ -818,12 +823,57 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   replaced, CD-BAND-BLAST must DROP it from its retune list** (it is no longer a Blast). Ships with a
   test: a unit entering a wall tile takes 25 and gains weaken(2); the wall is gone next turn; the caster's
   team is unharmed.
-- **RULED — Knockback/pull do NOT trigger traps in v1 (closes Builder OQ, review
-  2026-08-14).** Trap triggers list dash and move (entry under a unit's own power); a unit
-  *shoved* onto a trap by knockback or pull does not trigger it. Keeps end-of-Blast
-  displacement simple and deterministic. This is the first lever to pull if
-  "shove-into-trap" combos are wanted later — a deliberate v1 simplification, not an
-  oversight.
+- **RULED — TRAP-TRIGGER: what counts as setting off a trap, as a list of arrivals
+  (owner Dev Notes 2026-09-25; backlog TRAP-SHOVE-DEFAULT — engine; SUPERSEDES the
+  2026-08-14 "knockback/pull do NOT trigger traps in v1" ruling below, and closes
+  Builder session-8 OQ #3).** The owner pulled the lever the old ruling named: *"Traps
+  should trigger if an enemy is knocked through the trap or if they blink onto the trap
+  or dash onto/through the trap,"* and *"Trap should not trigger if enemy blinks PAST the
+  trap."* A trap now says **which arrivals set it off**, drawn from four kinds
+  (`TrapEntry`, `types.ts`): **`move`** (a Move step onto/through the tile), **`dash`** (a
+  charge step onto/through it), **`teleport`** (a blink whose *landing square is the trap
+  tile* — see below), and **`displacement`** (a knockback or pull that carries the victim
+  onto or across the tile). A trap fires for a given arrival iff that kind is in its list;
+  `triggers` unset means **`DEFAULT_TRAP_ENTRIES`**.
+  - **The reversal, precisely: `DEFAULT_TRAP_ENTRIES` now includes `displacement`**
+    (`['move','dash','teleport','displacement']`), so **every ordinary mine** (Vex's
+    Overwatch Trap, Thorn's Barbed Sling and Snare Bloom) now catches a knock-through —
+    the "shove-into-trap combos" the old ruling deferred. Knocked *through* and knocked to
+    *rest on* both trigger: displacement is walked **square by square** along the path
+    actually travelled (`applyDisplacements`, the `shovedThrough` list — a mechanism PR #97
+    already shipped for the wall), and the resting square is the last square in that path,
+    so crossing a trap costs the crossing and stopping on one costs the stop, each exactly
+    once (the carry-through fix-up re-uses a square already in the list; the trap is consumed
+    once).
+  - **Blink ONTO triggers; blink PAST does not — and this needs no `displacement`-style
+    path walk.** A teleport occupies only its **landing square** and crosses nothing (the
+    same reason "a teleport over a pad takes nothing"), so `triggerTrapsOnEntry` is called
+    once, for the landing tile, with entry `teleport`. Land on the trap → it fires; land
+    beyond it → it was never entered. This is why Dev Note #2 ("not if the enemy blinks
+    PAST") is the *automatic* consequence of checking only the landing square, not a special
+    case — and why the distinction is real for a mine (`teleport` is in the default) but
+    moot for the wall.
+  - **The wall keeps its authored "a blink goes around it" exception.** Warding Wall's
+    `triggers` are `['move','dash','displacement']` — deliberately **no `teleport`** — from
+    the owner's session-8 Dev Note *"It will hit dashes, moves, and displacements, but not
+    blinks."* A barrier is a thing a blink jumps; a mine is a thing a blink can land on top
+    of. So a blink neither onto nor past the wall triggers it, while a blink onto a mine
+    does. **Flag to owner:** this is the one place the new general rule ("blink onto → it
+    triggers") and the wall's authored exception diverge; kept as the owner last wrote it
+    for the wall — say so if the wall should now also bite a blink that lands on it.
+  - **Determinism / N-safety:** unchanged. The displacement path walk and per-square trap
+    firing already exist and are proven for the wall; widening the default only routes mines
+    through the same integer path. Trap-list order is stable, traps are consumed by id.
+  - **Ships with tests (backlog TRAP-SHOVE-DEFAULT):** the shipped guard *"an ordinary mine
+    still ignores a shove"* (`warding-wall.test.ts`) **flips** to assert the mine now fires
+    on a knock-through (damage lands, trap consumed); a **new** test asserts a blink that
+    lands **past** a mine does **not** fire it (mine still armed, no damage); the existing
+    blink-**onto**-a-mine and dash-through tests stay green.
+- **SUPERSEDED 2026-09-25 — Knockback/pull do NOT trigger traps in v1 (closed Builder OQ,
+  review 2026-08-14).** *(Kept for the record; reversed by TRAP-TRIGGER above.)* The v1 rule
+  listed dash and move only; a unit *shoved* onto a trap did not trigger it. It named itself
+  "the first lever to pull if shove-into-trap combos are wanted later" — and that is exactly
+  what the owner did.
 - **RULED — Every kit needs a dash answer; Thorn is a gap to fix, not to exempt
   (2026-08-20; addresses Builder OQ + Dev directive).** The 1v1 mind-game (and 2v2 spacing)
   assumes each character has a Dash-phase reposition. Expanding `content.test.ts` to the full
