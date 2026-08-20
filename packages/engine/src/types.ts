@@ -40,10 +40,11 @@ export const TARGET_SHAPES = [
   'path', // a movement path walked/charged by the caster (dashes)
   'square', // a single aimed square within `range` (incl. teleport destinations)
   'self', // the caster
-  // WARDING-WALL: a freely placed segment of `wallLength` tiles, laid ACROSS the
-  // caster's line to the aimed square. Unlike `line` — which starts at the
-  // caster and runs away from them — a wall is put *somewhere else*: the aim
-  // says where, and the caster's facing says which way it lies.
+  // WARDING-WALL / WALL-ROTATE: a freely placed segment of `wallLength` tiles,
+  // ANCHORED at the aimed square and running along the aimed step. Unlike
+  // `line` — which starts at the caster and runs away from them — a wall is put
+  // *somewhere else*, and it is the one shape whose aim carries both a square
+  // (where) and a direction (which way) as independent choices.
   'wall',
 ] as const;
 export type TargetShape = (typeof TARGET_SHAPES)[number];
@@ -185,9 +186,9 @@ export interface AbilityDef {
   /**
    * WARDING-WALL — for shape `wall`: how many tiles long the segment is.
    *
-   * The wall lies **across** the caster's line to the aimed square, so `range`
-   * says how far away it may be put and this says how wide it is. Authored,
-   * because the owner authored it: *"a 4 tile long wall"*.
+   * `range` says how far away the anchor may be put and this says how far the
+   * wall runs from it. Authored, because the owner authored it: *"a 4 tile long
+   * wall"*.
    */
   wallLength?: number;
   /**

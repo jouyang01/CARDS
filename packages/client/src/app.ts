@@ -54,6 +54,7 @@ import {
   abilityOptions,
   abilityPreview,
   previewBandSets,
+  rotationOptions,
   impactPreview,
   abilityTooltip,
   aimFor,
@@ -702,6 +703,27 @@ export function startHotSeat(
       interaction = arm('aim');
       render();
     },
+    /**
+     * WALL-ROTATE — turn the placed shape, keeping everything else.
+     *
+     * Deliberately NOT a `nextDraft` action, and deliberately not clearing the
+     * aim the way `selectMode` does. A mode change makes the old aim meaningless
+     * (a line's target is often illegal for a cone); a rotation is a change *to*
+     * the aim, about a square the player has already chosen. Clearing it would
+     * make "turn the wall" mean "put the wall away and start again", which is
+     * the opposite of what the control is for.
+     *
+     * So: store the step, re-arm aiming so the preview follows the pointer
+     * again, and re-render. A committed wall re-derives from the same draft, so
+     * it turns in place.
+     */
+    selectRotation: (aimStep) => {
+      const unit = selectedUnit();
+      if (unit === undefined) return;
+      draftFor(unit).aimStep = aimStep;
+      interaction = arm('aim');
+      render();
+    },
     hoverAbility: (abilityId, control, def) => {
       if (abilityId === undefined || control === undefined || def === undefined) hideTip();
       else showTip(control, def);
@@ -1027,6 +1049,7 @@ export function startHotSeat(
       roster: [],
       abilities: [],
       modes: [],
+      rotations: [],
       catalysts: [],
       move: { budget: 0, drawing: false, sprinting: false, sprintDisabled: true },
       chase: { armed: false, disabled: true },
@@ -1231,7 +1254,7 @@ export function startHotSeat(
       : [];
     const layer = impactLayer(
       [...impact.origin, ...impact.destination, ...chargeLanding],
-      refusedAim(map, state, unit, chosen, interaction),
+      refusedAim(map, state, unit, chosen, interaction, draft.aimStep),
       refusedSquare,
     );
     renderer.highlight('impact', layer.squares, layer.refused ? REFUSED : IMPACT, 0.4);
@@ -1597,6 +1620,9 @@ export function startHotSeat(
       // the *resolved* ability (`draftAbility` already applied the mode), so the
       // row and the preview can never disagree about which one is live.
       modes: modeOptions(draftAbility(character, draft), draft.mode),
+      // WALL-ROTATE: four cardinals for a placed shape, empty for everything
+      // else. Read off the *resolved* ability for the same reason `modes` is.
+      rotations: rotationOptions(draftAbility(character, draft), draft.aimStep),
       // Three slots, in phase order, read straight off the unit — `catalystsUsed`
       // is the engine's answer, so a slot can never grey out for the wrong reason.
       catalysts: unit.catalysts.flatMap((id) => {
@@ -1829,7 +1855,9 @@ export function startHotSeat(
       if (ability === undefined) return;
       // Exactly the aim the hover was already painting — one resolver, so what
       // you saw is what you committed.
-      const committed = commitAim(map, state, unit, ability, sq);
+      // WALL-ROTATE: the draft's rotation goes in so the committed wall is the
+      // one the hover was drawing, and comes back out on `committed.aimStep`.
+      const committed = commitAim(map, state, unit, ability, sq, draft.aimStep);
       if (committed === undefined) return;
       draft.aim = committed.aim;
       draft.aimStep = committed.aimStep;

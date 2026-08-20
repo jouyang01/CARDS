@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { buildBoard } from '../src/board.js';
 import { createMatch } from '../src/setup.js';
 import { resolveTurn, type Roster } from '../src/resolve.js';
-import { expandShape, wallSquares } from '../src/shapes.js';
+import { WALL_ROTATIONS, expandShape, wallSquares } from '../src/shapes.js';
 import { hasStatus } from '../src/status.js';
 import type { AbilityDef, CharacterDef, GameState, MapDef, TurnEvent, Vec2 } from '../src/types.js';
 
@@ -62,59 +62,99 @@ const roster: Roster = { aegis: AEGIS, vex: VEX, ravok: RAVOK, wisp: WISP };
 const unit = (state: GameState, unitId: string) => state.units.find((u) => u.unitId === unitId)!;
 const key = (p: Vec2): string => `${p.x},${p.y}`;
 
-describe('WARDING-WALL: the shape is freely placed, and laid across the aim', () => {
-  it('is four tiles long, and none of them is the caster\'s own square', () => {
-    // The `line` it replaces started under Aegis's feet; this does not touch him.
-    const tiles = expandShape(BOARD, WALL, { x: 10, y: 10 }, [{ x: 13, y: 10 }]);
+/** The four rotations, named, so a test reads as a direction rather than a number. */
+const EAST = WALL_ROTATIONS[0]!;
+const SOUTH = WALL_ROTATIONS[1]!;
+const WEST = WALL_ROTATIONS[2]!;
+const NORTH = WALL_ROTATIONS[3]!;
+
+describe('WALL-ROTATE: placed on a tile, turned in four directions', () => {
+  it('is four tiles long, anchored at the aimed square', () => {
+    // *"placed on a tile"* — the clicked square is always in the wall, and it is
+    // the end the rest of it grows from.
+    const tiles = expandShape(BOARD, WALL, { x: 10, y: 10 }, [{ x: 13, y: 10 }], EAST);
     expect(tiles).toHaveLength(4);
-    expect(tiles.map(key)).not.toContain('10,10');
+    expect(tiles.map(key)[0], 'the anchor comes first').toBe('13,10');
   });
 
-  it('lies ACROSS the caster\'s line to the aim, not along it', () => {
-    // Aiming due east puts the wall on a north–south column: one x, four ys.
-    // A `line` aimed the same way would have been four xs on one y, which is the
-    // difference the whole shape exists for.
-    const tiles = expandShape(BOARD, WALL, { x: 10, y: 10 }, [{ x: 13, y: 10 }]);
-    expect(new Set(tiles.map((p) => p.x)), 'one column').toEqual(new Set([13]));
-    expect(tiles.map((p) => p.y).sort((a, b) => a - b)).toEqual([9, 10, 11, 12]);
+  it('runs the way the rotation points, not the way the caster faces', () => {
+    // The item. Same caster, same aimed square, four rotations, four walls that
+    // radiate from the tile. Under the shipped derived orientation every one of
+    // these would have been the same north–south column, because the caster
+    // never moved.
+    const from: Vec2 = { x: 10, y: 10 };
+    const at: Vec2 = { x: 13, y: 10 };
+    expect(expandShape(BOARD, WALL, from, [at], EAST).map(key))
+      .toEqual(['13,10', '14,10', '15,10', '16,10']);
+    expect(expandShape(BOARD, WALL, from, [at], SOUTH).map(key))
+      .toEqual(['13,10', '13,11', '13,12', '13,13']);
+    expect(expandShape(BOARD, WALL, from, [at], WEST).map(key))
+      .toEqual(['13,10', '12,10', '11,10', '10,10']);
+    expect(expandShape(BOARD, WALL, from, [at], NORTH).map(key))
+      .toEqual(['13,10', '13,9', '13,8', '13,7']);
   });
 
-  it('and rotates with the aim — north puts it on a row', () => {
-    const tiles = expandShape(BOARD, WALL, { x: 10, y: 10 }, [{ x: 10, y: 7 }]);
-    expect(new Set(tiles.map((p) => p.y)), 'one row').toEqual(new Set([7]));
-    expect(tiles.map((p) => p.x).sort((a, b) => a - b)).toEqual([9, 10, 11, 12]);
+  it('four rotations really are four DIFFERENT walls', () => {
+    // The reason the shape had to be re-anchored rather than just given a
+    // player-chosen facing. A symmetric segment laid *across* a facing looks
+    // identical north and south, so four buttons would have produced two walls
+    // and a one-tile nudge — a rotate control that visibly does nothing half the
+    // time. Anchoring makes the tile a pivot and the four cardinals four arms.
+    const walls = WALL_ROTATIONS.map((step) =>
+      expandShape(BOARD, WALL, { x: 10, y: 10 }, [{ x: 13, y: 10 }], step).map(key).join(' '));
+    expect(new Set(walls).size, 'four distinct placements').toBe(4);
   });
 
-  it('is placed where it is AIMED, anywhere in range — the freely-placed half', () => {
-    // Four aims, four different walls, one caster who never moved. Under `line`
-    // every one of these would have started at (10,10).
+  it('and the caster\'s position has no say in it at all', () => {
+    // The other half of "freely placed": move the caster anywhere still in
+    // range and the same (tile, rotation) gives the same wall.
+    const at: Vec2 = { x: 12, y: 10 };
+    const fromEast = expandShape(BOARD, WALL, { x: 14, y: 10 }, [at], SOUTH).map(key);
+    const fromWest = expandShape(BOARD, WALL, { x: 10, y: 10 }, [at], SOUTH).map(key);
+    const fromNorth = expandShape(BOARD, WALL, { x: 12, y: 8 }, [at], SOUTH).map(key);
+    expect(fromEast).toEqual(fromWest);
+    expect(fromEast).toEqual(fromNorth);
+  });
+
+  it('is placed where it is AIMED, anywhere in range', () => {
     const from: Vec2 = { x: 10, y: 10 };
     const walls = [{ x: 13, y: 10 }, { x: 10, y: 13 }, { x: 8, y: 8 }, { x: 12, y: 12 }]
-      .map((at) => expandShape(BOARD, WALL, from, [at]).map(key).join(' '));
+      .map((at) => expandShape(BOARD, WALL, from, [at], SOUTH).map(key).join(' '));
     expect(new Set(walls).size, 'four distinct placements').toBe(4);
-    for (const w of walls) expect(w, 'and none of them under the caster').not.toContain('10,10');
   });
 
-  it('drops tiles that fall off the board rather than shortening the aim', () => {
+  it('drops tiles that fall off the board rather than refusing the aim', () => {
     // A wall laid at the edge is a shorter wall, not an illegal one — the same
     // treatment `circleSquares` gives a disc that overhangs.
-    // Cast from the west edge, aimed north: the wall runs east–west across the
-    // board's own edge, so its first tile would be at x = -1.
-    const tiles = expandShape(BOARD, WALL, { x: 0, y: 10 }, [{ x: 0, y: 7 }]);
+    const tiles = expandShape(BOARD, WALL, { x: 3, y: 3 }, [{ x: 1, y: 3 }], WEST);
     expect(tiles.length).toBeGreaterThan(0);
     expect(tiles.length).toBeLessThan(4);
     for (const p of tiles) expect(p.x).toBeGreaterThanOrEqual(0);
   });
 
-  it('covers nothing when aimed at the caster — there is no across', () => {
-    expect(expandShape(BOARD, WALL, { x: 10, y: 10 }, [{ x: 10, y: 10 }])).toEqual([]);
+  it('covers nothing without a rotation — a wall needs BOTH halves of its aim', () => {
+    // A `line` accepts either a step or a target, because for a line each
+    // implies the other. A wall's position and orientation are independent, so
+    // an aim carrying only one of them is not an under-specified wall, it is
+    // not a wall.
+    expect(expandShape(BOARD, WALL, { x: 10, y: 10 }, [{ x: 13, y: 10 }])).toEqual([]);
+    expect(expandShape(BOARD, WALL, { x: 10, y: 10 }, [], EAST)).toEqual([]);
+  });
+
+  it('any aim step snaps to one of the four, rather than being refused', () => {
+    // `AIM_STEPS` is 512 and a wall wants four of them. The client only ever
+    // sends one of `WALL_ROTATIONS`; this is what makes a hand-rolled order
+    // deterministic instead of an error case.
+    const at: Vec2 = { x: 13, y: 10 };
+    const nudged = expandShape(BOARD, WALL, { x: 10, y: 10 }, [at], EAST + 5).map(key);
+    expect(nudged, 'still due east').toEqual(['13,10', '14,10', '15,10', '16,10']);
   });
 
   it('`wallSquares` is deterministic — the same call, the same order', () => {
     const a = wallSquares(BOARD, { x: 10, y: 10 }, { x: 1, y: 0 }, 4);
     const b = wallSquares(BOARD, { x: 10, y: 10 }, { x: 1, y: 0 }, 4);
     expect(a).toEqual(b);
-    expect(a.map(key)).toEqual(['10,9', '10,10', '10,11', '10,12']);
+    expect(a.map(key)).toEqual(['10,10', '11,10', '12,10', '13,10']);
   });
 });
 
@@ -131,7 +171,12 @@ const field = (enemy: CharacterDef, enemyAt: Vec2) => {
   return { state, me, foe };
 };
 
-const WALL_AT: Vec2 = { x: 12, y: 10 };
+/**
+ * The wall used by the resolution tests: anchored at (12,9) running SOUTH, which
+ * lays the same column x=12, y=9..12 the fixtures below are written around.
+ */
+const WALL_AT: Vec2 = { x: 12, y: 9 };
+const WALL_FACING = SOUTH;
 
 /** Aegis raises the wall; the enemy does whatever the test says. */
 const turn = (
@@ -141,7 +186,10 @@ const turn = (
   {
     team: 0,
     units: raise
-      ? [{ unitId: aegisId, ability: { abilityId: WALL.id, target: [{ ...WALL_AT }] } }]
+      ? [{
+        unitId: aegisId,
+        ability: { abilityId: WALL.id, target: [{ ...WALL_AT }], aimStep: WALL_FACING },
+      }]
       : [],
   },
   { team: 1, units: enemyOrder === undefined ? [] : [enemyOrder as never] },
@@ -269,7 +317,7 @@ describe('WARDING-WALL: a shove through it counts', () => {
       {
         team: 0,
         units: [
-          { unitId: aegis.unitId, ability: { abilityId: WALL.id, target: [{ x: 12, y: 10 }] } },
+          { unitId: aegis.unitId, ability: { abilityId: WALL.id, target: [{ ...WALL_AT }], aimStep: WALL_FACING } },
           { unitId: ravok.unitId, ability: { abilityId: 'bullrush', target: [{ x: 10, y: 10 }] } },
         ],
       },
@@ -400,7 +448,7 @@ describe('WARDING-WALL: whose wall it is, and how long it stands', () => {
       {
         team: 0,
         units: [
-          { unitId: aegis.unitId, ability: { abilityId: WALL.id, target: [{ ...WALL_AT }] } },
+          { unitId: aegis.unitId, ability: { abilityId: WALL.id, target: [{ ...WALL_AT }], aimStep: WALL_FACING } },
           { unitId: mate.unitId, movePath: [{ x: 13, y: 10 }, { x: 12, y: 10 }] },
         ],
       },

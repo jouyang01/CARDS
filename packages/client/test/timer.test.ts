@@ -133,6 +133,7 @@ describe('UI-TIMER: the HUD readout', () => {
     active: character(),
     roster: [character()],
     modes: [],
+    rotations: [],
     abilities: [{
       id: VEX.abilities[0]!.id, name: 'Shot', isUlt: false, available: true, cooldown: 0,
       selected: false, free: false, def: def(VEX.abilities[0]!.id),
@@ -151,6 +152,7 @@ describe('UI-TIMER: the HUD readout', () => {
     hoverAbility: vi.fn(), selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(),
     hold: vi.fn(), lock: vi.fn(), toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime,
     selectMode: vi.fn(),
+    selectRotation: vi.fn(),
   };
 
   beforeEach(() => {

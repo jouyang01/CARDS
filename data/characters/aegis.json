@@ -89,7 +89,7 @@
           "duration": 2
         }
       ],
-      "description": "Raise a four-tile barrier of force anywhere within 4, laid across your line to the aimed square. It stands for this turn only: any enemy who walks, charges or is shoved through it takes 25 and is Weakened next turn. A blink goes around it."
+      "description": "Raise a four-tile barrier of force: pick a square within 4, then turn it to face any of the four directions. It stands for this turn only: any enemy who walks, charges or is shoved through it takes 25 and is Weakened next turn. A blink goes around it."
     }
   ],
   "ultimate": {

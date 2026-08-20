@@ -52,7 +52,7 @@
 
 import {
   AIM_STEPS, buildBoard, circleSquares, direction8, dominantCardinal, isAimStep,
-  stepToVector,
+  stepToVector, wallDirection,
   type AbilityDef, type MapDef, type UnitState, type Vec2,
 } from '@cards/engine';
 
@@ -267,14 +267,12 @@ export function boundaryContains(poly: readonly Pt[], p: Pt): boolean {
 export function aimDirectionOf(
   from: Vec2, ability: Pick<AbilityDef, 'shape'>, aim: readonly Vec2[], aimStep?: number,
 ): Vec2 | undefined {
-  // WARDING-WALL joins the two directional shapes here: a wall has a facing too
-  // — the cardinal it is laid *across* — and it is derived from the aim rather
-  // than dragged, so it never takes the `aimStep` branch.
+  // WALL-ROTATE: a wall's direction is the one thing about it the caster does
+  // not decide — it is the rotation the player picked, snapped to a cardinal by
+  // the same `wallDirection` the engine lays the tiles with. So it reads the
+  // step and ignores `from` entirely.
   if (ability.shape === 'wall') {
-    const at = aim[0];
-    if (at === undefined) return undefined;
-    const facing = dominantCardinal(from, at);
-    return facing.x === 0 && facing.y === 0 ? undefined : facing;
+    return isAimStep(aimStep) ? wallDirection(aimStep) : undefined;
   }
   if (ability.shape !== 'line' && ability.shape !== 'cone') return undefined;
   if (isAimStep(aimStep)) return stepToVector(aimStep);
@@ -471,26 +469,21 @@ function tessellate(
         : [outer, laneBoundary(from, dir, reach + HALF, HALF)];
     }
     case 'wall': {
-      // WARDING-WALL. The locus is the union of the wall's tiles — a rectangle
-      // `wallLength` long and one tile wide, laid across the caster's facing —
-      // and it is drawn as a lane so the outline is one figure rather than four
-      // squares with seams down the middle.
+      // WALL-ROTATE. The locus is the union of the wall's tiles — a rectangle
+      // `wallLength` long and one tile wide — drawn as a lane so the outline is
+      // one figure rather than four squares with seams down the middle.
       //
-      // Built from the same `dominantCardinal` the engine lays the wall along,
-      // and centred with the same off-by-half an even length forces: the aimed
-      // square is the second of four, so the lane's midpoint sits half a tile
-      // from it. Getting that wrong would draw the outline one tile off the
-      // tiles that light, which is the exact lie AIM-PREVIEW-TRUE removed.
+      // The wall is **anchored at the aimed tile and runs along `dir`**, so the
+      // lane starts one step *before* that tile: `laneBoundary` draws
+      // `(0, reach] × [−h, h]` from its origin, which puts the anchor at a = 1
+      // and the last tile at a = length. Exactly the tiles `wallSquares`
+      // returns, with no centring offset to get wrong. Getting it wrong would
+      // draw the outline off the tiles that light, which is the exact lie
+      // AIM-PREVIEW-TRUE removed.
       if (target === undefined || dir === undefined) return [];
       const length = ability.wallLength ?? 1;
-      const across: Vec2 = { x: -dir.y, y: dir.x };
-      // `laneBoundary` draws `(0, reach] × [−h, h]` from its origin, so putting
-      // the origin one step *before* the wall's first tile lands that tile at
-      // a = 1 and the last at a = length. Exactly the tiles `wallSquares`
-      // returns, with no half-tile fudge to get wrong.
-      const first = -Math.floor((length - 1) / 2) - 1;
-      const start: Pt = { x: target.x + across.x * first, y: target.y + across.y * first };
-      return [laneBoundary(start, across, length, HALF)];
+      const start: Pt = { x: target.x - dir.x, y: target.y - dir.y };
+      return [laneBoundary(start, dir, length, HALF)];
     }
     case 'path':
       return [];
