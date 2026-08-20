@@ -4712,3 +4712,56 @@ hands back the wrong outline silently.
    over a rising arc, both schematic at pip size. `PIP_COLORS` gains ember orange and mint; the mint
    sits a step cooler than Haste's leaf green, which is the closest pair on the row and the one worth
    looking at on a real plate before it is called settled.
+
+## 2026-09-23 — Cooldown bands: the commitment gradient, and the three judgement calls (Analyzer)
+
+The owner directed that dashes cost 4–5 turns, non-basic blasts 3–4, and Prep stay as it is. Measured
+against the real Atlas Reactor numbers (31 Freelancers × 5 abilities, parsed from the `wiskerz/ar-builds`
+scrape of the wiki — AR's kit structure is identical to ours: a 0-cooldown Blast auto, three cooldown
+skills, an energy ult), the directive is exactly right: AR's 93 skills run mean 3.80 / median 4 with 89%
+at ≥3, while our 27 run 2.70 / 3 with 56% — and the phase-level gap is almost entirely Dash (AR median
+5, ours 3) and non-basic Blast (AR median 4, ours 2). Prep was already the tightest match (3.10 vs 3.47),
+which is why directive #3 says leave it, and it is now recorded as frozen so a future pass does not
+"fix" it. Full evidence: `docs/reviews/2026-09-23.md`; the numbers ship as CD-BAND-DASH,
+CD-BAND-BLAST and CD-BAND-INVARIANT in BACKLOG.
+
+The interesting finding was *why* AR priced dashes highest, because it is not a flat tax. AR's dash
+cooldowns track direction of travel: a dash carrying an enemy-facing payload — the frontliner's engage —
+sits at 4 (Asana, Garrison, Titus, Rask, Phaedra, Tol-Ren all exactly 4), while a dash that is pure
+repositioning *away* climbs to 5–7 (Blitz 5, Slip Away 6, Backup Plan 7, Bombing Run 7). Planting
+yourself in front of the enemy is its own price; getting out is not, so it is paid for in cooldown. I
+adopted that as the rule — **enemy-facing effect ⇒ 4, no enemy-facing effect ⇒ 5** — rather than a flat
++2, and ruled explicitly that a *self*-shield does not buy the discount (it is escape insurance, not
+commitment), which is what sends Lumen's Glimmer Step and Aegis's Intercept to 5 alongside the pure
+teleports. Aegis surviving that is not luck: Barrier Pulse (Prep 2, shield 20, r4) is untouched and
+remains the every-other-turn bodyguard button, so Intercept can become the expensive repositioning save.
+
+Three judgement calls the directive's "use your judgement for the exceptions" licensed, and all three
+stay inside the owner's bands — the exceptions are deviations from *my own sub-rules*, not from the
+directive. (1) **Wisp's Blink is 4, not the 5 the rule gives a pure teleport.** She is the only character
+who is both lowest-HP (85) and holds a range-2 basic, so Blink is her approach and her exit; at 5 the
+archetype is deleted rather than taxed. AR kept precisely this exception for PuP, its low-HP harasser
+and one of only two lancers in the game with a sub-4 dash. It sits at the band floor, not under it, and
+is flagged for playtest. (2) **No blast is priced below 3.** Every non-basic blast in the roster already
+carries a status rider — slow, weaken, reveal, DoT, or a pull — on top of damage, so none of them is a
+plain shot deserving the cheap slot; the plain shot is the 0-cooldown basic, and restoring that hierarchy
+is the whole point of the directive. (3) **Vex's Frag Grenade goes to 4**, the only upward exception: at
+34 it is the roster's named skill-nuke ceiling and the one skill above the undelayed cap of 24, and AR
+priced its equivalents higher still. Bastion's Chain Hook I left at 3 — it is already in band and it is
+not the Analyzer's place to change a number nobody complained about — but it is the roster's only pull ≥
+2 and therefore the open question if the blast band should carry a second 4.
+
+One second-order result is worth pinning because the intuition runs the wrong way: **these cooldowns do
+not slow the ultimate clock, they speed it up slightly.** GAME_SPEC §3 fixes one ability per turn, so
+raising a cooldown never reduces cast *count* — it only changes which ability is cast. In this roster
+dashes are the cheapest energy abilities we have (`energyGain` 4–5) and every basic pays 8, so pushing
+dashes out replaces a 4–5 turn with an 8. Net positive for seven of nine characters, neutral for Bastion
+and Ravok (whose dashes already pay 8), and the blast band is energy-neutral apart from Frag Grenade's
+−2, covered several times over. `roster-v1.md` §4's "ultimates come online turns 8–10" therefore survives
+unmodified, and the backlog says in as many words not to retune `energyGain` to compensate for a problem
+that does not exist. Finally, the rule that permitted the drift — `roster-v1.md` §1's bare
+*"Skills | 3 | `cooldown ≥ 2`"* — is superseded but not violated (5 ≥ 2), so it blocks nothing; the fix
+is a per-phase band invariant in `content.test.ts` (Builder, CD-BAND-INVARIANT) with the prose update
+routed to the Designer. The invariant deliberately carries **no allow-list**: with Blink at 4 every value
+in the roster is inside its band, and an exception list is exactly the mechanism that lets the next drift
+in unnoticed.

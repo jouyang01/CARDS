@@ -30,10 +30,13 @@ Current suite: **2393 tests** (1191 + 910 + 292), typecheck + build clean.
 
 ### Build order and dependencies
 
-**DEATH-HANG → RAVOK-RECOIL → KESTREL-SLIPSTREAM-2T → PREVIEW-NUMBERS-AUDIT → BURN-VISIBLE →
-LINE-PREVIEW-SMOOTH.** The two data items (RAVOK-RECOIL, KESTREL-SLIPSTREAM-2T) are one-line each and
-should land **before** PREVIEW-NUMBERS-AUDIT so the audit checks the final numbers. DEATH-HANG is
-CRITICAL and first. Realistic one-session cut: DEATH-HANG + the two data items + PREVIEW-NUMBERS-AUDIT.
+**DEATH-HANG → RAVOK-RECOIL → KESTREL-SLIPSTREAM-2T → CD-BAND-DASH → CD-BAND-BLAST →
+CD-BAND-INVARIANT → PREVIEW-NUMBERS-AUDIT → BURN-VISIBLE → LINE-PREVIEW-SMOOTH.** DEATH-HANG is
+CRITICAL and first — a balance pass is unverifiable until a death stops freezing the game. All five
+data items (RAVOK-RECOIL, KESTREL-SLIPSTREAM-2T, and the three CD-BAND items — the owner's 2026-09-23
+cooldown directive) are one field each and should land **before** PREVIEW-NUMBERS-AUDIT so the audit
+checks the final numbers. CD-BAND-INVARIANT is the test and goes last of the three. Realistic
+one-session cut: DEATH-HANG + the five data items + PREVIEW-NUMBERS-AUDIT.
 
 ---
 
@@ -75,6 +78,77 @@ PREVIEW-NUMBERS-AUDIT's job. Out of scope: Shockwave/Seismic (correct).
 haste and energized both persist to the turn after the cast.* **Spec Notes.** Two data fields; matches
 how durations are measured (a `duration: 2` status survives the cast turn's end-of-turn tick). Out of
 scope: other Kestrel abilities.
+
+## Data — the cooldown bands (owner directive 2026-09-23, after the two number tweaks)
+
+> **Owner directive, verbatim:** *"1. Dashes should be a 4-5 turn cooldown with only a few exceptions,
+> use your judgement for the exceptions. 2. Non-basic blasts should have 3-4 turn cooldown with only a
+> few exceptions use your judgement for the exceptions. 3. Prep cooldowns are correct right now."*
+> Full evidence, the Atlas Reactor measurements behind it, and the reasoning for every number:
+> **`docs/reviews/2026-09-23.md`**. Numbers below are final — the Builder implements them, does not
+> re-derive them.
+
+**Three items, in order: CD-BAND-DASH → CD-BAND-BLAST → CD-BAND-INVARIANT.** Data + one test. **No
+engine change and no client change** — `cooldown` is already a plain data field the resolver reads
+(`resolve.ts:625`, `:903`) and the HUD/inspect panel renders it from data. **PREP COOLDOWNS ARE FROZEN
+for this batch** (directive #3): do not touch a `prep` ability's cooldown, including the four free
+actions (Vex Overwatch Trap 4, Thorn Snare Bloom 3, Wisp Veil & Decoy 5, Cinder Stoke the Flame 4).
+**Do not retune `energyGain`** — the review proves the ult clock is neutral-to-faster under these
+numbers (one ability per turn means cast *count* is unchanged; dashes are the roster's cheapest energy
+abilities at 4–5 and the basic pays 8), so there is nothing to compensate for.
+
+### CD-BAND-DASH. Every dash costs 4 or 5 turns (DATA) — UNBLOCKED
+**Addresses owner directive #1.** Today the nine dashes run 2–3 (mean 2.67, median 3) against Atlas
+Reactor's 4.81 / 5 — no CARDS dash reaches AR's modal value. The rule: **a dash with an enemy-facing
+effect (damage / knockback / root) costs 4; a dash with no enemy-facing effect — pure teleport, or a
+self/ally shield — costs 5.** A self-shield is escape insurance, not commitment, so it does not buy the
+discount. *AC: the nine `phase: "dash"` abilities carry exactly these cooldowns —* `bastion.ram_charge`
+**3→4**, `ravok.bullrush` **3→4**, `kestrel.skim` **2→4**, `thorn.bramble_stride` **3→4**,
+`wisp.blink` **2→4**, `aegis.intercept` **3→5**, `cinder.backdraft` **3→5**, `lumen.glimmer_step`
+**3→5**, `vex.combat_roll` **2→5**; *no other field on any of them changes; the engine + client suites
+stay green.* **Spec Notes.** Nine one-field edits in `data/characters/*.json`. **Wisp's Blink at 4 is a
+deliberate exception** to the rule (it is a pure teleport, so the rule says 5): Wisp is the only
+character who is both lowest-HP (85) and holds a range-2 basic, so Blink is her approach *and* her
+exit — at 5 the archetype is deleted rather than taxed. AR kept the same exception for PuP. It stays
+inside the owner's band at the floor; **do not move it to 3**. Aegis's Intercept going to 5 is safe
+because **Barrier Pulse (Prep 2, shield 20, r4) is unchanged** and remains the every-other-turn
+bodyguard button. Out of scope: `energyGain`, ranges, damage, Prep, ultimates.
+
+### CD-BAND-BLAST. Every non-basic blast costs 3 or 4 turns (DATA) — UNBLOCKED
+**Addresses owner directive #2.** Six of the eight non-basic blasts sit at 2 — a value Atlas Reactor
+used once in 29. The rule: **a non-basic blast costs 3; it costs 4 only if its damage exceeds the
+undelayed skill ceiling of 24 (`roster-v1.md` §4).** *AC: the eight non-basic `phase: "blast"`
+abilities carry exactly these cooldowns —* `aegis.grounding_strike` **2→3**, `cinder.flare_burst`
+**2→3**, `kestrel.kite_shot` **2→3**, `lumen.dazzling_ray` **2→3**, `ravok.shockwave` **2→3**,
+`wisp.bola` **2→3**, `vex.frag_grenade` **3→4**, `bastion.chain_hook` **unchanged at 3**; *every
+`abilities[0]` auto-attack stays at* `cooldown: 0`; *no other field changes; both suites stay green.*
+**Spec Notes.** Seven one-field edits in `data/characters/*.json` (Chain Hook is already in band —
+touch nothing). **Nothing is priced below 3 and that is deliberate:** every non-basic blast already
+carries a status rider (slow / weaken / reveal / DoT / pull) on top of damage, so none is a plain shot
+— **the plain shot is the 0-cooldown basic**, and restoring that hierarchy is the point of the
+directive. **Frag Grenade at 4** is the single upward exception: 34 damage is the roster's named skill
+nuke ceiling and the only skill above the undelayed cap of 24. Out of scope: `energyGain` (Frag's 10
+stays), the auto-attacks, Prep, ultimates.
+
+### CD-BAND-INVARIANT. The bands are enforced by a test, not by prose (TEST) — BLOCKED on the two above
+**Why:** `roster-v1.md` §1 states the kit constraint as *"Skills | 3 | `cooldown ≥ 2`"*. That bare
+floor is why the roster clustered at 2 — nothing in the repo ever said a dash should cost more than a
+heal. The new numbers satisfy it (5 ≥ 2), so the prose does not block the data change, but it cannot
+stop the next character shipping at 2 either. *AC: `packages/engine/test/content.test.ts` asserts, over
+all nine shipped characters:* `abilities[0]` *is* `phase: "blast"` *with* `cooldown: 0`*; every*
+`ultimate` *has* `cooldown: 0`*; and for the three skills —* **dash ⇒ 4 ≤ cd ≤ 5**, **blast ⇒ 3 ≤ cd ≤
+4**, **prep ⇒ 2 ≤ cd ≤ 5** *(the current Prep range, frozen per directive #3). The test names the band
+in its failure message so a future character author reads the rule, not a bare number.* **Spec Notes.**
+`content.test.ts` already imports all nine characters and is where the roster's structural rules live —
+extend it, do not add a file. **The invariant needs no allow-list**: with Blink at 4 rather than 3,
+every value in the roster is inside its band, and an exception list is exactly the thing that lets the
+next drift in. Out of scope: `validate.ts` (the engine's schema check stays value-agnostic — a band is
+roster policy, not a data-format rule, and content tests are where policy belongs).
+
+### The one risk, and it is mechanical
+Any existing test that advances turns to wait an ability off cooldown will need its turn count raised.
+Run the full suite. **Do not adjust a data value to keep a test green** — the numbers above are the
+owner's, the turn counts in tests are not.
 
 ## Client — the damage-number audit
 
@@ -120,6 +194,18 @@ test.
 - **Aegis beam distinctness** — now a visible 3-wide rectangle lane; **re-ask the Designer/owner**
   whether it reads distinct enough (Builder OQ 2026-09-22 #2). **Warding Halo's dead `weaken`** (add an
   enemy-facing Prep path or drop it), **trap count cap** — still Designer-owned.
+- **`roster-v1.md` §1 kit rule is now too loose** — it says *"Skills | 3 | `cooldown ≥ 2`"*, which is
+  the floor that let the roster cluster at 2. The owner's 2026-09-23 directive supersedes it: **dash
+  4–5, non-basic blast 3–4, prep unchanged**, with the commitment gradient behind it (a dash carrying
+  an enemy-facing effect costs 4; a pure disengage costs 5). **Designer-owned prose** — CD-BAND-INVARIANT
+  enforces the numbers in `content.test.ts` meanwhile, so this is documentation debt, not a blocker.
+  Evidence and reasoning: `docs/reviews/2026-09-23.md`.
+- **Bastion's Chain Hook — 3 or 4?** The roster's only pull ≥ 2 ("the strongest soft-CC in the game",
+  `roster-v1.md` §4). Left at 3 because it is already inside the owner's band; AR priced its
+  hard-displacement blasts at 4. **Owner's call** if the blast band should carry a second 4.
+- **Wisp's Blink at 4** — the one deliberate exception to the dash rule (a pure teleport that should
+  cost 5). Justified by Wisp being the only lowest-HP + range-2-basic character. **Playtest flag:**
+  first number to revisit after a real two-machine game.
 - **Inspect-panel chips hoverable** — needs a pinned-panel design; future. **Beam + axisBonus** compose
   legally. **Chase-preview detour** deferred. **Solar Flare DoT ceiling**, **Thorn mine carpet** —
   playtest. **AC #4 outline-through-centres** look — playtest note (Builder OQ #5).
