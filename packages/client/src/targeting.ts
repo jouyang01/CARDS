@@ -472,7 +472,13 @@ export function impactPreview(
   aimStep?: number,
 ): ImpactPreview {
   const none: ImpactPreview = { origin: [], destination: [] };
-  if (ability?.impact === undefined || ability.phase !== 'dash') return none;
+  // BASTION-RAM-LINE: the **landing** is reported for every dash, not only for
+  // one carrying an `impact`. *"The preview should be like a line attack that
+  // also shows the ending dash location."* A charge's route is already drawn as
+  // a line of tiles, and every tile of it looks the same — including the one you
+  // actually stop on, which is the tile the player is choosing between. The
+  // discs below still need an `impact`; where you come to rest does not.
+  if (ability === undefined || ability.phase !== 'dash') return none;
   if (!aimLegal(unit, ability, aim, aimStep)) return none;
   // Where the dash is *aimed* to end: the last square of a charge's route, or
   // the teleport's target. `dashRoute` already makes that one decision.
@@ -484,8 +490,8 @@ export function impactPreview(
   const disc = (centre: Vec2, radius: number | undefined): Vec2[] =>
     radius === undefined || radius < 1 ? [] : circleSquares(board, centre, radius);
   return {
-    origin: disc(unit.pos, ability.impact.origin),
-    destination: disc(landing, ability.impact.destination),
+    origin: disc(unit.pos, ability.impact?.origin),
+    destination: disc(landing, ability.impact?.destination),
     landing,
   };
 }

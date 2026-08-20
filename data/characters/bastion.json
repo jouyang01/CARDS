@@ -45,6 +45,7 @@
       "phase": "dash",
       "shape": "path",
       "range": 4,
+      "chargeHits": "all",
       "cooldown": 3,
       "energyGain": 8,
       "effects": [
@@ -57,7 +58,7 @@
           "amount": 1
         }
       ],
-      "description": "Charge in a straight line; the first enemy hit takes 15 damage and is knocked back 1 square (losing their Move)."
+      "description": "Charge in a straight line: EVERY enemy the path crosses takes 15 damage and is knocked back 1 square (losing their Move). A wall of a man going through a crowd."
     },
     {
       "id": "chain_hook",
