@@ -103,6 +103,20 @@ export interface HudModel {
    * would make "switch to Focus" and "re-arm Twin Bolts" the same click.
    */
   modes: ModeOption[];
+  /**
+   * WALL-ROTATE — the four cardinals a *placed* shape may be turned to, or empty
+   * for every ability that is not one (which is all of them but Warding Wall).
+   *
+   * Its own row beside `modes` rather than folded into it, because they answer
+   * different questions with the same widget: a mode changes **what the ability
+   * is**, a rotation changes **which way this placement points**. An ability
+   * could one day want both, and a single row could not show them.
+   *
+   * `index` carries the aim step itself rather than a 0..3 position — the value
+   * the draft stores and the engine reads, so nothing in between has to map it
+   * back.
+   */
+  rotations: ModeOption[];
   /** The three catalyst slots, in phase order. Empty if the match has no pool. */
   catalysts: HudCatalyst[];
   move: { budget: number; drawing: boolean; sprinting: boolean; sprintDisabled: boolean };
@@ -128,6 +142,8 @@ export interface HudHandlers {
   extendTime(): void;
   /** BASIC-MODES: the player flipped the armed ability's aim-time profile. */
   selectMode(mode: number): void;
+  /** WALL-ROTATE: the player turned a placed shape to one of its four cardinals. */
+  selectRotation(aimStep: number): void;
   hold(): void;
   lock(): void;
   toggleProjection(): void;
@@ -236,6 +252,11 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   // Hidden when the armed ability has no modes, which is almost always.
   const modeRow = el('div', 'hud-modes');
   modeRow.style.display = 'none';
+  // WALL-ROTATE: the rotate row lives directly under the mode row, for the same
+  // reason the mode row lives under the hotbar — it qualifies the armed ability,
+  // so it belongs between the ability and the movement it trades against.
+  const rotateRow = el('div', 'hud-rotations');
+  rotateRow.style.display = 'none';
   /**
    * HUD-LAYOUT — the movement controls are **bottom-right** (owner AC 2).
    *
@@ -293,7 +314,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   // HUD-LAYOUT (AC 3): the centre column is now Lock In + timer, the abilities,
   // and the mode toggle — three rows where there were five. The bar sits
   // directly over the hotbar it times, in the slot the catalyst row vacated.
-  centre.append(lockRow, hotbar, modeRow);
+  centre.append(lockRow, hotbar, modeRow, rotateRow);
 
   // ── bottom-right: the view toggles and the waiting banner ─────────────────
   const right = el('div', 'hud-right');
@@ -536,6 +557,20 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
         btn.classList.toggle('sel', mode.selected);
         btn.onclick = () => handlers.selectMode(mode.index);
         modeRow.appendChild(btn);
+      }
+
+      // WALL-ROTATE: rebuilt wholesale, exactly like the mode row above and for
+      // the same reason — four buttons that exist only while one ability is
+      // armed have no state worth keying across a repaint.
+      rotateRow.style.display = model.rotations.length > 0 ? '' : 'none';
+      rotateRow.replaceChildren();
+      for (const rotation of model.rotations) {
+        const btn = el('button', 'hud-rotate');
+        btn.textContent = rotation.label;
+        btn.dataset['rotation'] = String(rotation.index);
+        btn.classList.toggle('sel', rotation.selected);
+        btn.onclick = () => handlers.selectRotation(rotation.index);
+        rotateRow.appendChild(btn);
       }
 
       catalystRow.style.display = model.catalysts.length > 0 ? '' : 'none';

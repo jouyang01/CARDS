@@ -486,6 +486,80 @@ export function circleSquares(board: Board, center: Vec2, radius: number): Vec2[
 }
 
 /**
+ * WARDING-WALL — a segment of `length` tiles **anchored at** `from` and running
+ * along `dir`.
+ *
+ * The owner asked for this in two goes, and the second one reshaped it:
+ *
+ * > *"a freely placed, 4 tile line"* … *"should be able to placed on a tile and
+ * > then rotated in 4 directions for placement."*
+ *
+ * The first sentence is what separates a wall from a `line`: a `line` starts at
+ * the caster and runs away from them, so where it lands is decided by where you
+ * stand. A wall is put somewhere — the aim says where, anywhere inside `range`.
+ *
+ * The second sentence is why the segment is **anchored and running along**
+ * rather than **centred and lying across**, which is how it shipped. Centred is
+ * the more natural-sounding reading, and it cannot deliver four rotations: a
+ * symmetric segment laid across a facing looks identical facing north and facing
+ * south, so four buttons would produce two walls and a one-tile nudge. Anchoring
+ * at the clicked tile makes the tile a pivot and the four cardinals four
+ * genuinely different placements — an arm you spin around the square you picked,
+ * which is what "rotated in 4 directions for placement" describes.
+ *
+ * It also dissolves the even-length centring question (session-8 OQ #2): there is
+ * no centre to argue about. The aimed tile is always the first tile of the wall.
+ *
+ * `dir` is snapped to a cardinal by the caller, so this is exact integer stepping
+ * with no rotation arithmetic. Off-board and wall tiles are dropped, exactly as
+ * `circleSquares` drops them: a hazard laid across a doorway covers the floor,
+ * not the masonry. **A dropped tile does not stop the run** — a wall clipped by a
+ * pillar in the middle continues on the far side, because the length is authored
+ * and the obstruction is the map's business. Returned anchor-first, which is the
+ * order the traps are placed in and therefore the order their ids run.
+ */
+export function wallSquares(board: Board, from: Vec2, dir: Vec2, length: number): Vec2[] {
+  if (length < 1) return [];
+  if (dir.x === 0 && dir.y === 0) return [];
+  const step: Vec2 = { x: Math.sign(dir.x), y: Math.sign(dir.y) };
+  const out: Vec2[] = [];
+  for (let i = 0; i < length; i++) {
+    const p: Vec2 = { x: from.x + step.x * i, y: from.y + step.y * i };
+    if (!inBounds(board, p)) continue;
+    if (terrainAt(board, p) === 'wall') continue;
+    out.push(p);
+  }
+  return out;
+}
+
+/**
+ * WARDING-WALL — the four rotations a placed wall may take, as aim steps.
+ *
+ * The order is the one the HUD lays its buttons out in and the one a "rotate
+ * once more" cycles through: east, south, west, north (screen coordinates, y
+ * growing downward — the same convention `stepToVector` documents).
+ *
+ * Exported because the client's rotate control and the engine's snap must agree
+ * about what the four are; a client offering a fifth would be offering an aim
+ * the engine rounds to one of these anyway.
+ */
+export const WALL_ROTATIONS: readonly number[] = [0, AIM_STEPS / 4, AIM_STEPS / 2, (3 * AIM_STEPS) / 4];
+
+/**
+ * The cardinal a wall laid at `aimStep` runs along.
+ *
+ * Snapped rather than trusted: `AIM_STEPS` is 512 and a wall wants four of them,
+ * so any other step is rounded to the nearest cardinal instead of refused. The
+ * client only ever sends one of {@link WALL_ROTATIONS}; this is what makes a
+ * hand-rolled order deterministic rather than an error case, and it is the same
+ * snap `dominantCardinal` performs for a cone.
+ */
+export function wallDirection(aimStep: number): Vec2 {
+  const v = stepToVector(aimStep);
+  return dominantCardinal({ x: 0, y: 0 }, v);
+}
+
+/**
  * Expand an ability's aim into the squares it affects.
  *
  * `aim` is the order's target array (GAME_SPEC §2): the aimed square for
@@ -515,6 +589,14 @@ export function expandShape(
     case 'circle': {
       if (target === undefined) return [];
       return circleSquares(board, target, ability.radius ?? 1);
+    }
+    case 'wall': {
+      // Both halves come from the order, and they are independent: the target
+      // square is *where the wall is anchored* and the aim step is *which way it
+      // runs*. That independence is the item — the caster's own position no
+      // longer has any say in the wall's orientation.
+      if (target === undefined || !isAimStep(aimStep)) return [];
+      return wallSquares(board, target, wallDirection(aimStep), ability.wallLength ?? 1);
     }
     case 'line': {
       const dir = aimVector(direction8);

@@ -55,7 +55,7 @@ beforeAll(() => {
 const handlers = () => ({
   selectCharacter: vi.fn(), selectAbility: vi.fn(), selectCatalyst: vi.fn(), hoverAbility: vi.fn(),
   selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
-  toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime: vi.fn(), selectMode: vi.fn(),
+  toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime: vi.fn(), selectMode: vi.fn(), selectRotation: vi.fn(),
 });
 
 const character = (): HudCharacter => ({
@@ -77,6 +77,7 @@ const model = (over: Partial<HudModel> = {}): HudModel => ({
   roster: [character()],
   abilities: VEX.abilities.map(ability),
   modes: [],
+  rotations: [],
   catalysts: ['second_wind', 'shift', 'adrenaline'].map(catalyst),
   move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
   chase: { armed: false, disabled: false },
@@ -130,14 +131,31 @@ describe('HUD-LAYOUT: each block is in the corner the owner drew it in', () => {
     expect(root.querySelectorAll('.hud-catalyst'), 'and three catalyst slots').toHaveLength(3);
   });
 
-  it('the centre column is Lock In, the abilities, the modes — and nothing else (AC 3)', () => {
+  it('the centre column is Lock In, the abilities, the qualifiers — and nothing else (AC 3)', () => {
     // The whole of AC 5's mechanism: five stacked rows became three, and the
     // height that frees is what the board takes. Asserted as an exact list
     // rather than as "contains", because a row creeping back in is the way this
     // regresses.
+    //
+    // WALL-ROTATE adds a fourth entry, and it is the same *kind* of row as the
+    // mode row beside it: both qualify the armed ability, both are hidden unless
+    // one is armed that wants them, so neither costs the board any height in the
+    // common case. The exact-list assertion is what makes that a decision rather
+    // than a drift — the next row to appear here has to be argued for too.
     const hud = createHud(root, handlers());
     hud.update(model());
-    expect(rows('.hud-centre')).toEqual(['hud-lockrow', 'hud-hotbar', 'hud-modes']);
+    expect(rows('.hud-centre'))
+      .toEqual(['hud-lockrow', 'hud-hotbar', 'hud-modes', 'hud-rotations']);
+  });
+
+  it('and the two qualifier rows are both hidden until something wants them', () => {
+    // The reason a fourth row is affordable: with nothing armed, neither takes
+    // any height at all.
+    const hud = createHud(root, handlers());
+    hud.update(model());
+    for (const cls of ['.hud-modes', '.hud-rotations']) {
+      expect(root.querySelector<HTMLElement>(cls)?.style.display, cls).toBe('none');
+    }
   });
 
   it('with the timer bar directly over the hotbar it times', () => {

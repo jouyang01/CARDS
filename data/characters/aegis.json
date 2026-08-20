@@ -19,7 +19,7 @@
           "amount": 20
         }
       ],
-      "description": "A 3-wide wall of force, two tiles deep \u2014 the whole face of the shield. Melee \u2014 ignores cover.",
+      "description": "A 3-wide wall of force, two tiles deep — the whole face of the shield. Melee — ignores cover.",
       "melee": true
     },
     {
@@ -46,7 +46,7 @@
       "phase": "dash",
       "shape": "square",
       "range": 4,
-      "cooldown": 3,
+      "cooldown": 5,
       "energyGain": 5,
       "impact": {
         "destination": 1
@@ -61,27 +61,35 @@
           "duration": 1
         }
       ],
-      "description": "Dash to a square within 4; Aegis and every ally within 1 square of the landing gain a 12-point shield. Resolves before Blast \u2014 arrive at the ally being dived and cover them, or leave the trap you're standing in."
+      "description": "Dash to a square within 4; Aegis and every ally within 1 square of the landing gain a 12-point shield. Resolves before Blast — arrive at the ally being dived and cover them, or leave the trap you're standing in."
     },
     {
-      "id": "grounding_strike",
-      "name": "Grounding Strike",
-      "phase": "blast",
-      "shape": "line",
+      "id": "warding_wall",
+      "name": "Warding Wall",
+      "phase": "prep",
+      "shape": "wall",
       "range": 4,
-      "cooldown": 2,
+      "wallLength": 4,
+      "cooldown": 4,
       "energyGain": 8,
       "effects": [
         {
-          "kind": "damage",
-          "amount": 14
+          "kind": "trap",
+          "amount": 25,
+          "lifetime": 1,
+          "perTile": true,
+          "triggers": [
+            "move",
+            "dash",
+            "displacement"
+          ]
         },
         {
-          "kind": "slow",
-          "duration": 1
+          "kind": "weaken",
+          "duration": 2
         }
       ],
-      "description": "A grounding blow: 14 damage and Slow for a turn. Peel \u2014 a slowed diver never finishes the walk."
+      "description": "Raise a four-tile barrier of force: pick a square within 4, then turn it to face any of the four directions. It stands for this turn only: any enemy who walks, charges or is shoved through it takes 25 and is Weakened next turn. A blink goes around it."
     }
   ],
   "ultimate": {

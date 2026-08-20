@@ -4685,3 +4685,306 @@ tooling. `docs/ART_PIPELINE.md` is the full plan; the judgment calls behind it a
     optimistic — every phase after generation is mesh-agnostic, so if the output disappoints, CC0
     packs (Quaternius, KayKit, Kenney) drop in and nothing downstream changes. Spike one character
     before generating a roster.
+---
+
+## 2026-08-20 — Builder, session 7 (DEATH-HANG, the two data tweaks, the preview-number audit, burn pips, line-preview memo)
+
+**DEATH-HANG's discrimination is `net !== undefined && seatIdx === 0`, not "the roster is empty".**
+An empty roster reaches the bottom of `openSeat` meaning two different things and the shipped code
+could only see one. Walking *off the end* of the seat list means the turn is answered, and networked
+that is the **only** way a submission is ever made — which is why the first attempt at this fix
+(hold whenever the roster is empty and `net` is set) broke the ordinary lock-in and was caught by the
+reproduction's "the turn after the respawn is fully playable" case. Arriving at `seatIdx === 0` in a
+networked match is the other meaning: the walk has not started and this player is simply down.
+
+**A downed networked seat holds rather than auto-submitting.** The AC's parenthetical is explicit —
+"not an auto-submit that reads as frozen" — and the ruled treatment of a seat that submits nothing is
+*hold position*, which produces the identical game result. The cost is that the room now waits the
+full decision window on a turn the downed player cannot act in, where the old (broken) behaviour
+resolved as soon as the opponent locked. Mitigated by keeping **Lock In live as "Hold Position"**, so
+one click still resolves the turn early; the packet leaves only when the player sends it, which is
+the whole difference from the bug. Flagged as an open question below.
+
+**Ravok's Whirling Cleave description was rewritten to name the 11.** The backlog's AC is the one
+data field, but Seismic Rupture's description already says "and Ravok takes 19 himself", and a tell
+that stays silent about a cost the engine charges is the same class of defect as a wrong preview
+number. Same for Slipstream's "for a turn" → "for two turns". Neither is a balance change; both are
+the tell catching up with the data beside it.
+
+**`previewNumbers` composes damage the way `runBlast` does, and takes its bands from the engine.**
+The audit's whole discipline is that the client never works out for itself which tiles are the core
+or the axis — `previewBandSets` hands over `axisSquares`/`innerSquares`, and `previewBands` is now
+that pair flattened, so the glow a player sees and the figure written on it come from one derivation.
+
+**The floating number is the immediate blow; a burn is the pip and the tell.** `damageOverTime` is
+not a `PreviewKind`, so the audit compares against the *first* damage event on a target rather than
+the sum — a DOT-HOT tick emits an ordinary `damage` event at end of turn, and folding it into the
+number would make "30" mean "30 now then 8 twice". A roster-wide guard asserts no ability burns
+without also hitting immediately, which is what keeps "first event" honest.
+
+**`healOverTime` shipped alongside the burn pip.** The backlog puts it out of scope "unless cheap".
+It is one row in each of four tables, and the two kinds are the same mechanic pointed in opposite
+directions — shipping one would have left the asymmetry as a thing to explain later.
+
+**`status-pips.test.ts` asserted the vocabulary was total against a hand-written list**, which is how
+BURN-VISIBLE's gap survived: `damageOverTime` became a status when DOT-HOT shipped and nobody added
+it to the list. It now derives from the engine's own `isStatusKind`.
+
+**The boundary cache is several slots, not one, and bounded.** A render draws more than one boundary
+(the live aim plus AC #5's locked teammate plans), so a single slot would be evicted by each in turn
+and never hit — a memo that makes things slower. The key is a deliberate **superset** of what any one
+shape reads: erring that way costs a miss that recomputes an identical polygon, erring the other way
+hands back the wrong outline silently.
+
+## Open Questions for the Analyzer — 2026-08-20
+
+1. **A downed networked seat now costs the room its full decision window.** The hold is what the AC
+   asks for, and "Hold Position" gives the player a one-click way out, but a player who has *nothing
+   to do* is exactly the player least likely to be watching the screen. The clean fix is
+   server-side — `#answering()` could exclude a seat with no living units, so the turn resolves as
+   soon as everyone who *can* act has — but that is `hub.ts` scope the item's Files list does not
+   name, and it changes what "all in" means. Please rule: leave it to the button, or open a server
+   item.
+
+2. **`previewNumbers` still cannot know a status that lands this turn.** Unchanged from
+   PREVIEW-MODIFIERS and re-stated because the audit now claims equality with the resolution: the two
+   diverge exactly when a Prep-phase Might/Weaken resolves after the plan is locked. The audit sweeps
+   fixed states, so it does not exercise that gap. It is documented in `preview-numbers.ts` as an
+   honest limit; if you want the preview to predict same-turn buffs, that is a new item and a
+   different kind of promise.
+
+3. **The dash impact preview is a plan-time estimate, and the audit records the hole.** A unit
+   standing on a charge's route stops it short, so the aimed landing — and the disc centred on it —
+   is not where the blast goes off. The audit excludes route tiles for impact-carrying dashes and
+   says so; `dashRoute`'s own comment has always called this out. Worth a decision on whether the
+   preview should route around bodies (it would need the engine's stop rule, an ENGINE ASK) or keep
+   saying "where you aimed".
+
+4. **Ravok's recoil is not previewed as *refused* when it would kill him.** The number is on his own
+   tile and it is correct, but a whirl that would take his last 11 looks exactly like one that would
+   not. AIM-RANGE-TELL established that the board should say "no" out loud; whether a self-lethal
+   recoil deserves the same treatment is a design call, not mine.
+
+5. **`overTimeBlurb` is the only blurb that carries a number.** Every other `STATUS_BLURBS` entry
+   describes the effect and refuses to restate a magnitude, deliberately, so a balance pass cannot
+   leave a lie behind. This one is allowed to because the figure is the engine's own instance amount
+   rather than a client constant — but it is a precedent, and if you would rather the tooltip said
+   "takes damage each turn" and put the number only in the chip's `amount` span, say so.
+
+6. **The burn and regen glyphs are new artwork and have had no eyes on them.** A flame and a cross
+   over a rising arc, both schematic at pip size. `PIP_COLORS` gains ember orange and mint; the mint
+   sits a step cooler than Haste's leaf green, which is the closest pair on the row and the one worth
+   looking at on a real plate before it is called settled.
+
+## 2026-09-23 — Cooldown bands: the commitment gradient, and the three judgement calls (Analyzer)
+
+The owner directed that dashes cost 4–5 turns, non-basic blasts 3–4, and Prep stay as it is. Measured
+against the real Atlas Reactor numbers (31 Freelancers × 5 abilities, parsed from the `wiskerz/ar-builds`
+scrape of the wiki — AR's kit structure is identical to ours: a 0-cooldown Blast auto, three cooldown
+skills, an energy ult), the directive is exactly right: AR's 93 skills run mean 3.80 / median 4 with 89%
+at ≥3, while our 27 run 2.70 / 3 with 56% — and the phase-level gap is almost entirely Dash (AR median
+5, ours 3) and non-basic Blast (AR median 4, ours 2). Prep was already the tightest match (3.10 vs 3.47),
+which is why directive #3 says leave it, and it is now recorded as frozen so a future pass does not
+"fix" it. Full evidence: `docs/reviews/2026-09-23.md`; the numbers ship as CD-BAND-DASH,
+CD-BAND-BLAST and CD-BAND-INVARIANT in BACKLOG.
+
+The interesting finding was *why* AR priced dashes highest, because it is not a flat tax. AR's dash
+cooldowns track direction of travel: a dash carrying an enemy-facing payload — the frontliner's engage —
+sits at 4 (Asana, Garrison, Titus, Rask, Phaedra, Tol-Ren all exactly 4), while a dash that is pure
+repositioning *away* climbs to 5–7 (Blitz 5, Slip Away 6, Backup Plan 7, Bombing Run 7). Planting
+yourself in front of the enemy is its own price; getting out is not, so it is paid for in cooldown. I
+adopted that as the rule — **enemy-facing effect ⇒ 4, no enemy-facing effect ⇒ 5** — rather than a flat
++2, and ruled explicitly that a *self*-shield does not buy the discount (it is escape insurance, not
+commitment), which is what sends Lumen's Glimmer Step and Aegis's Intercept to 5 alongside the pure
+teleports. Aegis surviving that is not luck: Barrier Pulse (Prep 2, shield 20, r4) is untouched and
+remains the every-other-turn bodyguard button, so Intercept can become the expensive repositioning save.
+
+Three judgement calls the directive's "use your judgement for the exceptions" licensed, and all three
+stay inside the owner's bands — the exceptions are deviations from *my own sub-rules*, not from the
+directive. (1) **Wisp's Blink is 4, not the 5 the rule gives a pure teleport.** She is the only character
+who is both lowest-HP (85) and holds a range-2 basic, so Blink is her approach and her exit; at 5 the
+archetype is deleted rather than taxed. AR kept precisely this exception for PuP, its low-HP harasser
+and one of only two lancers in the game with a sub-4 dash. It sits at the band floor, not under it, and
+is flagged for playtest. (2) **No blast is priced below 3.** Every non-basic blast in the roster already
+carries a status rider — slow, weaken, reveal, DoT, or a pull — on top of damage, so none of them is a
+plain shot deserving the cheap slot; the plain shot is the 0-cooldown basic, and restoring that hierarchy
+is the whole point of the directive. (3) **Vex's Frag Grenade goes to 4**, the only upward exception: at
+34 it is the roster's named skill-nuke ceiling and the one skill above the undelayed cap of 24, and AR
+priced its equivalents higher still. Bastion's Chain Hook I left at 3 — it is already in band and it is
+not the Analyzer's place to change a number nobody complained about — but it is the roster's only pull ≥
+2 and therefore the open question if the blast band should carry a second 4.
+
+One second-order result is worth pinning because the intuition runs the wrong way: **these cooldowns do
+not slow the ultimate clock, they speed it up slightly.** GAME_SPEC §3 fixes one ability per turn, so
+raising a cooldown never reduces cast *count* — it only changes which ability is cast. In this roster
+dashes are the cheapest energy abilities we have (`energyGain` 4–5) and every basic pays 8, so pushing
+dashes out replaces a 4–5 turn with an 8. Net positive for seven of nine characters, neutral for Bastion
+and Ravok (whose dashes already pay 8), and the blast band is energy-neutral apart from Frag Grenade's
+−2, covered several times over. `roster-v1.md` §4's "ultimates come online turns 8–10" therefore survives
+unmodified, and the backlog says in as many words not to retune `energyGain` to compensate for a problem
+that does not exist. Finally, the rule that permitted the drift — `roster-v1.md` §1's bare
+*"Skills | 3 | `cooldown ≥ 2`"* — is superseded but not violated (5 ≥ 2), so it blocks nothing; the fix
+is a per-phase band invariant in `content.test.ts` (Builder, CD-BAND-INVARIANT) with the prose update
+routed to the Designer. The invariant deliberately carries **no allow-list**: with Blink at 4 every value
+in the roster is inside its band, and an exception list is exactly the mechanism that lets the next drift
+in unnoticed.
+
+---
+
+## 2026-08-20 — Builder, session 8 (Warding Wall, Ram Charge's line, the cooldown bands, the downed-seat skip)
+
+**Warding Wall's orientation is derived, not aimed.** The owner's dev note settled the aim —
+*"a freely placed, 4 tile line"* — which is why the new `wall` shape takes a **square** (a circle's
+aim, anywhere in `range`) rather than a direction. What the note did not say is which way the segment
+lies, so it is laid **across** `dominantCardinal(caster → aimed square)`: one click puts the whole
+wall down, and across-your-facing is the orientation the ability wants nearly always (between them and
+you, or over the lane they are coming down). An **even** length has no centre tile, so the segment runs
+from `-⌊(L-1)/2⌋` to `+⌊L/2⌋` along the perpendicular — for `L = 4` the aimed square is the second of
+the four. Arbitrary, deterministic, written down. **Flagged below**: if the Designer wants true free
+rotation, that is a position *and* a rotation in one aim, which the client's aim model does not carry.
+
+**The wall's trigger list is per-trap, and that is how the dev note and the RULED trap rule are both
+honoured.** The note says the wall *"will hit dashes, moves, and displacements, but not blinks"*. Both
+halves depart from the v1 trap rule (RULED: entry under your own power; knockback/pull never), and in
+**opposite directions** — it catches a shove and misses a teleport. Rather than move the global rule,
+`AbilityEffect.triggers` lets a hazard name its own arrivals, and `DEFAULT_TRAP_ENTRIES`
+(`move`/`dash`/`teleport`) keeps every shipped mine exactly as ruled — Overwatch Trap still fires on a
+blink landing, still ignores a shove, and there are two tests that say so. The reading behind the
+split: a mine is something you **tread on**, so a shove onto one is not your doing; a wall is something
+you are pushed **through**. This is the "first lever to pull" the knockback ruling anticipated, pulled
+for one ability rather than for all of them.
+
+**A blink that LANDS on a wall tile is not caught either.** The note does not spell this corner out.
+Ruled the same way for the same reason: the wall hurts what passes through it, and nothing passed.
+
+**Displacements fire wall traps square by square along the path travelled**, not only at the resting
+square, so a shove that carries somebody clean across the wall pays for the crossing. The
+carry-through fix-up can walk a victim back one square; that square was already crossed on the way out,
+so it is in the list once and its trap is consumed once.
+
+**`perTile` is opt-in rather than derived from the shape.** TRAP-CENTRE exists because an *area* shape
+burying a mine under each of thirteen tiles is a minefield nobody authored — the count fell out of the
+radius. A wall is the opposite case: four tiles because the ability says four. So the generalisation is
+a field on the effect, and the count stays something a human wrote down.
+
+**Two description rewrites rode with their data changes.** Ram Charge said "the first enemy hit", which
+`chargeHits: "all"` was about to make a lie; Warding Wall's names its 25 and its blink exception. A tell
+that contradicts the engine is the same class of defect as a wrong preview number.
+
+**A charge's landing goes on the impact layer.** `impactPreview` now reports a `landing` for every
+dash, and a `path` charge draws it. That layer already answers "what does the arrival *do*" against the
+aim layer's "where does the dash *go*", which is exactly the split the item asks for. A teleport gets
+nothing extra — its aimed square is the landing and is already the only tile lit.
+
+**The cooldown edits are nine and six single-line changes.** The first pass reserialised the JSON and
+produced a 73-line diff of reformatting around nine real changes; re-done as targeted edits. No test
+needed its turn count raised.
+
+**`#canAct` asks `controlledUnits`, not the seat's own `unitIds`.** Those are two different lists once
+M3-RECONNECT has handed an absent player's characters to a stand-in, and the question the lock count
+needs is what the seat may order *now* — the same question `#receiveSubmit` already asks.
+
+## Open Questions for the Analyzer — 2026-08-20
+
+1. **WARDING-WALL orientation: derived, not aimed** (backlog WARDING-WALL; `packages/engine/src/shapes.ts`
+   `wallSquares`). The owner ruled the *position* ("freely placed"); I derived the *facing* as
+   perpendicular to the caster's line. Please confirm, or route to the Designer: true free rotation
+   needs an aim carrying a square **and** a step, which `aimFor`/`OrderDraft` do not currently
+   express — that is a client aim-model change, not a shape change.
+
+2. **The even-length centring is a coin-flip I called.** A 4-tile wall puts the aimed square second of
+   four (offsets −1,0,+1,+2). If the Designer wants it third, it is a one-character change; if they
+   want odd lengths only, that is a data call.
+
+3. **WARDING-WALL is now the only ability whose trap can be set off by a shove** (edge-cases: RULED —
+   knockback/pull do NOT trigger traps in v1). I implemented it as a per-trap opt-in so the ruling
+   stands for every mine, but the ruling's text now needs a sentence saying the *hazard* may say
+   otherwise. Please amend it rather than leaving the two to be read as contradicting.
+
+4. **A turn on which EVERY seat is downed resolves on the timer, not at once** (backlog DOWN-SEAT-SKIP;
+   `hub.ts` `#answering`/`#allIn`). The answering set is empty, and `#allIn` deliberately refuses to
+   resolve on an empty set. Not a regression — it waited the full window before too — and resolving
+   eagerly from `#sendDecision` risks a resolve → send-decision → resolve loop, which is
+   QUOTA-RUNAWAY territory. If you want it closed, it wants its own item with the loop guard specified.
+
+5. **Aegis has lost his only non-basic Blast.** After WARDING-WALL his kit is one Blast (the free
+   basic), two Preps and a dash. That is the kit reshape the owner asked for, but it means Aegis is the
+   only character with no cooldown'd Blast at all, and `CD-BAND-BLAST`'s band now has one fewer
+   population. Worth a Designer look before playtest concludes anything from it.
+
+6. **Ram Charge at `chargeHits: "all"` plus cooldown 4 is two buffs and a nerf landing together.** The
+   Analyzer sequenced them deliberately and I implemented both as specified; flagging only that the
+   playtest note should read them as one change rather than two.
+
+---
+
+## 2026-08-20 — Builder, session 9 (traps catch a shove; the wall is placed and turned)
+
+**TRAP-SHOVE-DEFAULT was one production line, and the interesting part is what it did *not* change.**
+The v1 trap rule was about **whose idea the movement was** — your own power yes, a shove no. TRAP-TRIGGER
+replaces it with a rule about **crossing**: a shove drags you over every square between here and there,
+so it crosses; a blink occupies only its landing square and crosses nothing. That is why blinking *past*
+a mine still leaves it armed while blinking *onto* it sets it off, and it needed no code — the teleport
+path only ever offers the landing square to `triggerTrapsOnEntry`. Pads already worked this way; the two
+rules now agree, and `edge-cases` records that the historical pad-vs-trap difference is gone.
+
+**The wall had to be re-anchored to honour "rotated in 4 directions", and that is a shape change, not a
+control change.** The owner's note is *"placed on a tile and then rotated in 4 directions for
+placement"*. Keeping the shipped geometry — a segment **centred** on the aimed tile, lying **across** a
+facing — and merely letting the player pick the facing would satisfy the words and fail the intent: a
+symmetric segment laid across a facing is identical north and south, so the four buttons would produce
+two walls and a one-tile nudge. Anchoring at the clicked tile and running **along** the chosen cardinal
+makes the tile a pivot and the four rotations four genuinely different arms. Flagged below, because it
+is the one place I changed geometry the owner did not explicitly ask me to change.
+
+**It dissolves session-8 OQ #2.** There is no centre left, so the even-length centring coin-flip (was the
+aimed square 2nd or 3rd of 4?) has no question to answer: the aimed square is always the first tile.
+
+**`wall` is the only shape whose aim needs both halves.** A `line` accepts either a step or a target,
+because for a line each implies the other. A wall's position and orientation are independent, so an aim
+carrying one of them is not an under-specified wall — it is not a wall, and `aimIsLegal` refuses it. The
+old refusal of the caster's own square is gone with the reason for it (there was no direction to derive
+from that square; there is now one authored).
+
+**An off-cardinal aim step snaps rather than being refused.** `AIM_STEPS` is 512 and a wall wants four.
+The client only ever sends one of `WALL_ROTATIONS`; snapping is what makes a hand-rolled or replayed
+order deterministic instead of an error case — the same treatment a cone already gives
+`dominantCardinal`.
+
+**`selectRotation` does not clear the aim, and `selectMode` still does.** A mode change makes the old
+target meaningless (a line's target is often illegal for a cone); a rotation is a change *to* an aim
+about a square the player has already picked. Clearing it would make "turn the wall" mean "put the wall
+away and start again".
+
+**The rotate row is a sibling of the mode row, not an extension of it.** Both qualify the armed ability
+and both are hidden unless one is armed that wants them, so neither costs the board any height in the
+common case — but they answer different questions (*what the ability is* vs *which way this placement
+points*), and an ability could one day want both. `hud-layout`'s exact-list assertion now names four
+rows, so the next one has to be argued for too.
+
+## Open Questions for the Analyzer — 2026-08-20
+
+1. **The wall's geometry changed from centred-across to anchored-along** (Dev Note 2026-09-26 #1;
+   `packages/engine/src/shapes.ts` `wallSquares`, `WALL_ROTATIONS`, `wallDirection`). The owner asked for
+   four rotations; four rotations of a *centred* symmetric segment are two walls, so the anchor moved.
+   The clicked tile is now the **first** tile of the wall rather than the second of four. Please confirm
+   this reading, and close session-8 OQ #2 as moot if you agree.
+
+2. **`aegis.warding_wall`'s range now means something slightly different.** `range: 4` still bounds where
+   the *anchor* may go, but the wall then extends 4 tiles further in the chosen direction, so its far end
+   can sit up to 7 squares from Aegis (it could reach ~5 before). No number changed and I did not
+   rebalance — flagging because the effective reach did move, and it is a Designer call whether `range`
+   should come down.
+
+3. **WALL-BLINK-ONTO is still open and is now the *only* divergence** (backlog flag). After
+   TRAP-SHOVE-DEFAULT every mine bites a blink that lands on it; the wall still does not, per the owner's
+   session-8 *"but not blinks"*. One array entry (`teleport` on the wall's `triggers`) plus flipping the
+   *"nor is a blink that lands ON a wall tile"* test if the owner wants them aligned.
+
+4. **No rotate control exists for a *committed* wall aimed by a different seat's replay.** The rotation
+   rides on `AbilityOrder.aimStep`, which the server already relays, so networked play needs nothing —
+   flagging only that I verified this by reading the protocol rather than by a two-client test.
+
+5. **Dev Note "Aegis skill set is good"** — taken as confirmation of the WARDING-WALL kit reshape, so
+   session-8 OQ #5 (Aegis has no cooldown'd Blast) is closed as intended. No action taken; recording the
+   reading in case the Analyzer wants it recorded differently.

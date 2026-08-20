@@ -40,8 +40,58 @@ export const TARGET_SHAPES = [
   'path', // a movement path walked/charged by the caster (dashes)
   'square', // a single aimed square within `range` (incl. teleport destinations)
   'self', // the caster
+  // WARDING-WALL / WALL-ROTATE: a freely placed segment of `wallLength` tiles,
+  // ANCHORED at the aimed square and running along the aimed step. Unlike
+  // `line` — which starts at the caster and runs away from them — a wall is put
+  // *somewhere else*, and it is the one shape whose aim carries both a square
+  // (where) and a direction (which way) as independent choices.
+  'wall',
 ] as const;
 export type TargetShape = (typeof TARGET_SHAPES)[number];
+
+/**
+ * WARDING-WALL — the ways a unit can arrive on a square, as far as a trap cares.
+ *
+ * A trap used to have one answer to "did that count as stepping on me": the v1
+ * rule, *entry under the unit's own power* — a Move step, a charge step, or a
+ * blink landing — with knockback and pull excluded.
+ *
+ * What made it a *list* is that a wall is a different kind of hazard from a
+ * mine, and the owner said so in one sentence: it *"will hit dashes, moves, and
+ * displacements, but not blinks."* Both readings are coherent and they disagree,
+ * so the trap says which it wants rather than the engine holding one global
+ * opinion.
+ *
+ * **TRAP-TRIGGER (2026-09-25) then moved the default itself.** The owner:
+ * *"Traps should trigger if an enemy is knocked through the trap or if they blink
+ * onto the trap or dash onto/through the trap"* — and, the other half, *"Trap
+ * should not trigger if enemy blinks PAST the trap."* So the v1 carve-out for a
+ * shove is gone: a mine now fires on a knock-through like everything else. What
+ * survives is the sharper distinction underneath, and it is about **crossing**
+ * rather than about whose idea it was: a shove drags you over every square
+ * between here and there, so it crosses; a blink occupies only its landing square
+ * and crosses nothing, which is why blinking *past* a mine leaves it armed while
+ * blinking *onto* it sets it off. Pads already worked this way, and the two rules
+ * now agree.
+ */
+export const TRAP_ENTRIES = ['move', 'dash', 'teleport', 'displacement'] as const;
+export type TrapEntry = (typeof TRAP_ENTRIES)[number];
+
+/**
+ * TRAP-TRIGGER, as a list: **every** way of arriving on the square.
+ *
+ * All four, which is to say a trap with nothing authored catches whatever puts a
+ * unit on its tile — walked onto, charged through, blinked onto, or shoved
+ * across. A blink *past* it still fires nothing, and that falls out of the
+ * mechanism rather than out of this list: a teleport calls
+ * `triggerTrapsOnEntry` once, at its landing square, so a mine it flew over was
+ * never offered the chance.
+ *
+ * It stays a named default rather than "no filter at all" because the list is
+ * still *overridable* — `aegis.warding_wall` authors `['move','dash',
+ * 'displacement']` to keep the owner's "a blink goes around it" exception.
+ */
+export const DEFAULT_TRAP_ENTRIES: readonly TrapEntry[] = [...TRAP_ENTRIES];
 
 export const EFFECT_KINDS = [
   'damage',
@@ -99,6 +149,29 @@ export interface AbilityEffect {
    * Slow such traps carry (Dev Note #10b).
    */
   halt?: boolean;
+  /**
+   * WARDING-WALL — `trap` only. Which arrivals set this trap off. Omitted means
+   * {@link DEFAULT_TRAP_ENTRIES}, which since TRAP-TRIGGER is all four; every
+   * mine leaves it unset.
+   *
+   * Authored rather than inferred from the shape: "a wall does not bite a blink"
+   * is a statement about *this hazard*, not about hazards laid in lines. It is
+   * now a way of taking arrivals **away** rather than adding them, which is the
+   * only shipped use — the wall's `['move','dash','displacement']`.
+   */
+  triggers?: readonly TrapEntry[];
+  /**
+   * WARDING-WALL — `trap` only. Place a trap on **every tile the ability
+   * covers**, instead of the single one TRAP-CENTRE puts at the aimed square.
+   *
+   * The generalisation TRAP-CENTRE deliberately left out. That ruling exists
+   * because an *area* shape burying a mine under each of its thirteen tiles is a
+   * minefield nobody authored — the count fell out of the radius. A wall is the
+   * case where the count IS the authored thing: four tiles because the ability
+   * says four. So the difference is a field on the effect rather than a rule
+   * about shapes, and any future hazard that wants a footprint asks for one.
+   */
+  perTile?: boolean;
 }
 
 export interface AbilityDef {
@@ -110,6 +183,14 @@ export interface AbilityDef {
   range: number;
   /** For shape 'circle': area radius around the aimed square. */
   radius?: number;
+  /**
+   * WARDING-WALL — for shape `wall`: how many tiles long the segment is.
+   *
+   * `range` says how far away the anchor may be put and this says how far the
+   * wall runs from it. Authored, because the owner authored it: *"a 4 tile long
+   * wall"*.
+   */
+  wallLength?: number;
   /**
    * BASIC-AXIS — for shape `cone`: extra damage on the wedge's **central line**
    * (Designer §3.1, adopted from AR's Titus).
@@ -429,6 +510,11 @@ export interface TrapState {
   expiresOnTurn: number;
   /** TRAP-HALT: entering it ends the mover's movement (Unstoppable excepted). */
   halt?: boolean;
+  /**
+   * WARDING-WALL: which arrivals set it off, stamped at placement from the
+   * ability's `triggers`. Omitted means {@link DEFAULT_TRAP_ENTRIES}.
+   */
+  triggers?: readonly TrapEntry[];
   /** Applied to whoever triggers it. */
   onTrigger: AbilityEffect[];
 }

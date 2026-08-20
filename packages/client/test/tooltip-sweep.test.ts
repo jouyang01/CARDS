@@ -50,7 +50,7 @@ const POOL = buildCatalystPool(catalystData as unknown as CatalystData);
 const handlers = () => ({
   selectCharacter: vi.fn(), selectAbility: vi.fn(), selectCatalyst: vi.fn(), hoverAbility: vi.fn(),
   selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
-  toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime: vi.fn(), selectMode: vi.fn(),
+  toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime: vi.fn(), selectMode: vi.fn(), selectRotation: vi.fn(),
 });
 const character = (over: Partial<HudCharacter> = {}): HudCharacter => ({
   unitId: 'vex-t0-0', name: 'Vex', archetype: 'firepower', colour: '#4f8cff',
@@ -69,6 +69,7 @@ const model = (over: Partial<HudModel> = {}): HudModel => ({
   roster: [character()],
   abilities: VEX.abilities.map(ability),
   modes: [],
+  rotations: [],
   catalysts: ['second_wind', 'shift', 'adrenaline'].map(catalyst),
   move: { budget: 4, drawing: false, sprinting: false, sprintDisabled: false },
   chase: { armed: false, disabled: false },

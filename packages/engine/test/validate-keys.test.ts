@@ -90,12 +90,25 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
       modes: [{ name: 'Focus', shape: 'line', range: 6 }, { name: 'Spread', shape: 'cone', range: 2 }],
       effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
+    // WARDING-WALL: a fifth, because `wallLength` is `wall`-exclusive on the
+    // same argument again — and its trap effect is where `perTile`/`triggers`
+    // live, which the effect-key union below needs a home for.
+    const barrier: AbilityDef = {
+      id: 'v', name: 'V', phase: 'prep', shape: 'wall', range: 4, wallLength: 4, cooldown: 4,
+      energyGain: 8,
+      effects: [
+        { kind: 'trap', amount: 25, lifetime: 1, halt: true, perTile: true, triggers: ['move', 'displacement'] },
+      ],
+      description: 'test',
+    };
     expect(validateAbility(charge, 'x')).toEqual([]);
     expect(validateAbility(wedge, 'y')).toEqual([]);
     expect(validateAbility(bomb, 'z')).toEqual([]);
     expect(validateAbility(twin, 'w')).toEqual([]);
+    expect(validateAbility(barrier, 'v')).toEqual([]);
     expect([...new Set([
       ...Object.keys(charge), ...Object.keys(wedge), ...Object.keys(bomb), ...Object.keys(twin),
+      ...Object.keys(barrier),
     ])].sort())
       .toEqual([...ABILITY_KEYS].sort());
   });

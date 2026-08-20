@@ -554,11 +554,46 @@ export class RoomHub {
    * This is also the ruled "hold" arriving early rather than differently — the
    * absent seat contributes nothing to the merge either way, so the only thing
    * that changes is how long everybody else waits to find out.
+   *
+   * DOWN-SEAT-SKIP applies that same principle to a seat that is **present and
+   * has nothing to order**. DEATH-HANG left a downed player holding correctly —
+   * the board says why it cannot act, and "Hold Position" is live — but the room
+   * still waited the full window on a turn that seat could not change. And the
+   * player least likely to be watching the screen is exactly the one with
+   * nothing to do, so in practice the wait was the whole 40 seconds.
+   *
+   * Same argument as the disconnect, one step along: there is nothing behind the
+   * seat to press Lock In *with*. Its characters hold either way, so the only
+   * thing skipping it changes is how long everybody else waits to find out —
+   * "no turn ever waits on a player" applied to a player who cannot play.
+   *
+   * A seat with **some** units alive is still waited on: it has a turn to take.
    */
   #answering(): string[] {
     return this.#room.seats
       .filter((s) => s.connected || hasSubmitted(this.#room, s.seatId))
+      .filter((s) => this.#canAct(s.seatId) || hasSubmitted(this.#room, s.seatId))
       .map((s) => s.seatId);
+  }
+
+  /**
+   * Does this seat control at least one living character this turn?
+   *
+   * Asked of `controlledUnits` rather than of the seat's own `unitIds`, because
+   * those are two different lists once M3-RECONNECT has handed an absent
+   * player's characters to a stand-in: the question is what this seat may order
+   * *now*, which is the same question `#receiveSubmit` asks before accepting
+   * orders. A seat covering a teammate's units is not down just because its own
+   * are.
+   *
+   * `true` when the match has no state yet (a lobby seat can always answer), so
+   * this can never empty the answering set before a match starts.
+   */
+  #canAct(seatId: string): boolean {
+    const state = this.#room.state;
+    if (state === undefined) return true;
+    const controls = new Set(controlledUnits(this.#room, seatId));
+    return state.units.some((u) => u.alive && controls.has(u.unitId));
   }
 
   /** Has every seat that can still answer, answered? */

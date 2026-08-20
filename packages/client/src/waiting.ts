@@ -51,6 +51,25 @@ export function waitingLabel(view: WaitView | undefined): string | undefined {
   return parts.join(' · ');
 }
 
+/**
+ * DEATH-HANG — the banner for a seat whose every character is currently down.
+ *
+ * *"Something breaks when a character dies, the lock-in is not possible and the
+ * timer bar goes away."* There was genuinely nothing to order, and the client
+ * said so by going quiet — which is indistinguishable from having crashed. The
+ * turn is not over and the match is not stuck; this seat simply has no move to
+ * make, and the difference between that and a freeze is entirely whether it is
+ * written on the screen.
+ *
+ * Here rather than in the controller for the same reason `waitingLabel` is: the
+ * strings a player reads while they cannot act are the ones worth having a test
+ * hold.
+ */
+export function downedLabel(down: number, total: number): string {
+  const who = total > 1 && down < total ? `${down} of your ${total} characters are` : 'You are';
+  return `${who} down — respawning. Nothing to order this turn; the turn resolves without you.`;
+}
+
 /** Is this client locked in — the board disarmed, the turn already sent? */
 export const isWaiting = (view: WaitView | undefined): boolean => waitingLabel(view) !== undefined;
 

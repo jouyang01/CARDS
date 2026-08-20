@@ -27,7 +27,7 @@
       "phase": "dash",
       "shape": "square",
       "range": 4,
-      "cooldown": 2,
+      "cooldown": 4,
       "energyGain": 4,
       "effects": [
         {
@@ -63,7 +63,7 @@
       "phase": "blast",
       "shape": "line",
       "range": 6,
-      "cooldown": 2,
+      "cooldown": 3,
       "energyGain": 8,
       "effects": [
         {

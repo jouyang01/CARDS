@@ -7,6 +7,7 @@ import {
   EFFECT_KINDS,
   POWERUP_TYPES,
   TARGET_SHAPES,
+  TRAP_ENTRIES,
 } from './types.js';
 import { MAX_ABILITY_RANGE, TRAP_MAX_LIFETIME } from './constants.js';
 import { HARMFUL_KINDS } from './polarity.js';
@@ -35,7 +36,7 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
   'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
-  'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire',
+  'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire', 'wallLength',
   'effects', 'description',
 ] as const;
 
@@ -45,7 +46,7 @@ export const PROFILE_KEYS = [
 ] as const;
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
-export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime', 'halt'] as const;
+export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime', 'halt', 'triggers', 'perTile'] as const;
 
 /** Every key a `PowerupPad` may carry (PADS1) — same argument again. */
 export const POWERUP_PAD_KEYS = ['x', 'y', 'type', 'firstTurn', 'everyTurns'] as const;
@@ -83,6 +84,15 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   }
   if (a.shape === 'circle' && (!isInt(a.radius) || (a.radius ?? 0) < 1)) {
     errs.push(`${path}: circle shape requires integer radius >= 1`);
+  }
+  // WARDING-WALL: `wallLength` is to a wall what `radius` is to a circle — the
+  // shape has no size without it — and it is meaningless on anything else, for
+  // the same reason `axisBonus` is refused off a cone.
+  if (a.shape === 'wall' && (!isInt(a.wallLength) || (a.wallLength ?? 0) < 1)) {
+    errs.push(`${path}: wall shape requires integer wallLength >= 1`);
+  }
+  if (a.wallLength !== undefined && a.shape !== 'wall') {
+    errs.push(`${path}: wallLength is only meaningful on a wall (shape is "${a.shape}")`);
   }
   // BASIC-AXIS: a cone-only knob. On any other shape there is no axis to be on,
   // and a silently-ignored field is a balance number nobody can find.
@@ -270,6 +280,29 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
           errs.push(`${path}.effects[${i}]: lifetime is only meaningful on a "trap" effect`);
         } else if (!isInt(e.lifetime) || e.lifetime < 1 || e.lifetime > TRAP_MAX_LIFETIME) {
           errs.push(`${path}.effects[${i}]: trap lifetime must be an integer 1..${TRAP_MAX_LIFETIME}`);
+        }
+      }
+      // WARDING-WALL: `triggers` and `perTile` are trap-only for the same reason
+      // `lifetime` is, and a `triggers: []` is a trap nothing can ever set off —
+      // which is not a hazard, it is a typo that plays as one.
+      if (e.triggers !== undefined) {
+        if (e.kind !== 'trap') {
+          errs.push(`${path}.effects[${i}]: triggers is only meaningful on a "trap" effect`);
+        } else if (!Array.isArray(e.triggers) || e.triggers.length === 0) {
+          errs.push(`${path}.effects[${i}]: triggers must be a non-empty array (omit it for the default)`);
+        } else {
+          for (const t of e.triggers) {
+            if (!TRAP_ENTRIES.includes(t)) {
+              errs.push(`${path}.effects[${i}]: invalid trigger "${String(t)}" (one of ${TRAP_ENTRIES.join(', ')})`);
+            }
+          }
+        }
+      }
+      if (e.perTile !== undefined) {
+        if (e.kind !== 'trap') {
+          errs.push(`${path}.effects[${i}]: perTile is only meaningful on a "trap" effect`);
+        } else if (e.perTile !== true) {
+          errs.push(`${path}.effects[${i}]: perTile must be true when present (omit it for TRAP-CENTRE's single placement)`);
         }
       }
       // TRAP-HALT: same argument as `lifetime` — a `halt` on anything but a trap

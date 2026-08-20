@@ -55,6 +55,7 @@ import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, st
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
 import { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from './polarity.js';
+import { DEFAULT_TRAP_ENTRIES } from './types.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
 import { buildVision, teamCanSee, teamHasSightline, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
@@ -73,6 +74,7 @@ import type {
   PlayerOrders,
   TeamId,
   TrapState,
+  TrapEntry,
   TurnEvent,
   TurnResult,
   UnitOrders,
@@ -646,6 +648,21 @@ function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonl
       const target = aim[0];
       return target !== undefined && aimInRange(unit.pos, target, def.range);
     }
+    case 'wall': {
+      // The one shape that needs **both** halves of an aim: a square inside the
+      // Euclidean range (where the wall is anchored) and a quantized step (which
+      // way it runs). A `line` accepts either — a step is a direction on its own
+      // and a target implies one — but a wall's position and orientation are
+      // independent, so neither substitutes for the other.
+      //
+      // The old refusal of the caster's own square is gone with the reason for
+      // it: it was there because the orientation used to be derived from
+      // `caster → aim`, which that square cannot supply. A rotation is authored
+      // now, so a wall anchored under your own feet is a legal, if eccentric,
+      // placement.
+      const target = aim[0];
+      return target !== undefined && aimInRange(unit.pos, target, def.range) && isAimStep(aimStep);
+    }
     case 'line':
     case 'cone': {
       // A quantized step is a direction in its own right, so it needs no target
@@ -732,10 +749,28 @@ const sourceOf = (unit: UnitState, abilityId: string): Source => ({ unitId: unit
  * **Unstoppable ignores the halt**, exactly as it already ignores the Slow these
  * traps carry: the damage still lands, the walk simply does not stop.
  */
-function triggerTrapsOnEntry(draft: GameState, board: Board, unit: UnitState, events: TurnEvent[]): boolean {
+function triggerTrapsOnEntry(
+  draft: GameState,
+  board: Board,
+  unit: UnitState,
+  events: TurnEvent[],
+  /**
+   * WARDING-WALL — how the unit got here. A trap only fires for the arrivals it
+   * lists (`DEFAULT_TRAP_ENTRIES` when it lists none), which is what lets a wall
+   * catch a shove that a mine ignores.
+   *
+   * Defaulted to `'move'` so a caller that has not been taught the distinction
+   * keeps the v1 behaviour rather than silently becoming un-triggerable — the
+   * safe direction for a field every existing trap leaves unset.
+   */
+  entry: TrapEntry = 'move',
+  /** The square being entered. Defaults to where the unit now stands. */
+  at: Vec2 = unit.pos,
+): boolean {
   if (!unit.alive) return false;
   let halted = false;
-  for (const trap of draft.traps.filter((t) => t.owner !== unit.owner && vecEq(t.pos, unit.pos))) {
+  const fires = (t: TrapState): boolean => (t.triggers ?? DEFAULT_TRAP_ENTRIES).includes(entry);
+  for (const trap of draft.traps.filter((t) => t.owner !== unit.owner && vecEq(t.pos, at) && fires(t))) {
     draft.traps = draft.traps.filter((t) => t.id !== trap.id); // consumed
     events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
     const res = applyDamage(unit, trap.damage);
@@ -861,12 +896,19 @@ function applyDisplacements(
 
     // Walk the line the nominal distance; the displacer's body is transparent, so
     // `cur` may land on it.
+    //
+    // WARDING-WALL: every square the shove passes through is remembered, not
+    // just where it stops. A wall is something you go *through*, so a knockback
+    // that carries somebody across one has crossed it whether or not they came
+    // to rest on the far side.
     let cur = d.victim.pos;
+    const shovedThrough: Vec2[] = [];
     for (let step = 0; step < d.amount; step++) {
       const nxt: Vec2 = { x: cur.x + dir.x, y: cur.y + dir.y };
       if (d.kind === 'pull' && vecEq(nxt, d.source)) break; // never land on the puller
       if (solidFor(nxt, d.attackerId)) break;
       cur = nxt;
+      shovedThrough.push({ x: cur.x, y: cur.y });
     }
     // Carry-through (R1c): a unit may never *end* on another's square. If the
     // victim came to rest on the displacer's own square, skip *past* it — advance
@@ -886,7 +928,19 @@ function applyDisplacements(
       const from = d.victim.pos;
       d.victim.pos = { x: cur.x, y: cur.y };
       events.push({ type: 'displaced', unitId: d.victim.unitId, from, to: d.victim.pos, kind: d.kind });
-      // Traps do not trigger on knockback in v1 (edge-cases list dash/move only).
+      // WARDING-WALL. Mines still do not fire on a shove — that is the v1 rule
+      // and `DEFAULT_TRAP_ENTRIES` keeps it — but a hazard that asks for
+      // `displacement` does, because the owner said a wall *"will hit dashes,
+      // moves, and displacements"*. Fired square by square along the path
+      // actually travelled, so a shove that carries somebody clean across the
+      // wall pays for the crossing rather than for where it stopped. The
+      // carry-through fix-up above can walk the victim back one square; that
+      // square was already crossed on the way out, so it is in the list once and
+      // its trap is consumed once.
+      for (const square of shovedThrough) {
+        if (!d.victim.alive) break;
+        triggerTrapsOnEntry(draft, board, d.victim, events, 'displacement', square);
+      }
     }
   }
 }
@@ -1079,35 +1133,52 @@ function placeTraps(
   // A `square` or `self` shape lands in exactly the same place it always did:
   // for those the area *is* the aimed square (or the caster's own), so this is
   // one rule with no special case rather than a carve-out for area shapes.
-  const pos = planned.aim[0] ?? owner.pos;
-  const trap: TrapState = {
-    // The ability is part of the id because a unit can now arm two traps in
-    // one turn — Thorn's auto-mine in Blast beside a free Snare Bloom in Prep
-    // — and two traps sharing an id would make the consumed-trap filter in
-    // `triggerTrapsOnEntry` sweep away the one that did not fire.
-    id: `trap-${owner.unitId}-t${draft.turn}-${planned.def.id}`,
-    owner: owner.owner,
-    ownerUnitId: owner.unitId,
-    abilityId: planned.def.id,
-    pos: { x: pos.x, y: pos.y },
-    // PHASE-STATUS-FIRST: the number is stamped now, from the Might or Weaken
-    // the owner is carrying as the mine goes in the ground — including one
-    // applied earlier in this same phase, which is why arming is the phase's
-    // second sub-step. A trap that detonates three turns later is not
-    // re-measured against whatever the owner happens to be feeling then; the
-    // charge was set when it was buried.
-    damage: scaleDamage(trapEffect.amount ?? 0, outgoingDamagePct(owner)),
-    // TRAP-LIFETIME: stamped at placement, measured exactly like a status
-    // `duration` — `lifetime: 2` covers this turn and the next. An omitted
-    // lifetime lands on the cap rather than living forever, so a trap can only
-    // be *shorter* than the rule by being under-specified, never longer.
-    expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
-    // TRAP-HALT: carried from the effect, like the lifetime beside it.
-    ...(trapEffect.halt === true ? { halt: true } : {}),
-    onTrigger,
-  };
-  draft.traps.push(trap);
-  events.push({ type: 'trapPlaced', trapId: trap.id, pos: trap.pos, owner: trap.owner });
+  //
+  // WARDING-WALL is the exception TRAP-CENTRE left room for, and it is opt-in
+  // rather than shape-derived. TRAP-CENTRE exists because a *disc* burying a
+  // mine under each of thirteen tiles is a minefield nobody authored — the count
+  // fell out of the radius. A wall is the opposite case: four tiles because the
+  // ability says four. So `perTile` is a field on the effect, the count stays
+  // something a human wrote down, and every existing trap is untouched.
+  const squares = trapEffect.perTile === true
+    ? planned.area
+    : [planned.aim[0] ?? owner.pos];
+  // PHASE-STATUS-FIRST: the number is stamped now, from the Might or Weaken the
+  // owner is carrying as the mine goes in the ground — including one applied
+  // earlier in this same phase, which is why arming is the phase's second
+  // sub-step. A trap that detonates three turns later is not re-measured against
+  // whatever the owner happens to be feeling then; the charge was set when it
+  // was buried. Hoisted out of the loop so every tile of one wall carries the
+  // same number — it is one cast, not four.
+  const damage = scaleDamage(trapEffect.amount ?? 0, outgoingDamagePct(owner));
+  for (const pos of squares) {
+    const trap: TrapState = {
+      // The ability is part of the id because a unit can now arm two traps in
+      // one turn — Thorn's auto-mine in Blast beside a free Snare Bloom in Prep
+      // — and two traps sharing an id would make the consumed-trap filter in
+      // `triggerTrapsOnEntry` sweep away the one that did not fire. The square
+      // is in it for the same reason, one level down: a wall is four traps from
+      // one cast of one ability, and they must be individually consumable.
+      id: `trap-${owner.unitId}-t${draft.turn}-${planned.def.id}-${pos.x},${pos.y}`,
+      owner: owner.owner,
+      ownerUnitId: owner.unitId,
+      abilityId: planned.def.id,
+      pos: { x: pos.x, y: pos.y },
+      damage,
+      // TRAP-LIFETIME: stamped at placement, measured exactly like a status
+      // `duration` — `lifetime: 2` covers this turn and the next. An omitted
+      // lifetime lands on the cap rather than living forever, so a trap can only
+      // be *shorter* than the rule by being under-specified, never longer.
+      expiresOnTurn: draft.turn + (trapEffect.lifetime ?? TRAP_MAX_LIFETIME) - 1,
+      // TRAP-HALT: carried from the effect, like the lifetime beside it.
+      ...(trapEffect.halt === true ? { halt: true } : {}),
+      // WARDING-WALL: likewise carried rather than decided here.
+      ...(trapEffect.triggers !== undefined ? { triggers: [...trapEffect.triggers] } : {}),
+      onTrigger,
+    };
+    draft.traps.push(trap);
+    events.push({ type: 'trapPlaced', trapId: trap.id, pos: trap.pos, owner: trap.owner });
+  }
 }
 
 /** `"x,y"` back to a `Vec2` — the inverse of `vecKey`, for blast bookkeeping. */
@@ -1482,7 +1553,7 @@ function walkCharge(draft: GameState, board: Board, unit: UnitState, path: reado
     const from = unit.pos;
     unit.pos = { x: step.x, y: step.y };
     events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-    if (triggerTrapsOnEntry(draft, board, unit, events)) return crossed; // died or halted (TRAP-HALT)
+    if (triggerTrapsOnEntry(draft, board, unit, events, 'dash')) return crossed; // died or halted (TRAP-HALT)
   }
   return crossed;
 }
@@ -1506,7 +1577,10 @@ function teleport(
   const from = unit.pos;
   unit.pos = { x: landing.x, y: landing.y };
   events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-  triggerTrapsOnEntry(draft, board, unit, events);
+  // WARDING-WALL: a blink *arrives*, it does not cross — so a hazard that only
+  // catches things passing through it (the wall) sits this out, while a mine
+  // you materialise on top of still goes off, exactly as before.
+  triggerTrapsOnEntry(draft, board, unit, events, 'teleport');
   return true;
 }
 
@@ -2536,7 +2610,7 @@ function stepMovers(
       const k = vecKey(to);
       entered.set(k, [...(entered.get(k) ?? []), m]);
       events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
-      if (triggerTrapsOnEntry(draft, board, m.unit, events)) m.halted = true; // died or halted → rest of the path dropped
+      if (triggerTrapsOnEntry(draft, board, m.unit, events, 'move')) m.halted = true; // died or halted → rest of the path dropped
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
       bounceOffOccupied(draft, movers, m, step, events);

@@ -466,3 +466,95 @@ describe('effect polarity table is total (R7)', () => {
     expect(HARMFUL_KINDS.size + BENEFICIAL_KINDS.size + NEUTRAL_KINDS.size).toBe(EFFECT_KINDS.length);
   });
 });
+
+describe('CD-BAND-INVARIANT: every cooldown sits in its phase\'s band', () => {
+  /**
+   * The owner's cooldown directive, as an assertion instead of nine data edits
+   * nobody can find again:
+   *
+   * > *"1. Dashes should be a 4-5 turn cooldown with only a few exceptions …
+   * > 2. Non-basic blasts should have 3-4 turn cooldown with only a few
+   * > exceptions … 3. Prep cooldowns are correct right now."*
+   *
+   * CD-BAND-DASH and CD-BAND-BLAST moved fifteen numbers to satisfy it. This is
+   * what stops the sixteenth from drifting back out — and, more to the point,
+   * what tells the next author writing a new ability what the rule *is*. A
+   * balance directive that lives only in a review document is a directive that
+   * gets re-litigated; one that fails the build states itself.
+   *
+   * **Prep is FROZEN** (directive #3): its band is descriptive, drawn around the
+   * numbers as they already stand, so it catches a new outlier without licensing
+   * anybody to retune an existing one.
+   *
+   * No allow-list. Every shipped value is inside its band — Blink at 4 is a
+   * deliberate exception to the *reasoning* (a pure teleport that costs 4) and
+   * not to the band, and Warding Wall is Prep cd 4, which the prep range already
+   * contains. If a genuine exception ever arrives, it belongs here as a named
+   * constant with the reason beside it, not as a widened bound.
+   */
+  const BANDS = {
+    dash: { min: 4, max: 5, why: 'CD-BAND-DASH: a dash costs 4 (enemy-facing) or 5 (pure reposition)' },
+    blast: { min: 3, max: 4, why: 'CD-BAND-BLAST: a non-basic blast costs 3, or 4 above the 24-damage skill ceiling' },
+    prep: { min: 2, max: 5, why: 'prep cooldowns are FROZEN by owner directive #3 — this band is descriptive' },
+  } as const;
+
+  /** Every non-basic, non-ultimate ability, with where it came from. */
+  const rows = characters.flatMap((c) => c.abilities
+    .map((a, i) => ({ where: `${c.id}.${a.id}`, a, basic: i === 0 })));
+
+  it('reads the whole roster, not a sample', () => {
+    // A guard that iterates nothing passes forever.
+    expect(characters).toHaveLength(9);
+    expect(rows.length).toBeGreaterThanOrEqual(30);
+  });
+
+  it('every abilities[0] is a Blast auto-attack on no cooldown', () => {
+    // The reason nothing sits below the blast band: the plain shot IS the basic,
+    // and it is free. Every other blast pays for a status rider.
+    for (const { where, a, basic } of rows) {
+      if (!basic) continue;
+      expect(a.phase, `${where} is abilities[0] and must be the basic Blast`).toBe('blast');
+      expect(a.cooldown, `${where} is the auto-attack and must be free`).toBe(0);
+    }
+  });
+
+  it('every ultimate is on no cooldown — energy is its cost', () => {
+    for (const c of characters) {
+      expect(c.ultimate.cooldown, `${c.id}.${c.ultimate.id} — an ult is gated by energy, not turns`)
+        .toBe(0);
+    }
+  });
+
+  it('every non-basic ability is inside its phase\'s band', () => {
+    for (const { where, a, basic } of rows) {
+      if (basic) continue;
+      const band = BANDS[a.phase];
+      expect(a.cooldown, `${where} (${a.phase} cd ${a.cooldown}) — ${band.why}`)
+        .toBeGreaterThanOrEqual(band.min);
+      expect(a.cooldown, `${where} (${a.phase} cd ${a.cooldown}) — ${band.why}`)
+        .toBeLessThanOrEqual(band.max);
+    }
+  });
+
+  it('and each band actually has abilities in it, so none is vacuous', () => {
+    // Three bands, three populations. A phase that quietly emptied — every
+    // Blast becoming a Prep, say — would leave its band asserting nothing, and
+    // WARDING-WALL just did exactly that to one of Aegis's Blasts.
+    const counts = { dash: 0, blast: 0, prep: 0 };
+    for (const { a, basic } of rows) if (!basic) counts[a.phase] += 1;
+    for (const phase of ['dash', 'blast', 'prep'] as const) {
+      expect(counts[phase], `no non-basic ${phase} ability to check`).toBeGreaterThan(0);
+    }
+  });
+
+  it('and the guard would actually catch one that was not', () => {
+    // The check on the check. A band nobody can demonstrate failing is a
+    // comment: a dash one turn under its floor must trip it.
+    const inBand = (phase: keyof typeof BANDS, cd: number): boolean =>
+      cd >= BANDS[phase].min && cd <= BANDS[phase].max;
+    expect(inBand('dash', 4)).toBe(true);
+    expect(inBand('dash', 3), 'a 3-turn dash is out of band').toBe(false);
+    expect(inBand('blast', 2), 'a 2-turn non-basic blast is out of band').toBe(false);
+    expect(inBand('blast', 5), 'and so is a 5-turn one').toBe(false);
+  });
+});

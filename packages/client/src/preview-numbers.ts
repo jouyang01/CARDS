@@ -41,10 +41,44 @@
  * the number is the post-cover damage, and the nameplate shows the shield pool
  * separately. Heals and shields keep their authored amounts — the owner named
  * Might, Cover and Weaken, all of which are outgoing-damage rules.
+ *
+ * PREVIEW-NUMBERS-AUDIT — *"AUDIT ALL DAMAGE PREVIEWS TO ENSURE THEY ARE
+ * CORRECT."*
+ *
+ * PREVIEW-MODIFIERS got the *modifiers* right and still previewed the wrong
+ * number, because it took `effect.amount` as **the** damage. It is not: the
+ * engine composes a per-tile figure before any modifier runs, and four rules
+ * were missing from this file entirely.
+ *
+ * - **BASIC-INNER** — a tile in the disc's core takes `innerAmount` *instead
+ *   of* the ring's number. Cinder's Ember Bolt is 22 in the middle and 14
+ *   around it, and every tile previewed 14 (Dev Note #2, named exactly).
+ * - **BASIC-AXIS** — a tile on the wedge's centre line takes `axisBonus` on top
+ *   (Bastion, +8).
+ * - **CASTER-SAFE** — the caster is not a target of its own harmful effects, but
+ *   Ravok stands inside every one of his `range: 0` discs, so his own square
+ *   previewed the enemies' full 22.
+ * - **RECOIL** — and now that RAVOK-RECOIL priced the whirl, that same square
+ *   genuinely takes **11**. Dev Note #3 spells the whole table out: "11 to
+ *   himself, 22 to enemies for whirling cleave … 12 to enemies for shockwave and
+ *   nothing on Ravok … seismic rupture should show 19 damage to ravok and 38 to
+ *   others."
+ *
+ * ALLY-SAFE (`noFriendlyFire`) and UNTGT1 (`untargetable`) join them for the
+ * same reason: both make the engine skip a target this file was still drawing a
+ * number over.
+ *
+ * The composition below is `runBlast`'s, in the same order — inner *replaces*,
+ * axis *adds*, then Might/Weaken/cover — and the axis and inner tile sets are
+ * handed in from the engine's own `axisSquares`/`innerSquares` rather than
+ * re-derived here. That is the whole discipline of the item: a client that
+ * worked out for itself which tiles look like the core would be a second
+ * geometry, and the previewed number would drift from the dealt one the first
+ * time the shapes changed.
  */
 
 import {
-  computeDamage, isBehindCover,
+  computeDamage, hasStatus, isBehindCover,
   type AbilityDef, type Board, type GameState, type TeamId, type UnitState, type Vec2,
 } from '@cards/engine';
 
@@ -82,6 +116,20 @@ export interface PreviewDecoy {
 export interface AimedAction {
   def: AbilityDef;
   squares: readonly Vec2[];
+  /**
+   * PREVIEW-NUMBERS-AUDIT — the two interior bands, straight from the engine's
+   * `axisSquares` / `innerSquares` (via `previewBandSets`).
+   *
+   * Optional because most abilities have neither, and absent means "no band",
+   * not "unknown": an ability that declares `axisBonus` or `innerAmount` and is
+   * handed no bands simply previews its flat number, which is the pre-audit
+   * behaviour rather than a crash. Callers that draw the bands already compute
+   * these — `previewBands` is the same pair concatenated — so passing them in
+   * costs nothing and keeps the number and the highlight derived from one
+   * source.
+   */
+  axis?: readonly Vec2[];
+  inner?: readonly Vec2[];
 }
 
 /** Beneficial kinds are own-team only; `damage` is the one that crosses teams. */
@@ -131,37 +179,68 @@ export function previewNumbers(
   decoys: readonly PreviewDecoy[] = [],
 ): PreviewNumber[] {
   const totals = new Map<string, number>(); // `${targetId}:${kind}` → amount
-  for (const { def, squares } of actions) {
+  const key = (p: Vec2): string => `${p.x},${p.y}`;
+  for (const { def, squares, axis, inner } of actions) {
     if (squares.length === 0) continue;
-    const area = new Set(squares.map((p) => `${p.x},${p.y}`));
+    const area = new Set(squares.map(key));
+    // BASIC-AXIS / BASIC-INNER, engine-derived. Sets rather than lists because
+    // the question asked per target is membership.
+    const axisTiles = new Set((axis ?? []).map(key));
+    const innerTiles = new Set((inner ?? []).map(key));
+    const axisBonus = def.axisBonus ?? 0;
+    // ALLY-SAFE (Dev Note #11): an ability may opt out of friendly fire, and one
+    // shipped ability does — Lumen's Radiant Lash damages enemies in the line
+    // and heals allies in the same line. A red number over the ally it is
+    // healing is the reading this closes.
+    const allySafe = def.noFriendlyFire === true;
+
     for (const effect of def.effects) {
       const kind = effect.kind;
       if (!isPreviewKind(kind)) continue;
       const amount = effect.amount ?? 0;
-      if (amount <= 0) continue;
+      // `innerAmount` can carry the whole blow on a tile where `amount` is 0,
+      // so the "does this effect do anything" gate has to see both.
+      if (Math.max(amount, kind === 'damage' ? def.innerAmount ?? 0 : 0) <= 0) continue;
       /**
-       * PREVIEW-MODIFIERS: the engine's own composition, per target square.
-       * `damage` alone — Might, Weaken and cover are outgoing-damage rules, and
-       * applying them to a heal would be inventing a mechanic.
+       * `runBlast`'s composition, in `runBlast`'s order.
+       *
+       * Inner **replaces** the ring's number (a falloff is authored as two
+       * numbers, not a number and a discount); axis **adds** on top (the bonus
+       * is part of the blow); and only then do Might, Weaken and cover apply —
+       * because both bands are "which blow landed", not a second one.
        */
-      const dealt = (at: Vec2): number => kind !== 'damage'
-        ? amount
+      const dealt = (at: Vec2): number => {
+        if (kind !== 'damage') return amount;
+        const here = key(at);
+        const base = def.innerAmount !== undefined && innerTiles.has(here) ? def.innerAmount : amount;
+        const raw = base + (axisTiles.has(here) ? axisBonus : 0);
         // MELEE-COVER: a melee strike is not reduced by cover, so the preview
         // must not reduce it either — the whole point of routing through the
         // engine is that the two cannot disagree.
-        : computeDamage(amount, caster, def.melee === true
+        return computeDamage(raw, caster, def.melee === true
           ? false
           : isBehindCover(board, caster.pos, at, def.range));
+      };
 
       for (const target of state.units) {
-        if (!target.alive || !area.has(`${target.pos.x},${target.pos.y}`)) continue;
+        if (!target.alive || !area.has(key(target.pos))) continue;
         if (OWN_TEAM_ONLY.has(kind) && target.owner !== caster.owner) continue;
         // PREVIEW-FOG. Own units are always visible to their own team, so this
         // only ever removes enemies — and it asks the fog view rather than
         // re-deriving sight, exactly like every other client consumer.
         if (target.owner !== caster.owner && !visible.has(target.unitId)) continue;
-        const key = `${target.unitId}:${kind}`;
-        totals.set(key, (totals.get(key) ?? 0) + dealt(target.pos));
+        if (kind === 'damage') {
+          // CASTER-SAFE: you are never a target of your own harmful effects.
+          // Ravok stands inside every one of his `range: 0` discs, so without
+          // this his own square previewed the enemies' full number. What he
+          // actually pays is the recoil, added below.
+          if (target.unitId === caster.unitId) continue;
+          if (allySafe && target.owner === caster.owner) continue;
+          // UNTGT1: the whole harmful half is skipped for an untargetable unit.
+          if (hasStatus(target, 'untargetable')) continue;
+        }
+        totals.set(`${target.unitId}:${kind}`,
+          (totals.get(`${target.unitId}:${kind}`) ?? 0) + dealt(target.pos));
       }
       // Decoys take the same polarity rule off the same `owner` field, so a
       // decoy in your AoE reads exactly like the unit it is pretending to be.
@@ -169,10 +248,33 @@ export function previewNumbers(
       // a decoy that previewed full damage from behind a wall the real unit
       // would be reduced by is a tell, and this fiction has to be seamless.
       for (const decoy of decoys) {
-        if (!area.has(`${decoy.pos.x},${decoy.pos.y}`)) continue;
+        if (!area.has(key(decoy.pos))) continue;
         if (OWN_TEAM_ONLY.has(kind) && decoy.owner !== caster.owner) continue;
-        const key = `${decoy.id}:${kind}`;
-        totals.set(key, (totals.get(key) ?? 0) + dealt(decoy.pos));
+        if (kind === 'damage' && allySafe && decoy.owner === caster.owner) continue;
+        totals.set(`${decoy.id}:${kind}`,
+          (totals.get(`${decoy.id}:${kind}`) ?? 0) + dealt(decoy.pos));
+      }
+    }
+
+    /**
+     * RECOIL — the caster's own square, which CASTER-SAFE just excluded.
+     *
+     * `selfDamagePct` is a **cost of firing**, so it is outside the target loop:
+     * it is charged whether or not the caster stands in the area, and whether or
+     * not the swing hit anybody. The engine scales the ability's plain `damage`
+     * amount — not the inner number, not the axis bonus — and the result bypasses
+     * cover, Might and Weaken (it is the authored number scaled, not an attack
+     * aimed at yourself), so `computeDamage` is deliberately not called here.
+     *
+     * 11 for Whirling Cleave, 19 for Seismic Rupture, and nothing at all for
+     * Shockwave, which carries no `selfDamagePct` — the table from Dev Note #3.
+     */
+    const recoilPct = def.selfDamagePct;
+    if (recoilPct !== undefined && caster.alive) {
+      const base = def.effects.find((e) => e.kind === 'damage')?.amount ?? 0;
+      const recoil = Math.floor((base * recoilPct) / 100);
+      if (recoil > 0) {
+        totals.set(`${caster.unitId}:damage`, (totals.get(`${caster.unitId}:damage`) ?? 0) + recoil);
       }
     }
   }

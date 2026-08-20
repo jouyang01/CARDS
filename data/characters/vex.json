@@ -27,7 +27,7 @@
       "shape": "circle",
       "range": 6,
       "radius": 2,
-      "cooldown": 3,
+      "cooldown": 4,
       "energyGain": 10,
       "delayTurns": 1,
       "effects": [
@@ -44,7 +44,7 @@
       "phase": "dash",
       "shape": "path",
       "range": 4,
-      "cooldown": 2,
+      "cooldown": 5,
       "energyGain": 4,
       "effects": [
         {

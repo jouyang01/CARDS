@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { BENEFICIAL_KINDS, HARMFUL_KINDS, type EffectKind, type GameState, type TurnEvent } from '@cards/engine';
+import {
+  BENEFICIAL_KINDS, EFFECT_KINDS, HARMFUL_KINDS, isStatusKind,
+  type EffectKind, type GameState, type TurnEvent,
+} from '@cards/engine';
 import {
   BENEFICIAL_PIPS, HARMFUL_PIPS, PIP_COLORS, PIP_ORDER, PIP_TINT, pipTint, statusPips,
 } from '../src/status-pips.js';
@@ -12,14 +15,21 @@ import { initView, playEvents } from '../src/playback.js';
  * deriving nothing in either case.
  */
 
-const ALL_STATUS_KINDS: EffectKind[] = [
-  'might', 'weaken', 'haste', 'slow', 'root', 'reveal', 'energized',
-  'unstoppable', 'stealth', 'untargetable', 'shield',
-  // BRUSH-BREAK: a marker the enemy applies to you by hitting you in a bush,
-  // and one a player has to be able to see — "the thicket has stopped working"
-  // is a positioning decision, and an invisible one is a trap.
-  'brushBroken',
-];
+/**
+ * Every kind that can live on `unit.statuses`, **asked of the engine**.
+ *
+ * It was a hand-written list, and BURN-VISIBLE is what a hand-written list
+ * costs: `damageOverTime` became a status when DOT-HOT shipped, nobody added it
+ * here, and this test went on certifying the vocabulary as "total" while
+ * Cinder's burn had no mark at all — *"Cinder burn should be a debuff that
+ * players can see"*. `isStatusKind` is the same predicate `applyStatus` uses, so
+ * the next kind to join cannot slip past unnoticed.
+ *
+ * BRUSH-BREAK is in it for the reason it was called out before: a marker the
+ * enemy applies to you by hitting you in a bush is a positioning decision, and
+ * an invisible one is a trap.
+ */
+const ALL_STATUS_KINDS: EffectKind[] = EFFECT_KINDS.filter((k) => isStatusKind(k));
 
 describe('the pip vocabulary is total over the statuses that exist', () => {
   it('has a slot for every status kind and no slot for anything else', () => {
@@ -101,11 +111,13 @@ describe('polarity tint: buffs blue, debuffs red', () => {
   });
 
   it('names the sides the owner named: DoT red, HoT blue', () => {
-    // The two kinds ar-parity §4.8 calls out by name. Neither is drawable today
-    // (they are not in PIP_ORDER), so this pins the *table*, which is the thing
-    // that would be wrong if the polarity were retyped instead of derived.
+    // The two kinds ar-parity §4.8 calls out by name. They pinned the *table*
+    // while neither was drawable; since BURN-VISIBLE put both in `PIP_ORDER`
+    // they pin the row as well, which is the reading a player gets.
     expect(pipTint('damageOverTime')).toBe(PIP_TINT.harmful);
     expect(pipTint('healOverTime')).toBe(PIP_TINT.beneficial);
+    expect(PIP_ORDER, 'and both are on the row now').toContain('damageOverTime');
+    expect(PIP_ORDER).toContain('healOverTime');
   });
 
   it('derives its debuff set from the engine rather than restating it', () => {

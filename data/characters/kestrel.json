@@ -25,7 +25,7 @@
       "phase": "dash",
       "shape": "path",
       "range": 4,
-      "cooldown": 2,
+      "cooldown": 4,
       "energyGain": 5,
       "effects": [{ "kind": "damage", "amount": 12 }],
       "description": "Glide up to 4 squares; the first enemy passed takes 12 damage. The dodge is also the poke — dodges Blast attacks aimed at your old square."
@@ -39,10 +39,10 @@
       "cooldown": 3,
       "energyGain": 5,
       "effects": [
-        { "kind": "haste", "duration": 1 },
-        { "kind": "energized", "duration": 1 }
+        { "kind": "haste", "duration": 2 },
+        { "kind": "energized", "duration": 2 }
       ],
-      "description": "Ride the wind: Haste and Energized for a turn. Converts a quiet turn into position and ult tempo."
+      "description": "Ride the wind: Haste and Energized for two turns. Converts a quiet turn into position and ult tempo."
     },
     {
       "id": "kite_shot",
@@ -50,7 +50,7 @@
       "phase": "blast",
       "shape": "line",
       "range": 7,
-      "cooldown": 2,
+      "cooldown": 3,
       "energyGain": 8,
       "effects": [
         { "kind": "damage", "amount": 16 },

@@ -10,127 +10,113 @@ independently shippable. Each item carries **Spec Notes** (Analyzer's build guid
 **dependency-free**; client/server consume `TurnEvent[]` + the engine's derived queries — never
 recompute them. **`@cards/server` imports `@cards/engine` only** (client may import server protocol
 **types only**). **Movement is Manhattan (MET1); aiming is Euclidean.** **Every engine behavior change
-ships with a Vitest test in the same commit.** **Drive the real UI wiring in tests** (`app-harness.ts`
-/ two-net-client tests — the death hang is exactly this class). **Open/update a PR to `main` every
-session.**
+ships with a Vitest test in the same commit** — and a **bug fix or a reversed ruling ships with the
+regression / flipped test in that same commit.** **A genuinely new mechanic gets a generic, reusable
+implementation** (golden rule #2). **Drive the real UI wiring in tests.** **Open/update a PR to `main`
+every session.**
 
-> ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set; QUOTA-RUNAWAY (PR #89) guards the
-> Cloudflare quota. Keep it green.
+> ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set; QUOTA-RUNAWAY guards the quota. Keep green.
 
 ## ✅ COMPLETE
 
-- The full hot-seat game + AR parity + the whole M3 networked loop + deploy + Dev Notes batch 3.
-- **PR #89 (Designer/infra):** **QUOTA-RUNAWAY** — abandoned matches stop the DO alarm ticking, no-op
-  writes are skipped, Worker errors are CORS'd (the Cloudflare-quota guard; tested in every area).
-- **PR #92 (this review):** **AIM-PREVIEW-TRUE** (the aim preview's shape is now the engine's own
-  tile-centre predicate, congruence-swept — Aegis's beam reads as a 3-wide lane; boundary has square
-  ends matching the predicate), **HARNESS-LOBBY-MATCH** (the lobby→match handoff is harness-driven).
+- The full hot-seat game + AR parity + the whole M3 networked loop + deploy + Dev Notes batches 1–3 +
+  AIM-PREVIEW-TRUE + DEATH-HANG.
+- **PR #97 (this review):** **WARDING-WALL** (Aegis's Grounding Strike → a Prep, freely-placed 4-tile
+  line-hazard: a new `wall` shape, `perTile` trap placement, and a **per-trap `triggers` list** —
+  `move`/`dash`/`teleport`/`displacement` — so a wall catches a shove and a mine keeps the v1 rule),
+  **BASTION-RAM-LINE** (`chargeHits:"all"` + a line preview with a landing marker), **CD-BAND-DASH**,
+  **CD-BAND-BLAST**, **CD-BAND-INVARIANT** (the bands, enforced by a band-naming test),
+  **DOWN-SEAT-SKIP** (a seat with no living units is not waited on).
 
-Current suite: **2393 tests** (1191 + 910 + 292), typecheck + build clean.
+Current suite: **2600 tests** (1341 + 957 + 302), typecheck clean.
 
 ### Build order and dependencies
 
-**DEATH-HANG → RAVOK-RECOIL → KESTREL-SLIPSTREAM-2T → PREVIEW-NUMBERS-AUDIT → BURN-VISIBLE →
-LINE-PREVIEW-SMOOTH.** The two data items (RAVOK-RECOIL, KESTREL-SLIPSTREAM-2T) are one-line each and
-should land **before** PREVIEW-NUMBERS-AUDIT so the audit checks the final numbers. DEATH-HANG is
-CRITICAL and first. Realistic one-session cut: DEATH-HANG + the two data items + PREVIEW-NUMBERS-AUDIT.
+**TRAP-SHOVE-DEFAULT** is the only scheduled work — one engine field, one flipped test, one new test.
+Everything else this session is flags/Designer routing. No dependencies.
 
 ---
 
-## Client — the death hang (CRITICAL, do first)
+## Engine — traps now catch a shove (the whole session)
 
-### DEATH-HANG. A character dying must not freeze the turn (CLIENT bug) — UNBLOCKED (first, CRITICAL)
-**Addresses Dev Note: "BIG BUG: IMPORTANT: Something breaks when a character dies, the lock-in is not
-possible and the timer bar goes away, forcing game to go on forever."** Investigated: the hot-seat
-turn-boundary is robust (`seatRoster()` filters `alive`); the suspect is the **networked** path —
-`playResolution` runs `beginTurn()` for both modes (`app.ts:1932`), and `openSeat`'s *"no living roster
-→ `endTurn()`"* branch (`app.ts:925-932`) **auto-submits** `net.submit([])` the instant a resolution
-leaves this seat's unit(s) **downed** (respawning), leaving the client locked with no actionable window
-— "lock-in impossible, timer gone." *AC: after a resolution that downs a unit, the **next** turn is
-playable — the timer (from the server window) shows and lock-in works — for **both** the downed seat
-and its opponent, in **hot-seat and networked**; a seat with all units currently down presents an
-honest **waiting/hold** state (not an auto-submit that reads as frozen); the match still ends on the
-kill target, not on a transient down. Tests: **drive a death through the harness** (a two-net-client
-match and a hot-seat) and assert the following turn opens with a live timer and a working lock-in; a
-downed seat does not silently auto-submit into a frozen UI.* **Spec Notes.** Files:
-`packages/client/src/app.ts` (`playResolution`/`beginTurn`/`openSeat`/`adoptWindow` — the networked
-turn-boundary; separate the networked next-turn open from the hot-seat seat-iteration), possibly the
-server window re-arm after a death-resolution (verify `#sendDecision` sends a fresh window when status
-stays active). **Reproduce before fixing** — this is a wiring bug, not a pure-function bug. Out of
-scope: the engine (death/respawn correct); the end-screen (correct).
+### TRAP-SHOVE-DEFAULT. An ordinary mine triggers on a knock-through; a blink past it never does (ENGINE) — UNBLOCKED (first)
+**Addresses Dev Note: "Traps should trigger if an enemy is knocked through the trap or if they blink
+onto the trap or dash onto/through the trap."** and **Dev Note: "Trap should not trigger if enemy blinks
+PAST the trap."** PR #97 already built the whole mechanism (`triggerTrapsOnEntry` takes an entry kind;
+displacement is walked square-by-square; teleport fires only at the landing square). The **only** gap is
+that `DEFAULT_TRAP_ENTRIES` omits `displacement`, so an ordinary mine ignores a shove — which this Dev
+Note reverses. Ruled in edge-cases (**TRAP-TRIGGER**, superseding the 2026-08-14 knockback-exclusion).
 
-## Data — the two number tweaks (before the preview audit)
+*AC:*
+- **`DEFAULT_TRAP_ENTRIES` becomes `['move','dash','teleport','displacement']`** (`packages/engine/src/types.ts`).
+  No other production change is needed — `applyDisplacements` already calls `triggerTrapsOnEntry(..., 'displacement', square)`
+  for every square a shove crosses, and `triggerTrapsOnEntry` already filters by `(t.triggers ?? DEFAULT_TRAP_ENTRIES).includes(entry)`.
+- **A knock-through fires an ordinary mine.** A knockback/pull that carries an enemy **onto or across** a
+  mine tile triggers it (damage lands, the trap is consumed), for the three default-trap abilities: Vex
+  `overwatch_trap`, Thorn `barbed_sling`, Thorn `snare_bloom`. Knocked *through* and knocked to *rest on*
+  both count (the resting square is the last square in the walked path).
+- **A blink PAST a mine does NOT fire it** — a teleport whose landing square is **beyond** the mine's
+  tile leaves the mine armed and the blinker unhurt (it occupies only its landing square, crosses nothing).
+- **A blink ONTO a mine still fires it, and a dash onto/through still fires it** — unchanged.
+- **The wall is untouched.** `aegis.warding_wall`'s explicit `triggers: ['move','dash','displacement']`
+  overrides the default, so its authored *"a blink goes around it"* exception stands (a blink neither onto
+  nor past the wall fires it). **Do not add `teleport` to the wall** — see the flag below.
 
-### RAVOK-RECOIL. Whirling Cleave costs Ravok 11 (DATA) — UNBLOCKED
-**Addresses Dev Note: "Ravok whirling cleave should do 11 damage to himself."** *AC:
-`data/characters/ravok.json` `cleave` gains `selfDamagePct: 50` (Ravok takes floor(22×50/100)=11 —
-RECOIL, bypasses cover, shields first); Shockwave unchanged (0 self / 12 enemies); Seismic Rupture
-unchanged (19/38); the content + engine suites stay green.* **Spec Notes.** One data field; the RECOIL
-mechanic already exists. Ruled in edge-cases (RAVOK-RECOIL). The **preview** of the self number is
-PREVIEW-NUMBERS-AUDIT's job. Out of scope: Shockwave/Seismic (correct).
+*Tests (same commit — this reverses a v1 ruling):*
+- **FLIP** the shipped guard *"an ordinary mine still ignores a shove — the RULED v1 behaviour"*
+  (`packages/engine/test/warding-wall.test.ts`, ~line 286) to assert the mine **now fires** on the same
+  Bullrush shove: the victim loses HP beyond the charge alone and `shoved.traps` is empty (the mine is
+  consumed). Rename it to reflect the reversal (e.g. *"an ordinary mine now fires on a shove — TRAP-TRIGGER"*).
+- **ADD** a blink-**past**-a-mine test: arm an Overwatch Trap, have Wisp blink to a square **beyond** it
+  in the same line; assert the mine is still armed (`traps` length 1) and the blinker took no damage.
+- **KEEP GREEN** the existing *"an ORDINARY mine still fires on a blink"* (blink-onto) and the dash /
+  move trap tests, and **both wall guards** (a shove through the wall fires it; a blink onto/past the wall
+  does not).
 
-### KESTREL-SLIPSTREAM-2T. Slipstream lasts 2 turns (DATA) — UNBLOCKED
-**Addresses Dev Note: "Kestrel's slipstream shouldgive a 2T buff for both haste and energized."** *AC:
-`data/characters/kestrel.json` `slipstream` — both riders `duration: 2` (was 1); a test asserts the
-haste and energized both persist to the turn after the cast.* **Spec Notes.** Two data fields; matches
-how durations are measured (a `duration: 2` status survives the cast turn's end-of-turn tick). Out of
-scope: other Kestrel abilities.
-
-## Client — the damage-number audit
-
-### PREVIEW-NUMBERS-AUDIT. Every ability's previewed damage number matches its resolution (CLIENT) — UNBLOCKED
-**Addresses Dev Notes #2 and #3.** *#2: "Cinder's preview for damage on her auto attack should show the
-extra damage to the center correctly. IMPORTANT again, AUDIT ALL DAMAGE PREVIEWS TO ENSURE THEY ARE
-CORRECT." #3: "show 11 to himself, 22 to enemies for whirling cleave … 12 to enemies for shockwave and
-nothing on Ravok … seismic rupture should show 19 damage to ravok and 38 to others."* AIM-PREVIEW-TRUE
-fixed the shape; the **numbers** still hide the centre bonus and the caster's own recoil. *AC: the
-damage tell equals the engine's resolution **at every previewed tile** for the whole roster, including:
-Cinder's inner (22 centre / 14 ring), Bastion's axis (+8 line), and — the new dimension — the **caster's
-own tile** carrying `selfDamagePct` recoil (**11** whirl, **19** Seismic, **nothing** for Shockwave);
-DoT/heal tells unchanged. A property-style test: previewed number at tile == resolved number at tile,
-for every roster ability at a fixed aim, **including the caster's square when `selfDamagePct` is set.*
-**Spec Notes.** Files: `packages/client/src/targeting.ts` (`previewBands`/`damageTell`/`impactPreview`)
-— drive numbers from the engine's `axisSquares`/`innerSquares` and the damage composition (incl.
-`selfDamagePct` on the caster's tile); **never a client re-guess**. Depends on RAVOK-RECOIL /
-KESTREL-SLIPSTREAM-2T landing first so the audit checks final numbers. Out of scope: the shape
-(AIM-PREVIEW-TRUE, done); rebalancing.
-
-## Client — the burn debuff & the line smoothness
-
-### BURN-VISIBLE. Cinder's burn (DoT) shows as a visible debuff pip (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "Cinder burn should be a debuff that players can see."** The DoT is a
-`damageOverTime` **status** on the unit (per-turn amount + source), but the status pips don't render it.
-*AC: a unit with a `damageOverTime` status shows a **burn debuff pip** (with its remaining turns), like
-root/slow/reveal; hovering it names the per-turn amount; a test asserts a burning unit renders the pip.*
-**Spec Notes.** Files: `packages/client/src/status-pips.ts` (+ the pip's tooltip). Read the existing
-status — no engine change. Out of scope: HoT (own-team heal-over-time — apply the same treatment if
-cheap, but the ask is the burn).
-
-### LINE-PREVIEW-SMOOTH. Line-attack previews track smoothly on hover (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "Vex's and other line attack previews seem to be a little laggy, can you make it
-more smooth?"** The per-hover boundary re-derivation (AIM-PREVIEW-TRUE) likely re-tessellates every
-mousemove for a long line. *AC: the line/beam preview re-derives only when the **quantized aim
-direction** changes (not every pixel), so it tracks smoothly; a test/benchmark asserts the derivation
-is skipped when the aim step is unchanged.* **Spec Notes.** Files: `packages/client/src/` (the hover →
-boundary path — memoise on `aimStep`/direction). Out of scope: the geometry (correct); the congruence
-test.
+**Spec Notes.** This is one production line plus the tests — resist widening it. **Determinism / N-safety
+are already proven** (the displacement path walk and per-square firing shipped for the wall in PR #97;
+this only routes mines through the same integer path). Trap-list order is stable; traps consumed by id.
+**Do not** try to distinguish "knocked through" from "knocked to rest on" — both put the victim on the
+tile and both trigger; splitting them is a hair the Dev Note does not ask for and the path walk does not
+draw. Out of scope: the wall's trigger list (unchanged); any new trap ability; changing how far a shove
+travels.
 
 ## Routed to Designer / flags
 
-- **Aegis beam distinctness** — now a visible 3-wide rectangle lane; **re-ask the Designer/owner**
-  whether it reads distinct enough (Builder OQ 2026-09-22 #2). **Warding Halo's dead `weaken`** (add an
-  enemy-facing Prep path or drop it), **trap count cap** — still Designer-owned.
-- **Inspect-panel chips hoverable** — needs a pinned-panel design; future. **Beam + axisBonus** compose
-  legally. **Chase-preview detour** deferred. **Solar Flare DoT ceiling**, **Thorn mine carpet** —
-  playtest. **AC #4 outline-through-centres** look — playtest note (Builder OQ #5).
+- **WALL-BLINK-ONTO (owner confirmation, from TRAP-SHOVE-DEFAULT).** After this change, a blink that
+  lands **on a mine** fires it, but a blink that lands **on a wall tile** does not — the wall keeps the
+  owner's session-8 *"but not blinks"* exception. This is the one place the new general trap rule and the
+  wall's authored behaviour diverge. **Kept as authored; flag to owner** — say if the wall should now
+  also bite a blink that lands on it (it would be one array entry: add `teleport` to `warding_wall`'s
+  `triggers`, and flip the *"nor is a blink that lands ON a wall tile"* test).
+- **WARDING-WALL free rotation (session-8 OQ #1).** Orientation is **derived** (perpendicular to the
+  caster's line), not truly aimed. Correct and deterministic for v1; **true free rotation is an
+  ENGINE/CLIENT ASK** (needs an aim carrying a square **and** a step — an `aimFor`/`OrderDraft` change),
+  **not scheduled**. Designer call whether it is wanted.
+- **WARDING-WALL even-length centring (session-8 OQ #2).** A 4-tile wall puts the aimed square 2nd of 4
+  (offsets −1,0,+1,+2). A one-character change to 3rd, or an odd-lengths-only data rule, if the Designer
+  wants it. Not blocking.
+- **Aegis has no cooldown'd Blast (session-8 OQ #5).** Intended (the owner asked for the wall), but Aegis
+  is now the only character with no non-basic Blast — CD-BAND-BLAST's band has one fewer population. A
+  Designer look-before-playtest note.
+- **Aegis beam distinctness** (Shield Bash now reads as a 3-wide lane — re-ask if distinct enough).
+  **Self-lethal recoil warning** (a "this whirl will kill you" tell — a design call, not scheduled).
+  **Burn/regen pip glyphs** (new art, worth a look on a real plate).
+- **Warding Halo's dead `weaken`**, **trap count cap**, **inspect-panel chips hoverable**,
+  **chase-preview detour**, **Solar Flare DoT ceiling**, **Thorn mine carpet** — unchanged flags.
 
 ## Flagged future (not scheduled)
 
-- **NET-E2E** (two-client Playwright), **M3-REMATCH**, **IDLE-KICK**, **LOBBY-TEAM-CHOICE**,
-  **CAMO-E2E-FINISH** (low) — unchanged.
+- **All-seats-downed resolves on the timer, not at once** (session-8 OQ #4). DOWN-SEAT-SKIP closed the
+  partial case; the all-downed case is rare and safe (it already waited the window), and resolving
+  eagerly from `#sendDecision` risks a resolve→send→resolve loop (QUOTA-RUNAWAY territory). Only schedule
+  if the owner wants it, and then **only with the loop guard specified**.
+- **NET-E2E**, **M3-REMATCH**, **IDLE-KICK**, **LOBBY-TEAM-CHOICE**, **CAMO-E2E-FINISH** (low),
+  **same-turn-buff preview**, **route-around-bodies dash impact preview** — unchanged.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **A real two-machine internet playtest** (after DEATH-HANG — a death is the exact thing to exercise).
-  **The new HUD layout**, **AIM-PREVIEW-TRUE feel** (tiles pop as centres cross the outline),
-  **PHASE-STATUS-FIRST**, **Ravok's recoil**, **Thorn's mine carpet**.
+- **A real two-machine internet playtest** (DEATH-HANG shipped — exercise a death). **Shove-into-trap
+  combos** (TRAP-SHOVE-DEFAULT — a Bullrush into an Overwatch Trap is now a real play), **the cooldown
+  bands feel** (dashes at 4–5 change the tempo), **Warding Wall**, **Ram Charge's line**, **the new HUD**,
+  **AIM-PREVIEW-TRUE**, **Ravok's recoil**.

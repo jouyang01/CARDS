@@ -34,8 +34,14 @@ import { BENEFICIAL_KINDS, HARMFUL_KINDS, type EffectKind } from '@cards/engine'
  * a colour. Debuffs lead — what is being done *to* you is the more urgent read.
  */
 export const PIP_ORDER: readonly EffectKind[] = [
-  'root', 'slow', 'weaken', 'reveal', 'brushBroken',
-  'shield', 'might', 'haste', 'energized', 'unstoppable', 'untargetable', 'stealth',
+  // BURN-VISIBLE: `damageOverTime` and `healOverTime` join the row. They were
+  // the only two kinds that live on `unit.statuses` and had no mark, which made
+  // Cinder's burn a debuff you could feel and not see — "Cinder burn should be a
+  // debuff that players can see". Burn leads the debuffs because it is the one
+  // that is still taking HP off you while you plan; regen leads the buffs for
+  // the same reason from the other side.
+  'damageOverTime', 'root', 'slow', 'weaken', 'reveal', 'brushBroken',
+  'healOverTime', 'shield', 'might', 'haste', 'energized', 'unstoppable', 'untargetable', 'stealth',
 ];
 
 /**
@@ -46,6 +52,11 @@ export const PIP_ORDER: readonly EffectKind[] = [
  * the presence, and one thing should not have two colours.
  */
 export const PIP_COLORS: Readonly<Record<string, number>> = {
+  // BURN-VISIBLE: ember orange, hotter and more saturated than Root's brown so
+  // the two do not read as one earthy pair; and a mint for regen, kept a step
+  // cooler than Haste's leaf green because a unit can carry both.
+  damageOverTime: 0xf2782b,
+  healOverTime: 0x4fd6a8,
   root: 0x8a5a2b,
   slow: 0x4a7fc8,
   weaken: 0x6b5fa8,
@@ -168,6 +179,18 @@ export interface GlyphPart {
 export const GLYPH_STROKE = 2;
 
 export const STATUS_GLYPHS: Readonly<Record<string, readonly GlyphPart[]>> = {
+  // BURN-VISIBLE — flame. Filled, because a burn should read as a solid mass at
+  // pip size where an outline would close up into a blob anyway.
+  damageOverTime: [
+    { d: 'M13 2 c1 4 5 6 5 11 a6 6 0 0 1 -12 0 c0 -3 2 -4 3 -6 c1 2 2 2 2 -1 c0 -2 1 -3 2 -4 z', fill: true },
+  ],
+  // BURN-VISIBLE — a cross over a rising arc: the cross says heal, the arc says
+  // it keeps happening. Deliberately not a second leaf; Haste already owns the
+  // wing and two organic silhouettes in one row would be one silhouette.
+  healOverTime: [
+    { d: 'M9.5 2 h5 v5 h5 v5 h-5 v5 h-5 v-5 h-5 V7 h5 z', fill: true },
+    { d: 'M3 21 c5 -4 13 -4 18 0' },
+  ],
   // Chained boot — the sole and upper as one silhouette, with a shackle ring.
   root: [
     { d: 'M8 3 h4.5 v10 H19 v5 H8 z', fill: true },
@@ -328,6 +351,8 @@ export function statusPips(
  * one to keep in step.
  */
 export const STATUS_LABELS: Readonly<Record<string, string>> = {
+  damageOverTime: 'Burning',
+  healOverTime: 'Regenerating',
   root: 'Rooted',
   slow: 'Slowed',
   weaken: 'Weakened',
@@ -351,6 +376,12 @@ export const STATUS_LABELS: Readonly<Record<string, string>> = {
  * does not.
  */
 export const STATUS_BLURBS: Readonly<Record<string, string>> = {
+  // BURN-VISIBLE: the fallback wording, used when the amount is not known — the
+  // playback fold has the kind and not the instance. `overTimeBlurb` replaces it
+  // with the per-turn figure wherever there is one, which is the half of the AC
+  // that says "hovering it names the per-turn amount".
+  damageOverTime: 'Takes damage at the end of each turn.',
+  healOverTime: 'Heals at the end of each turn.',
   root: 'Cannot move or dash this turn.',
   slow: 'Moves fewer squares.',
   weaken: 'Deals less damage.',
@@ -389,6 +420,26 @@ export interface StatusChip {
 const cssHex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
 
 /**
+ * BURN-VISIBLE — the over-time blurb, with the number in it.
+ *
+ * *"Hovering it names the per-turn amount."* This is the one place a blurb may
+ * carry a figure, and the reason it is allowed to is that the figure is **not a
+ * client constant**: it is `status.amount`, the per-turn number the engine
+ * itself ticks with. The rule the other blurbs follow — describe the effect,
+ * never restate a magnitude — exists so a balance pass cannot leave a lie
+ * behind, and a number read off the instance cannot.
+ *
+ * `undefined` for every other kind, and for an over-time instance with no
+ * amount, so the caller falls back to the static wording rather than showing
+ * "0 damage".
+ */
+export function overTimeBlurb(kind: EffectKind, amount: number): string | undefined {
+  if (amount <= 0) return undefined;
+  if (kind === 'damageOverTime') return `Takes ${amount} damage at the end of each turn.`;
+  return kind === 'healOverTime' ? `Heals ${amount} at the end of each turn.` : undefined;
+}
+
+/**
  * The HUD's status strip for one unit: `PIP_ORDER`, deduped, unknown kinds
  * dropped — the same rule as {@link statusPips}, so the strip and the pips can
  * never disagree about what is on a unit or in what order.
@@ -414,7 +465,7 @@ export function statusChips(
       remaining: Math.max(...mine.map((s) => s.remaining)),
       ...(amount > 0 ? { amount } : {}),
       harmful: HARMFUL_PIPS.has(kind),
-      blurb: STATUS_BLURBS[kind] ?? '',
+      blurb: overTimeBlurb(kind, amount) ?? STATUS_BLURBS[kind] ?? '',
     };
   });
 }
