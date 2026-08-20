@@ -129,16 +129,21 @@ describe('beneficial aims stay on your own team', () => {
   it('only the three colours — a status rider is not a number', () => {
     const s = board();
     const caster = unitOf(s, 'aegis');
+    // Aimed at an ENEMY rather than at the caster's own square: PREVIEW-NUMBERS
+    // -AUDIT made the caster CASTER-SAFE, so a damage number on itself is now
+    // (correctly) absent and would answer this question by accident.
+    const enemy = s.units.find((u) => u.owner !== caster.owner)!;
     at(s, caster.unitId, 5, 7);
+    at(s, enemy.unitId, 6, 7);
     const withRider: AbilityDef = {
       ...ability(AEGIS, AEGIS.ultimate.id),
       shape: 'circle', radius: 1, range: 3, phase: 'blast',
       effects: [{ kind: 'damage', amount: 30 }, { kind: 'slow', duration: 2 }, { kind: 'might', duration: 1 }],
     };
-    const shown = previewNumbers(s, BOARD, caster, [{ def: withRider, squares: [caster.pos] }], allSeen(s));
+    const shown = previewNumbers(s, BOARD, caster, [{ def: withRider, squares: [enemy.pos] }], allSeen(s));
     // Exactly one number: the damage. Slow and Might are real effects with no
     // amount to show, and inventing a "0" for them would be noise.
-    expect(shown).toEqual([{ targetId: caster.unitId, kind: 'damage', amount: 30, pos: { ...caster.pos } }]);
+    expect(shown).toEqual([{ targetId: enemy.unitId, kind: 'damage', amount: 30, pos: { ...enemy.pos } }]);
   });
 });
 
@@ -182,7 +187,11 @@ describe('several armed actions read as one turn', () => {
     const once = previewNumbers(s, BOARD, caster, [{ def, squares }], allSeen(s));
     const twice = previewNumbers(s, BOARD, caster, [{ def, squares }], allSeen(s));
     expect(once).toEqual(twice);
-    expect(once.map((n) => n.targetId)).toEqual(s.units.map((u) => u.unitId));
+    // Everyone the blow reaches, in `state.units` order. The caster is not in
+    // the list — CASTER-SAFE, per PREVIEW-NUMBERS-AUDIT — which is the one unit
+    // the aim covers and the preview correctly declines to number.
+    expect(once.map((n) => n.targetId))
+      .toEqual(s.units.filter((u) => u.unitId !== caster.unitId).map((u) => u.unitId));
   });
 });
 

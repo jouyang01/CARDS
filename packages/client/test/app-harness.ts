@@ -179,9 +179,20 @@ export function recordingNet(seatId: string, team: TeamId, unitIds: string[]): {
   net: NetPlay;
   submitted: UnitOrders[][];
   resolve: (state: never, events: never) => void;
+  /**
+   * DEATH-HANG — deliver a server Decision window, the way `net-boot.ts` does
+   * when a `decision` frame arrives. The controller has no clock of its own in
+   * a networked match (`startTimer` returns early), so a test that wants to ask
+   * "is the timer running" has to play the server's part.
+   */
+  openWindow: (remainingMs: number | undefined, charges?: number) => void;
+  /** The control map the server last sent — a death can change it. */
+  setControl: (unitIds: string[]) => void;
 } {
   const submitted: UnitOrders[][] = [];
   let onResolved: (state: never, events: never) => void = () => {};
+  let onTimer: (remainingMs: number | undefined, charges: number) => void = () => {};
+  let onControl: (unitIds: string[]) => void = () => {};
   const net: NetPlay = {
     seatId,
     team,
@@ -189,12 +200,18 @@ export function recordingNet(seatId: string, team: TeamId, unitIds: string[]): {
     submit: (orders) => { submitted.push(orders.map((o) => structuredClone(o))); },
     onResolved: (handler) => { onResolved = handler as typeof onResolved; },
     onStatus: () => {},
-    onTimer: () => {},
+    onTimer: (handler) => { onTimer = handler; },
     onPresence: () => {},
-    onControl: () => {},
+    onControl: (handler) => { onControl = handler; },
     extend: () => {},
   };
-  return { net, submitted, resolve: (state, events) => { onResolved(state, events); } };
+  return {
+    net,
+    submitted,
+    resolve: (state, events) => { onResolved(state, events); },
+    openWindow: (remainingMs, charges = 1) => { onTimer(remainingMs, charges); },
+    setControl: (ids) => { onControl(ids); },
+  };
 }
 
 /** Click a DOM node the way the HUD's own buttons are clicked. */

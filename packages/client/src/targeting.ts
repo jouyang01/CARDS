@@ -334,12 +334,36 @@ export function previewBands(
   aim: readonly Vec2[],
   aimStep?: number,
 ): Vec2[] {
-  if (!aimLegal(unit, ability, aim, aimStep)) return [];
+  const { axis, inner } = previewBandSets(map, unit, ability, aim, aimStep);
+  return [...axis, ...inner];
+}
+
+/**
+ * PREVIEW-NUMBERS-AUDIT — the same two bands, kept apart.
+ *
+ * `previewBands` concatenates them because the *highlight* treats both the same
+ * way: these tiles are special, glow them. The **numbers** cannot, because the
+ * two bands compose differently — `innerAmount` replaces the ring's damage and
+ * `axisBonus` adds to it — so a preview handed one merged list could not tell
+ * which arithmetic a tile wanted.
+ *
+ * Still one derivation, from the engine's own `axisSquares`/`innerSquares`:
+ * `previewBands` is now this function flattened, so the band a player sees and
+ * the number written on it cannot come from different geometry.
+ */
+export function previewBandSets(
+  map: MapDef,
+  unit: UnitState,
+  ability: AbilityDef,
+  aim: readonly Vec2[],
+  aimStep?: number,
+): { axis: Vec2[]; inner: Vec2[] } {
+  if (!aimLegal(unit, ability, aim, aimStep)) return { axis: [], inner: [] };
   const board = buildBoard(map);
-  return [
-    ...axisSquares(board, ability, unit.pos, aim, aimStep),
-    ...innerSquares(board, ability, aim),
-  ];
+  return {
+    axis: axisSquares(board, ability, unit.pos, aim, aimStep),
+    inner: innerSquares(board, ability, aim),
+  };
 }
 
 /**

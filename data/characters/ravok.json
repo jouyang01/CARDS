@@ -12,13 +12,14 @@
       "range": 0,
       "cooldown": 0,
       "energyGain": 8,
+      "selfDamagePct": 50,
       "effects": [
         {
           "kind": "damage",
           "amount": 22
         }
       ],
-      "description": "A full spin: every adjacent enemy takes 22. Melee \u2014 ignores cover. Dive the middle and swing all the way around.",
+      "description": "A full spin: every adjacent enemy takes 22, and Ravok takes 11 himself. Melee \u2014 ignores cover. Dive the middle and swing all the way around.",
       "melee": true,
       "radius": 1
     },

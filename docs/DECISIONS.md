@@ -4621,3 +4621,94 @@ element ids), which is the part a test has no business driving.
    once with "no `#board canvas`" — a WebGL context that never came up, in the `beforeEach`, while
    vitest was running concurrently on the same box. Every other size and map passed in the same run.
    Recorded here so a future intermittent failure is not diagnosed from scratch.
+
+---
+
+## 2026-08-20 — Builder, session 7 (DEATH-HANG, the two data tweaks, the preview-number audit, burn pips, line-preview memo)
+
+**DEATH-HANG's discrimination is `net !== undefined && seatIdx === 0`, not "the roster is empty".**
+An empty roster reaches the bottom of `openSeat` meaning two different things and the shipped code
+could only see one. Walking *off the end* of the seat list means the turn is answered, and networked
+that is the **only** way a submission is ever made — which is why the first attempt at this fix
+(hold whenever the roster is empty and `net` is set) broke the ordinary lock-in and was caught by the
+reproduction's "the turn after the respawn is fully playable" case. Arriving at `seatIdx === 0` in a
+networked match is the other meaning: the walk has not started and this player is simply down.
+
+**A downed networked seat holds rather than auto-submitting.** The AC's parenthetical is explicit —
+"not an auto-submit that reads as frozen" — and the ruled treatment of a seat that submits nothing is
+*hold position*, which produces the identical game result. The cost is that the room now waits the
+full decision window on a turn the downed player cannot act in, where the old (broken) behaviour
+resolved as soon as the opponent locked. Mitigated by keeping **Lock In live as "Hold Position"**, so
+one click still resolves the turn early; the packet leaves only when the player sends it, which is
+the whole difference from the bug. Flagged as an open question below.
+
+**Ravok's Whirling Cleave description was rewritten to name the 11.** The backlog's AC is the one
+data field, but Seismic Rupture's description already says "and Ravok takes 19 himself", and a tell
+that stays silent about a cost the engine charges is the same class of defect as a wrong preview
+number. Same for Slipstream's "for a turn" → "for two turns". Neither is a balance change; both are
+the tell catching up with the data beside it.
+
+**`previewNumbers` composes damage the way `runBlast` does, and takes its bands from the engine.**
+The audit's whole discipline is that the client never works out for itself which tiles are the core
+or the axis — `previewBandSets` hands over `axisSquares`/`innerSquares`, and `previewBands` is now
+that pair flattened, so the glow a player sees and the figure written on it come from one derivation.
+
+**The floating number is the immediate blow; a burn is the pip and the tell.** `damageOverTime` is
+not a `PreviewKind`, so the audit compares against the *first* damage event on a target rather than
+the sum — a DOT-HOT tick emits an ordinary `damage` event at end of turn, and folding it into the
+number would make "30" mean "30 now then 8 twice". A roster-wide guard asserts no ability burns
+without also hitting immediately, which is what keeps "first event" honest.
+
+**`healOverTime` shipped alongside the burn pip.** The backlog puts it out of scope "unless cheap".
+It is one row in each of four tables, and the two kinds are the same mechanic pointed in opposite
+directions — shipping one would have left the asymmetry as a thing to explain later.
+
+**`status-pips.test.ts` asserted the vocabulary was total against a hand-written list**, which is how
+BURN-VISIBLE's gap survived: `damageOverTime` became a status when DOT-HOT shipped and nobody added
+it to the list. It now derives from the engine's own `isStatusKind`.
+
+**The boundary cache is several slots, not one, and bounded.** A render draws more than one boundary
+(the live aim plus AC #5's locked teammate plans), so a single slot would be evicted by each in turn
+and never hit — a memo that makes things slower. The key is a deliberate **superset** of what any one
+shape reads: erring that way costs a miss that recomputes an identical polygon, erring the other way
+hands back the wrong outline silently.
+
+## Open Questions for the Analyzer — 2026-08-20
+
+1. **A downed networked seat now costs the room its full decision window.** The hold is what the AC
+   asks for, and "Hold Position" gives the player a one-click way out, but a player who has *nothing
+   to do* is exactly the player least likely to be watching the screen. The clean fix is
+   server-side — `#answering()` could exclude a seat with no living units, so the turn resolves as
+   soon as everyone who *can* act has — but that is `hub.ts` scope the item's Files list does not
+   name, and it changes what "all in" means. Please rule: leave it to the button, or open a server
+   item.
+
+2. **`previewNumbers` still cannot know a status that lands this turn.** Unchanged from
+   PREVIEW-MODIFIERS and re-stated because the audit now claims equality with the resolution: the two
+   diverge exactly when a Prep-phase Might/Weaken resolves after the plan is locked. The audit sweeps
+   fixed states, so it does not exercise that gap. It is documented in `preview-numbers.ts` as an
+   honest limit; if you want the preview to predict same-turn buffs, that is a new item and a
+   different kind of promise.
+
+3. **The dash impact preview is a plan-time estimate, and the audit records the hole.** A unit
+   standing on a charge's route stops it short, so the aimed landing — and the disc centred on it —
+   is not where the blast goes off. The audit excludes route tiles for impact-carrying dashes and
+   says so; `dashRoute`'s own comment has always called this out. Worth a decision on whether the
+   preview should route around bodies (it would need the engine's stop rule, an ENGINE ASK) or keep
+   saying "where you aimed".
+
+4. **Ravok's recoil is not previewed as *refused* when it would kill him.** The number is on his own
+   tile and it is correct, but a whirl that would take his last 11 looks exactly like one that would
+   not. AIM-RANGE-TELL established that the board should say "no" out loud; whether a self-lethal
+   recoil deserves the same treatment is a design call, not mine.
+
+5. **`overTimeBlurb` is the only blurb that carries a number.** Every other `STATUS_BLURBS` entry
+   describes the effect and refuses to restate a magnitude, deliberately, so a balance pass cannot
+   leave a lie behind. This one is allowed to because the figure is the engine's own instance amount
+   rather than a client constant — but it is a precedent, and if you would rather the tooltip said
+   "takes damage each turn" and put the number only in the chip's `amount` span, say so.
+
+6. **The burn and regen glyphs are new artwork and have had no eyes on them.** A flame and a cross
+   over a rising arc, both schematic at pip size. `PIP_COLORS` gains ember orange and mint; the mint
+   sits a step cooler than Haste's leaf green, which is the closest pair on the row and the one worth
+   looking at on a real plate before it is called settled.

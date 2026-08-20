@@ -39,10 +39,10 @@
       "cooldown": 3,
       "energyGain": 5,
       "effects": [
-        { "kind": "haste", "duration": 1 },
-        { "kind": "energized", "duration": 1 }
+        { "kind": "haste", "duration": 2 },
+        { "kind": "energized", "duration": 2 }
       ],
-      "description": "Ride the wind: Haste and Energized for a turn. Converts a quiet turn into position and ult tempo."
+      "description": "Ride the wind: Haste and Energized for two turns. Converts a quiet turn into position and ult tempo."
     },
     {
       "id": "kite_shot",

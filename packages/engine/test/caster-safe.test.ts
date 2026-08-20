@@ -28,6 +28,14 @@ import type { AbilityDef, CharacterDef, GameState, MapDef, TurnEvent, Vec2 } fro
  * something. The caster takes `floor(amount × pct / 100)` — 19 — bypassing cover
  * and the attacker's own Might/Weaken (it is the authored number scaled, not an
  * attack aimed at yourself) but consuming shields normally.
+ *
+ * RAVOK-RECOIL then opted **Whirling Cleave** in at the same 50%: 22 to every
+ * adjacent enemy, 11 to Ravok. Worth being precise about what that is and is
+ * not, because the two look alike from a distance. CASTER-SAFE is untouched —
+ * the swing still does not *target* Ravok, so the Slow on Shockwave would still
+ * skip him and Shockwave itself, carrying no `selfDamagePct`, still costs him
+ * nothing. What changed is one authored number on one ability. The rule below
+ * it did not move.
  */
 
 const load = (name: string): CharacterDef => JSON.parse(
@@ -84,12 +92,14 @@ const applied = (events: readonly TurnEvent[], unitId: string): string[] => even
   .flatMap((e) => (e.type === 'statusApplied' && e.unitId === unitId ? [e.status] : []));
 
 describe('CASTER-SAFE: your own attack does not hit you', () => {
-  it('Whirling Cleave leaves Ravok untouched and still guts the enemy beside him', () => {
+  it('Whirling Cleave costs Ravok the authored 11, not the enemy\'s 22', () => {
     // The reported bug in one line: a radius-1 disc centred on Ravok used to
-    // include Ravok.
+    // include Ravok for the *full* 22. RAVOK-RECOIL then priced the swing at
+    // 11 — but through `selfDamagePct`, so the number is the Designer's and
+    // the rule underneath is still "not a target of your own attack".
     const { state, ravok, enemy } = field({ x: 10, y: 10 }, { x: 24, y: 24 }, { x: 11, y: 10 });
     const after = fire(state, ravok.unitId, 'cleave', ravok.pos);
-    expect(unit(after, ravok.unitId).hp, 'not a scratch on himself').toBe(RAVOK.maxHp);
+    expect(unit(after, ravok.unitId).hp, 'half of 22, floored').toBe(RAVOK.maxHp - 11);
     expect(unit(after, enemy.unitId).hp).toBe(VEX.maxHp - 22);
   });
 
@@ -109,7 +119,9 @@ describe('CASTER-SAFE: your own attack does not hit you', () => {
     // teammate inside your own area and you cut them down. Only *you* are safe.
     const { state, ravok, ally } = field({ x: 10, y: 10 }, { x: 10, y: 11 }, { x: 24, y: 1 });
     const after = fire(state, ravok.unitId, 'cleave', ravok.pos);
-    expect(unit(after, ravok.unitId).hp).toBe(RAVOK.maxHp);
+    // Ravok pays his own authored 11 (RAVOK-RECOIL); the ally takes the full
+    // 22, which is the asymmetry the whole rule is about.
+    expect(unit(after, ravok.unitId).hp).toBe(RAVOK.maxHp - 11);
     expect(unit(after, ally.unitId).hp, 'friendly fire survives the fix').toBe(AEGIS.maxHp - 22);
   });
 
@@ -172,8 +184,13 @@ describe('RECOIL: the opt-in exception', () => {
 
   it('an ability without the field costs its caster nothing', () => {
     // The default, stated as its own case so the exception cannot leak into it.
+    //
+    // Shockwave rather than Cleave: RAVOK-RECOIL gave Cleave the field, and the
+    // two Ravok blasts now standing on opposite sides of this line is exactly
+    // why the case is worth keeping — the rule is per-ability and authored, not
+    // "melee discs hurt you".
     const { state, ravok } = field({ x: 10, y: 10 }, { x: 24, y: 24 }, { x: 11, y: 10 });
-    const after = fire(state, ravok.unitId, 'cleave', ravok.pos);
+    const after = fire(state, ravok.unitId, 'shockwave', ravok.pos);
     expect(unit(after, ravok.unitId).hp).toBe(RAVOK.maxHp);
   });
 

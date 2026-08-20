@@ -30,7 +30,7 @@ import {
   type UnitState,
   type Vec2,
 } from '@cards/engine';
-import { createRenderer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer } from './renderer3d.js';
+import { createRenderer, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { type Cue } from './choreograph.js';
@@ -53,7 +53,7 @@ import {
 import {
   abilityOptions,
   abilityPreview,
-  previewBands,
+  previewBandSets,
   impactPreview,
   abilityTooltip,
   aimFor,
@@ -80,6 +80,7 @@ import {
   type OrderDraft,
 } from './targeting.js';
 import { createCombatLog, type CombatLog, type LogNames } from './combat-log.js';
+import { downedLabel } from './waiting.js';
 import { createHud, type Hud, type HudCharacter, type HudModel } from './hud.js';
 import { deriveSeats, mergeSeatOrders, type Seat } from '@cards/engine';
 import {
@@ -255,6 +256,22 @@ const FOG_OPACITY = 0.62;
  * colour and dashing, so a player learns the shape once and reads the colour:
  * blue walks, blue dashed sprints, YELLOW dashes (owner directive).
  */
+/**
+ * Every overlay a *plan* puts on the board, and every outline that goes with
+ * them — the set that has to come off when there is no plan to show.
+ *
+ * Named because there are now three places that clear it (playback start, the
+ * end screen, and DEATH-HANG's downed hold) and a list repeated three times is
+ * a list that will be added to twice. A missed layer here is a ghost overlay
+ * hanging over a board nobody is aiming on.
+ */
+const PLANNING_LAYERS = [
+  'fog', 'camo', 'range', 'reach', 'aim', 'band', 'locked', 'impact', 'free', 'catalyst', 'select',
+] as const satisfies readonly HighlightLayer[];
+const PLANNING_SHAPE_LAYERS = [
+  'shape', 'shapeBand', 'shapeImpact', 'shapeLocked',
+] as const satisfies readonly ShapeLayer[];
+
 const MOVE_LINE = 0x9fc4ff;
 const SPRINT_LINE = 0x8fd6ff;
 const DASH_LINE = 0xffd23f;
@@ -393,6 +410,16 @@ export function startHotSeat(
    * is taking them. Networked only: a hot-seat is never waiting for anybody.
    */
   let banner: string | undefined;
+  /**
+   * DEATH-HANG — this networked seat has no living character to order, so it is
+   * holding rather than planning.
+   *
+   * A separate flag from `banner` because the two mean opposite things about the
+   * turn: `banner` says *the orders are already sent*, and this says *there are
+   * none to send and the player has not yet said so*. Lock In is dead under the
+   * first and alive under the second.
+   */
+  let downedHold = false;
   let projection: ProjectionName = 'isometric';
 
   /** The shield pool `initView` sums, so board and HUD never disagree. */
@@ -923,12 +950,92 @@ export function startHotSeat(
 
   /** Put the next seat with living characters on the clock, or resolve. */
   function openSeat(): void {
+    // DEATH-HANG. An empty roster reaches the bottom of this function meaning
+    // two completely different things, and the shipped code could only see one
+    // of them.
+    //
+    // Walking *off the end* of the seat list means the turn is answered — every
+    // seat had its say — and `endTurn` sends it. That is the normal path in
+    // both modes, and networked it is the only way a submission is ever made.
+    //
+    // But a networked match has exactly ONE seat, so arriving here at
+    // `seatIdx === 0` means something else entirely: the walk has not started,
+    // and this player's characters are simply **down**. The old code could not
+    // tell those apart and ran the first meaning for both — `net.submit([])`
+    // the instant a resolution downed the seat. The client answered a turn it
+    // was never shown, every control then correctly refused to change orders
+    // that were already sent, and the window the server opened next was a
+    // window on a spent turn. "The lock-in is not possible", exactly.
+    //
+    // The turn ends when the SERVER says so. This seat has nothing to add to
+    // it, which is not the same as having said so.
+    if (net !== undefined && seatIdx === 0 && seatRoster().length === 0) return holdDownedSeat();
+
     while (seatIdx < seats.length && seatRoster().length === 0) seatIdx += 1;
     const roster = seatRoster();
-    if (roster.length === 0) return void endTurn(); // nobody left to order
+    if (roster.length === 0) return void endTurn();
+    downedHold = false;
     for (const unit of roster) draftFor(unit); // every character is orderable at once
     startTimer();
     selectUnit(roster[0]!.unitId);
+  }
+
+  /**
+   * DEATH-HANG — a networked seat with every character down.
+   *
+   * It holds: no order goes out, because the player never chose one, and the
+   * engine's ruled treatment of a seat that submits nothing is *hold position* —
+   * the same result an empty submission produces, arrived at honestly.
+   *
+   * What it must not do is go quiet. The HUD is put back into its ordering
+   * layout (so the server's window has somewhere visible to land) with no active
+   * character, and the banner says why there is nothing to press. A silent
+   * client and a crashed one look identical from the chair.
+   *
+   * Lock In stays **live** — as "Hold Position", the one thing this seat can
+   * still say. It is the difference between a hold and the auto-submit that
+   * caused the bug: the packet only leaves when the player sends it, and a
+   * player who has nothing to do can still let the turn resolve early rather
+   * than sit out the whole window.
+   */
+  function holdDownedSeat(): void {
+    downedHold = true;
+    selectedUnitId = undefined;
+    interaction = IDLE;
+    clearPreviewNumbers();
+    for (const layer of PLANNING_LAYERS) renderer.highlight(layer, [], 0);
+    for (const shapeLayer of PLANNING_SHAPE_LAYERS) renderer.drawShape([], SHAPE, 0, shapeLayer);
+    renderer.drawPath([], MOVE_LINE, false);
+    renderer.drawPath([], DASH_LINE, false, 'catalystPath');
+    paintFog(currentSeat()?.team ?? 0);
+
+    const mine = (currentSeat()?.unitIds ?? []).map(unitById)
+      .filter((u): u is UnitState => u !== undefined);
+    hud.update(idleHudModel());
+    hud.setBanner(downedLabel(mine.filter((u) => !u.alive).length, mine.length));
+    ui.status.textContent = `Turn ${state.turn} · ${teamName(currentSeat()?.team ?? 0)} — down`;
+    renderScoreboard();
+  }
+
+  /**
+   * The HUD with nothing to order: the ordering layout, an empty hotbar and no
+   * active character. `hud.update` has always tolerated an absent `active` —
+   * that is the shape this uses.
+   */
+  function idleHudModel(): HudModel {
+    return {
+      roster: [],
+      abilities: [],
+      modes: [],
+      catalysts: [],
+      move: { budget: 0, drawing: false, sprinting: false, sprintDisabled: true },
+      chase: { armed: false, disabled: true },
+      lock: { label: 'Hold Position ▸' },
+      view: {
+        projection: projection === 'isometric' ? 'Isometric' : 'Top-down',
+        orbit: renderer.orbitEnabled(),
+      },
+    };
   }
 
   function selectUnit(unitId: string): void {
@@ -944,6 +1051,13 @@ export function startHotSeat(
    */
   function lockSelected(): void {
     if (banner !== undefined) return; // already sent, or disconnected
+    // DEATH-HANG: a downed seat has no character to lock, but pressing the
+    // button is still a decision — "I have nothing, resolve without me". That
+    // sends the empty submission the bug used to send *for* the player.
+    if (downedHold) {
+      downedHold = false;
+      return void endTurn();
+    }
     if (selectedUnitId === undefined) return;
     locked.add(selectedUnitId);
     const next = seatRoster().find((u) => !locked.has(u.unitId));
@@ -1081,12 +1195,15 @@ export function startHotSeat(
     // tiles the aim overlay draws identically, so the ability read as one flat
     // number over one flat shape. Its own layer, directly above the aim it
     // qualifies: it is a reading of those same tiles, not a separate area.
-    renderer.highlight(
-      'band',
-      chosen !== undefined ? previewBands(map, unit, chosen, preview.aim, preview.aimStep) : [],
-      BAND,
-      0.5,
-    );
+    //
+    // PREVIEW-NUMBERS-AUDIT: derived once, as two sets. The highlight wants them
+    // merged (both bands mean "this tile is special") and the numbers need them
+    // apart (`innerAmount` replaces, `axisBonus` adds) — deriving them twice is
+    // how the glow and the figure written on it would come to disagree.
+    const bands = chosen !== undefined
+      ? previewBandSets(map, unit, chosen, preview.aim, preview.aimStep)
+      : { axis: [], inner: [] };
+    renderer.highlight('band', [...bands.axis, ...bands.inner], BAND, 0.5);
 
     // ── DASH-PREVIEW: a dash's impact disc(s) ────────────────────────────────
     // "Shadowstep Strike needs to show what boxes are being hit, not just the
@@ -1201,14 +1318,29 @@ export function startHotSeat(
     // about cover. Built here rather than cached because it is derived from
     // `map`, which never changes for a match — see the memo below it.
     showPreviewNumbers(previewNumbers(state, previewBoard(), unit, [
+      // PREVIEW-NUMBERS-AUDIT: the interior bands ride along with the footprint,
+      // so a tile in Cinder's core is written 22 and one in her ring 14.
       ...(chosen !== undefined
-        ? [{ def: chosen, squares: [...covered, ...impact.origin, ...impact.destination] }]
+        ? [{
+          def: chosen,
+          squares: [...covered, ...impact.origin, ...impact.destination],
+          axis: bands.axis,
+          inner: bands.inner,
+        }]
         : []),
       ...(freeDef !== undefined && freeAim.length > 0
-        ? [{ def: freeDef, squares: abilityPreview(map, unit, freeDef, freeAim) }]
+        ? [{
+          def: freeDef,
+          squares: abilityPreview(map, unit, freeDef, freeAim),
+          ...previewBandSets(map, unit, freeDef, freeAim),
+        }]
         : []),
       ...(catalystDef !== undefined && catalystAim.length > 0
-        ? [{ def: catalystDef, squares: abilityPreview(map, unit, catalystDef, catalystAim) }]
+        ? [{
+          def: catalystDef,
+          squares: abilityPreview(map, unit, catalystDef, catalystAim),
+          ...previewBandSets(map, unit, catalystDef, catalystAim),
+        }]
         : []),
       // PREVIEW-DECOY: the fogged, per-viewer decoy list the board is already
       // drawn from. A decoy renders to the enemy as a real Wisp, so it has to
@@ -1884,10 +2016,10 @@ export function startHotSeat(
     // The turn stops being a plan the instant it resolves, so the plan-time
     // numbers go with the aim overlays rather than lingering over the playback.
     clearPreviewNumbers();
-    for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'band', 'locked', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of PLANNING_LAYERS) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
-    for (const shapeLayer of ['shape', 'shapeBand', 'shapeImpact', 'shapeLocked'] as const) renderer.drawShape([], SHAPE, 0, shapeLayer);
+    for (const shapeLayer of PLANNING_SHAPE_LAYERS) renderer.drawShape([], SHAPE, 0, shapeLayer);
     renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
 
     let skipped = false;
@@ -2094,10 +2226,10 @@ export function startHotSeat(
     clearPreviewNumbers();
     const revealed = revealedView(state, currentSeat()?.team ?? 0);
     renderer.show(toRenderUnits(revealed.units, currentSeat()?.team ?? 0), revealed.decoys, revealed.traps, pads());
-    for (const layer of ['fog', 'camo', 'range', 'reach', 'aim', 'band', 'locked', 'impact', 'free', 'catalyst', 'select'] as const) renderer.highlight(layer, [], 0);
+    for (const layer of PLANNING_LAYERS) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
-    for (const shapeLayer of ['shape', 'shapeBand', 'shapeImpact', 'shapeLocked'] as const) renderer.drawShape([], SHAPE, 0, shapeLayer);
+    for (const shapeLayer of PLANNING_SHAPE_LAYERS) renderer.drawShape([], SHAPE, 0, shapeLayer);
     renderer.setSpotlight(null);
     renderer.fitBoard();
     stopTimer();
