@@ -29,7 +29,7 @@
       "phase": "dash",
       "shape": "path",
       "range": 4,
-      "cooldown": 3,
+      "cooldown": 4,
       "energyGain": 8,
       "impact": {
         "destination": 2
@@ -73,7 +73,7 @@
       "shape": "circle",
       "range": 0,
       "radius": 2,
-      "cooldown": 2,
+      "cooldown": 3,
       "energyGain": 8,
       "effects": [
         {

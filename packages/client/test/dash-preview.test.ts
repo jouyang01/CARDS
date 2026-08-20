@@ -87,18 +87,29 @@ describe('a dash with an impact previews the disc it will detonate', () => {
 });
 
 describe('and previews nothing when there is nothing to preview', () => {
-  it('a dash with no `impact` is unchanged', () => {
+  it('a dash with no `impact` detonates nothing — but it still lands somewhere', () => {
+    // BASTION-RAM-LINE split these two claims apart. The DISCS still require an
+    // `impact` and that is what this test has always been about; the LANDING is
+    // now reported for every dash, because *"the preview should be like a line
+    // attack that also shows the ending dash location"* and where you stop is
+    // not a detonation.
     const s = match(WISP);
     const u = unitOf(s, 'wisp');
     const roll = [...WISP.abilities].find((a) => a.phase === 'dash' && a.impact === undefined);
     if (roll !== undefined) {
-      expect(impactPreview(OPEN, u, roll, [{ x: u.pos.x + 2, y: u.pos.y }])).toEqual({ origin: [], destination: [] });
+      const preview = impactPreview(OPEN, u, roll, [{ x: u.pos.x + 2, y: u.pos.y }]);
+      expect(preview.origin, 'nothing goes off at the takeoff').toEqual([]);
+      expect(preview.destination, 'nor at the landing').toEqual([]);
     }
     // …and the same holds for a hand-built one, so this does not depend on the
     // roster happening to contain a plain dash.
     const plain: AbilityDef = { ...abilityOf(WISP, 'shadowstep_strike') };
     delete (plain as { impact?: unknown }).impact;
-    expect(impactPreview(OPEN, u, plain, [{ x: u.pos.x + 3, y: u.pos.y }])).toEqual({ origin: [], destination: [] });
+    const preview = impactPreview(OPEN, u, plain, [{ x: u.pos.x + 3, y: u.pos.y }]);
+    expect(preview.origin).toEqual([]);
+    expect(preview.destination).toEqual([]);
+    expect(preview.landing, 'but the arrival square is still named')
+      .toEqual({ x: u.pos.x + 3, y: u.pos.y });
   });
 
   it('a Blast ability with an impact-shaped radius is not a dash and previews nothing', () => {

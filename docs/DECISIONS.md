@@ -4765,3 +4765,90 @@ is a per-phase band invariant in `content.test.ts` (Builder, CD-BAND-INVARIANT) 
 routed to the Designer. The invariant deliberately carries **no allow-list**: with Blink at 4 every value
 in the roster is inside its band, and an exception list is exactly the mechanism that lets the next drift
 in unnoticed.
+
+---
+
+## 2026-08-20 — Builder, session 8 (Warding Wall, Ram Charge's line, the cooldown bands, the downed-seat skip)
+
+**Warding Wall's orientation is derived, not aimed.** The owner's dev note settled the aim —
+*"a freely placed, 4 tile line"* — which is why the new `wall` shape takes a **square** (a circle's
+aim, anywhere in `range`) rather than a direction. What the note did not say is which way the segment
+lies, so it is laid **across** `dominantCardinal(caster → aimed square)`: one click puts the whole
+wall down, and across-your-facing is the orientation the ability wants nearly always (between them and
+you, or over the lane they are coming down). An **even** length has no centre tile, so the segment runs
+from `-⌊(L-1)/2⌋` to `+⌊L/2⌋` along the perpendicular — for `L = 4` the aimed square is the second of
+the four. Arbitrary, deterministic, written down. **Flagged below**: if the Designer wants true free
+rotation, that is a position *and* a rotation in one aim, which the client's aim model does not carry.
+
+**The wall's trigger list is per-trap, and that is how the dev note and the RULED trap rule are both
+honoured.** The note says the wall *"will hit dashes, moves, and displacements, but not blinks"*. Both
+halves depart from the v1 trap rule (RULED: entry under your own power; knockback/pull never), and in
+**opposite directions** — it catches a shove and misses a teleport. Rather than move the global rule,
+`AbilityEffect.triggers` lets a hazard name its own arrivals, and `DEFAULT_TRAP_ENTRIES`
+(`move`/`dash`/`teleport`) keeps every shipped mine exactly as ruled — Overwatch Trap still fires on a
+blink landing, still ignores a shove, and there are two tests that say so. The reading behind the
+split: a mine is something you **tread on**, so a shove onto one is not your doing; a wall is something
+you are pushed **through**. This is the "first lever to pull" the knockback ruling anticipated, pulled
+for one ability rather than for all of them.
+
+**A blink that LANDS on a wall tile is not caught either.** The note does not spell this corner out.
+Ruled the same way for the same reason: the wall hurts what passes through it, and nothing passed.
+
+**Displacements fire wall traps square by square along the path travelled**, not only at the resting
+square, so a shove that carries somebody clean across the wall pays for the crossing. The
+carry-through fix-up can walk a victim back one square; that square was already crossed on the way out,
+so it is in the list once and its trap is consumed once.
+
+**`perTile` is opt-in rather than derived from the shape.** TRAP-CENTRE exists because an *area* shape
+burying a mine under each of thirteen tiles is a minefield nobody authored — the count fell out of the
+radius. A wall is the opposite case: four tiles because the ability says four. So the generalisation is
+a field on the effect, and the count stays something a human wrote down.
+
+**Two description rewrites rode with their data changes.** Ram Charge said "the first enemy hit", which
+`chargeHits: "all"` was about to make a lie; Warding Wall's names its 25 and its blink exception. A tell
+that contradicts the engine is the same class of defect as a wrong preview number.
+
+**A charge's landing goes on the impact layer.** `impactPreview` now reports a `landing` for every
+dash, and a `path` charge draws it. That layer already answers "what does the arrival *do*" against the
+aim layer's "where does the dash *go*", which is exactly the split the item asks for. A teleport gets
+nothing extra — its aimed square is the landing and is already the only tile lit.
+
+**The cooldown edits are nine and six single-line changes.** The first pass reserialised the JSON and
+produced a 73-line diff of reformatting around nine real changes; re-done as targeted edits. No test
+needed its turn count raised.
+
+**`#canAct` asks `controlledUnits`, not the seat's own `unitIds`.** Those are two different lists once
+M3-RECONNECT has handed an absent player's characters to a stand-in, and the question the lock count
+needs is what the seat may order *now* — the same question `#receiveSubmit` already asks.
+
+## Open Questions for the Analyzer — 2026-08-20
+
+1. **WARDING-WALL orientation: derived, not aimed** (backlog WARDING-WALL; `packages/engine/src/shapes.ts`
+   `wallSquares`). The owner ruled the *position* ("freely placed"); I derived the *facing* as
+   perpendicular to the caster's line. Please confirm, or route to the Designer: true free rotation
+   needs an aim carrying a square **and** a step, which `aimFor`/`OrderDraft` do not currently
+   express — that is a client aim-model change, not a shape change.
+
+2. **The even-length centring is a coin-flip I called.** A 4-tile wall puts the aimed square second of
+   four (offsets −1,0,+1,+2). If the Designer wants it third, it is a one-character change; if they
+   want odd lengths only, that is a data call.
+
+3. **WARDING-WALL is now the only ability whose trap can be set off by a shove** (edge-cases: RULED —
+   knockback/pull do NOT trigger traps in v1). I implemented it as a per-trap opt-in so the ruling
+   stands for every mine, but the ruling's text now needs a sentence saying the *hazard* may say
+   otherwise. Please amend it rather than leaving the two to be read as contradicting.
+
+4. **A turn on which EVERY seat is downed resolves on the timer, not at once** (backlog DOWN-SEAT-SKIP;
+   `hub.ts` `#answering`/`#allIn`). The answering set is empty, and `#allIn` deliberately refuses to
+   resolve on an empty set. Not a regression — it waited the full window before too — and resolving
+   eagerly from `#sendDecision` risks a resolve → send-decision → resolve loop, which is
+   QUOTA-RUNAWAY territory. If you want it closed, it wants its own item with the loop guard specified.
+
+5. **Aegis has lost his only non-basic Blast.** After WARDING-WALL his kit is one Blast (the free
+   basic), two Preps and a dash. That is the kit reshape the owner asked for, but it means Aegis is the
+   only character with no cooldown'd Blast at all, and `CD-BAND-BLAST`'s band now has one fewer
+   population. Worth a Designer look before playtest concludes anything from it.
+
+6. **Ram Charge at `chargeHits: "all"` plus cooldown 4 is two buffs and a nerf landing together.** The
+   Analyzer sequenced them deliberately and I implemented both as specified; flagging only that the
+   playtest note should read them as one change rather than two.

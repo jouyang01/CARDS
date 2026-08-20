@@ -1218,8 +1218,19 @@ export function startHotSeat(
     // not a refusal. (This line was dropped by the AIM-RANGE-TELL commit, which
     // silently took the dash discs off the board with it — see the regression
     // test in `dash-preview.test.ts`.)
+    // BASTION-RAM-LINE: a CHARGE marks where it stops. *"The preview should be
+    // like a line attack that also shows the ending dash location."* Its route
+    // is already a line of tiles and every one of them looks identical —
+    // including the square the player is actually choosing between. The landing
+    // goes on this layer rather than getting one of its own because it answers
+    // exactly this layer's question: the aim says where the dash *goes*, this
+    // says what the arrival *is*. A teleport needs none — its aimed square IS
+    // the landing, and is already the only tile lit.
+    const chargeLanding = chosen?.shape === 'path' && impact.landing !== undefined
+      ? [impact.landing]
+      : [];
     const layer = impactLayer(
-      [...impact.origin, ...impact.destination],
+      [...impact.origin, ...impact.destination, ...chargeLanding],
       refusedAim(map, state, unit, chosen, interaction),
       refusedSquare,
     );
