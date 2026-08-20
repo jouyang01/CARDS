@@ -42,10 +42,18 @@ Current suite: **2610 tests** (1347 + 961 + 302), typecheck clean, purity clean.
 
 ### Build order and dependencies
 
-**WALL-CAST-FIX → RAM-LINE-PREVIEW-FIX**, then the **Path A** milestone (PLAYTEST → tuning → NET-E2E).
-Both bug fixes are first and **blocking**: they gate the playtest — a playtest of Warding Wall and Ram
-Charge is worthless while one cannot be cast and the other cannot be read. No dependency between them; do
-them in the listed order (severity).
+**WALL-CAST-FIX → RAM-LINE-PREVIEW-FIX → the five TTK items → PLAYTEST → NET-E2E.** Both bug fixes are
+first and **blocking**: they gate the playtest — a playtest of Warding Wall and Ram Charge is worthless
+while one cannot be cast and the other cannot be read. No dependency between them; do them in the listed
+order (severity).
+
+**The TTK package (owner directive 2026-09-27) sits between the fixes and the playtest.** It is Path A's
+tuning pass arriving early — from measurement rather than from felt play — and the argument for putting it
+*before* PLAYTEST is that a playtest of numbers we already intend to change spends the scarcest resource
+in the project on values that will not ship. **This ordering is the owner's call** (review §5 / OQ 1); if
+the preference is to playtest current numbers first, the five items move behind PLAYTEST with their specs
+unchanged. **The five must land as one change** — HP alone makes a healer comp outlast the match, and HP
+without the turn limit ends every 2v2 on the clock.
 
 ---
 
@@ -112,6 +120,133 @@ of scope: the `chargeHits` engine mechanic (correct); Ram Charge's numbers/coold
 
 ---
 
+## Data — the TTK package (owner directive 2026-09-27; Path A's tuning pass, arriving early)
+
+> **Owner directive, verbatim:** *"The package — 1. HP to the table above — raises TTK to AR parity and
+> fixes the ult burst. 2. Skill damage to 1.25x basic, single target skills should do more than aoe
+> skills. Skills that debuff should do less damage than skills that do not. 3. `TURN_LIMIT` 2v2: 16 → 20
+> — mandatory, or matches decide on the clock. 4. Lumen's Mending Light 25 → 20 — mandatory, or a healer
+> comp outlives the match."* Stated goal: *"I want to make sure time to kill is similar so that one error
+> doesn't cause an instant death."*
+>
+> Evidence, the Atlas Reactor measurements, and the reasoning for every number:
+> **`docs/reviews/2026-09-27.md`**. **The integers below are final — implement them, do not re-derive
+> them.**
+
+**Five items, in order: TTK-HP-BAND → TTK-SKILL-DAMAGE → TTK-LUMEN-HEAL → TTK-TURN-LIMIT →
+TTK-INVARIANT.** Four are data/config one-liners; the fifth is the test. **They are one change and must
+land together** — HP alone makes the healer grind outlast the match, and HP without the turn limit ends
+every 2v2 on the clock. Do not ship a partial package.
+
+**Out of scope for the whole batch, stated so nobody adds a "helpful" pass:** ultimate damage (the HP
+raise replaces the ult cap the 2026-09-23 review proposed — see review §2.1); `energyGain`, `ULT_COST`,
+`PASSIVE_ENERGY` (review §3.3); every shield value and every catalyst (they land in AR's band by
+themselves once the bars grow); `KILLS_TO_WIN`; all cooldowns, including Mending Light's — **only its
+amount changes**, so "Prep cooldowns are correct right now" still holds; traps; Aegis's kit (he has no
+direct-damage skill since PR #97 and session-8 OQ #5 closed that as intended).
+
+### TTK-HP-BAND. HP rises ~30% and the archetype ladder is restored (DATA) — UNBLOCKED
+**Addresses owner directive #1.** Today's bars run 85–135 (median 100), so a basic takes **22.0%** of a
+health bar against Atlas Reactor's **17.3%**, and an ultimate takes **38%** against AR's **23%** — which
+is why **two ults deal exactly 85 to Wisp's 85 HP and kill from full**. Supports sit only 11% above
+firepower where AR put them 33% above. *AC: the nine `maxHp` values become —* `wisp` **85→100**,
+`kestrel` **90→105**, `cinder` **95→110**, `vex` **95→110**, `thorn` **100→130**, `lumen` **105→140**,
+`aegis` **120→155**, `bastion` **130→170**, `ravok` **135→175**; *no other field in any character file
+changes; both suites stay green.* **Spec Notes.** Nine one-field edits in `data/characters/*.json`.
+Lands median HP 130 (basic bite 16.9% vs AR's 17.3%, TTK 5.9 hits vs AR's 5.8), archetype ratio
+1 : 1.26 : 1.58 (AR 1 : 1.33 : 1.65), and the double-ult at 85% of the squishiest bar against AR's 83%.
+**This is why no ultimate is being nerfed** — do not also cut ult damage. Out of scope: everything in the
+batch-level list above.
+
+### TTK-SKILL-DAMAGE. Skill damage rises to a tiered 1.25× ceiling (DATA) — UNBLOCKED (after HP)
+**Addresses owner directive #2.** Skills currently deal **0.64×** their character's basic (AR: 0.96×), so
+damage is barbelled into the free basic and the ultimate with nothing in between — the basic is the
+damage-max pick on every single turn for seven of nine characters. *AC: the eleven damaging non-basic,
+non-ult abilities carry exactly these `damage` amounts —*
+
+| Character | Ability | Now | **New** |
+|---|---|---|---|
+| Kestrel | `skim` | 12 | **30** |
+| Vex | `frag_grenade` | 34 | **33** |
+| Kestrel | `kite_shot` | 16 | **26** |
+| Wisp | `bola` | 12 | **24** |
+| Bastion | `ram_charge` | 15 | **23** |
+| Bastion | `chain_hook` | 10 | **23** |
+| Ravok | `shockwave` | 12 | **19** |
+| Thorn | `bramble_stride` | 10 | **17** |
+| Ravok | `bullrush` | 14 | **17** |
+| Lumen | `dazzling_ray` | 12 | **15** |
+| Cinder | `flare_burst` | 10 | **12** |
+
+*— and nothing else on those abilities changes (riders, ranges, radii, cooldowns, `energyGain` all
+stand); no trap amount changes; no ultimate changes; both suites stay green.* **Spec Notes.** Eleven
+one-field edits in `data/characters/*.json`. The rule these came from, recorded for the **next**
+character rather than for re-deriving this table:
+`round_half_up(basic × shape × rider × delay)` where **basic** is `abilities[0]`'s headline `damage`
+(conditional bonuses like `axisBonus`/`innerBonus` excluded), **shape** = 1.25 single-target (no
+`radius`/`impact`/`beamWidth`) or 1.00 area, **rider** = 1.00 none / 0.88 status (`slow`, `weaken`,
+`root`, `reveal`, `damageOverTime`) / 0.76 displacement (`knockback`, `pull`), **delay** = 1.25 when
+`delayTurns ≥ 1`. **The tiers are load-bearing, not decoration:** a flat 1.25× would raise sustained
+output ~10% and claw back part of the HP gain, while the tiered table lands median output at **22.0/turn
+— exactly today's** (review §3.1). **Do not simplify them into a single multiplier.** Two numbers to
+watch in the playtest: `skim` is the only ability at the 1.25 ceiling and at 30 it is 86% of Kestrel's
+ultimate (fallback **26** if it crowds her ult), and `chain_hook` more than doubles on the roster's only
+pull ≥ 2 (AR's Rampart Fusion Lance is the precedent: 25 + pull, cd3). Out of scope: as above.
+
+### TTK-LUMEN-HEAL. Mending Light heals 20, not 25 (DATA) — UNBLOCKED (must ship with the HP change)
+**Addresses owner directive #4.** Heals are absolute numbers and do not scale with a bigger bar, so
+raising HP alone makes a healer comp **worse**: two attackers net 7.9 damage/turn through Lumen, and at
+the new bars that is **16.5 turns for a single kill — longer than the match**. At 20 it is 12.5. *AC:
+`data/characters/lumen.json` `mending_light` `heal` amount **25 → 20**; its* `cooldown` *stays* **2**;
+*no other Lumen value changes; both suites stay green.* **Spec Notes.** One field. Lumen's sustained
+throughput becomes 16.0/turn on a 140 bar = **11.4% of a health bar per turn**, inside AR's support band
+(median 9.7%, max 12.5%) for the first time — today she is at 17.6%, 1.4× AR's best support, because
+Radiant Lash heals 12 *while* dealing 14 so her 2-turn cooldown never leaves a gap. **The amount changes,
+not the cooldown** — the 2026-09-23 directive "Prep cooldowns are correct right now" is untouched.
+`roster-v1.md` §4's "sustain ceiling: 25 heal per 2-turn cooldown (Lumen)" becomes 20 and is routed to
+the Designer below. Out of scope: Verdant Veil, Blood Frenzy, Sanctuary, Overgrowth, every shield.
+
+### TTK-TURN-LIMIT. 2v2 runs to 20 turns, not 16 (ENGINE CONFIG) — UNBLOCKED (must ship with the HP change)
+**Addresses owner directive #3, and it is load-bearing.** At two attackers and `roster-v1.md` §4's 60%
+hit rate, 2v2 already paces to **15.2 turns for 4 kills against a 16-turn limit**; after the HP raise it
+is **19.7**. Without this change every 2v2 ends on the clock instead of on kills. (AR had slack because
+4v4 supplies four attackers per kill target; our default supplies two.) *AC:*
+`packages/engine/src/formats.ts` `FORMATS['2v2'].turnLimit` **16 → 20**; `killsToWin` *stays* **4**; *4v4
+and 1v1 untouched;* `docs/GAME_SPEC.md` §1's *format table row for 2v2 reads* `| 2v2 | 4 | 20 |`; *the
+two assertions in* `packages/engine/test/formats.test.ts` *that name 16 (`:22` — the `toEqual` on the
+whole 2v2 record — and `:61-67` — "2v2 decides on the leader after turn 16") are updated to 20 and still
+prove the same behaviour (still active at the old boundary, finished at the new one).* **Spec Notes.**
+One config value, one spec-table cell, two test updates. Not a "constant tweak" — it changes what a match
+is, which is why the review argues it in full (§2.3) and why it must not ship without the HP change or
+vice versa. Also check the client's clock/scoreboard read the limit from the format rather than a literal
+(`scoreboard.ts:145` takes `format.turnLimit`, so it should just follow — confirm, don't assume). Out of
+scope: `KILLS_TO_WIN` (staying at 4 is deliberate — see review §7.3, an open question for the owner, not
+a Builder call).
+
+### TTK-INVARIANT. The HP ladder and the damage tiers are enforced by a test (TEST) — BLOCKED on the four above
+**Why:** the same reason CD-BAND-INVARIANT exists — a balance rule that lives only in prose is a rule the
+next character silently breaks, and `roster-v1.md` §1's kit table has no HP or damage constraint at all.
+*AC:* `packages/engine/test/content.test.ts` *asserts, over all nine shipped characters:* (a) *every*
+`maxHp` *matches the shipped ladder and the archetype medians stay ordered* **firepower < support <
+frontline** *with support at least 15% above firepower;* (b) *every non-basic, non-ult ability carrying a*
+`damage` *effect sits at* `round_half_up(basic × shape × rider × delay)` *for its own class, per the table
+in TTK-SKILL-DAMAGE — computed in the test from the ability's own* `radius`/`impact`/`beamWidth`/`shape`,
+*its rider effect kinds, and its* `delayTurns`, *so a new character is checked by the same rule;* (c) *the
+failure message names the class and the expected multiplier, so an author reads the rule rather than a
+bare number.* **Spec Notes.** `content.test.ts` already imports all nine characters and is where the
+roster's structural rules live — extend it, do not add a file. **Aegis is legitimately exempt from (b)**
+(no direct-damage skill since PR #97; session-8 OQ #5 closed that as intended) — express that as "no
+damaging skills to check", never as a name in an allow-list. **Traps are out of (b) entirely** —
+conditional damage has no term in the formula. Keep `validate.ts` value-agnostic: a balance band is roster
+policy, and content tests are where policy belongs.
+
+### The risk, and it is mechanical
+Changing nine `maxHp` values and eleven damage values will break any test that asserts a specific
+remaining-HP number or a kill after N hits, and the turn-limit change breaks the two `formats.test.ts`
+assertions named above. Run the full suite and fix the **tests**, not the data — these integers are the
+owner's. Watch `packages/client/test/modes-ui.test.ts`, the one client test that references real
+character HP values.
+
 ## Path A — validate before you build (the session direction; owner-chosen)
 
 The game is feature-complete for a 2v2 duel and **deployed live**, but the recent mechanics (cooldown
@@ -121,7 +256,10 @@ bands, Warding Wall + rotation, Ram Charge's line, TRAP-SHOVE, DEATH-HANG, AIM-P
 ### PLAYTEST (owner + humans; not a Builder code item) — AFTER the two bug fixes ship
 A real **two-machine internet playtest** of the live deploy — ideally the **asymmetric 3-player 2v2**, the
 least-exercised path. **Prerequisite:** WALL-CAST-FIX and RAM-LINE-PREVIEW-FIX merged first — otherwise two
-abilities under test are unusable. Watch: does a mid-match death stay playable for both sides (DEATH-HANG);
+abilities under test are unusable; and, per the build order, **the five TTK items** unless the owner rules
+otherwise. If the TTK package has landed, the playtest also answers: does a fight last long enough that a
+single caught-in-the-open turn is survivable (the directive's whole point); does Kestrel's Skim at 30 crowd
+her ultimate (fallback 26); does Bastion's Chain Hook at 23 + pull 2 read as fair; does a 20-turn 2v2 drag. Watch: does a mid-match death stay playable for both sides (DEATH-HANG);
 do dashes at 4–5 and blasts at 3–4 improve the tempo; does the rotatable Warding Wall read and matter (and
 is its ~7-tile reach too long — session-9 OQ #2); does Ram Charge's line read as an attack; does a
 shove-into-trap play feel good (TRAP-SHOVE). **Output: a short list of felt problems → a tuning pass**,
@@ -138,6 +276,16 @@ Durable Object in a test worker). Scope it into a full item after the playtest.
 
 ## Routed to Designer / flags
 
+- **`roster-v1.md` §4's balance ceilings go stale with the TTK package (Designer).** Three lines need
+  rewriting once TTK-HP-BAND / TTK-SKILL-DAMAGE / TTK-LUMEN-HEAL land: *"time-to-kill on a 100 HP target:
+  4–5 connected hits"* (bars are 100–175 now and TTK is ~5.9), *"undelayed skill damage caps at 24"* (the
+  cap becomes 30 — Kestrel's Skim) and *"skill nuke ceiling: 34"* (33), and *"sustain ceiling: 25 heal per
+  2-turn cooldown (Lumen)"* (20). §1's kit table should also gain the HP ladder and the damage-tier rule,
+  which it has never carried. **Documentation debt, not a blocker** — TTK-INVARIANT enforces the numbers in
+  `content.test.ts` meanwhile. Evidence: `docs/reviews/2026-09-27.md`.
+- **Kestrel's Skim at 30 (playtest flag).** The only ability at the 1.25 ceiling, and 86% of her own
+  ultimate on a 4-turn cooldown. **Fallback 26.** — **Bastion's Chain Hook at 23** on the roster's only
+  pull ≥ 2; AR-normal (Rampart's Fusion Lance: 25 + pull, cd3) but a big change in what the ability is.
 - **WALL-REACH (session-9 OQ #2, Designer).** After WALL-ROTATE, `warding_wall`'s far end can sit ~7 tiles
   from Aegis (anchor within 4, wall extends 4 along the cardinal); it was ~5 under the old centred geometry.
   No number changed and the Builder did not rebalance. **Designer/playtest call** whether `range` should
