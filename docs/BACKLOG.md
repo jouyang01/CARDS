@@ -10,113 +10,156 @@ independently shippable. Each item carries **Spec Notes** (Analyzer's build guid
 **dependency-free**; client/server consume `TurnEvent[]` + the engine's derived queries — never
 recompute them. **`@cards/server` imports `@cards/engine` only** (client may import server protocol
 **types only**). **Movement is Manhattan (MET1); aiming is Euclidean.** **Every engine behavior change
-ships with a Vitest test in the same commit** — and a **bug fix or a reversed ruling ships with the
-regression / flipped test in that same commit.** **A genuinely new mechanic gets a generic, reusable
-implementation** (golden rule #2). **Drive the real UI wiring in tests.** **Open/update a PR to `main`
-every session.**
+ships with a Vitest test in the same commit** — and a **bug fix ships with the regression test in that
+same commit.** **A genuinely new mechanic gets a generic, reusable implementation** (golden rule #2).
+**DRIVE THE REAL UI WIRING IN TESTS** (see the ⚠⚠ box). **Open/update a PR to `main` every session.**
 
 > ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set; QUOTA-RUNAWAY guards the quota. Keep green.
+
+> ⚠️⚠️ **The bug class that keeps shipping green: "pure function passes, real UI broken."** WALL-CAST-FIX
+> (top of this backlog) is the newest instance: WALL-ROTATE's engine + preview are correct and fully
+> tested, yet the ability **cannot be cast**, because the ONE untested seam — the client building and
+> submitting the order (`toUnitOrders` → lock-in → resolve) — drops the wall's rotation. **No client test
+> drives select → click → lock-in → resolve for `warding_wall`.** Every fix below ships a test that drives
+> **`app-harness.ts` end-to-end**, not the pure helper. If a test would still pass with the order-build
+> unwired, it is the wrong test.
 
 ## ✅ COMPLETE
 
 - The full hot-seat game + AR parity + the whole M3 networked loop + deploy + Dev Notes batches 1–3 +
   AIM-PREVIEW-TRUE + DEATH-HANG.
-- **PR #97 (this review):** **WARDING-WALL** (Aegis's Grounding Strike → a Prep, freely-placed 4-tile
-  line-hazard: a new `wall` shape, `perTile` trap placement, and a **per-trap `triggers` list** —
-  `move`/`dash`/`teleport`/`displacement` — so a wall catches a shove and a mine keeps the v1 rule),
-  **BASTION-RAM-LINE** (`chargeHits:"all"` + a line preview with a landing marker), **CD-BAND-DASH**,
-  **CD-BAND-BLAST**, **CD-BAND-INVARIANT** (the bands, enforced by a band-naming test),
-  **DOWN-SEAT-SKIP** (a seat with no living units is not waited on).
+- **PR #97:** WARDING-WALL (a new `wall` shape + `perTile` trap placement + a per-trap `triggers` list),
+  BASTION-RAM-LINE (`chargeHits:"all"` + a landing marker), CD-BAND-DASH/BLAST/INVARIANT, DOWN-SEAT-SKIP.
+- **PR #98 (docs):** the TRAP-TRIGGER ruling.
+- **PR #99 (Builder session 9):** **TRAP-SHOVE-DEFAULT** (`DEFAULT_TRAP_ENTRIES` = all four; an ordinary
+  mine now fires on a knock-through, the guard flipped, blink-past still inert — verified against
+  TRAP-TRIGGER) and **WALL-ROTATE** (the wall aim now carries anchor **+** rotation; anchored-at-click,
+  runs along the chosen cardinal; a four-button rotate row; ruled in edge-cases — WALL-ROTATE). *(WALL-ROTATE
+  is correct in the engine and preview but exposed a client order-build bug — see WALL-CAST-FIX.)*
+- **PR #100:** a character-art-pipeline doc (generation → Mixamo → weapons → VFX). Docs only.
 
-Current suite: **2600 tests** (1341 + 957 + 302), typecheck clean.
+Current suite: **2610 tests** (1347 + 961 + 302), typecheck clean, purity clean.
 
 ### Build order and dependencies
 
-**TRAP-SHOVE-DEFAULT** is the only scheduled work — one engine field, one flipped test, one new test.
-Everything else this session is flags/Designer routing. No dependencies.
+**WALL-CAST-FIX → RAM-LINE-PREVIEW-FIX**, then the **Path A** milestone (PLAYTEST → tuning → NET-E2E).
+Both bug fixes are first and **blocking**: they gate the playtest — a playtest of Warding Wall and Ram
+Charge is worthless while one cannot be cast and the other cannot be read. No dependency between them; do
+them in the listed order (severity).
 
 ---
 
-## Engine — traps now catch a shove (the whole session)
+## Client bugs — the two abilities that don't work for a human (do first; they gate the playtest)
 
-### TRAP-SHOVE-DEFAULT. An ordinary mine triggers on a knock-through; a blink past it never does (ENGINE) — UNBLOCKED (first)
-**Addresses Dev Note: "Traps should trigger if an enemy is knocked through the trap or if they blink
-onto the trap or dash onto/through the trap."** and **Dev Note: "Trap should not trigger if enemy blinks
-PAST the trap."** PR #97 already built the whole mechanism (`triggerTrapsOnEntry` takes an entry kind;
-displacement is walked square-by-square; teleport fires only at the landing square). The **only** gap is
-that `DEFAULT_TRAP_ENTRIES` omits `displacement`, so an ordinary mine ignores a shove — which this Dev
-Note reverses. Ruled in edge-cases (**TRAP-TRIGGER**, superseding the 2026-08-14 knockback-exclusion).
+### WALL-CAST-FIX. Warding Wall cannot be cast — the client drops the rotation from the order (CLIENT, HIGH) — UNBLOCKED (first)
+**Addresses Dev Note: "Aegis's Warding Wall does not cast successfully."** **Root cause found.** WALL-ROTATE
+(PR #99) made a wall's aim require **both** an anchor square and a rotation step — the engine's `aimIsLegal`
+for `'wall'` ends `... && isAimStep(aimStep)` (`resolve.ts`), so a wall order **with no step is refused**.
+The client computes the rotation into `draft.aimStep` (`aimFor` `'wall'`) and shows the rotate row
+(`isPlacedRotatable`), **but `toUnitOrders` only copies `aimStep` into the order when `isRotatable(ability)`
+is true**, and `isRotatable` is `line || cone` only (`targeting.ts:176`, used at `:995`). A wall is
+`isPlacedRotatable`, **not** `isRotatable`, so the rotation is **dropped at order-build**, the engine gets a
+stepless wall, and refuses it → the wall never casts. The preview reads `aimFor` directly, so it draws
+correctly and hides the bug.
 
 *AC:*
-- **`DEFAULT_TRAP_ENTRIES` becomes `['move','dash','teleport','displacement']`** (`packages/engine/src/types.ts`).
-  No other production change is needed — `applyDisplacements` already calls `triggerTrapsOnEntry(..., 'displacement', square)`
-  for every square a shove crosses, and `triggerTrapsOnEntry` already filters by `(t.triggers ?? DEFAULT_TRAP_ENTRIES).includes(entry)`.
-- **A knock-through fires an ordinary mine.** A knockback/pull that carries an enemy **onto or across** a
-  mine tile triggers it (damage lands, the trap is consumed), for the three default-trap abilities: Vex
-  `overwatch_trap`, Thorn `barbed_sling`, Thorn `snare_bloom`. Knocked *through* and knocked to *rest on*
-  both count (the resting square is the last square in the walked path).
-- **A blink PAST a mine does NOT fire it** — a teleport whose landing square is **beyond** the mine's
-  tile leaves the mine armed and the blinker unhurt (it occupies only its landing square, crosses nothing).
-- **A blink ONTO a mine still fires it, and a dash onto/through still fires it** — unchanged.
-- **The wall is untouched.** `aegis.warding_wall`'s explicit `triggers: ['move','dash','displacement']`
-  overrides the default, so its authored *"a blink goes around it"* exception stands (a blink neither onto
-  nor past the wall fires it). **Do not add `teleport` to the wall** — see the flag below.
+- **A failing test, added first, driving the REAL controller end-to-end** (`app-harness.ts`): select
+  Warding Wall the way the UI does, click a target square, (optionally pick a rotation), **Lock In**, and
+  **resolve** — assert a 4-tile wall of traps is in the resolved state, anchored at the clicked tile,
+  running in the selected (or default) direction. This must **fail on `main`** (the order has no `aimStep`,
+  the engine refuses it, no wall appears) and pass after the fix.
+- **The fix carries the step for a placed-rotatable shape.** In `toUnitOrders` (`targeting.ts:995`), gate
+  the `aimStep` write on `isRotatable(ability) || isPlacedRotatable(ability)` (or simply on
+  `isAimStep(draft.aimStep)` — the engine ignores a step on shapes that don't read one). A wall's chosen
+  rotation reaches the engine.
+- **A defaulted wall still casts:** a player who never touches the rotate row commits with `aimFor`'s
+  default (`WALL_ROTATIONS[0]`), so the order carries that step and the wall lands.
+- **The selected rotation is the one that lands:** picking a different arrow and committing produces a wall
+  running that way (assert against the resolved trap tiles).
 
-*Tests (same commit — this reverses a v1 ruling):*
-- **FLIP** the shipped guard *"an ordinary mine still ignores a shove — the RULED v1 behaviour"*
-  (`packages/engine/test/warding-wall.test.ts`, ~line 286) to assert the mine **now fires** on the same
-  Bullrush shove: the victim loses HP beyond the charge alone and `shoved.traps` is empty (the mine is
-  consumed). Rename it to reflect the reversal (e.g. *"an ordinary mine now fires on a shove — TRAP-TRIGGER"*).
-- **ADD** a blink-**past**-a-mine test: arm an Overwatch Trap, have Wisp blink to a square **beyond** it
-  in the same line; assert the mine is still armed (`traps` length 1) and the blinker took no damage.
-- **KEEP GREEN** the existing *"an ORDINARY mine still fires on a blink"* (blink-onto) and the dash /
-  move trap tests, and **both wall guards** (a shove through the wall fires it; a blink onto/past the wall
-  does not).
+**Spec Notes.** Files: `packages/client/src/targeting.ts` (the `toUnitOrders` gate), tests in
+`packages/client/test/` driving `app-harness.ts` through **lock-in and resolve** (not preview). **No engine
+change** — the engine is correct; the client drops the field. Keep the existing preview tests green. The
+real lesson to bank: `warding_wall` had 24 engine + a preview test and still could not be cast, because the
+order-build seam had no coverage — this fix closes that seam for the wall for good. Out of scope: the wall's
+geometry/mechanics (correct per WALL-ROTATE); other abilities.
 
-**Spec Notes.** This is one production line plus the tests — resist widening it. **Determinism / N-safety
-are already proven** (the displacement path walk and per-square firing shipped for the wall in PR #97;
-this only routes mines through the same integer path). Trap-list order is stable; traps consumed by id.
-**Do not** try to distinguish "knocked through" from "knocked to rest on" — both put the victim on the
-tile and both trigger; splitting them is a hair the Dev Note does not ask for and the path walk does not
-draw. Out of scope: the wall's trigger list (unchanged); any new trap ability; changing how far a shove
-travels.
+### RAM-LINE-PREVIEW-FIX. Ram Charge does not preview as a line attack (CLIENT) — UNBLOCKED (after WALL-CAST-FIX)
+**Addresses Dev Note: "Bastion's Ram Charge is still not a linear dash/attack preview."** The **engine is
+correct** (`bastion.ram_charge` has `chargeHits:"all"`; `walkCharge` damages every enemy the path crosses).
+The preview draws the route tiles (`covered`, `app.ts`) and the landing marker (the BASTION-RAM-LINE
+addition), **but nothing marks the crossed ENEMIES as hit and no damage number shows along the line** —
+`ram_charge` has no `impact` field, so `impactPreview`'s discs are empty, and there is **no client mirror of
+`walkCharge`/`chargeHits`.** A real `line` attack lights its whole tile run (`lineSquares`) and
+`previewNumbers` stamps every enemy on it; a `path` charge never reaches that path, so it reads as a
+movement route, not an attack.
+
+*AC:*
+- **The preview reads as a line attack:** every enemy the charge path crosses is marked with its **15**
+  damage (the same tell a `line`/blast attack shows — reuse that path, do not invent a second), **plus** the
+  existing landing marker. A `chargeHits:"all"` dash previews **all** crossed enemies, not just the first.
+- **A test driving the REAL preview** (`app-harness.ts`): with enemies along Bastion's charge line, aim Ram
+  Charge and assert the preview reports **every** crossed enemy hit for 15 (and the landing marker present).
+  Property-style (PREVIEW-NUMBERS-AUDIT): the previewed hit set == the set the engine's `chargeHits:"all"`
+  resolution damages, for the roster.
+- **A non-`chargeHits:"all"` dash is unchanged** (a first-enemy-only or teleport dash previews as before).
+
+**Spec Notes.** Files: `packages/client/src/targeting.ts` (compute the crossed-enemy hit set for a
+`chargeHits:"all"` path the way `walkCharge` does — **read the engine's derivation, don't recompute a
+parallel one**), `packages/client/src/app.ts` (draw the damage tell on the crossed enemies, same layer a
+line attack uses). Preview-only — the engine already hits everyone. Ties off session-7 OQ #3 for real. Out
+of scope: the `chargeHits` engine mechanic (correct); Ram Charge's numbers/cooldown (correct); other dashes.
+
+---
+
+## Path A — validate before you build (the session direction; owner-chosen)
+
+The game is feature-complete for a 2v2 duel and **deployed live**, but the recent mechanics (cooldown
+bands, Warding Wall + rotation, Ram Charge's line, TRAP-SHOVE, DEATH-HANG, AIM-PREVIEW-TRUE) are
+**unvalidated by real play**. Path A retires that risk before adding more.
+
+### PLAYTEST (owner + humans; not a Builder code item) — AFTER the two bug fixes ship
+A real **two-machine internet playtest** of the live deploy — ideally the **asymmetric 3-player 2v2**, the
+least-exercised path. **Prerequisite:** WALL-CAST-FIX and RAM-LINE-PREVIEW-FIX merged first — otherwise two
+abilities under test are unusable. Watch: does a mid-match death stay playable for both sides (DEATH-HANG);
+do dashes at 4–5 and blasts at 3–4 improve the tempo; does the rotatable Warding Wall read and matter (and
+is its ~7-tile reach too long — session-9 OQ #2); does Ram Charge's line read as an attack; does a
+shove-into-trap play feel good (TRAP-SHOVE). **Output: a short list of felt problems → a tuning pass**,
+mostly data (numbers), not engine.
+
+### NET-E2E. Automated end-to-end networked test harness (SERVER + CLIENT) — FLAGGED, size TBD after playtest
+The biggest latent risk: DEATH-HANG was a networking-wiring bug pure-function tests could not catch, and
+session-9 OQ #4 (a committed wall's rotation across a replay) was "verified by reading the protocol, not a
+two-client test" — the same gap. There is **no automated two-client coverage** of the networked loop (lobby
+→ both clients submit → resolve → next turn → a death → reconnect → a rotated-wall order relayed). Path A's
+infrastructure payoff. **Not fully specced** — its shape depends on what the playtest surfaces and a
+Builder/owner call on the seam (two `app-harness.ts` controllers over a loopback transport, or the real
+Durable Object in a test worker). Scope it into a full item after the playtest.
 
 ## Routed to Designer / flags
 
-- **WALL-BLINK-ONTO (owner confirmation, from TRAP-SHOVE-DEFAULT).** After this change, a blink that
-  lands **on a mine** fires it, but a blink that lands **on a wall tile** does not — the wall keeps the
-  owner's session-8 *"but not blinks"* exception. This is the one place the new general trap rule and the
-  wall's authored behaviour diverge. **Kept as authored; flag to owner** — say if the wall should now
-  also bite a blink that lands on it (it would be one array entry: add `teleport` to `warding_wall`'s
-  `triggers`, and flip the *"nor is a blink that lands ON a wall tile"* test).
-- **WARDING-WALL free rotation (session-8 OQ #1).** Orientation is **derived** (perpendicular to the
-  caster's line), not truly aimed. Correct and deterministic for v1; **true free rotation is an
-  ENGINE/CLIENT ASK** (needs an aim carrying a square **and** a step — an `aimFor`/`OrderDraft` change),
-  **not scheduled**. Designer call whether it is wanted.
-- **WARDING-WALL even-length centring (session-8 OQ #2).** A 4-tile wall puts the aimed square 2nd of 4
-  (offsets −1,0,+1,+2). A one-character change to 3rd, or an odd-lengths-only data rule, if the Designer
-  wants it. Not blocking.
-- **Aegis has no cooldown'd Blast (session-8 OQ #5).** Intended (the owner asked for the wall), but Aegis
-  is now the only character with no non-basic Blast — CD-BAND-BLAST's band has one fewer population. A
-  Designer look-before-playtest note.
-- **Aegis beam distinctness** (Shield Bash now reads as a 3-wide lane — re-ask if distinct enough).
-  **Self-lethal recoil warning** (a "this whirl will kill you" tell — a design call, not scheduled).
-  **Burn/regen pip glyphs** (new art, worth a look on a real plate).
-- **Warding Halo's dead `weaken`**, **trap count cap**, **inspect-panel chips hoverable**,
-  **chase-preview detour**, **Solar Flare DoT ceiling**, **Thorn mine carpet** — unchanged flags.
+- **WALL-REACH (session-9 OQ #2, Designer).** After WALL-ROTATE, `warding_wall`'s far end can sit ~7 tiles
+  from Aegis (anchor within 4, wall extends 4 along the cardinal); it was ~5 under the old centred geometry.
+  No number changed and the Builder did not rebalance. **Designer/playtest call** whether `range` should
+  come down. Ruled in edge-cases (WALL-ROTATE flag). Watch it in the playtest.
+- **WALL-BLINK-ONTO (owner confirmation; session-9 OQ #3).** After TRAP-SHOVE-DEFAULT every mine bites a
+  blink that lands on it, but the wall still does not (its authored *"a blink goes around it"*). This is now
+  the *only* trap-trigger divergence. **Kept as authored; flag to owner** — one array entry (`teleport` on
+  `warding_wall.triggers`) + flipping the *"blink onto a wall tile"* test aligns them if wanted.
+- **Aegis has no cooldown'd Blast** (session-8 OQ #5) — **closed as intended** (owner "Aegis skill set is
+  good"). **Aegis beam distinctness** (now a 3-wide lane). **Self-lethal recoil warning** (a design call,
+  not scheduled). **Burn/regen pip glyphs** (art, a look on a real plate). **Warding Halo's dead `weaken`**,
+  **trap count cap**, **inspect-panel chips hoverable**, **chase-preview detour**, **Solar Flare DoT
+  ceiling**, **Thorn mine carpet** — unchanged flags.
 
 ## Flagged future (not scheduled)
 
-- **All-seats-downed resolves on the timer, not at once** (session-8 OQ #4). DOWN-SEAT-SKIP closed the
-  partial case; the all-downed case is rare and safe (it already waited the window), and resolving
-  eagerly from `#sendDecision` risks a resolve→send→resolve loop (QUOTA-RUNAWAY territory). Only schedule
-  if the owner wants it, and then **only with the loop guard specified**.
-- **NET-E2E**, **M3-REMATCH**, **IDLE-KICK**, **LOBBY-TEAM-CHOICE**, **CAMO-E2E-FINISH** (low),
-  **same-turn-buff preview**, **route-around-bodies dash impact preview** — unchanged.
+- **All-seats-downed resolves on the timer, not at once** (session-8 OQ #4) — rare, safe; schedule only
+  with the resolve-loop guard specified. **M3-REMATCH**, **IDLE-KICK**, **LOBBY-TEAM-CHOICE** (room
+  lifecycle — the natural follow to NET-E2E). **same-turn-buff preview**, **route-around-bodies dash impact
+  preview** — unchanged.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **A real two-machine internet playtest** (DEATH-HANG shipped — exercise a death). **Shove-into-trap
-  combos** (TRAP-SHOVE-DEFAULT — a Bullrush into an Overwatch Trap is now a real play), **the cooldown
-  bands feel** (dashes at 4–5 change the tempo), **Warding Wall**, **Ram Charge's line**, **the new HUD**,
-  **AIM-PREVIEW-TRUE**, **Ravok's recoil**.
+- Folded into **Path A / PLAYTEST**: exercise a death; shove-into-trap combos; the cooldown-band feel; the
+  rotatable Warding Wall and its reach; Ram Charge's line; the new HUD; AIM-PREVIEW-TRUE; Ravok's recoil.

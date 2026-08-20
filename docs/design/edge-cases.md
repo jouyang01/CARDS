@@ -823,6 +823,34 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   replaced, CD-BAND-BLAST must DROP it from its retune list** (it is no longer a Blast). Ships with a
   test: a unit entering a wall tile takes 25 and gains weaken(2); the wall is gone next turn; the caster's
   team is unharmed.
+- **RULED — WALL-ROTATE: a wall is anchored at the clicked tile and runs ALONG a chosen cardinal, not
+  centred across a derived facing (owner Dev Note 2026-09-26 #1: "Warding Wall should be able to be placed
+  on a tile and then rotated in 4 directions for placement"; shipped `63d613f`; confirms Builder session-9
+  OQ #1; CLOSES session-8 OQ #1 and OQ #2).** The `wall` aim now carries **both** halves — a square (the
+  anchor) **and** a step (which of four cardinals it runs in) — as independent choices; the caster's
+  position no longer factors in. The clicked tile is the wall's **first** tile, and the four rotations are
+  four genuinely different arms. **Why the anchor moved:** a segment *centred* on the aimed tile and laid
+  *across* a facing is symmetric — identical north and south — so four rotate buttons would produce only
+  two distinct walls plus a one-tile nudge. Anchoring at the click and running *along* the cardinal makes
+  the tile a pivot and gives four real rotations, which is what "rotated in 4 directions" means. This also
+  **dissolves the even-length centring question** (old OQ #2): there is no centre left to place. **Aim
+  legality:** `aimIsLegal`/`aimLegal` for `'wall'` now require an in-range anchor **and** a valid step
+  (`isAimStep`); neither substitutes for the other (unlike a `line`, where a step and a target each imply
+  the other). An off-cardinal step **snaps** to the nearest of `WALL_ROTATIONS` rather than being refused
+  (deterministic, like a cone's `dominantCardinal`); the old refusal of the caster's own square is gone
+  (there is now an authored direction, so a wall under your own feet is legal, if eccentric). Rotation
+  rides `AbilityOrder.aimStep`, which the server already relays, so networked play needs nothing new.
+  - **DESIGNER FLAG (session-9 OQ #2) — the effective reach moved.** `range: 4` still bounds the *anchor*,
+    but the wall then extends 4 further tiles along the cardinal, so its far end can now sit up to ~7
+    squares from Aegis (it reached ~5 under the centred geometry). No number changed and the Builder did
+    not rebalance; whether `range` should come down is a **Designer/playtest call**, not an engine bug.
+  - **CLIENT WIRING BUG this exposed (backlog WALL-CAST-FIX).** Because a wall order is now *refused*
+    without its step, a client that fails to *send* the step makes the ability uncastable — which is
+    exactly what shipped: `toUnitOrders` copies `aimStep` only when `isRotatable` (line/cone), and a wall
+    is `isPlacedRotatable`, not `isRotatable`, so the rotation is dropped and the engine refuses the order.
+    The preview (which reads `aimFor` directly) still draws, so it looks fine. Fixed by carrying the step
+    for placed-rotatable shapes too, with an order-build/resolve regression. This is a client defect, not
+    a rule question — the ruling above is correct as shipped in the engine.
 - **RULED — TRAP-TRIGGER: what counts as setting off a trap, as a list of arrivals
   (owner Dev Notes 2026-09-25; backlog TRAP-SHOVE-DEFAULT — engine; SUPERSEDES the
   2026-08-14 "knockback/pull do NOT trigger traps in v1" ruling below, and closes
