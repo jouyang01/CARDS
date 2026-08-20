@@ -117,6 +117,19 @@ export interface AimedAction {
   def: AbilityDef;
   squares: readonly Vec2[];
   /**
+   * RAM-LINE-PREVIEW-FIX — for a `path` charge, the units the charge actually
+   * damages, from the engine's own `chargeVictims`.
+   *
+   * A charge is the one shape where standing in the area is **not** enough to be
+   * hit: `chargeHits` decides whether it is the first crossed unit or all of
+   * them, and the area is the whole route either way. Kestrel's Skim is
+   * first-only, and the preview was numbering *every* enemy on the route for 12
+   * — promising two hits where one lands.
+   *
+   * Absent means "the area is the answer", which is true of every other shape.
+   */
+  victims?: readonly string[];
+  /**
    * PREVIEW-NUMBERS-AUDIT — the two interior bands, straight from the engine's
    * `axisSquares` / `innerSquares` (via `previewBandSets`).
    *
@@ -180,8 +193,11 @@ export function previewNumbers(
 ): PreviewNumber[] {
   const totals = new Map<string, number>(); // `${targetId}:${kind}` → amount
   const key = (p: Vec2): string => `${p.x},${p.y}`;
-  for (const { def, squares, axis, inner } of actions) {
+  for (const { def, squares, axis, inner, victims } of actions) {
     if (squares.length === 0) continue;
+    // RAM-LINE-PREVIEW-FIX: a charge names its victims; every other shape lets
+    // the area name them.
+    const hitList = victims === undefined ? undefined : new Set(victims);
     const area = new Set(squares.map(key));
     // BASIC-AXIS / BASIC-INNER, engine-derived. Sets rather than lists because
     // the question asked per target is membership.
@@ -224,6 +240,10 @@ export function previewNumbers(
 
       for (const target of state.units) {
         if (!target.alive || !area.has(key(target.pos))) continue;
+        // A charge's damage reaches only the units `chargeHits` selected — but
+        // its beneficial half, and anything an `impact` disc covers, is an area
+        // effect like any other, so the list gates the damage alone.
+        if (hitList !== undefined && kind === 'damage' && !hitList.has(target.unitId)) continue;
         if (OWN_TEAM_ONLY.has(kind) && target.owner !== caster.owner) continue;
         // PREVIEW-FOG. Own units are always visible to their own team, so this
         // only ever removes enemies — and it asks the fog view rather than

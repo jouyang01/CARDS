@@ -15,6 +15,8 @@ import {
   aimInRange,
   axisSquares,
   buildBoard,
+  chargeVictims,
+  chargedUnits,
   abilityProfile,
   circleSquares,
   direction8,
@@ -939,6 +941,28 @@ export function isBlockedDashLanding(
  * statement: you end up there. Empty only when no dash is drafted, which is the
  * one case where the line should be suppressed.
  */
+/**
+ * RAM-LINE-PREVIEW-FIX — the units a `path` charge would actually damage.
+ *
+ * *"Bastion's Ram Charge is still not a linear dash/attack preview."*
+ *
+ * Both halves come from the engine: `chargedUnits` finds who is standing on the
+ * route (the scan `walkCharge` does before it moves anybody) and `chargeVictims`
+ * applies ALLY-SAFE and `chargeHits`. Neither is re-derived here, which is the
+ * point — `chargeHits` is a rule with two values and the preview was silently
+ * assuming one of them.
+ *
+ * Empty for anything that is not a charge, so a caller can hand the result
+ * straight to `previewNumbers` without asking what shape it has.
+ */
+export function chargeHitList(
+  state: GameState, unit: UnitState, ability: AbilityDef | undefined, aim: readonly Vec2[],
+): string[] {
+  if (ability === undefined || ability.shape !== 'path' || ability.phase !== 'dash') return [];
+  const crossed = chargedUnits(state.units, unit.unitId, aim);
+  return chargeVictims(ability, unit.owner, crossed).map((u) => u.unitId);
+}
+
 export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim: readonly Vec2[]): Vec2[] {
   if (ability === undefined || ability.phase !== 'dash') return [];
   if (ability.shape === 'path') return aim.map((p) => ({ ...p }));
