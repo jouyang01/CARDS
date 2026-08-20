@@ -4621,3 +4621,67 @@ element ids), which is the part a test has no business driving.
    once with "no `#board canvas`" — a WebGL context that never came up, in the `beforeEach`, while
    vitest was running concurrently on the same box. Every other size and map passed in the same run.
    Recorded here so a future intermittent failure is not diagnosed from scratch.
+
+## 2026-09-22 — ART-PIPELINE: characters are generated, not modelled (owner + Claude, brainstorm session)
+
+The owner has no Blender, animation or art skills and wants character art produced ~99% by AI and
+tooling. `docs/ART_PIPELINE.md` is the full plan; the judgment calls behind it are here.
+
+1. **Procedural generation beats AI mesh generators, specifically because of Mixamo.** The
+   auto-rigger has four hard requirements — clean T-pose, left/right symmetry, limbs not fused to
+   the torso, single mesh under 150k tris. Text-to-3D and image-to-3D tools (Meshy, Tripo, TRELLIS)
+   fail all four routinely and need Blender cleanup to recover, which is exactly the skill the owner
+   does not have. A parametric Blender script satisfies all four by construction. The constraint
+   that we can only make blocky characters happens to align with what the rigger wants and with what
+   reads at isometric distance.
+
+2. **Blender is a build dependency, not a tool anyone opens.** `blender --background --python`.
+   It is required because Mixamo exports FBX and the client needs glTF; something has to convert,
+   merge clips onto one skeleton and optimize. Rejecting the install would mean depending on web
+   converters for a step that runs on every asset rebuild. Require 4.2 LTS or newer.
+
+3. **Faces are painted into a texture, never modelled.** Because the generator builds the head it
+   also assigns the UVs, so the atlas layout is a decision rather than a discovery — no unwrapping,
+   no seams, no Blender UI. Most of the body points at a single solid-coloured pixel; only the face
+   earns real detail. This is the same trick Quaternius and KayKit use and it is why their models
+   ship with one tiny texture.
+
+4. **Art parameters get a new `data/art/<id>.json`, not a block inside `data/characters/<id>.json`.**
+   The role table says Builder never touches balance numbers. Separate files mean changing a coat
+   never requires opening a file full of damage values, and Designer can own art wholesale.
+
+5. **No engine change is required by any phase of this, and that is load-bearing.** Projectile
+   flight time falls out of the gap between the `ability` cue at `t` and its `impact` cue at
+   `impactT` (`choreograph.ts:163`, `:169`); source and destination units are both already in the
+   payloads. Much of the VFX dispatch is derivable from `shape`, `range`, `melee` and
+   `effects[].kind`, which abilities already declare. If a future session believes it needs an
+   engine change for art, that is an `ENGINE ASK`, not a commit.
+
+6. **Clip selection and VFX dispatch live in the renderer, never in `sampleFrame()`.** That module
+   is pure, Three-free and unit-tested, and its contract is that dropping every frame changes
+   nothing about where the board lands. Renderer randomness is legal — golden rule #1 binds the
+   engine, not the view — but it must be seeded from `cue.t + unitId` so a replayed turn looks the
+   same twice. Unseeded jitter would make `skip == watch` true in state and false to the eye.
+
+7. **The free-orbit camera, not the isometric preset, is what constrains the art.** `renderer3d.ts:782`
+   runs yaw modulo 360 unclamped and pitch reaches ~8°. That kills billboarded faces, untextured
+   backs of heads and flat cards for hair and cloth, and it makes front/back asymmetry a facing cue
+   rather than a flourish. An earlier draft of this plan proposed pre-rendering animations to 2D
+   sprite sheets; a rotating camera makes that impossible, and it is recorded here so nobody
+   re-proposes it.
+
+8. **"In Place" on Mixamo locomotion downloads is a correctness requirement, not a preference.**
+   The engine owns unit positions. A clip carrying root motion fights it and units drift off their
+   squares. The clip looks fine in isolation, which is what makes this worth writing down.
+
+9. **`CLAUDE.md` said "SVG rendering" long after the Three.js swap, and it cost real work.** The
+   stale line sent this very session down a wrong path — recommending sprite sheets and warning
+   about the cost of adding a 3D renderer that had already been added. Fixed in the same commit.
+   `ARCHITECTURE.md` was already correct; the constitution was not, and the constitution is what
+   every session reads first.
+
+10. **Not decided: whether the generated characters will look good enough.** The honest expectation
+    is "competent low-poly indie", not stylized AAA. The mitigation is structural rather than
+    optimistic — every phase after generation is mesh-agnostic, so if the output disappoints, CC0
+    packs (Quaternius, KayKit, Kenney) drop in and nothing downstream changes. Spike one character
+    before generating a roster.

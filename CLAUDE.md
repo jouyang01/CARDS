@@ -65,8 +65,10 @@ mark it `ENGINE ASK` — don't assume.
 - `docs/BACKLOG.md` — prioritized work items with acceptance criteria. Builder takes the top unblocked item.
 - `docs/DECISIONS.md` — append-only log of judgment calls.
 - `docs/design/edge-cases.md` — explicit rulings for simultaneous-turn edge cases. Grow it.
+- `docs/ART_PIPELINE.md` — how characters get modelled, rigged, animated and armed. Read before changing how a unit is drawn.
 - `packages/engine` — pure deterministic simulation + tests. The heart of the project.
-- `packages/client` — Vite + TypeScript + SVG rendering.
+- `packages/client` — Vite + TypeScript, orthographic 3D rendering (Three.js,
+  `renderer3d.ts`). **Not SVG** — that was swapped out; see `docs/ARCHITECTURE.md`.
 - `packages/server` — Cloudflare Worker + Durable Object room (built at M3).
 - `data/` — characters and maps as JSON.
 
