@@ -31,7 +31,7 @@ from near-ground-level to straight down.
 | Phase | Owner | Produces |
 |---|---|---|
 | 0 · Setup & style lock | human | Blender installed, spike character chosen |
-| 1 · Character generator | Builder | `<id>.fbx` + `<id>_atlas.png` |
+| 1 · Character generator | Builder | `<id>.fbx` (Blender) + `<id>_atlas.png` (no Blender) |
 | 2 · Rigging & clips | human, in Mixamo | 1 rigged FBX + 8 animation FBX |
 | 3 · Asset build | Builder | one `.glb`, all clips named |
 | 4 · Renderer integration | Builder | boxes replaced |
@@ -44,8 +44,15 @@ Exactly one phase is hands-on: dragging five markers onto a model in Mixamo's we
 
 Blender runs headless — `blender --background --python script.py`. It is in the pipeline
 because **Mixamo exports FBX and the client needs glTF**, and something has to convert,
-merge clips onto one skeleton, and optimize. Nobody opens its interface. Require 4.2 LTS
-or newer.
+merge clips onto one skeleton, and optimize. Nobody opens its interface.
+
+Require 4.2 LTS or newer. Verified working on **5.2.0 LTS / macOS**. Since 4.2 Blender has
+been migrating bundled add-ons to its extensions system, so confirm the two exporters this
+pipeline needs are actually present before assuming they are:
+
+```
+blender --background --python-expr "import bpy; print(hasattr(bpy.ops.export_scene,'fbx'), hasattr(bpy.ops.export_scene,'gltf'))"
+```
 
 ## 3. Character generation (Phase 1)
 
@@ -95,8 +102,14 @@ Atlas layout (1024²):
 | Flat swatches | `512,256–1024,512` | Solid colours for limbs, boots, gloves |
 
 That last row is the economy of the whole approach: most of the body points at a single
-solid-coloured pixel. Only the face earns real pixel detail. Drawing happens with Pillow,
-which ships inside Blender's bundled Python — no extra install.
+solid-coloured pixel. Only the face earns real pixel detail.
+
+**Texture generation is a separate script that does not use Blender.** Painting a face into a
+PNG is plain 2D image drawing; Blender builds geometry and assigns UVs, and never touches
+pixels. That split is deliberate — the texture step then runs and tests without launching
+Blender, it mirrors how `textures.ts` already generates textures in the client, and it
+removes any question about what Blender's bundled Python does or does not ship. Plain Python
+with Pillow, or Node with canvas to match the client, are both fine.
 
 ### Rules the rotating camera imposes
 
@@ -328,7 +341,8 @@ Owns `data/art/<id>.json` for all nine characters, and the per-ability VFX table
 
 ## 10. First steps
 
-1. Human: install Blender 4.2 LTS or newer; confirm `blender --version` runs from a terminal.
+1. Human: install Blender 4.2 LTS or newer; confirm `blender --version` runs from a terminal,
+   then confirm the FBX and glTF exporters are present with the `--python-expr` check in §2.
 2. Human: confirm the spike character. **Aegis** is the recommendation — `frontline`
    archetype, shield, chunky silhouette, and `shield_bash` is `melee: true`, so the
    rig-and-animate loop can be proven without any projectile VFX.
