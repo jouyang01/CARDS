@@ -10,213 +10,144 @@ independently shippable. Each item carries **Spec Notes** (Analyzer's build guid
 **dependency-free**; client/server consume `TurnEvent[]` + the engine's derived queries — never
 recompute them. **`@cards/server` imports `@cards/engine` only** (client may import server protocol
 **types only**). **Movement is Manhattan (MET1); aiming is Euclidean.** **Every engine behavior change
-ships with a Vitest test in the same commit.** **Drive the real UI wiring in tests** (`app-harness.ts`
-/ two-net-client tests — the death hang is exactly this class). **Open/update a PR to `main` every
-session.**
+ships with a Vitest test in the same commit.** **A genuinely new mechanic gets a generic, reusable
+implementation** (golden rule #2). **Drive the real UI wiring in tests.** **Open/update a PR to `main`
+every session.**
 
-> ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set; QUOTA-RUNAWAY (PR #89) guards the
-> Cloudflare quota. Keep it green.
+> ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set; QUOTA-RUNAWAY guards the quota. Keep green.
 
 ## ✅ COMPLETE
 
-- The full hot-seat game + AR parity + the whole M3 networked loop + deploy + Dev Notes batch 3.
-- **PR #89 (Designer/infra):** **QUOTA-RUNAWAY** — abandoned matches stop the DO alarm ticking, no-op
-  writes are skipped, Worker errors are CORS'd (the Cloudflare-quota guard; tested in every area).
-- **PR #92 (this review):** **AIM-PREVIEW-TRUE** (the aim preview's shape is now the engine's own
-  tile-centre predicate, congruence-swept — Aegis's beam reads as a 3-wide lane; boundary has square
-  ends matching the predicate), **HARNESS-LOBBY-MATCH** (the lobby→match handoff is harness-driven).
+- The full hot-seat game + AR parity + the whole M3 networked loop + deploy + Dev Notes batch 3 +
+  AIM-PREVIEW-TRUE.
+- **PR #94 (this review):** **DEATH-HANG** (a downed networked seat holds — with "Hold Position" live —
+  instead of auto-submitting into a frozen UI; verified by a reproduction test), **RAVOK-RECOIL** (11
+  self), **KESTREL-SLIPSTREAM-2T** (2 turns), **PREVIEW-NUMBERS-AUDIT** (the previewed number is the
+  dealt number, incl. self-damage), **BURN-VISIBLE** (+ `healOverTime` pip), **LINE-PREVIEW-SMOOTH**.
 
-Current suite: **2393 tests** (1191 + 910 + 292), typecheck + build clean.
+Current suite: **2538 tests** (1323 + 921 + 294), typecheck + build clean.
 
 ### Build order and dependencies
 
-**DEATH-HANG → RAVOK-RECOIL → KESTREL-SLIPSTREAM-2T → CD-BAND-DASH → CD-BAND-BLAST →
-CD-BAND-INVARIANT → PREVIEW-NUMBERS-AUDIT → BURN-VISIBLE → LINE-PREVIEW-SMOOTH.** DEATH-HANG is
-CRITICAL and first — a balance pass is unverifiable until a death stops freezing the game. All five
-data items (RAVOK-RECOIL, KESTREL-SLIPSTREAM-2T, and the three CD-BAND items — the owner's 2026-09-23
-cooldown directive) are one field each and should land **before** PREVIEW-NUMBERS-AUDIT so the audit
-checks the final numbers. CD-BAND-INVARIANT is the test and goes last of the three. Realistic
-one-session cut: DEATH-HANG + the five data items + PREVIEW-NUMBERS-AUDIT.
+**WARDING-WALL → BASTION-RAM-LINE → CD-BAND-DASH → CD-BAND-BLAST → CD-BAND-INVARIANT → DOWN-SEAT-SKIP.**
+WARDING-WALL is the only real engine work and **must precede CD-BAND-BLAST** (it replaces the ability
+CD-BAND-BLAST would retune). CD-BAND-INVARIANT is the test, after its two data items. Realistic
+one-session cut: WARDING-WALL + BASTION-RAM-LINE + the three CD-BAND items.
 
 ---
 
-## Client — the death hang (CRITICAL, do first)
+## Engine + data — Aegis's new wall (do first; the only new mechanic)
 
-### DEATH-HANG. A character dying must not freeze the turn (CLIENT bug) — UNBLOCKED (first, CRITICAL)
-**Addresses Dev Note: "BIG BUG: IMPORTANT: Something breaks when a character dies, the lock-in is not
-possible and the timer bar goes away, forcing game to go on forever."** Investigated: the hot-seat
-turn-boundary is robust (`seatRoster()` filters `alive`); the suspect is the **networked** path —
-`playResolution` runs `beginTurn()` for both modes (`app.ts:1932`), and `openSeat`'s *"no living roster
-→ `endTurn()`"* branch (`app.ts:925-932`) **auto-submits** `net.submit([])` the instant a resolution
-leaves this seat's unit(s) **downed** (respawning), leaving the client locked with no actionable window
-— "lock-in impossible, timer gone." *AC: after a resolution that downs a unit, the **next** turn is
-playable — the timer (from the server window) shows and lock-in works — for **both** the downed seat
-and its opponent, in **hot-seat and networked**; a seat with all units currently down presents an
-honest **waiting/hold** state (not an auto-submit that reads as frozen); the match still ends on the
-kill target, not on a transient down. Tests: **drive a death through the harness** (a two-net-client
-match and a hot-seat) and assert the following turn opens with a live timer and a working lock-in; a
-downed seat does not silently auto-submit into a frozen UI.* **Spec Notes.** Files:
-`packages/client/src/app.ts` (`playResolution`/`beginTurn`/`openSeat`/`adoptWindow` — the networked
-turn-boundary; separate the networked next-turn open from the hot-seat seat-iteration), possibly the
-server window re-arm after a death-resolution (verify `#sendDecision` sends a fresh window when status
-stays active). **Reproduce before fixing** — this is a wiring bug, not a pure-function bug. Out of
-scope: the engine (death/respawn correct); the end-screen (correct).
+### WARDING-WALL. Aegis's Grounding Strike becomes a Prep line-hazard (ENGINE + data, ENGINE ASK) — UNBLOCKED (first)
+**Addresses Dev Note: "Change Aegis's Grounding Strike to be a prep phase, 4 cool down skill named
+Warding Wall which puts down a 4 tile long wall that lasts until the end of this turn that does 25
+damage to those who walk through it and weakens them for the next turn."** Replaces the Blast
+`grounding_strike` (line, dmg 14 + slow) with a Prep **line-hazard** — a new, reusable mechanic. *AC:
+`aegis.grounding_strike` becomes **`warding_wall`** — `phase: "prep"`, `cooldown: 4`, a **4-tile
+line/wall** placed at aim; the engine places a **trap on every tile of the wall** (generalise
+TRAP-CENTRE's single placement to a wall placement), each carrying `onTrigger: [{damage: 25},
+{weaken, duration: 2}]`, with a **lifetime that covers only the placement turn** (armed in Prep, active
+through this turn's Dash/Move, gone at end of turn); it is a **hazard, not a blocker** (units walk
+through, taking the hit — no pathing/LoS change); a unit **entering** any wall tile under its own power
+(dash or move — not knockback/pull, the v1 trap rule) takes 25 and gains weaken(2, so it bites next
+turn); the **caster's own team is unharmed** (existing trap team-exclusion); the wall is gone next turn.
+Tests: a unit walking through takes 25 + weaken(2); a teammate is unharmed; the wall expires end of
+turn; the four tiles all trigger.* **Spec Notes.** Files: `packages/engine/src/resolve.ts` (`placeTraps`
+→ a wall/line placement over the shape's tiles, not just the centre — the reusable generalisation),
+`types.ts`/`validate.ts` (a `wall`/line-trap shape or a flag on the trap effect), `data/characters/aegis.json`
+(the ability rewrite + name + description). Keep it deterministic, integer, N-safe. **Design
+confirmations owed to the Designer/owner** (flag before finalising): the **aim** (a line from the caster
+along a direction, or a freely-placed 4-tile segment?), whether a **dasher** crossing it is hit (default
+**yes** — traps fire on dash entry), and that Aegis trading a Blast for a Prep wall is intended.
+**Cross-item: this removes `grounding_strike` as a Blast — CD-BAND-BLAST must NOT retune it** (see
+below). Ruled PROPOSED (WARDING-WALL). Out of scope: making it a movement/LoS blocker (it is a hazard);
+other kits.
 
-## Data — the two number tweaks (before the preview audit)
+## Data + client — Bastion's line charge
 
-### RAVOK-RECOIL. Whirling Cleave costs Ravok 11 (DATA) — UNBLOCKED
-**Addresses Dev Note: "Ravok whirling cleave should do 11 damage to himself."** *AC:
-`data/characters/ravok.json` `cleave` gains `selfDamagePct: 50` (Ravok takes floor(22×50/100)=11 —
-RECOIL, bypasses cover, shields first); Shockwave unchanged (0 self / 12 enemies); Seismic Rupture
-unchanged (19/38); the content + engine suites stay green.* **Spec Notes.** One data field; the RECOIL
-mechanic already exists. Ruled in edge-cases (RAVOK-RECOIL). The **preview** of the self number is
-PREVIEW-NUMBERS-AUDIT's job. Out of scope: Shockwave/Seismic (correct).
+### BASTION-RAM-LINE. Ram Charge hits all in the line and previews as a line + landing marker (DATA + CLIENT) — UNBLOCKED
+**Addresses Dev Note: "Bastion's Ram Charge should be a linear aoe dash that affects all players in a
+line, not just the first enemy hit the preview should be like a line attack that also shows the ending
+dash location."** The engine already supports it (`chargeHits: "all"`, validated, read at
+`resolve.ts:1347`). *AC: `bastion.ram_charge` gains **`chargeHits: "all"`** — it applies its damage 15 +
+knockback 1 to **every** enemy its path crosses (CASTER-SAFE/ALLY-SAFE filter as always); the client
+**previews the charge as a line** over the tiles the path crosses **plus a marker at the dash landing
+square**; a test asserts the charge hits every enemy in the line and the preview draws the line + the
+end marker (drive the real preview).* **Spec Notes.** Files: `data/characters/bastion.json`
+(`chargeHits: "all"`), `packages/client/src/` (the dash/charge preview — draw the crossed-tile line +
+the landing marker for a `chargeHits:"all"` path). Ram Charge stays a dash → **CD-BAND-DASH sets its cd
+to 4** (composes). Ruled (BASTION-RAM-LINE); resolves session-7 OQ #3 for this ability. Out of scope:
+the `chargeHits` engine mechanic (shipped); other charges.
 
-### KESTREL-SLIPSTREAM-2T. Slipstream lasts 2 turns (DATA) — UNBLOCKED
-**Addresses Dev Note: "Kestrel's slipstream shouldgive a 2T buff for both haste and energized."** *AC:
-`data/characters/kestrel.json` `slipstream` — both riders `duration: 2` (was 1); a test asserts the
-haste and energized both persist to the turn after the cast.* **Spec Notes.** Two data fields; matches
-how durations are measured (a `duration: 2` status survives the cast turn's end-of-turn tick). Out of
-scope: other Kestrel abilities.
+## Data — the cooldown bands (owner directive; PR #95, Dev Note #1)
 
-## Data — the cooldown bands (owner directive 2026-09-23, after the two number tweaks)
-
-> **Owner directive, verbatim:** *"1. Dashes should be a 4-5 turn cooldown with only a few exceptions,
-> use your judgement for the exceptions. 2. Non-basic blasts should have 3-4 turn cooldown with only a
-> few exceptions use your judgement for the exceptions. 3. Prep cooldowns are correct right now."*
-> Full evidence, the Atlas Reactor measurements behind it, and the reasoning for every number:
-> **`docs/reviews/2026-09-23.md`**. Numbers below are final — the Builder implements them, does not
-> re-derive them.
-
-**Three items, in order: CD-BAND-DASH → CD-BAND-BLAST → CD-BAND-INVARIANT.** Data + one test. **No
-engine change and no client change** — `cooldown` is already a plain data field the resolver reads
-(`resolve.ts:625`, `:903`) and the HUD/inspect panel renders it from data. **PREP COOLDOWNS ARE FROZEN
-for this batch** (directive #3): do not touch a `prep` ability's cooldown, including the four free
-actions (Vex Overwatch Trap 4, Thorn Snare Bloom 3, Wisp Veil & Decoy 5, Cinder Stoke the Flame 4).
-**Do not retune `energyGain`** — the review proves the ult clock is neutral-to-faster under these
-numbers (one ability per turn means cast *count* is unchanged; dashes are the roster's cheapest energy
-abilities at 4–5 and the basic pays 8), so there is nothing to compensate for.
+> **Owner directive, verbatim:** *"1. Dashes should be a 4-5 turn cooldown with only a few exceptions …
+> 2. Non-basic blasts should have 3-4 turn cooldown with only a few exceptions … 3. Prep cooldowns are
+> correct right now."* Evidence + reasoning: **`docs/reviews/2026-09-23.md`**. Numbers are final — the
+> Builder implements, does not re-derive. **PREP is FROZEN** (directive #3): do not touch a `prep`
+> ability's cooldown. **Do not retune `energyGain`** (the review proves the ult clock is neutral).
 
 ### CD-BAND-DASH. Every dash costs 4 or 5 turns (DATA) — UNBLOCKED
-**Addresses owner directive #1.** Today the nine dashes run 2–3 (mean 2.67, median 3) against Atlas
-Reactor's 4.81 / 5 — no CARDS dash reaches AR's modal value. The rule: **a dash with an enemy-facing
-effect (damage / knockback / root) costs 4; a dash with no enemy-facing effect — pure teleport, or a
-self/ally shield — costs 5.** A self-shield is escape insurance, not commitment, so it does not buy the
-discount. *AC: the nine `phase: "dash"` abilities carry exactly these cooldowns —* `bastion.ram_charge`
-**3→4**, `ravok.bullrush` **3→4**, `kestrel.skim` **2→4**, `thorn.bramble_stride` **3→4**,
-`wisp.blink` **2→4**, `aegis.intercept` **3→5**, `cinder.backdraft` **3→5**, `lumen.glimmer_step`
-**3→5**, `vex.combat_roll` **2→5**; *no other field on any of them changes; the engine + client suites
-stay green.* **Spec Notes.** Nine one-field edits in `data/characters/*.json`. **Wisp's Blink at 4 is a
-deliberate exception** to the rule (it is a pure teleport, so the rule says 5): Wisp is the only
-character who is both lowest-HP (85) and holds a range-2 basic, so Blink is her approach *and* her
-exit — at 5 the archetype is deleted rather than taxed. AR kept the same exception for PuP. It stays
-inside the owner's band at the floor; **do not move it to 3**. Aegis's Intercept going to 5 is safe
-because **Barrier Pulse (Prep 2, shield 20, r4) is unchanged** and remains the every-other-turn
-bodyguard button. Out of scope: `energyGain`, ranges, damage, Prep, ultimates.
+**Addresses owner directive #1.** Rule: **a dash with an enemy-facing effect (damage/knockback/root)
+costs 4; a dash with no enemy-facing effect (pure teleport, or a self/ally shield) costs 5.** *AC: the
+nine `phase: "dash"` abilities carry exactly —* `bastion.ram_charge` **3→4**, `ravok.bullrush` **3→4**,
+`kestrel.skim` **2→4**, `thorn.bramble_stride` **3→4**, `wisp.blink` **2→4**, `aegis.intercept` **3→5**,
+`cinder.backdraft` **3→5**, `lumen.glimmer_step` **3→5**, `vex.combat_roll` **2→5**; *no other field
+changes; suites stay green.* **Spec Notes.** Nine one-field edits. **Wisp's Blink at 4 is the deliberate
+exception** (pure teleport, but Wisp is lowest-HP with a range-2 basic, so Blink is approach *and* exit
+— AR kept the same PuP exception; do not move to 3 or 5). Aegis Intercept→5 is safe (Barrier Pulse
+Prep-2 shield is unchanged). Out of scope: `energyGain`, ranges, damage, Prep, ults.
 
-### CD-BAND-BLAST. Every non-basic blast costs 3 or 4 turns (DATA) — UNBLOCKED
-**Addresses owner directive #2.** Six of the eight non-basic blasts sit at 2 — a value Atlas Reactor
-used once in 29. The rule: **a non-basic blast costs 3; it costs 4 only if its damage exceeds the
-undelayed skill ceiling of 24 (`roster-v1.md` §4).** *AC: the eight non-basic `phase: "blast"`
-abilities carry exactly these cooldowns —* `aegis.grounding_strike` **2→3**, `cinder.flare_burst`
-**2→3**, `kestrel.kite_shot` **2→3**, `lumen.dazzling_ray` **2→3**, `ravok.shockwave` **2→3**,
-`wisp.bola` **2→3**, `vex.frag_grenade` **3→4**, `bastion.chain_hook` **unchanged at 3**; *every
-`abilities[0]` auto-attack stays at* `cooldown: 0`; *no other field changes; both suites stay green.*
-**Spec Notes.** Seven one-field edits in `data/characters/*.json` (Chain Hook is already in band —
-touch nothing). **Nothing is priced below 3 and that is deliberate:** every non-basic blast already
-carries a status rider (slow / weaken / reveal / DoT / pull) on top of damage, so none is a plain shot
-— **the plain shot is the 0-cooldown basic**, and restoring that hierarchy is the point of the
-directive. **Frag Grenade at 4** is the single upward exception: 34 damage is the roster's named skill
-nuke ceiling and the only skill above the undelayed cap of 24. Out of scope: `energyGain` (Frag's 10
-stays), the auto-attacks, Prep, ultimates.
+### CD-BAND-BLAST. Every non-basic blast costs 3 or 4 turns (DATA) — UNBLOCKED (after WARDING-WALL)
+**Addresses owner directive #2.** Rule: **a non-basic blast costs 3; 4 only if its damage exceeds the
+undelayed skill ceiling of 24 (`roster-v1.md` §4).** *AC: the non-basic `phase: "blast"` abilities carry
+exactly —* `cinder.flare_burst` **2→3**, `kestrel.kite_shot` **2→3**, `lumen.dazzling_ray` **2→3**,
+`ravok.shockwave` **2→3**, `wisp.bola` **2→3**, `vex.frag_grenade` **3→4**, `bastion.chain_hook`
+**unchanged at 3**; *every* `abilities[0]` *auto-attack stays* `cooldown: 0`; *no other field changes.*
+**⚠ `aegis.grounding_strike` is REMOVED from this list — WARDING-WALL replaces it with a Prep ability, so
+it is no longer a Blast. Do not touch it here.** **Spec Notes.** Six one-field edits (Chain Hook already
+in band). Nothing below 3 is deliberate (every non-basic blast carries a status rider; the plain shot is
+the 0-cooldown basic). Frag Grenade at 4 is the single upward exception (34 dmg > the 24 cap). Out of
+scope: `energyGain`, auto-attacks, Prep, ults.
 
-### CD-BAND-INVARIANT. The bands are enforced by a test, not by prose (TEST) — BLOCKED on the two above
-**Why:** `roster-v1.md` §1 states the kit constraint as *"Skills | 3 | `cooldown ≥ 2`"*. That bare
-floor is why the roster clustered at 2 — nothing in the repo ever said a dash should cost more than a
-heal. The new numbers satisfy it (5 ≥ 2), so the prose does not block the data change, but it cannot
-stop the next character shipping at 2 either. *AC: `packages/engine/test/content.test.ts` asserts, over
-all nine shipped characters:* `abilities[0]` *is* `phase: "blast"` *with* `cooldown: 0`*; every*
-`ultimate` *has* `cooldown: 0`*; and for the three skills —* **dash ⇒ 4 ≤ cd ≤ 5**, **blast ⇒ 3 ≤ cd ≤
-4**, **prep ⇒ 2 ≤ cd ≤ 5** *(the current Prep range, frozen per directive #3). The test names the band
-in its failure message so a future character author reads the rule, not a bare number.* **Spec Notes.**
-`content.test.ts` already imports all nine characters and is where the roster's structural rules live —
-extend it, do not add a file. **The invariant needs no allow-list**: with Blink at 4 rather than 3,
-every value in the roster is inside its band, and an exception list is exactly the thing that lets the
-next drift in. Out of scope: `validate.ts` (the engine's schema check stays value-agnostic — a band is
-roster policy, not a data-format rule, and content tests are where policy belongs).
+### CD-BAND-INVARIANT. The bands are enforced by a test (TEST) — BLOCKED on the two CD-BAND data items
+*AC: `packages/engine/test/content.test.ts` asserts, over all nine characters:* `abilities[0]` *is*
+`phase:"blast"` `cooldown:0`*; every* `ultimate` `cooldown:0`*; and* **dash ⇒ 4 ≤ cd ≤ 5**, **blast ⇒
+3 ≤ cd ≤ 4** *(non-basic)*, **prep ⇒ 2 ≤ cd ≤ 5** *(frozen). The failure message names the band so a
+future author reads the rule.* **Spec Notes.** Extend `content.test.ts` (don't add a file). No
+allow-list (with Blink at 4 every value is in band; **Warding Wall is Prep cd 4 — inside the prep
+band**, so it needs no exception). Out of scope: `validate.ts` (schema stays value-agnostic).
+**Mechanical risk:** any test that advances turns to wait an ability off cooldown needs its turn count
+raised — **do not adjust a data value to keep a test green.**
 
-### The one risk, and it is mechanical
-Any existing test that advances turns to wait an ability off cooldown will need its turn count raised.
-Run the full suite. **Do not adjust a data value to keep a test green** — the numbers above are the
-owner's, the turn counts in tests are not.
+## Server — the downed-seat wait
 
-## Client — the damage-number audit
-
-### PREVIEW-NUMBERS-AUDIT. Every ability's previewed damage number matches its resolution (CLIENT) — UNBLOCKED
-**Addresses Dev Notes #2 and #3.** *#2: "Cinder's preview for damage on her auto attack should show the
-extra damage to the center correctly. IMPORTANT again, AUDIT ALL DAMAGE PREVIEWS TO ENSURE THEY ARE
-CORRECT." #3: "show 11 to himself, 22 to enemies for whirling cleave … 12 to enemies for shockwave and
-nothing on Ravok … seismic rupture should show 19 damage to ravok and 38 to others."* AIM-PREVIEW-TRUE
-fixed the shape; the **numbers** still hide the centre bonus and the caster's own recoil. *AC: the
-damage tell equals the engine's resolution **at every previewed tile** for the whole roster, including:
-Cinder's inner (22 centre / 14 ring), Bastion's axis (+8 line), and — the new dimension — the **caster's
-own tile** carrying `selfDamagePct` recoil (**11** whirl, **19** Seismic, **nothing** for Shockwave);
-DoT/heal tells unchanged. A property-style test: previewed number at tile == resolved number at tile,
-for every roster ability at a fixed aim, **including the caster's square when `selfDamagePct` is set.*
-**Spec Notes.** Files: `packages/client/src/targeting.ts` (`previewBands`/`damageTell`/`impactPreview`)
-— drive numbers from the engine's `axisSquares`/`innerSquares` and the damage composition (incl.
-`selfDamagePct` on the caster's tile); **never a client re-guess**. Depends on RAVOK-RECOIL /
-KESTREL-SLIPSTREAM-2T landing first so the audit checks final numbers. Out of scope: the shape
-(AIM-PREVIEW-TRUE, done); rebalancing.
-
-## Client — the burn debuff & the line smoothness
-
-### BURN-VISIBLE. Cinder's burn (DoT) shows as a visible debuff pip (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "Cinder burn should be a debuff that players can see."** The DoT is a
-`damageOverTime` **status** on the unit (per-turn amount + source), but the status pips don't render it.
-*AC: a unit with a `damageOverTime` status shows a **burn debuff pip** (with its remaining turns), like
-root/slow/reveal; hovering it names the per-turn amount; a test asserts a burning unit renders the pip.*
-**Spec Notes.** Files: `packages/client/src/status-pips.ts` (+ the pip's tooltip). Read the existing
-status — no engine change. Out of scope: HoT (own-team heal-over-time — apply the same treatment if
-cheap, but the ask is the burn).
-
-### LINE-PREVIEW-SMOOTH. Line-attack previews track smoothly on hover (CLIENT) — UNBLOCKED
-**Addresses Dev Note: "Vex's and other line attack previews seem to be a little laggy, can you make it
-more smooth?"** The per-hover boundary re-derivation (AIM-PREVIEW-TRUE) likely re-tessellates every
-mousemove for a long line. *AC: the line/beam preview re-derives only when the **quantized aim
-direction** changes (not every pixel), so it tracks smoothly; a test/benchmark asserts the derivation
-is skipped when the aim step is unchanged.* **Spec Notes.** Files: `packages/client/src/` (the hover →
-boundary path — memoise on `aimStep`/direction). Out of scope: the geometry (correct); the congruence
-test.
+### DOWN-SEAT-SKIP. A seat with no living units is not waited on (SERVER) — UNBLOCKED
+**Addresses Builder session-7 OQ #1.** DEATH-HANG's downed seat holds correctly, but the room waits the
+full 40s on a turn it cannot act in. *AC: `#answering()` (and the lock total) **excludes a seat that
+controls no living units this turn**, so the turn resolves as soon as every seat that *can* act has
+locked; the downed seat's units hold; "Hold Position" stays for a seat with some units still alive. A
+test: a match where one seat's only unit is down resolves as soon as the other seat locks.* **Spec
+Notes.** Files: `packages/server/src/hub.ts` (`#answering` — intersect the seat's `controlledUnits`
+with alive). Deterministic; N-safe; the "no turn ever waits on a player" principle applied to a downed
+seat. Ruled (DOWN-SEAT-SKIP). Out of scope: the client hold UI (correct); the timer.
 
 ## Routed to Designer / flags
 
-- **Aegis beam distinctness** — now a visible 3-wide rectangle lane; **re-ask the Designer/owner**
-  whether it reads distinct enough (Builder OQ 2026-09-22 #2). **Warding Halo's dead `weaken`** (add an
-  enemy-facing Prep path or drop it), **trap count cap** — still Designer-owned.
-- **`roster-v1.md` §1 kit rule is now too loose** — it says *"Skills | 3 | `cooldown ≥ 2`"*, which is
-  the floor that let the roster cluster at 2. The owner's 2026-09-23 directive supersedes it: **dash
-  4–5, non-basic blast 3–4, prep unchanged**, with the commitment gradient behind it (a dash carrying
-  an enemy-facing effect costs 4; a pure disengage costs 5). **Designer-owned prose** — CD-BAND-INVARIANT
-  enforces the numbers in `content.test.ts` meanwhile, so this is documentation debt, not a blocker.
-  Evidence and reasoning: `docs/reviews/2026-09-23.md`.
-- **Bastion's Chain Hook — 3 or 4?** The roster's only pull ≥ 2 ("the strongest soft-CC in the game",
-  `roster-v1.md` §4). Left at 3 because it is already inside the owner's band; AR priced its
-  hard-displacement blasts at 4. **Owner's call** if the blast band should carry a second 4.
-- **Wisp's Blink at 4** — the one deliberate exception to the dash rule (a pure teleport that should
-  cost 5). Justified by Wisp being the only lowest-HP + range-2-basic character. **Playtest flag:**
-  first number to revisit after a real two-machine game.
-- **Inspect-panel chips hoverable** — needs a pinned-panel design; future. **Beam + axisBonus** compose
-  legally. **Chase-preview detour** deferred. **Solar Flare DoT ceiling**, **Thorn mine carpet** —
-  playtest. **AC #4 outline-through-centres** look — playtest note (Builder OQ #5).
+- **WARDING-WALL design confirmations** — aim direction, dasher-through (default yes), kit-reshape
+  intent. **Aegis beam distinctness** (now a 3-wide lane — re-ask if it reads distinct enough).
+- **Self-lethal recoil warning** (session-7 OQ #4) — a "this whirl will kill you" tell is a design call,
+  not scheduled. **Burn/regen pip glyphs** (OQ #6) — new art, worth a look on a real plate.
+- **Warding Halo's dead `weaken`**, **trap count cap**, **inspect-panel chips hoverable**,
+  **chase-preview detour**, **Solar Flare DoT ceiling**, **Thorn mine carpet** — unchanged flags.
 
 ## Flagged future (not scheduled)
 
-- **NET-E2E** (two-client Playwright), **M3-REMATCH**, **IDLE-KICK**, **LOBBY-TEAM-CHOICE**,
-  **CAMO-E2E-FINISH** (low) — unchanged.
+- **NET-E2E**, **M3-REMATCH**, **IDLE-KICK**, **LOBBY-TEAM-CHOICE**, **CAMO-E2E-FINISH** (low),
+  **same-turn-buff preview** (OQ #2), **route-around-bodies dash impact preview** (OQ #3) — unchanged.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- **A real two-machine internet playtest** (after DEATH-HANG — a death is the exact thing to exercise).
-  **The new HUD layout**, **AIM-PREVIEW-TRUE feel** (tiles pop as centres cross the outline),
-  **PHASE-STATUS-FIRST**, **Ravok's recoil**, **Thorn's mine carpet**.
+- **A real two-machine internet playtest** (DEATH-HANG shipped — exercise a death). **The cooldown bands
+  feel** (dashes at 4–5 change the tempo), **Warding Wall**, **Ram Charge's line**, **the new HUD**,
+  **AIM-PREVIEW-TRUE**, **Ravok's recoil**.
