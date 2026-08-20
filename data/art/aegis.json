@@ -3,9 +3,9 @@
   "thesis": "He doesn't shield you, he takes it. Exhaustion and a little contempt, not devotion. He'd rather eat the hit than trust you to avoid it.",
   "build": {
     "height": 1.78,
-    "headScale": 1.36,
-    "shoulderWidth": 1.55,
-    "neckLength": 0.55,
+    "headScale": 1.62,
+    "shoulderWidth": 1.32,
+    "neckLength": 0.42,
     "torsoDepth": 1.15,
     "limbThickness": 1.55
   },
@@ -78,5 +78,10 @@
       1.55
     ],
     "shared": true
+  },
+  "style": {
+    "_comment": "blockiness is the superellipse exponent: 2 = round, 4 = squircle, 8+ = boxy. The single knob that moves the whole roster between silhouette languages.",
+    "blockiness": 3.4,
+    "sides": 10
   }
 }

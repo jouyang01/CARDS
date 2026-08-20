@@ -178,13 +178,124 @@ def new_mesh(name):
     return obj, mesh, bm, uv_layer
 
 
-def finish(obj, mesh, bm):
+def finish(obj, mesh, bm, bevel=0.006, smooth_angle=38.0):
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
     bm.normal_update()
     bm.to_mesh(mesh)
     bm.free()
-    mesh.shade_flat()
+
+    # A perfectly sharp 90° corner reads as a hard black line and is most of why
+    # untreated geometry looks like a stack of cubes. A small bevel gives every
+    # edge a highlight strip.
+    if bevel:
+        mod = obj.modifiers.new("bevel", "BEVEL")
+        mod.width = bevel
+        mod.segments = 2
+        mod.limit_method = "ANGLE"
+        mod.angle_limit = math.radians(30.0)
+        mod.harden_normals = False
+
+    # Smooth shading above a threshold: curved surfaces round out, genuine
+    # corners stay crisp.
+    for poly in mesh.polygons:
+        poly.use_smooth = True
+    if hasattr(mesh, "auto_smooth_angle"):        # Blender < 4.1
+        mesh.use_auto_smooth = True
+        mesh.auto_smooth_angle = math.radians(smooth_angle)
+    else:                                          # 4.1+ uses a modifier
+        try:
+            bpy.ops.object.select_all(action="DESELECT")
+            obj.select_set(True)
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.shade_smooth_by_angle(angle=math.radians(smooth_angle))
+        except Exception:
+            pass
     return obj
+
+
+# ── rounded forms ───────────────────────────────────────────────────────────
+#
+# The move away from blocky is not "more polygons" — it is cross-sections that
+# are not squares and profiles that are not constant. A superellipse
+#
+#     |x/a|^n + |y/b|^n = 1
+#
+# is a circle at n=2, a squircle around n=4, and approaches a rectangle as n
+# grows. So a single number in data/art/<id>.json takes the whole character from
+# rounded to blocky, which is exactly the knob a designer wants.
+
+AXIS_VECTORS = {
+    "x": ((1, 0, 0), (0, 1, 0), (0, 0, 1)),
+    "y": ((0, 1, 0), (1, 0, 0), (0, 0, 1)),
+    "z": ((0, 0, 1), (1, 0, 0), (0, 1, 0)),
+}
+
+
+def superellipse(n_points: int, exponent: float):
+    """Unit superellipse as (u, v) pairs. n=2 circle, n≈4 squircle, high n box."""
+    pts = []
+    for i in range(n_points):
+        t = 2.0 * math.pi * i / n_points
+        ct, st = math.cos(t), math.sin(t)
+        # Signed power keeps the shape symmetric through all four quadrants.
+        u = math.copysign(abs(ct) ** (2.0 / exponent), ct)
+        v = math.copysign(abs(st) ** (2.0 / exponent), st)
+        pts.append((u, v))
+    return pts
+
+
+def add_tube(bm, uv_layer, axis, start, end, profile, swatch,
+             sides=10, exponent=4.0, cap_start=True, cap_end=True):
+    """A tapered tube between two points, with a superellipse cross-section.
+
+    `profile` is a list of (t, half_width, half_depth) with t running 0→1 along
+    the axis, so a limb can swell at the shoulder and narrow at the wrist. This
+    replaces the constant-section box that made everything read as stacked
+    cubes.
+    """
+    main, side_a, side_b = AXIS_VECTORS[axis]
+    start_v, end_v = Vector(start), Vector(end)
+    span = end_v - start_v
+    unit = superellipse(sides, exponent)
+    uv = swatch_uv(swatch)
+
+    rings = []
+    for t, hw, hd in profile:
+        centre = start_v + span * t
+        ring = []
+        for u, v in unit:
+            offset = (Vector(side_a) * (u * hw)) + (Vector(side_b) * (v * hd))
+            ring.append(bm.verts.new(centre + offset))
+        rings.append(ring)
+
+    made = []
+    for a, b in zip(rings, rings[1:]):
+        for i in range(sides):
+            j = (i + 1) % sides
+            try:
+                f = bm.faces.new((a[i], a[j], b[j], b[i]))
+            except ValueError:
+                continue
+            for loop in f.loops:
+                loop[uv_layer].uv = uv
+            made.append(f)
+
+    for ring, want in ((rings[0], cap_start), (rings[-1], cap_end)):
+        if not want:
+            continue
+        try:
+            f = bm.faces.new(ring)
+        except ValueError:
+            continue
+        for loop in f.loops:
+            loop[uv_layer].uv = uv
+        made.append(f)
+    return made
+
+
+def taper(*stops):
+    """Readable shorthand for a profile: taper((0,.9,.9),(1,.6,.6))."""
+    return list(stops)
 
 
 # ── the character ───────────────────────────────────────────────────────────
@@ -192,6 +303,9 @@ def finish(obj, mesh, bm):
 def build_body(spec):
     b = spec["build"]
     g = spec["garment"]
+    style = spec.get("style", {})
+    exp = style.get("blockiness", 4.0)      # 2 = round, 4 = squircle, 8+ = boxy
+    sides = style.get("sides", 10)
 
     h = b["height"]
     head_r = 0.115 * b["headScale"]
@@ -206,82 +320,129 @@ def build_body(spec):
 
     obj, mesh, bm, uv = new_mesh("body")
 
+    def tube(axis, a, c, profile, swatch, **kw):
+        return add_tube(bm, uv, axis, a, c, profile, swatch,
+                        sides=sides, exponent=exp, **kw)
+
     # ── head ──
-    # Front face carries the painted face; back, sides and crown each get their
-    # own region, because a 360° camera sees all of them constantly.
+    # Stays a box on purpose: the painted face needs a flat plane to sit on, and
+    # a subdivided head would smear it. The bevel modifier softens its edges
+    # without curving the face.
     add_box(bm, (0, 0, head_z), (head_r * 1.9, head_r * 1.8, head_r * 1.72), {
         "front": "head_front", "back": "head_back",
         "left": "head_sides", "right": "head_sides",
         "top": "crown", "bottom": "skinShadow",
     }, uv)
 
-    # Supporting geometry so the painted face reads at 45° instead of like a sticker.
-    fy = -head_r * 0.875
+    fy = -head_r * 0.9
     add_wedge(bm,
-              (0, fy - head_r * 0.34, head_z - head_r * 0.10),
-              (-head_r * 0.16, fy, head_z + head_r * 0.20),
-              (head_r * 0.16, fy, head_z + head_r * 0.20),
-              (0, fy, head_z - head_r * 0.48), uv, "skin")          # nose
+              (0, fy - head_r * 0.30, head_z - head_r * 0.10),
+              (-head_r * 0.15, fy, head_z + head_r * 0.18),
+              (head_r * 0.15, fy, head_z + head_r * 0.18),
+              (0, fy, head_z - head_r * 0.44), uv, "skin")
     for side in (-1, 1):
         add_wedge(bm,
-                  (side * head_r * 0.42, fy - head_r * 0.16, head_z + head_r * 0.46),
-                  (side * head_r * 0.10, fy, head_z + head_r * 0.34),
-                  (side * head_r * 0.78, fy, head_z + head_r * 0.34),
-                  (side * head_r * 0.44, fy, head_z + head_r * 0.62), uv, "skinShadow")  # brow ridge
+                  (side * head_r * 0.42, fy - head_r * 0.14, head_z + head_r * 0.44),
+                  (side * head_r * 0.10, fy, head_z + head_r * 0.32),
+                  (side * head_r * 0.76, fy, head_z + head_r * 0.32),
+                  (side * head_r * 0.44, fy, head_z + head_r * 0.58), uv, "skinShadow")
 
-    # Neck — high collar, so it stays dark from every angle.
-    add_box(bm, (0, 0, neck_z - 0.02), (limb * 1.9, limb * 1.9, 0.10), {"_default": "leather"}, uv)
-    if g.get("collar") == "high":
-        add_box(bm, (0, 0, neck_z + 0.01), (shoulder * 0.62, depth * 1.15, 0.07),
-                {"_default": "ironDark"}, uv)
+    # ── neck ──
+    tube("z", (0, 0, neck_z - 0.09), (0, 0, neck_z + 0.03),
+         taper((0.0, limb * 2.0, limb * 1.9), (1.0, limb * 1.6, limb * 1.5)), "leather")
 
     # ── torso ──
-    _, trunk = add_box(bm, (0, 0, (chest_z + hip_z) / 2),
-                       (shoulder * 1.55, depth * 2, chest_z - hip_z), {
-                           "front": "torso", "back": "torso",
-                           "left": "ironDark", "right": "ironDark",
-                           "top": "ironDark", "bottom": "ironDark",
-                       }, uv)
-    segment(bm, trunk, "z", 3, uv)
+    # Tapered: wide at the chest, narrow at the waist, deeper at the ribs. This
+    # single change kills most of the "stack of cubes" read.
+    tube("z", (0, 0, hip_z - 0.02), (0, 0, chest_z + 0.04), taper(
+        (0.00, shoulder * 0.62, depth * 0.80),
+        (0.22, shoulder * 0.58, depth * 0.76),
+        (0.55, shoulder * 0.70, depth * 0.95),
+        (0.85, shoulder * 0.80, depth * 1.00),
+        (1.00, shoulder * 0.74, depth * 0.88),
+    ), "iron")
+
+    # Armour as discrete overlapping plates, not lines painted on a flat slab.
+    # Layered pieces are what read as armour at a glance.
+    for i, (zt, wide, deep) in enumerate((
+        (0.86, 0.66, 1.02), (0.68, 0.62, 1.00), (0.50, 0.56, 0.96),
+    )):
+        z = hip_z + (chest_z - hip_z) * zt
+        tube("z", (0, -depth * 0.20, z - 0.035), (0, -depth * 0.20, z + 0.035),
+             taper((0.0, shoulder * wide, depth * deep * 0.42),
+                   (1.0, shoulder * wide * 1.04, depth * deep * 0.46)),
+             "ironDark" if i % 2 else "ironLight")
+
+    tube("z", (0, 0, hip_z - 0.05), (0, 0, hip_z + 0.02),
+         taper((0.0, shoulder * 0.66, depth * 0.86), (1.0, shoulder * 0.68, depth * 0.88)),
+         "leather")
+
+    if g.get("collar") == "high":
+        tube("z", (0, 0, chest_z + 0.01), (0, 0, chest_z + 0.10),
+             taper((0.0, shoulder * 0.56, depth * 0.80),
+                   (1.0, shoulder * 0.44, depth * 0.62)), "ironDark")
 
     if g.get("skirt") == "tassets":
         for side in (-1, 1):
-            add_box(bm, (side * shoulder * 0.62, 0, hip_z - 0.11),
-                    (shoulder * 0.72, depth * 1.9, 0.24), {"_default": "iron"}, uv)
+            tube("z", (side * shoulder * 0.50, 0, hip_z - 0.20),
+                 (side * shoulder * 0.50, 0, hip_z + 0.01),
+                 taper((0.0, shoulder * 0.30, depth * 0.70),
+                       (1.0, shoulder * 0.36, depth * 0.84)), "iron")
 
-    # ── arms, in a strict T-pose ──
-    # The gap at the armpit is deliberate: fused limbs are the most common reason
-    # Mixamo's auto-rigger fails.
-    arm_z = chest_z - 0.06
-    gap = shoulder * 1.55 / 2 + 0.03
+    # ── arms, still a strict T-pose ──
+    arm_z = chest_z - 0.05
+    gap = shoulder * 0.74
     arm_len = h * 0.30
     for side in (-1, 1):
         pads = g.get("shoulderPads", {})
         heavy = pads.get("left" if side < 0 else "right", "light") == "heavy-riveted"
-        pad = 1.55 if heavy else 1.12
-        add_box(bm, (side * (gap - 0.015), 0, arm_z + 0.03),
-                (limb * 2.4 * pad, limb * 2.4 * pad, limb * 2.2 * pad),
-                {"_default": "iron" if heavy else "ironDark"}, uv)
-        _, upper = add_box(bm, (side * (gap + 0.06 + arm_len * 0.25), 0, arm_z),
-                           (arm_len * 0.5, limb * 2.5, limb * 2.5), {"_default": "iron"}, uv)
-        segment(bm, upper, "x", 3, uv)
-        _, fore = add_box(bm, (side * (gap + 0.06 + arm_len * 0.75), 0, arm_z),
-                          (arm_len * 0.5, limb * 1.75, limb * 1.75), {"_default": "leather"}, uv)
-        segment(bm, fore, "x", 3, uv)
-        add_box(bm, (side * (gap + 0.06 + arm_len + 0.045), 0, arm_z),
-                (0.09, limb * 2, limb * 2.2), {"_default": "leather"}, uv)
+        pad = 1.5 if heavy else 1.1
 
-    # ── legs, with a crotch gap for the same reason ──
+        # Pauldron: a dome that overhangs the arm, which is most of what makes a
+        # stylised silhouette read as armoured rather than as a tube.
+        tube("x", (side * gap * 0.80, 0, arm_z), (side * (gap + limb * 1.15 * pad), 0, arm_z),
+             taper((0.0, limb * 1.75 * pad, limb * 1.85 * pad),
+                   (0.55, limb * 1.95 * pad, limb * 2.05 * pad),
+                   (1.0, limb * 1.55 * pad, limb * 1.60 * pad)),
+             "iron" if heavy else "ironDark")
+
+        ax = gap + limb * 0.95 * pad
+        tube("x", (side * ax, 0, arm_z), (side * (ax + arm_len * 0.52), 0, arm_z),
+             taper((0.0, limb * 2.0, limb * 2.0),
+                   (0.5, limb * 1.8, limb * 1.8),
+                   (1.0, limb * 1.6, limb * 1.6)), "iron")
+
+        bx = ax + arm_len * 0.52
+        tube("x", (side * bx, 0, arm_z), (side * (bx + arm_len * 0.52), 0, arm_z),
+             taper((0.0, limb * 1.7, limb * 1.7),
+                   (0.45, limb * 1.5, limb * 1.5),
+                   (1.0, limb * 1.35, limb * 1.35)), "leather")
+
+        cx = bx + arm_len * 0.52
+        tube("x", (side * cx, 0, arm_z), (side * (cx + 0.095), 0, arm_z),
+             taper((0.0, limb * 1.7, limb * 1.9),
+                   (0.6, limb * 1.9, limb * 2.1),
+                   (1.0, limb * 1.4, limb * 1.6)), "leather")
+
+    # ── legs ──
     for side in (-1, 1):
-        leg_x = side * shoulder * 0.52
-        _, thigh = add_box(bm, (leg_x, 0, hip_z * 0.72), (limb * 2.5, limb * 2.5, hip_z * 0.56),
-                           {"_default": "ironDark"}, uv)
-        segment(bm, thigh, "z", 3, uv)
-        _, shin = add_box(bm, (leg_x, 0, hip_z * 0.24), (limb * 2.2, limb * 2.2, hip_z * 0.48),
-                          {"_default": "leather"}, uv)
-        segment(bm, shin, "z", 3, uv)
-        add_box(bm, (leg_x, -0.02, 0.035), (limb * 2.4, limb * 3.4, 0.07),
-                {"_default": "ironDark"}, uv)
+        lx = side * shoulder * 0.58
+        tube("z", (lx, 0, hip_z * 0.46), (lx, 0, hip_z + 0.02), taper(
+            (0.0, limb * 1.55, limb * 1.65),
+            (0.35, limb * 1.70, limb * 1.80),
+            (1.0, limb * 1.95, limb * 2.05),
+        ), "ironDark")
+        tube("z", (lx, 0, 0.055), (lx, 0, hip_z * 0.48), taper(
+            (0.0, limb * 1.30, limb * 1.40),
+            (0.45, limb * 1.55, limb * 1.65),
+            (1.0, limb * 1.60, limb * 1.70),
+        ), "leather")
+        # Boot: forward-biased so the foot reads as a foot from above.
+        tube("y", (lx, depth * 0.50, 0.045), (lx, -depth * 1.00, 0.045), taper(
+            (0.0, limb * 1.65, limb * 1.35),
+            (0.5, limb * 1.90, limb * 1.55),
+            (1.0, limb * 1.55, limb * 1.10),
+        ), "ironDark")
 
     return finish(obj, mesh, bm)
 
@@ -302,7 +463,7 @@ def build_door(spec):
             add_box(bm, (-w["widthTiles"] * 0.52, 0, z),
                     (w["widthTiles"] * 0.14, w["thickness"] * 1.6, 0.10),
                     {"_default": "rustDeep"}, uv)
-    return finish(obj, mesh, bm)
+    return finish(obj, mesh, bm, bevel=0.004)
 
 
 # ── material ────────────────────────────────────────────────────────────────
