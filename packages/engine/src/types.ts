@@ -363,6 +363,29 @@ export interface AbilityDef {
    * it on an ability with no harmful effect to skip.
    */
   noFriendlyFire?: boolean;
+  /**
+   * FRAG-SELF — this ability's harmful **area** effects treat the caster as just
+   * another unit standing in it, so CASTER-SAFE does not exempt them.
+   *
+   * Owner Dev Note: *"Vex Frag grenade should hurt yourself too."* CASTER-SAFE
+   * (RULED) says you are never a target of your own ability, and it is right
+   * about nearly everything — Ravok's whirl is centred on him, Aegis's halo is
+   * centred on him, and both would be unusable otherwise. A grenade is the case
+   * it is wrong about: you *threw* it somewhere else, and standing in the blast
+   * you threw is a mistake the game should let you make.
+   *
+   * Distinct from {@link selfDamagePct}, and the difference is the whole reason
+   * this is a second field rather than a reuse of that one. RECOIL is a **cost
+   * of firing**: charged whether or not you are in the area, scaled from the
+   * authored number, bypassing cover and Might/Weaken. This is **presence**: you
+   * take what anyone standing there takes, and only if you are standing there.
+   * An ability wanting both would be charging twice for one blast, so validation
+   * refuses the pair.
+   *
+   * Riders come with it. The caster is treated as a unit in the area, not as a
+   * unit in the area for damage and exempt for everything else — one rule.
+   */
+  selfHarm?: boolean;
   effects: AbilityEffect[];
   description: string;
 }

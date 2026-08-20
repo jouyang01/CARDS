@@ -36,6 +36,18 @@ import type { AbilityDef, CharacterDef, GameState, MapDef, TurnEvent, Vec2 } fro
  * skip him and Shockwave itself, carrying no `selfDamagePct`, still costs him
  * nothing. What changed is one authored number on one ability. The rule below
  * it did not move.
+ *
+ * **FRAG-SELF (2026-09-27) is the second way back in, and a different one.**
+ * Owner: *"Vex Frag grenade should hurt yourself too."* `selfHarm` says the
+ * caster is **just another unit standing in the area** — so it costs nothing if
+ * you are not there, and everything if you are. RECOIL is a price for firing;
+ * this is presence. An ability carrying both would charge twice for one blast,
+ * and validation refuses the pair.
+ *
+ * Which leaves CASTER-SAFE exactly where it was: still the default, still what
+ * makes Ravok's `range: 0` kit playable, and now with two named exits rather
+ * than one. The tests for all three live together on purpose — the failure mode
+ * is one of them quietly widening into the others.
  */
 
 const load = (name: string): CharacterDef => JSON.parse(
@@ -139,9 +151,18 @@ describe('CASTER-SAFE: your own attack does not hit you', () => {
     expect(applied(res.events, ally.unitId), 'and no self-Weaken beside it').toEqual(['shield']);
   });
 
-  it('and a grenade you armed two turns ago will not blow you up either', () => {
-    // A delayed detonation resolves at its locked squares whoever is standing
-    // there — but it is still your ability, so CASTER-SAFE reaches it too.
+  it('but the grenade you armed two turns ago WILL blow you up — FRAG-SELF', () => {
+    // **This assertion is reversed.** It shipped asserting CASTER-SAFE reached a
+    // delayed detonation too — "it is still your ability, so standing on it
+    // should not blow you up". The owner ruled the other way: *"Vex Frag grenade
+    // should hurt yourself too."*
+    //
+    // Kept here, in the CASTER-SAFE file, because the pair is the point. The
+    // rule has not gone: it is still true of every `range: 0` disc a character
+    // stands in the middle of, which is what it was written for. A grenade is
+    // the case it was wrong about — you threw it somewhere else, and walking
+    // into your own blast is a mistake the game should let you make. So the
+    // ability opts out by name (`selfHarm`) and the default is untouched.
     const state = createMatch(OPEN, '2v2', [[VEX, AEGIS], [VEX, VEX]]);
     const vex = state.units.find((u) => u.owner === 0 && u.characterId === 'vex')!;
     for (const u of state.units.filter((x) => x.owner === 1)) u.pos = { x: 24, y: 0 };
@@ -155,7 +176,34 @@ describe('CASTER-SAFE: your own attack does not hit you', () => {
     unit(armed, vex.unitId).pos = { x: 14, y: 10 }; // walk onto your own grenade
     const boom = resolveTurn(armed, OPEN, [{ team: 0, units: [] }, { team: 1, units: [] }], roster).state;
     expect(boom.delayed.length, 'and it really did detonate').toBe(0);
-    expect(unit(boom, vex.unitId).hp).toBe(VEX.maxHp);
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    expect(unit(boom, vex.unitId).hp, 'caught in his own blast')
+      .toBe(VEX.maxHp - grenade.effects.find((e) => e.kind === 'damage')!.amount!);
+  });
+
+  it('…and standing clear of it still costs him nothing', () => {
+    // The other half: FRAG-SELF is about **presence**, not about a price for
+    // throwing. A grenade you did not stand in is free, which is what separates
+    // it from RECOIL — and why validation refuses an ability carrying both.
+    const state = createMatch(OPEN, '2v2', [[VEX, AEGIS], [VEX, VEX]]);
+    const vex = state.units.find((u) => u.owner === 0 && u.characterId === 'vex')!;
+    for (const u of state.units.filter((x) => x.owner === 1)) u.pos = { x: 24, y: 0 };
+    vex.pos = { x: 10, y: 10 };
+    const armed = resolveTurn(state, OPEN, [
+      { team: 0, units: [{ unitId: vex.unitId, ability: { abilityId: 'frag_grenade', target: [{ x: 14, y: 10 }] } }] },
+      { team: 1, units: [] },
+    ], roster).state;
+    const boom = resolveTurn(armed, OPEN, [{ team: 0, units: [] }, { team: 1, units: [] }], roster).state;
+    expect(boom.delayed.length, 'it went off').toBe(0);
+    expect(unit(boom, vex.unitId).hp, 'nowhere near it').toBe(VEX.maxHp);
+  });
+
+  it('and CASTER-SAFE still holds for every ability that did not opt out', () => {
+    // The guard on the exception. `selfHarm` is one field on one ability; a fix
+    // that reached wider would take Ravok's whole kit with it.
+    const opted = [...VEX.abilities, VEX.ultimate, ...RAVOK.abilities, RAVOK.ultimate,
+      ...AEGIS.abilities, AEGIS.ultimate].filter((a) => a.selfHarm === true);
+    expect(opted.map((a) => a.id), 'exactly one opt-out').toEqual(['frag_grenade']);
   });
 });
 

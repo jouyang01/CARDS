@@ -36,7 +36,7 @@ const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
   'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
-  'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire', 'wallLength',
+  'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire', 'selfHarm', 'wallLength',
   'effects', 'description',
 ] as const;
 
@@ -84,6 +84,18 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   }
   if (a.shape === 'circle' && (!isInt(a.radius) || (a.radius ?? 0) < 1)) {
     errs.push(`${path}: circle shape requires integer radius >= 1`);
+  }
+  // FRAG-SELF: `true` when present, like every other opt-in flag here — a
+  // `selfHarm: false` is a way of writing "CASTER-SAFE applies" that looks like a
+  // decision somebody made about this ability, and it is just the default.
+  if (a.selfHarm !== undefined && a.selfHarm !== true) {
+    errs.push(`${path}: selfHarm must be true when present (omit it for CASTER-SAFE)`);
+  }
+  // …and never alongside RECOIL. The two are different answers to "what does
+  // this cost its caster" — a price for firing versus the blast catching you —
+  // and an ability carrying both charges twice for one cast.
+  if (a.selfHarm === true && a.selfDamagePct !== undefined) {
+    errs.push(`${path}: selfHarm and selfDamagePct are alternatives — an ability may carry one, not both`);
   }
   // WARDING-WALL: `wallLength` is to a wall what `radius` is to a circle — the
   // shape has no size without it — and it is meaningless on anything else, for

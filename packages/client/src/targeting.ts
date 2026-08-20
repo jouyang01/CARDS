@@ -15,6 +15,8 @@ import {
   aimInRange,
   axisSquares,
   buildBoard,
+  chargeVictims,
+  chargedUnits,
   abilityProfile,
   circleSquares,
   direction8,
@@ -939,6 +941,28 @@ export function isBlockedDashLanding(
  * statement: you end up there. Empty only when no dash is drafted, which is the
  * one case where the line should be suppressed.
  */
+/**
+ * RAM-LINE-PREVIEW-FIX — the units a `path` charge would actually damage.
+ *
+ * *"Bastion's Ram Charge is still not a linear dash/attack preview."*
+ *
+ * Both halves come from the engine: `chargedUnits` finds who is standing on the
+ * route (the scan `walkCharge` does before it moves anybody) and `chargeVictims`
+ * applies ALLY-SAFE and `chargeHits`. Neither is re-derived here, which is the
+ * point — `chargeHits` is a rule with two values and the preview was silently
+ * assuming one of them.
+ *
+ * Empty for anything that is not a charge, so a caller can hand the result
+ * straight to `previewNumbers` without asking what shape it has.
+ */
+export function chargeHitList(
+  state: GameState, unit: UnitState, ability: AbilityDef | undefined, aim: readonly Vec2[],
+): string[] {
+  if (ability === undefined || ability.shape !== 'path' || ability.phase !== 'dash') return [];
+  const crossed = chargedUnits(state.units, unit.unitId, aim);
+  return chargeVictims(ability, unit.owner, crossed).map((u) => u.unitId);
+}
+
 export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim: readonly Vec2[]): Vec2[] {
   if (ability === undefined || ability.phase !== 'dash') return [];
   if (ability.shape === 'path') return aim.map((p) => ({ ...p }));
@@ -990,9 +1014,23 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
     // BASIC-MODES: sent only when the ability actually has modes, so an ordinary
     // order stays exactly the bytes it was before this existed.
     if (draft.mode !== undefined && ability.modes !== undefined) order.ability.mode = draft.mode;
-    // Only directional shapes rotate; sending a step for a circle would be noise
-    // the engine ignores anyway (AIM2).
-    if (isRotatable(ability) && isAimStep(draft.aimStep)) order.ability.aimStep = draft.aimStep;
+    // WALL-CAST-FIX. This gate used to read `isRotatable(ability)`, which is
+    // `line || cone` — and a `wall` is neither. So Warding Wall's rotation was
+    // computed by `aimFor`, drawn correctly by the preview, and then **dropped
+    // here**, at the one step nothing tested. The engine's `aimIsLegal` refuses
+    // a stepless wall, so the ability simply never cast.
+    //
+    // The gate is now BOTH kinds of rotatable, because there are two: a `line`
+    // or `cone` turned by a drag, and a placed shape turned by the rotate row.
+    // Widening it to a bare `isAimStep(draft.aimStep)` would also work — the
+    // engine ignores a step on a shape that reads none — but it would put a
+    // stale step on the wire when a player arms a line and then switches to a
+    // circle, and `targeting.test.ts` asserts that it does not. Keeping the
+    // shape gate keeps that promise; the bug was that the gate knew about one
+    // kind of rotation and the game had grown two.
+    if ((isRotatable(ability) || isPlacedRotatable(ability)) && isAimStep(draft.aimStep)) {
+      order.ability.aimStep = draft.aimStep;
+    }
     if (ability.phase !== 'dash') {
       // A dash owns the movement, so neither the walk nor the chase goes out
       // with it — the engine would drop both anyway, and sending them would put
