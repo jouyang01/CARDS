@@ -53,6 +53,7 @@ import {
 import {
   abilityOptions,
   abilityPreview,
+  chargeHitList,
   previewBandSets,
   rotationOptions,
   impactPreview,
@@ -1360,6 +1361,13 @@ export function startHotSeat(
           squares: [...covered, ...impact.origin, ...impact.destination],
           axis: bands.axis,
           inner: bands.inner,
+          // RAM-LINE-PREVIEW-FIX: a charge's route covers everybody standing on
+          // it, but `chargeHits` decides how many of them are actually hit.
+          // Empty for every other shape, and `previewNumbers` reads it as "the
+          // area is the answer" then.
+          ...(chosen.shape === 'path'
+            ? { victims: chargeHitList(state, unit, chosen, preview.aim) }
+            : {}),
         }]
         : []),
       ...(freeDef !== undefined && freeAim.length > 0

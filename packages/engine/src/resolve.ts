@@ -1408,15 +1408,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // as it was — is what makes a status effect a field the engine reads and
     // then does nothing with, which is the class of bug this item is.
     if (dmg !== undefined || riders.length > 0) {
-      // ALLY-SAFE trims the charge's own list before `chargeHits` counts it: an
-      // ability that spares its team does not spend its single hit on a
-      // teammate it was never going to damage.
-      const run = a.def.noFriendlyFire === true
-        ? crossed.filter((u) => u.owner !== plan.unit.owner)
-        : crossed;
-      const crossedVictims = a.def.shape === 'path'
-        ? (a.def.chargeHits === 'all' ? run : run.slice(0, 1)).map((u) => ({ unit: u, from: origin }))
-        : [];
+      // The shared derivation (RAM-LINE-PREVIEW-FIX): ALLY-SAFE trims, then
+      // `chargeHits` takes the first or all. The preview calls the same function,
+      // so the number a player reads on a crossed enemy is the hit they get.
+      const crossedVictims = chargeVictims(a.def, plan.unit.owner, crossed)
+        .map((u) => ({ unit: u, from: origin }));
       const blasted = blasts.flatMap(({ centre, area }) =>
         draft.units
           .filter((u) => u.alive && u.owner !== plan.unit.owner && area.has(vecKey(u.pos)))
@@ -1529,6 +1525,43 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
  * square lies on the path, in path order — allies included (FF1-charge) — and the
  * caller applies `chargeHits` to take the first or all of them.
  */
+export function chargedUnits(
+  units: readonly UnitState[], casterId: string, path: readonly Vec2[],
+): UnitState[] {
+  const out: UnitState[] = [];
+  for (const step of path) {
+    // Every UNIT on the path, ally or enemy (FF1-charge): a charge is a directly
+    // aimed attack, so it hits whoever is standing in it. `chargeVictims` then
+    // takes the first or all of them.
+    const hit = units.find((u) => u.alive && u.unitId !== casterId && vecEq(u.pos, step));
+    if (hit !== undefined) out.push(hit);
+  }
+  return out;
+}
+
+/**
+ * RAM-LINE-PREVIEW-FIX — which of the crossed units a charge actually damages.
+ *
+ * Exported, and this is the whole point of it being exported: the **preview** has
+ * to answer the same question, and a client that worked it out for itself would
+ * be a second implementation of `chargeHits` to drift from this one. Kestrel's
+ * Skim is `path` with no `chargeHits` — first-enemy-only — and the preview was
+ * stamping a damage number on *every* enemy on the route, promising a hit that
+ * never lands.
+ *
+ * ALLY-SAFE trims before `chargeHits` counts, so an ability that spares its team
+ * does not spend its single hit on a teammate it was never going to damage.
+ */
+export function chargeVictims(
+  def: AbilityDef, casterOwner: TeamId, crossed: readonly UnitState[],
+): UnitState[] {
+  if (def.shape !== 'path') return [];
+  const run = def.noFriendlyFire === true
+    ? crossed.filter((u) => u.owner !== casterOwner)
+    : [...crossed];
+  return def.chargeHits === 'all' ? run : run.slice(0, 1);
+}
+
 function walkCharge(draft: GameState, board: Board, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState[] {
   const occupiedAt = (p: Vec2) => draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
   // Furthest square the charger may rest on (last free square in the path).
@@ -1536,16 +1569,9 @@ function walkCharge(draft: GameState, board: Board, unit: UnitState, path: reado
   for (let i = 0; i < path.length; i++) if (!occupiedAt(path[i]!)) restIndex = i;
 
   // Every enemy whose square lies on the path, in path order: crossed while
-  // passing through, or run into at the occupied destination. `chargeHits` in the
-  // caller selects the first (R1a) or all of them (R1b).
-  const crossed: UnitState[] = [];
-  for (const step of path) {
-    // Every UNIT on the path, ally or enemy (FF1-charge): a charge is a directly
-    // aimed attack, so it hits whoever is standing in it. The caller's
-    // `chargeHits` then takes the first or all of them.
-    const hit = draft.units.find((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, step));
-    if (hit !== undefined) crossed.push(hit);
-  }
+  // passing through, or run into at the occupied destination. `chargeVictims` in
+  // the caller selects the first (R1a) or all of them (R1b).
+  const crossed = chargedUnits(draft.units, unit.unitId, path);
 
   // Move square-by-square to the rest square, triggering traps on each entry.
   for (let i = 0; i <= restIndex; i++) {
@@ -1745,7 +1771,10 @@ function runBlast(
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of a.def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
-          if (self) continue; // CASTER-SAFE — see `casterSafe`; RECOIL is below
+          // CASTER-SAFE — see `casterSafe`; RECOIL is below. FRAG-SELF is the
+          // other way back in: an ability that opts out treats its caster as
+          // just another unit standing in the area.
+          if (self && a.def.selfHarm !== true) continue;
           if (allySafe && !enemy) continue; // ALLY-SAFE — this one spares the team
           if (untargetable) continue; // the whole harmful half is skipped, energy included
           // Energy stays enemy-only, so splashing an ally pays nothing.
@@ -1942,9 +1971,11 @@ function detonateDelayedBlasts(
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of def.effects) {
         if (HARMFUL_KINDS.has(e.kind)) {
-          // CASTER-SAFE reaches here too: a grenade you armed two turns ago is
-          // still your own ability, and standing on it should not blow you up.
-          if (target.unitId === caster.unitId) continue;
+          // CASTER-SAFE reaches here too — unless the ability opted out
+          // (FRAG-SELF). Vex's Frag Grenade does: *"Vex Frag grenade should hurt
+          // yourself too."* You threw it somewhere else, and walking into your
+          // own blast is a mistake the game lets you make.
+          if (target.unitId === caster.unitId && def.selfHarm !== true) continue;
           if (def.noFriendlyFire === true && !enemy) continue; // ALLY-SAFE
           if (untargetable) continue;
           if (enemy) hitEnemy = true; // energy stays enemy-only
