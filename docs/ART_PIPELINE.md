@@ -541,12 +541,37 @@ that is what lets one animation set serve the whole roster.
 | Prep phase | `casting spell` | not offered |
 | Dash phase | `running` | **tick it** |
 | Blast phase | `shooting` / `sword slash` | not offered |
-| Move phase | `walking` | **tick it** |
+| Move phase | *(reuses `running`)* | — |
 | Taking damage | `hit reaction` | not offered |
 | Death | `falling back death` | not offered |
 | Knockback | `knocked out` | not offered |
 
 A missing In Place checkbox means the clip has no root motion and needs nothing done.
+
+### One locomotion clip, not two
+
+**There is exactly one ground speed in this game.** `choreograph.ts:199` gives every move step
+`dur: BEAT` — 760 ms — whether it belongs to a 4-square move or an 8-square sprint. A sprint
+is not faster; it is *longer*.
+
+So a walk and a run cannot coexist: played at the same ground speed, whichever clip's stride
+does not match will **foot-slide**. Two clips would guarantee the bug that one clip avoids.
+
+Which clip is correct depends on the board scale (§11), because one square per 760 ms is:
+
+| tile | ground speed | reads as |
+|---|---|---|
+| 1.0 m | 1.3 m/s | walk |
+| 1.5 m | 2.0 m/s | brisk jog |
+| 2.0 m | 2.6 m/s | run |
+
+Sprint is already distinguished without animation: `renderer3d.ts:1160` draws a sprint path
+**dashed** and a move path solid, and during resolution a sprint simply runs longer.
+
+> **The clip must be time-scaled so its stride matches one square per 760 ms**, via
+> `AnimationAction.timeScale` derived from the clip's own cycle length. Skip this and it
+> foot-slides regardless of which clip you chose — subtly wrong forever, and nobody will be
+> able to say why.
 
 ### Animation classes — what the hands are holding
 
@@ -567,7 +592,7 @@ door through his own chest. Vex's rifle needs a hand on the foregrip at all time
 | `bow` | Kestrel | draw and loose, with a hold at full draw |
 | `cast` | Cinder, Lumen, Thorn | nothing held |
 
-**Clip tiers.** Universal (all nine): idle, walk, run, hit, death, knocked out — six clips.
+**Clip tiers.** Universal (all nine): idle, run, hit, death, knocked out — five clips.
 Per class: two or three attacks each, ~15 across seven classes. Per phase: prep splits two
 ways (outward cast vs self-buff — Ravok's `blood_frenzy`, Bastion's `bulwark`), dash splits
 two ways (five teleport, four charge) — four clips.
