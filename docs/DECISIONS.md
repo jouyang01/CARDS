@@ -5300,3 +5300,65 @@ Read every line with the floor caveat above. Reproduce with `npm run botplay`; a
    two fixed comps. Worth an item if the Analyzer wants it: sweep every character pairing for outliers,
    run 4v4 and 1v1, or run it on both maps. Not built — the dev note asked whether it could be done, and
    scope beyond that is the Analyzer's to set.
+
+---
+
+## 2026-08-21 — Builder session 13 (the model load path: the missing call site, and four decisions around it)
+
+**(MODEL-PRELOAD) A fail-soft asset path needs its call site pinned by a spec.** Phase 8 shipped
+`character-clips.ts`, `character-model.ts` and the `renderer3d.ts` wiring, all tested, all
+working — and nothing ever called `preloadCharacters`. The board drew boxes exactly as it had
+before, silently, because a fallback that fires quietly is indistinguishable from a feature
+nobody switched on. `app.ts` now kicks the preload off with the match's distinct character ids,
+and `character-preload.test.ts` asserts it: one call per match, deduplicated by character id,
+never the whole roster. Verified by removing the call — all three specs fail.
+
+**(MODEL-LATE) Models arrive after the first paint, and the renderer rebuilds rather than the
+app awaiting.** The opening paint must stay synchronous (VISION1-opening: anything awaited
+before it reintroduces the frame where the enemy team is unfogged), and a `.glb` is a network
+fetch, so on any cold load the board is drawn before the models exist. `buildUnit` decides
+box-or-model once and `show()` caches the group, so `preloadCharacters` ends by dropping the
+groups of units whose model has since landed (`staleUnitGroups`, pure and unit-tested) and the
+next paint rebuilds them. The alternative — awaiting the preload before the opening paint —
+trades a correctness invariant for a loading screen, which is the wrong direction. Dropping is
+safe only for box-drawn units, and that is why the check excludes rigged ones: a box owns its
+geometry and materials outright, while a `SkeletonUtils.clone` shares both with the scene it
+came from, so disposing one would blank every later instance of that character.
+
+**(MODEL-AUDIT) A model with no idle clip falls back to the box; any other missing clip only
+warns.** Idle is what a unit plays whenever nothing else is happening, so a `.glb` without it
+leaves the unit in its bind pose — a T-pose standing on the board, which reads far more broken
+than the box it replaced. Every other clip costs one animation and nothing structural. The
+same pass also warns per character when no model loads at all: eight of nine having no art yet
+is ordinary, but "no art yet" and "the path is wrong" draw the identical box, and only one of
+them is fine.
+
+**(MODEL-CACHE) The mesh URL carries a content hash from the manifest.** Vite fingerprints
+`dist/assets/` and not `public/`, where the models live, so `aegis.glb` ships under that exact
+name every build and a browser holding the previous rig keeps serving it. `build_glb.py` now
+stamps a 12-hex hash of the exported bytes into the manifest; the client revalidates the
+manifest (`cache: 'no-cache'` — it is a few hundred bytes) and appends the hash to the mesh
+URL. Mesh and manifest can then never disagree about which clips exist, which is the stale case
+that matters: the model loads and the clip the manifest names is not in it.
+
+## Open Questions for the Analyzer — 2026-08-21 (art assets)
+
+1. **One clip set, or nine copies of it?** `build_glb.py` writes every clip into every
+   character's `.glb`, including the generic ones the roster shares — four of Aegis's nine are
+   stock Mixamo. Estimated cost is ~1 MB per 4v4 cold load and ~1.2 MB across the roster, spent
+   on duplicates; animation keyframes, not the mesh, are the bulk of these files. Written up in
+   full with three options in `ART_PIPELINE.md` §18. **Owner/Designer call, and it wants making
+   before the other eight characters are rigged** — retrofitting means re-exporting all of them.
+   Not decided here: it changes the shape of what the build emits, which is past a Builder call.
+
+2. **`ASSET-WEIGHT-BUDGET` is now live, not hypothetical.** The 300 kB gz budget counts `.js`
+   in `dist/assets/` and nothing in `public/`. Phase 8 means `public/models/` is a real,
+   growing directory that no CI number watches. The backlog item exists; the models now exist
+   too.
+
+3. **The 2× headroom argument for the 300 kB budget is stale.** `bundle-budget.mjs` and the
+   BUNDLE1 entry above both justify 300 kB as roughly double the then-current 145 kB. It is
+   210.1 kB today, so the margin is 1.43×, and "you have to double the bundle to trip it" no
+   longer holds. Not changed — whether to raise it, ratchet it, or hold at 300 and code-split
+   `renderer3d.ts` when it trips is a call worth making deliberately rather than in passing.
+

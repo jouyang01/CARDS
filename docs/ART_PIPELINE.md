@@ -614,6 +614,13 @@ takes the action out of every other file, re-applies the atlas, and writes
 
 Clip names slug from filenames: `Falling Back Death.fbx` → `falling_back_death`.
 
+The manifest also carries a **`version`** — a 12-hex content hash of the `.glb` beside it.
+Vite fingerprints `dist/assets/`; it does **not** fingerprint `public/`, so `aegis.glb` ships
+under that exact name every build and a browser holding the previous rig will keep serving it.
+The client fetches the manifest with `cache: 'no-cache'` (revalidate — it is a few hundred
+bytes) and appends the version to the mesh URL, so the two can never disagree about which
+clips exist.
+
 > **Mixamo exports centimetres; the client works in metres.** The script applies the
 > armature's scale on import. Skipping that lands a 1.7 m character at 170 units — not
 > subtly wrong, off the board entirely.
@@ -623,11 +630,42 @@ Clip names slug from filenames: `Falling Back Death.fbx` → `falling_back_death
 
 ---
 
-## 11. Phase 8 — renderer integration (planned)
+## 11. Phase 8 — renderer integration (shipped)
 
-The box at `renderer3d.ts:541` becomes a `GLTFLoader`-loaded `SkinnedMesh` with an
-`AnimationMixer`, cloned per unit via `SkeletonUtils.clone`, driven from the existing cue
-timeline. `posture` bone offsets apply on top of the mixer.
+The box in `buildUnit` is now a `GLTFLoader`-loaded `SkinnedMesh` with an `AnimationMixer`,
+cloned per unit via `SkeletonUtils.clone`, driven from the existing cue timeline. `posture`
+bone offsets apply on top of the mixer — **after** `mixer.update()`, because the mixer
+overwrites bone rotations wholesale each frame.
+
+Three pieces, and the seams between them are where this went wrong once already:
+
+| Piece | File | What it owns |
+|---|---|---|
+| Which clip | `character-clips.ts` | Pure. Cue → clip, priority `death > knockback > impact > ability > movement > idle`. No Three.js. |
+| On screen | `character-model.ts` | Fetch, audit, instance, mixer, posture. |
+| Where | `renderer3d.ts` | `buildUnit` box-or-model, `preloadCharacters`, `setUnitClip`, mixer ticks on wall time. |
+
+**The call site is part of the feature.** All three of the above shipped working, wired to each
+other, and the board drew boxes for a full session — because nothing in `app.ts` ever called
+`preloadCharacters`. A fail-soft asset path produces exactly this failure: every piece passes
+its own tests and the missing one is invisible. `character-preload.test.ts` is the spec that
+now fails if the call goes away.
+
+**Models arrive after the board is drawn, by design.** `app.ts` kicks the preload off without
+awaiting it, because the opening paint has to stay synchronous (VISION1-opening: nothing may
+await before it or the enemy team flashes unfogged). `buildUnit` decides box-or-model *once*
+and `show()` caches the group forever, so `preloadCharacters` finishes by dropping the groups
+of any unit whose model has since landed — `staleUnitGroups` — and the next paint rebuilds
+them. Late arrival is the normal path on any cold load, not an edge case.
+
+**Only the match's characters are fetched**, deduplicated by character id: four at most in
+2v2, eight in 4v4. Never the roster.
+
+**A model with no idle clip is refused.** `auditClips` checks the manifest's promises against
+what the `.glb` actually shipped. A missing ability clip costs one animation and warns; a
+missing *idle* means the unit has nothing to play when nothing is happening, so it stands in
+its bind pose — a literal T-pose on the board, which reads far worse than the box. That one
+falls back.
 
 > **Clip selection lives in the renderer, never in `sampleFrame()`.** That function is pure,
 > Three-free and unit-tested, and its contract is that dropping every frame changes nothing
@@ -741,6 +779,9 @@ code alone.
 | Missing "In Place" | units drift off their squares | root motion fights engine-owned position. |
 | Weapon in the upload | auto-rig fails or skins to spine | Mixamo cannot rig held props. |
 | No studio lights (headless) | brightness setting silently ignored | distro Blender ships none. |
+| Fail-soft with no call site | board draws boxes, nothing logs | every piece of the load path worked; nobody called it. A silent fallback cannot tell you it fired. |
+| `public/` is not fingerprinted | model and manifest disagree about clips | Vite hashes `dist/assets/` only. Stamp a version and put it in the URL. |
+| Box-or-model decided at build time | models load, units stay boxes | `buildUnit` runs once per unit and the group is cached; the fetch had not finished when the first paint ran. |
 
 ---
 
@@ -802,6 +843,9 @@ Owns `data/art/<id>.json` for all nine, and the per-ability VFX table.
 
 ## 17. Open decisions
 
+- **One clip set or nine copies of it** (§18) — the build ships every clip inside every
+  character's `.glb`, including the generic ones the whole roster shares. Decide before the
+  roster exists; retrofitting means re-exporting every character.
 - **Board scale** (§11) — what a tile represents on the ground. Deferred until characters
   can be seen on the board.
 - **Aegis's abilities contradict his thesis.** The thesis says "he doesn't shield you, he
@@ -810,3 +854,101 @@ Owns `data/art/<id>.json` for all nine, and the per-ability VFX table.
   thesis rejects. Owner/Designer call; the art works either way.
 - **Art direction for the other eight.** The stub files carry only `weaponClass`; the theses
   are unwritten.
+
+---
+
+## 18. Decision needed — one clip set, or nine copies of it
+
+**Owner/Designer call. Make it before the other eight characters are built.** Everything below
+is reversible today and expensive to reverse once nine rigs exist.
+
+### The situation
+
+`build_glb.py` writes one self-contained `<id>.glb` per character: mesh, skeleton, atlas and
+**every clip**. That is the right shape for one character and the wrong shape for nine, because
+most of those clips are not the character's. Aegis's map:
+
+| Cue | Clip | Whose? |
+|---|---|---|
+| idle | `aegis_idle` | his |
+| ability × 4 | `aegis_smash`, `aegis_ultimate`, `intercept_cast`, `warding_wall_cast` | his |
+| run | `sword_and_shield_run` | **generic Mixamo** |
+| hit | `sword_and_shield_impact` | **generic Mixamo** |
+| death | `sword_and_shield_death` | **generic Mixamo** |
+| knockback | `knocked_down` | **generic Mixamo** |
+
+Four of nine are stock clips any character with the same weapon class will use. §10 already
+states the principle — *"One skeleton, many bodies… asset cost is `N meshes + 1 shared clip
+set`, not `N × (mesh + clips)`"* — and the build does not implement it. Nine characters means
+nine copies of `knocked_down`.
+
+### What it costs
+
+Animation is the **majority of the bytes**, which is the part that surprises: Aegis's mesh is
+1,772 triangles (~50 kB) and his atlas is 168 kB, while a single second of clip is larger than
+either. The arithmetic, for a Mixamo humanoid:
+
+> 65 bones × 30 fps × ~20 B per bone-frame (a float32 quaternion plus its time key)
+> ≈ **39 kB per second of clip**, and float keyframes gzip poorly — call it ~30 kB/s over
+> the wire. A 1.5 s clip is therefore ~45 kB, and a five-second shared set ~150 kB.
+
+Which gives, as an **order-of-magnitude estimate** — the exact figure lands with the first
+`.glb`, and `build_glb.py` already prints it:
+
+| | Duplicated (today) | Shared |
+|---|---|---|
+| Shared clips across the roster | 9 × ~150 kB ≈ **1.35 MB** | ~150 kB |
+| Cold load, 4v4 (8 characters) | 8 × ~150 kB ≈ **1.2 MB** | ~150 kB, then cached |
+
+Roughly **1 MB per match and ~1.2 MB across the roster**, spent on nine copies of four files.
+
+The per-match number is the one that matters more than the total, and for a reason the total
+hides: a shared file is fetched once and then cached for **every** match, whatever anyone
+picks. A duplicated one is re-downloaded the first time a player picks a character they have
+not played, forever.
+
+### Option A — split the export (recommended)
+
+`build_glb.py` grows two modes and writes two kinds of file:
+
+- `shared.glb` — skeleton + the generic clips, **no mesh**. Built once.
+- `<id>.glb` — mesh + that character's own clips.
+
+`character-model.ts` loads `shared.glb` once and concatenates its `AnimationClip[]` onto each
+character's. Nothing else changes: `AnimationMixer` binds tracks by **node name**, Mixamo gives
+every rig identical bone names, and `SkeletonUtils.clone` preserves them — which is the whole
+reason the one-skeleton rule exists.
+
+> **The trap in Option A.** Bone names must match *exactly*. Blender renames on collision:
+> import two FBX files with a `mixamorigHips` each and the second becomes `mixamorigHips.001`.
+> Today's single-blend build sidesteps this by construction; a split build must assert it. The
+> check is cheap and belongs in `build_glb.py` — compare the shared file's bone names against
+> the character's and fail the build on any difference, rather than shipping a `.glb` whose
+> clips bind to nothing and whose units stand in bind pose.
+
+Cost: perhaps half a day, most of it in the build script. `auditClips` already covers the
+failure it introduces (a clip named by the manifest and present in neither file).
+
+### Option B — leave it
+
+Defensible if the roster stays at nine and the numbers above land at the low end. Every file
+is self-contained, there is no cross-file bone-name contract to get wrong, and ~1 MB per match
+on a desktop connection is a second. It gets less defensible with every character added.
+
+### Option C — compress the keyframes (orthogonal to A and B)
+
+`EXT_meshopt_compression` (via `gltfpack -cc`) quantises and compresses animation tracks well —
+commonly 4–8× on keyframe data. It costs a ~25 kB decoder in the client bundle and a build
+step. This is a *multiplier* on whichever of A or B is chosen, not an alternative to them:
+compressed duplicates are still duplicates.
+
+### What the decision needs
+
+1. **Is the roster staying at nine?** Option B scales badly and only badly.
+2. **How many clips end up genuinely shared?** Aegis is 4 of 9. If most characters turn out to
+   want bespoke run and death animations, the duplication shrinks and B gets stronger.
+3. **Is the cold-load budget a real constraint?** There is no target for it — the JS budget
+   (300 kB gz) counts `.js` in `dist/assets/` and nothing in `public/`, so today the answer is
+   "nobody is measuring". That is the `ASSET-WEIGHT-BUDGET` item already in the backlog, and
+   this decision is the reason to schedule it.
+
