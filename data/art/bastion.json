@@ -1,0 +1,6 @@
+{
+  "id": "bastion",
+  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
+  "weaponClass": "unarmed",
+  "_weaponClassNote": "Fists and gauntlets. Both hands empty, both hands are the weapon."
+}

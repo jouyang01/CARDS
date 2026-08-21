@@ -83,5 +83,7 @@
     "_comment": "blockiness is the superellipse exponent: 2 = round, 4 = squircle, 8+ = boxy. The single knob that moves the whole roster between silhouette languages.",
     "blockiness": 3.4,
     "sides": 10
-  }
+  },
+  "weaponClass": "door",
+  "_weaponClassNote": "A salvaged bulkhead strapped to one arm. That arm is never free."
 }

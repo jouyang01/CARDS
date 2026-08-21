@@ -229,6 +229,28 @@ The box at `renderer3d.ts:541` becomes a `GLTFLoader`-loaded `SkinnedMesh` with 
 `AnimationMixer`, cloned per unit via `SkeletonUtils.clone`, driven from the existing cue
 timeline.
 
+### Scale: the model does not fit the board as authored
+
+`renderer3d.ts:52` sets `TILE = 1` and line 53 sets `UNIT_HEIGHT = 0.6`. Aegis is built at
+human scale and measures **1.733 world units tall — 2.9x the box he replaces, and 1.73
+tiles.**
+
+Footprint is fine: the body is 0.486 x 0.310 inside a 1.0 tile, comfortably clear. Height is
+not. Two things break at 1.73 tiles:
+
+- **Occlusion.** Eight characters nearly two tiles tall on an 18x15 board hide each other
+  and the ground they stand on, worst at the ~8 degree pitch the free orbit allows.
+- **Nameplates.** `PLATE_H = 0.66`, positioned at `PLATE_H / 2 + 0.14` = 0.47 — which on
+  this model is mid-thigh. Every nameplate would render inside the character.
+
+Author at human metres regardless: Mixamo expects it and the animations read naturally. Then
+apply a **board scale** at load. Clips are bone rotations and In Place exports carry no root
+translation, so scale costs nothing and is fully reversible.
+
+The number to pick is what a tile represents on the ground. At 1.5 m per tile a 1.78 m
+character is 1.19 tiles — tall enough to read, short enough to see past. That is a game
+design decision, so it belongs in data rather than hard-coded in the renderer.
+
 > **Clip selection lives in the renderer, never in `sampleFrame()`.** That function is pure,
 > Three-free and unit-tested, and its contract is that dropping every frame changes nothing
 > about where the board lands. Animation is presentation. Golden rule #1 is untouched and

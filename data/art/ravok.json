@@ -1,0 +1,6 @@
+{
+  "id": "ravok",
+  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
+  "weaponClass": "twohand",
+  "_weaponClassNote": "A heavy two-handed cleave. Both hands on one haft."
+}
