@@ -10,3 +10,5 @@ playwright-report/
 
 # Generated art assets — rebuild with tools/art/. Source of truth is data/art/*.json.
 build/art/
+__pycache__/
+*.pyc
