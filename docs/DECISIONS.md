@@ -5204,3 +5204,95 @@ stays a literal.
 
 8. **PLAYTEST is unblocked as of this branch.** RAM-PREVIEW-REVERT, WALL-HIT-ONCE and all five TTK items
    are in; WALL-CAST-FIX shipped in PR #103. Nothing in the Builder backlog blocks it.
+
+## 2026-08-21 — Builder session 12 (NET-E2E, the two doc items, and a botted playtest)
+
+**NET-E2E's transport is a loopback, not a socket, and that is the whole call.** The AC left the seam to
+the Builder: two `app-harness.ts` controllers over a fake transport, or the real Durable Object in a test
+worker. A `Loopback` that hands a frame straight to the other side's `receive` keeps the **real** server
+(`RoomHub` + `createRoom`), the **real** client reducer (`RoomClient`), and the **real** controller
+(`watchForMatch` → `startNetworkedMatch` → `startHotSeat`) — everything except latency and a scheduler,
+neither of which any bug in this class depends on. A DO in a test worker would add a second runtime and a
+second failure mode to catch the same bugs more slowly.
+
+**"Both clients reach the same resolved state" had to be redefined before it could be asserted.** M3-HIDDEN
+filters every payload to the receiving team, so the two clients are *supposed* to hold different objects —
+a client that saw the whole board would be the bug the filter exists to prevent. `agreement()` therefore
+compares the two views **where they overlap**: any unit both can see must have the same HP and square on
+both. Every test that uses it also asserts the overlap is non-empty, because a client that drew nothing
+would otherwise agree with everybody.
+
+**The wall-relay tests are paired on purpose.** "Turned south, the x=13 column is bare" passes whether or
+not `aimStep` survives the wire — no wall and a wall pointing elsewhere both deal zero. It only means
+something beside "…and the southward wall bites where it actually runs". Verified by reverting
+WALL-CAST-FIX's gate: exactly the two "the wall bit" tests go red.
+
+**The downed seat's Lock In stays enabled, and that is what "not frozen" means.** Reaching for `canAct()`
+as a revive detector did not work: a seat with no units can still lock in an empty turn, which is precisely
+what stops the match waiting on a player who cannot move. Recorded because it looks like a bug from the
+outside and is the opposite.
+
+**BOTPLAY is a floor, not an estimate, and the file says so in three places.** The bot walks at the nearest
+enemy and fires the biggest thing that reaches. Two bad players finish a fight faster than two good ones,
+so every pacing number below is a lower bound on a human match. Its own failure rate (proposals the engine
+refused) is reported alongside, so the numbers can be discounted rather than trusted blindly — and it is
+high for the charge-heavy comp (~3 refusals per match for Bastion/Ravok vs ~0.4 for the healer comp), which
+is a bot limitation and not an engine one.
+
+**Two engine behaviours the bot harness had to learn rather than assert against.** (1) *Sudden death has no
+cap*: a tie at the turn limit sets the flag and play continues until somebody scores, so a match running
+past its limit is the ruleset. My first backstop called that a broken outcome check. (2) *Deaths ≠ kills*:
+FF1 scores a friendly kill for nobody, so the two reconcile only with the unscored ones added back — a
+sharper assertion than the equality I first wrote, and it now pins FF1 over whole matches.
+
+### What 400 bot matches measured (2v2, duel-arena, seeds 1–200 per comp)
+
+Read every line with the floor caveat above. Reproduce with `npm run botplay`; any seed replays exactly.
+
+| | brawl (Vex+Bastion v Kestrel+Ravok) | healer (Lumen+Aegis v Vex+Bastion) |
+|---|---|---|
+| ended on **kills** | 37 (19%) | 27 (14%) |
+| ended on **clock** | 151 (76%) | 173 (87%) |
+| reached sudden death | 43 | 20 |
+| still open at 3× the limit | 12 (6%) | 0 |
+| turns | median 20, mean 22.8, range 13–61 | median 20, mean 20.1, range 15–32 |
+| deaths per match | 4.3 | 4.5 |
+| worst single-turn burst | 112 HP (Ravok, 175 bar — 64%) | 117 HP (Aegis, 155 bar — 75%) |
+
+- **The TTK burst goal looks met.** The worst turn anywhere in 400 matches took 75% of a bar. Nothing
+  approached a kill from full, which is what TTK-HP-BAND was for.
+- **Matches end on the clock, not on kills** — the opposite of what TTK-TURN-LIMIT was raised to achieve.
+  Heavily caveated: the bot spreads damage instead of focusing, and 4.3 deaths per match split across two
+  teams is exactly how you get 20 turns with neither side reaching 4. A human playtest is the test.
+- **Sudden death can run forever** (6% of brawls unresolved at 60 turns). The rules have no tiebreak beyond
+  "play until somebody scores".
+
+## Open Questions for the Analyzer — 2026-08-21
+
+1. **Sudden death is unbounded** (`resolveOutcome`, `formats.ts`; found by BOTPLAY). Tied at the turn limit,
+   play continues with no cap — 6% of bot brawls were still going at 3× the limit. Needs a ruling: a
+   hard cap with a tiebreak (total damage? first blood?), or "accept it, humans will break a tie". Not
+   changed — inventing a tiebreak is a rules decision, not a Builder call.
+
+2. **76–87% of bot matches end on the clock, not on kills** — the thing TTK-TURN-LIMIT (16→20) was meant to
+   fix. Caveated hard (the bot does not focus fire), but it is the one measurement that disagrees with the
+   review's model, and the human playtest should be asked the same question directly.
+
+3. **NET-E2E covers three scenarios, not the networked surface.** Per the Spec Notes, breadth was left to
+   grow later. Not covered: the per-player timer expiring over the wire, two seats on one team
+   (asymmetric 3-player 2v2 — the least-exercised path and the one PLAYTEST prioritises), a mid-match
+   disconnect during *playback* rather than during Decision, and the lobby→match handoff for a
+   **reconnecting** seat.
+
+4. **The two-client harness is client-side** (`packages/client/test/net-harness.ts`). The Durable Object
+   wrapper around `RoomHub` is still only covered by the miniflare smoke test. If the DO is where a
+   networked bug is most likely to live, that is the next item, and it is a different one.
+
+5. **`ROSTER-CEILINGS-UPDATE` touched a Designer-owned doc** (`docs/design/roster-v1.md`). Kept strictly to
+   numbers read off the data plus writing down two rules that already ship and are already enforced by
+   `TTK-INVARIANT`. Flagging so the Designer knows it moved.
+
+6. **BOTPLAY costs ~1s in CI and could be a lot more useful.** It is currently 48 matches on one map with
+   two fixed comps. Worth an item if the Analyzer wants it: sweep every character pairing for outliers,
+   run 4v4 and 1v1, or run it on both maps. Not built — the dev note asked whether it could be done, and
+   scope beyond that is the Analyzer's to set.
