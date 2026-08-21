@@ -2,7 +2,7 @@
   "id": "cinder",
   "name": "Cinder",
   "archetype": "firepower",
-  "maxHp": 95,
+  "maxHp": 110,
   "abilities": [
     {
       "id": "ember_bolt",
@@ -35,7 +35,7 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 10
+          "amount": 12
         },
         {
           "kind": "damageOverTime",
@@ -47,7 +47,7 @@
           "duration": 2
         }
       ],
-      "description": "A clinging flare: 10 on impact, then 6 burn at the end of each of the next 2 turns, and Revealed for 2 turns. The roster's stealth counter, now with a lit fuse."
+      "description": "A clinging flare: 12 on impact, then 6 burn at the end of each of the next 2 turns, and Revealed for 2 turns. The roster's stealth counter, now with a lit fuse."
     },
     {
       "id": "stoke_the_flame",

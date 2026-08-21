@@ -2,7 +2,7 @@
   "id": "lumen",
   "name": "Lumen",
   "archetype": "support",
-  "maxHp": 105,
+  "maxHp": 140,
   "abilities": [
     {
       "id": "radiant_lash",
@@ -37,10 +37,10 @@
       "effects": [
         {
           "kind": "heal",
-          "amount": 25
+          "amount": 20
         }
       ],
-      "description": "Heal allies in the aimed area for 25. Aim it at your own square when fighting alone. Prep phase \u2014 lands before this turn's damage."
+      "description": "Heal allies in the aimed area for 20. Aim it at your own square when fighting alone. Prep phase \u2014 lands before this turn's damage."
     },
     {
       "id": "glimmer_step",
@@ -73,14 +73,14 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 12
+          "amount": 15
         },
         {
           "kind": "weaken",
           "duration": 1
         }
       ],
-      "description": "12 damage and Weaken for a turn. Lumen's real defensive stat \u2014 make them hit like a Support."
+      "description": "15 damage and Weaken for a turn. Lumen's real defensive stat \u2014 make them hit like a Support."
     }
   ],
   "ultimate": {

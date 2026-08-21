@@ -63,6 +63,9 @@ const OPEN: MapDef = {
   spawns: [[{ x: 2, y: 12 }, { x: 3, y: 12 }], [{ x: 22, y: 12 }, { x: 21, y: 12 }]],
 };
 const roster: Roster = { ravok: RAVOK, aegis: AEGIS, vex: VEX };
+/** Read off the data — these tests are about who is spared, not about the number. */
+const SHOCKWAVE_DAMAGE = RAVOK.abilities.find((a) => a.id === 'shockwave')!
+  .effects.find((e) => e.kind === 'damage')!.amount!;
 
 /** Ravok with an ally beside him and two enemies, each placed by the test. */
 const field = (
@@ -122,7 +125,7 @@ describe('CASTER-SAFE: your own attack does not hit you', () => {
     const res = cast(state, ravok.unitId, 'shockwave', ravok.pos);
     expect(unit(res.state, ravok.unitId).hp).toBe(RAVOK.maxHp);
     expect(applied(res.events, ravok.unitId), 'not slowed by his own tremor').toEqual([]);
-    expect(unit(res.state, enemy.unitId).hp).toBe(VEX.maxHp - 12);
+    expect(unit(res.state, enemy.unitId).hp).toBe(VEX.maxHp - SHOCKWAVE_DAMAGE);
     expect(applied(res.events, enemy.unitId)).toContain('slow');
   });
 

@@ -245,11 +245,15 @@ describe('PREVIEW-NUMBERS-AUDIT: the numbers the owner asked for by name', () =>
       .toEqual({ self: 11, foe: 22 });
   });
 
-  it('Shockwave: 12 to enemies and nothing at all on Ravok', () => {
+  it('Shockwave: its authored damage to enemies, nothing at all on Ravok', () => {
     // "12 to enemies for shockwave and nothing on Ravok" — the middle position,
-    // and the one a blanket "melee discs recoil" rule would get wrong.
-    expect(numbersFor(by('ravok'), ability('ravok', 'shockwave'), { x: 11, y: 12 }))
-      .toEqual({ self: 0, foe: 12 });
+    // and the one a blanket "melee discs recoil" rule would get wrong. The
+    // number is read off the ability now (TTK-SKILL-DAMAGE moved it 12 → 19);
+    // what the owner asked for is the ZERO on Ravok, which is asserted exactly.
+    const stomp = ability('ravok', 'shockwave');
+    const damage = stomp.effects.find((e) => e.kind === 'damage')!.amount!;
+    expect(numbersFor(by('ravok'), stomp, { x: 11, y: 12 }))
+      .toEqual({ self: 0, foe: damage });
   });
 
   it('Seismic Rupture: 19 to Ravok, 38 to everyone else', () => {

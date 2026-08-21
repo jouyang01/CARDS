@@ -22,7 +22,7 @@ export interface Format {
 
 /** The supported formats (GAME_SPEC §1). 2v2 is the default; 1v1 is dev/testing. */
 export const FORMATS: Readonly<Record<FormatId, Format>> = {
-  '2v2': { id: '2v2', charactersPerTeam: 2, killsToWin: 4, turnLimit: 16 },
+  '2v2': { id: '2v2', charactersPerTeam: 2, killsToWin: 4, turnLimit: 20 },
   '4v4': { id: '4v4', charactersPerTeam: 4, killsToWin: 5, turnLimit: 20 },
   '1v1': { id: '1v1', charactersPerTeam: 1, killsToWin: 3, turnLimit: 12 },
 };

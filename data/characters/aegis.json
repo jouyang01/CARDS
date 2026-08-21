@@ -2,7 +2,7 @@
   "id": "aegis",
   "name": "Aegis",
   "archetype": "frontline",
-  "maxHp": 120,
+  "maxHp": 155,
   "abilities": [
     {
       "id": "shield_bash",

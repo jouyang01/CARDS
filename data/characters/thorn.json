@@ -2,7 +2,7 @@
   "id": "thorn",
   "name": "Thorn",
   "archetype": "support",
-  "maxHp": 100,
+  "maxHp": 130,
   "abilities": [
     {
       "id": "barbed_sling",
@@ -60,14 +60,14 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 10
+          "amount": 17
         },
         {
           "kind": "root",
           "duration": 1
         }
       ],
-      "description": "Thorn surges through the undergrowth up to 4 squares; the first unit crossed takes 10 damage and is Rooted for a turn. The escape that still leaves someone stuck to the floor."
+      "description": "Thorn surges through the undergrowth up to 4 squares; the first unit crossed takes 17 damage and is Rooted for a turn. The escape that still leaves someone stuck to the floor."
     },
     {
       "id": "verdant_veil",

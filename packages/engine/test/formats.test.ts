@@ -19,7 +19,7 @@ const run = (s: GameState, u0: UnitOrders[], u1: UnitOrders[]) =>
 
 describe('format table', () => {
   it('matches GAME_SPEC §1', () => {
-    expect(FORMATS['2v2']).toEqual({ id: '2v2', charactersPerTeam: 2, killsToWin: 4, turnLimit: 16 });
+    expect(FORMATS['2v2']).toEqual({ id: '2v2', charactersPerTeam: 2, killsToWin: 4, turnLimit: 20 });
     expect(FORMATS['4v4']).toEqual({ id: '4v4', charactersPerTeam: 4, killsToWin: 5, turnLimit: 20 });
     expect(FORMATS['1v1']).toEqual({ id: '1v1', charactersPerTeam: 1, killsToWin: 3, turnLimit: 12 });
     expect(DEFAULT_FORMAT).toBe('2v2');
@@ -58,13 +58,17 @@ describe('per-format turn limit', () => {
   const holdTurn = (format: FormatId, turn: number, kills: [number, number]) =>
     run(makeState([makeUnit('u', 0, { x: 1, y: 1 }), makeUnit('e', 1, { x: 7, y: 7 })], { format, turn, kills }), [], []);
 
-  it('2v2 decides on the leader after turn 16 (not 12)', () => {
-    const at12 = holdTurn('2v2', 12, [1, 0]);
-    expect(at12.state.status).toBe('active'); // still playing — 2v2 runs to 16
-    expect(at12.state.turn).toBe(13);
+  it('2v2 decides on the leader after turn 20 (not 16)', () => {
+    // TTK-TURN-LIMIT raised the 2v2 limit 16 → 20. The assertion keeps its
+    // shape — still running at the OLD boundary, finished at the new one — so
+    // it goes on proving that the limit is read per format rather than that a
+    // particular number is written down somewhere.
     const at16 = holdTurn('2v2', 16, [1, 0]);
-    expect(at16.state.status).toBe('finished');
-    expect(at16.state.winner).toBe(0);
+    expect(at16.state.status).toBe('active'); // still playing — 2v2 runs to 20
+    expect(at16.state.turn).toBe(17);
+    const at20 = holdTurn('2v2', 20, [1, 0]);
+    expect(at20.state.status).toBe('finished');
+    expect(at20.state.winner).toBe(0);
   });
 
   it('4v4 runs to turn 20; a tie at the limit enters sudden death', () => {

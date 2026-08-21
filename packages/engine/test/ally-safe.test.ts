@@ -98,7 +98,9 @@ describe('ALLY-SAFE: Radiant Lash fires through its own frontliner', () => {
     // Dazzling Ray is the same shape from the same character, without the flag.
     const { state, lumen, ally } = beamline({ x: 5, y: 10 }, { x: 7, y: 10 }, { x: 9, y: 10 });
     const after = fire(state, lumen.unitId, 'dazzling_ray', { x: 11, y: 10 });
-    expect(unit(after, ally.unitId).hp, 'FF1 is still the rule').toBe(50 - 12);
+    const ray = LUMEN.abilities.find((a) => a.id === 'dazzling_ray')!
+      .effects.find((e) => e.kind === 'damage')!.amount!;
+    expect(unit(after, ally.unitId).hp, 'FF1 is still the rule').toBe(50 - ray);
   });
 });
 

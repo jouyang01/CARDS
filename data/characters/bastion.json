@@ -2,7 +2,7 @@
   "id": "bastion",
   "name": "Bastion",
   "archetype": "frontline",
-  "maxHp": 130,
+  "maxHp": 170,
   "abilities": [
     {
       "id": "crushing_slam",
@@ -51,14 +51,14 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 15
+          "amount": 23
         },
         {
           "kind": "knockback",
           "amount": 1
         }
       ],
-      "description": "Charge in a straight line: EVERY enemy the path crosses takes 15 damage and is knocked back 1 square (losing their Move). A wall of a man going through a crowd."
+      "description": "Charge in a straight line: EVERY enemy the path crosses takes 23 damage and is knocked back 1 square (losing their Move). A wall of a man going through a crowd."
     },
     {
       "id": "chain_hook",
@@ -71,14 +71,14 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 10
+          "amount": 23
         },
         {
           "kind": "pull",
           "amount": 2
         }
       ],
-      "description": "Hook the first enemy in a line: 10 damage, dragged 2 squares toward Bastion, Move cancelled. Sets up next turn's Slam."
+      "description": "Hook the first enemy in a line: 23 damage, dragged 2 squares toward Bastion, Move cancelled. Sets up next turn's Slam."
     }
   ],
   "ultimate": {
