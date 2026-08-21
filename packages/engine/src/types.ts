@@ -538,6 +538,18 @@ export interface TrapState {
    * ability's `triggers`. Omitted means {@link DEFAULT_TRAP_ENTRIES}.
    */
   triggers?: readonly TrapEntry[];
+  /**
+   * WALL-HIT-ONCE: the cast this tile belongs to. Every tile of one `perTile`
+   * placement shares it, and resolution will not let one cast hit the same unit
+   * twice in a turn — walking *along* a wall takes its damage once, not once per
+   * tile crossed.
+   *
+   * **Omitted for a single-tile trap**, which needs no group: it is consumed by
+   * the first unit to set it off, so it can only ever hit anybody once anyway.
+   * A `groupId` is therefore precisely "I am one tile of a bigger hazard", not
+   * an id every trap happens to carry.
+   */
+  groupId?: string;
   /** Applied to whoever triggers it. */
   onTrigger: AbilityEffect[];
 }

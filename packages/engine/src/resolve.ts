@@ -550,7 +550,7 @@ function planCatalyst(
  */
 function fireCatalyst(
   draft: GameState, board: Board, unit: UnitState, c: PlannedAbility, events: TurnEvent[],
-  contested?: ReadonlySet<string>,
+  trapHits: TrapHits, contested?: ReadonlySet<string>,
 ): void {
   if (!unit.alive) return;
   unit.catalystsUsed.push(c.def.id);
@@ -565,7 +565,7 @@ function fireCatalyst(
   // and a once-per-match burst out of a thicket is exactly the tell.
   revealIfConcealed(board, unit, unit.pos, c.def.id, events);
   if (c.def.effects.some((e) => e.kind === 'teleport')) {
-    teleport(draft, board, unit, c.aim[0], events, contested);
+    teleport(draft, board, unit, c.aim[0], events, trapHits, contested);
   }
   const onSelf = c.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind) || e.kind === 'decoy');
   if (onSelf.length > 0) applySelfEffects(draft, unit, onSelf, source, events);
@@ -596,11 +596,11 @@ function fireCatalyst(
  */
 function runCatalysts(
   draft: GameState, board: Board, plans: UnitPlan[], phase: AbilityPhase, events: TurnEvent[],
-  contested?: ReadonlySet<string>,
+  trapHits: TrapHits, contested?: ReadonlySet<string>,
 ): void {
   for (const plan of orderedPlans(draft, plans)) {
     const c = plan.catalyst;
-    if (c !== undefined && c.def.phase === phase) fireCatalyst(draft, board, plan.unit, c, events, contested);
+    if (c !== undefined && c.def.phase === phase) fireCatalyst(draft, board, plan.unit, c, events, trapHits, contested);
   }
 }
 
@@ -732,6 +732,46 @@ const sourceOf = (unit: UnitState, abilityId: string): Source => ({ unitId: unit
 // ── Traps ───────────────────────────────────────────────────────────────────
 
 /**
+ * WALL-HIT-ONCE — which multi-tile hazards have already caught which units this
+ * turn, as a set of `unitId|groupId`.
+ *
+ * *"Warding Wall is not a trap that goes away after being hit"*, disambiguated by
+ * the owner to **"barrier, but each unit hit once"**. A wall is `perTile`: four
+ * independent one-shot traps, so one unit could be bitten several times by the
+ * same cast — walking *along* its length ran over three tiles for 75, and even a
+ * perpendicular cross that clipped two tiles double-hit.
+ *
+ * So the dedup is **per unit per cast**, not consumption of the whole wall: the
+ * first tile to catch somebody fires and is consumed, and the rest of that cast
+ * neither fire on *that* unit again nor are consumed — they are still lying there
+ * for the next enemy. The barrier stays a barrier; it just cannot bill one
+ * person twice.
+ *
+ * **Resolution-scoped and turn-wide**, which is why it is threaded from
+ * `resolveTurn` rather than kept per phase: a unit can dash through a wall in
+ * Dash and be shoved back across it in Blast, and that is still one hit from that
+ * wall. Threaded rather than hung on the state for the same reason `displaced`
+ * and `coEntries` are — it is scratch that belongs to one resolution, and putting
+ * it in `GameState` would ship per-turn bookkeeping to every client and every
+ * saved room.
+ *
+ * A keyed set, so it is order-independent, N-safe and deterministic: nothing
+ * reads it but membership.
+ */
+type TrapHits = Set<string>;
+
+const hitKey = (unitId: string, groupId: string): string => `${unitId}|${groupId}`;
+
+/**
+ * Has this trap's cast already had its one hit on this unit?
+ *
+ * A trap with no `groupId` is a lone mine — it is consumed the moment it fires,
+ * so it can only hit anybody once and never needs asking.
+ */
+const alreadyHit = (hits: TrapHits, unit: UnitState, t: TrapState): boolean =>
+  t.groupId !== undefined && hits.has(hitKey(unit.unitId, t.groupId));
+
+/**
  * Trigger any enemy trap on the square `unit` just entered (edge-cases: traps
  * fire on entry in any phase). Trap damage is raw — Might/Weaken and cover do
  * not apply (see DECISIONS.md) — and the trap's non-trap effects (e.g. Reveal)
@@ -754,6 +794,8 @@ function triggerTrapsOnEntry(
   board: Board,
   unit: UnitState,
   events: TurnEvent[],
+  /** WALL-HIT-ONCE — what each multi-tile hazard has already caught this turn. */
+  trapHits: TrapHits,
   /**
    * WARDING-WALL — how the unit got here. A trap only fires for the arrivals it
    * lists (`DEFAULT_TRAP_ENTRIES` when it lists none), which is what lets a wall
@@ -769,9 +811,14 @@ function triggerTrapsOnEntry(
 ): boolean {
   if (!unit.alive) return false;
   let halted = false;
-  const fires = (t: TrapState): boolean => (t.triggers ?? DEFAULT_TRAP_ENTRIES).includes(entry);
+  const fires = (t: TrapState): boolean =>
+    (t.triggers ?? DEFAULT_TRAP_ENTRIES).includes(entry) && !alreadyHit(trapHits, unit, t);
   for (const trap of draft.traps.filter((t) => t.owner !== unit.owner && vecEq(t.pos, at) && fires(t))) {
     draft.traps = draft.traps.filter((t) => t.id !== trap.id); // consumed
+    // WALL-HIT-ONCE: this cast has now had its one bite of this unit. Recorded
+    // before the effects rather than after, so a trap that kills — and returns
+    // early below — still closes the group.
+    if (trap.groupId !== undefined) trapHits.add(hitKey(unit.unitId, trap.groupId));
     events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
     const res = applyDamage(unit, trap.damage);
     events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: trap.ownerUnitId, abilityId: trap.abilityId });
@@ -842,7 +889,7 @@ function collectDisplacement(pending: Displacement[], effects: readonly AbilityE
  */
 function clearLandingWithKnockback(
   draft: GameState, board: Board, dasher: UnitState, a: PlannedAbility,
-  displaced: Set<string>, events: TurnEvent[],
+  displaced: Set<string>, events: TurnEvent[], trapHits: TrapHits,
 ): UnitState | undefined {
   const dest = a.aim[0];
   if (dest === undefined) return undefined;
@@ -856,7 +903,7 @@ function clearLandingWithKnockback(
   applyDisplacements(
     draft, board,
     [{ victim: occupant, kind: 'knockback', amount: shove.amount ?? 0, source: { ...dasher.pos }, attackerId: dasher.unitId }],
-    displaced, events,
+    displaced, events, trapHits,
   );
   return occupant;
 }
@@ -875,6 +922,7 @@ function applyDisplacements(
   pending: Displacement[],
   displaced: Set<string>,
   events: TurnEvent[],
+  trapHits: TrapHits,
 ): void {
   for (const d of pending) {
     if (!d.victim.alive || isImmuneTo(d.victim, d.kind)) continue;
@@ -939,7 +987,7 @@ function applyDisplacements(
       // its trap is consumed once.
       for (const square of shovedThrough) {
         if (!d.victim.alive) break;
-        triggerTrapsOnEntry(draft, board, d.victim, events, 'displacement', square);
+        triggerTrapsOnEntry(draft, board, d.victim, events, trapHits, 'displacement', square);
       }
     }
   }
@@ -963,9 +1011,9 @@ function grantUseEnergy(unit: UnitState, def: AbilityDef, hitEnemy: boolean, eve
   if (gained > 0) events.push({ type: 'energyGained', unitId: unit.unitId, amount: gained });
 }
 
-function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[]): void {
+function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[], trapHits: TrapHits): void {
   events.push({ type: 'phaseStart', phase: 'prep' });
-  runCatalysts(draft, board, plans, 'prep', events);
+  runCatalysts(draft, board, plans, 'prep', events, trapHits);
   // PHASE-STATUS-FIRST: Prep's two sub-steps. Prep lands no damage of its own —
   // its only damage-shaped act is **arming a trap**, whose number is stamped
   // from the owner's Might/Weaken at placement. So the traps wait: every Prep
@@ -1151,6 +1199,19 @@ function placeTraps(
   // was buried. Hoisted out of the loop so every tile of one wall carries the
   // same number — it is one cast, not four.
   const damage = scaleDamage(trapEffect.amount ?? 0, outgoingDamagePct(owner));
+  // WALL-HIT-ONCE: one id for the whole cast, so resolution can tell "another
+  // tile of the wall I already walked into" from "a second, different wall".
+  // It is exactly the trap id with the square left off — the part that is the
+  // *cast* rather than the tile — so two walls from one Aegis in one turn (a
+  // free ability beside a cooldown'd one) still count separately, and the same
+  // ability re-cast next turn is a new hazard because the turn is in the id.
+  //
+  // Only a `perTile` cast gets one. A single-tile trap is consumed by the first
+  // unit to set it off, so "once per unit" is already true of it, and giving it
+  // a group would be an id that never changes an answer.
+  const groupId = trapEffect.perTile === true
+    ? `trap-${owner.unitId}-t${draft.turn}-${planned.def.id}`
+    : undefined;
   for (const pos of squares) {
     const trap: TrapState = {
       // The ability is part of the id because a unit can now arm two traps in
@@ -1174,6 +1235,8 @@ function placeTraps(
       ...(trapEffect.halt === true ? { halt: true } : {}),
       // WARDING-WALL: likewise carried rather than decided here.
       ...(trapEffect.triggers !== undefined ? { triggers: [...trapEffect.triggers] } : {}),
+      // WALL-HIT-ONCE: present only on a multi-tile cast (see above).
+      ...(groupId !== undefined ? { groupId } : {}),
       onTrigger,
     };
     draft.traps.push(trap);
@@ -1324,7 +1387,7 @@ function applyDashHits(
   }
 }
 
-function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], displaced: Set<string>, events: TurnEvent[]): void {
+function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Displacement[], displaced: Set<string>, events: TurnEvent[], trapHits: TrapHits): void {
   events.push({ type: 'phaseStart', phase: 'dash' });
   // Shift resolves before a dash ability the same unit declared. Its Move cost
   // (CAT-DASH-COST) was already taken at plan time — `planUnit` drops the walk
@@ -1333,7 +1396,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
   // BLINK-CLASH: settled before anything moves, so it cannot depend on which
   // blink the loop below reaches first.
   const contested = contestedBlinks(plans);
-  runCatalysts(draft, board, plans, 'dash', events, contested);
+  runCatalysts(draft, board, plans, 'dash', events, trapHits, contested);
   // A blocked Shift leaves the unit where it started, and everything it planned
   // from the landing square now describes nothing. Dropping those is the safe
   // reading — a plan is never allowed to act from a square its owner is not on.
@@ -1368,14 +1431,14 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     const origin: Vec2 = { x: plan.unit.pos.x, y: plan.unit.pos.y };
     let crossed: UnitState[] = [];
     let shovedAside: UnitState | undefined;
-    if (a.def.shape === 'path') crossed = walkCharge(draft, board, plan.unit, a.aim, events);
+    if (a.def.shape === 'path') crossed = walkCharge(draft, board, plan.unit, a.aim, events, trapHits);
     else {
       // DASH-OCCUPIED: a dash carrying its own knockback clears the landing
       // square before it settles. Without this the shove would be queued for
       // end-of-Blast, the occupant would still be there, and the teleport would
       // simply fizzle — the exception the owner asked for would never fire.
-      shovedAside = clearLandingWithKnockback(draft, board, plan.unit, a, displaced, events);
-      teleport(draft, board, plan.unit, a.aim[0], events, contested);
+      shovedAside = clearLandingWithKnockback(draft, board, plan.unit, a, displaced, events, trapHits);
+      teleport(draft, board, plan.unit, a.aim[0], events, trapHits, contested);
     }
 
     // DASH-IMPACT: an optional AoE at takeoff and/or landing, expanded from the
@@ -1562,7 +1625,7 @@ export function chargeVictims(
   return def.chargeHits === 'all' ? run : run.slice(0, 1);
 }
 
-function walkCharge(draft: GameState, board: Board, unit: UnitState, path: readonly Vec2[], events: TurnEvent[]): UnitState[] {
+function walkCharge(draft: GameState, board: Board, unit: UnitState, path: readonly Vec2[], events: TurnEvent[], trapHits: TrapHits): UnitState[] {
   const occupiedAt = (p: Vec2) => draft.units.some((u) => u.alive && u.unitId !== unit.unitId && vecEq(u.pos, p));
   // Furthest square the charger may rest on (last free square in the path).
   let restIndex = -1;
@@ -1579,7 +1642,7 @@ function walkCharge(draft: GameState, board: Board, unit: UnitState, path: reado
     const from = unit.pos;
     unit.pos = { x: step.x, y: step.y };
     events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
-    if (triggerTrapsOnEntry(draft, board, unit, events, 'dash')) return crossed; // died or halted (TRAP-HALT)
+    if (triggerTrapsOnEntry(draft, board, unit, events, trapHits, 'dash')) return crossed; // died or halted (TRAP-HALT)
   }
   return crossed;
 }
@@ -1594,7 +1657,7 @@ function walkCharge(draft: GameState, board: Board, unit: UnitState, path: reado
  */
 function teleport(
   draft: GameState, board: Board, unit: UnitState, dest: Vec2 | undefined, events: TurnEvent[],
-  contested?: ReadonlySet<string>,
+  trapHits: TrapHits, contested?: ReadonlySet<string>,
 ): boolean {
   if (dest === undefined) return false;
   const landing = blinkLanding(draft, board, unit, dest, contested);
@@ -1606,7 +1669,7 @@ function teleport(
   // WARDING-WALL: a blink *arrives*, it does not cross — so a hazard that only
   // catches things passing through it (the wall) sits this out, while a mine
   // you materialise on top of still goes off, exactly as before.
-  triggerTrapsOnEntry(draft, board, unit, events, 'teleport');
+  triggerTrapsOnEntry(draft, board, unit, events, trapHits, 'teleport');
   return true;
 }
 
@@ -1693,6 +1756,7 @@ function runBlast(
   plans: UnitPlan[],
   pending: Displacement[],
   events: TurnEvent[],
+  trapHits: TrapHits,
 ): void {
   events.push({ type: 'phaseStart', phase: 'blast' });
 
@@ -1706,7 +1770,7 @@ function runBlast(
 
   // Adrenaline and Overdrive have to land BEFORE the damage below is computed —
   // a Might applied after the fact would boost nothing until next turn.
-  runCatalysts(draft, board, plans, 'blast', events);
+  runCatalysts(draft, board, plans, 'blast', events, trapHits);
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
   // their locked squares, folded into this turn's simultaneous damage.
@@ -2008,7 +2072,7 @@ interface Mover {
   origin: Vec2;
 }
 
-function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: ReadonlySet<string>, events: TurnEvent[]): void {
+function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: ReadonlySet<string>, events: TurnEvent[], trapHits: TrapHits): void {
   events.push({ type: 'phaseStart', phase: 'move' });
 
   const movers: Mover[] = [];
@@ -2031,13 +2095,13 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
   // CLASH-AR (a): one collector for the whole Move phase — normal movers and
   // chasers run on two clocks, and a tie only ever happens inside one of them.
   const coEntries: VoidedClaims = new Set();
-  runSteps(draft, board, movers, events, coEntries);
+  runSteps(draft, board, movers, events, trapHits, coEntries);
 
   // CHASE1 — chasers go after the normal movers, against the board they leave
   // behind, so a chase closes on where its target actually finished rather than
   // on a square guessed when orders were written.
   const chasers = planChases(draft, board, plans, displaced, events);
-  runSteps(draft, board, chasers, events, coEntries);
+  runSteps(draft, board, chasers, events, trapHits, coEntries);
 
   // A decoy is destroyed by an enemy that *ends a move* on its square (R2) —
   // and a chaser ends a move like anyone else.
@@ -2055,11 +2119,12 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
 
 /** Advance a set of movers on one shared clock until every path is spent. */
 function runSteps(
-  draft: GameState, board: Board, movers: Mover[], events: TurnEvent[], coEntries?: VoidedClaims,
+  draft: GameState, board: Board, movers: Mover[], events: TurnEvent[], trapHits: TrapHits,
+  coEntries?: VoidedClaims,
 ): void {
   if (movers.length === 0) return;
   const maxLen = Math.max(...movers.map((m) => m.path.length));
-  for (let step = 0; step < maxLen; step++) stepMovers(draft, board, movers, step, events, coEntries);
+  for (let step = 0; step < maxLen; step++) stepMovers(draft, board, movers, step, events, trapHits, coEntries);
 }
 
 /**
@@ -2577,6 +2642,7 @@ function stepMovers(
   movers: Mover[],
   step: number,
   events: TurnEvent[],
+  trapHits: TrapHits,
   coEntries?: VoidedClaims,
 ): void {
   const active = movers.filter((m) => !m.halted && m.unit.alive && step < m.path.length);
@@ -2641,7 +2707,7 @@ function stepMovers(
       const k = vecKey(to);
       entered.set(k, [...(entered.get(k) ?? []), m]);
       events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
-      if (triggerTrapsOnEntry(draft, board, m.unit, events, 'move')) m.halted = true; // died or halted → rest of the path dropped
+      if (triggerTrapsOnEntry(draft, board, m.unit, events, trapHits, 'move')) m.halted = true; // died or halted → rest of the path dropped
     } else {
       m.halted = true; // stops on the last square before the contested/blocked one
       bounceOffOccupied(draft, movers, m, step, events);
@@ -2926,11 +2992,16 @@ export function resolveTurn(
 
     const pending: Displacement[] = [];
     const displaced = new Set<string>();
-    runPrep(draft, board, plans, events);
-    runDash(draft, board, plans, pending, displaced, events);
-    runBlast(draft, board, roster, plans, pending, events);
-    applyDisplacements(draft, board, pending, displaced, events);
-    runMove(draft, board, plans, displaced, events);
+    // WALL-HIT-ONCE: one dedup set for the whole turn, so a wall that catches
+    // somebody in Dash cannot bill them again when a Blast shove pushes them
+    // back across it. Created here beside `displaced` and `pending` for the same
+    // reason those are — it is scratch belonging to one resolution.
+    const trapHits: TrapHits = new Set<string>();
+    runPrep(draft, board, plans, events, trapHits);
+    runDash(draft, board, plans, pending, displaced, events, trapHits);
+    runBlast(draft, board, roster, plans, pending, events, trapHits);
+    applyDisplacements(draft, board, pending, displaced, events, trapHits);
+    runMove(draft, board, plans, displaced, events, trapHits);
     endOfTurn(draft, map, board, deadAtStart, events);
     resolveOutcome(draft, events);
   }
