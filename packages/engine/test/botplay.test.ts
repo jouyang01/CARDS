@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import { buildRoster } from '../src/setup.js';
 import { getFormat } from '../src/formats.js';
 import type { Roster } from '../src/resolve.js';
-import { formatReport, playMatch, playSeason, type SeasonReport } from './bot.js';
+import {
+  formatReport, formatSweep, playMatch, playSeason, playSweep, type SeasonReport,
+} from './bot.js';
 import type { CharacterDef, MapDef } from '../src/types.js';
 
 /**
@@ -168,5 +170,53 @@ describe('BOTPLAY: what the season measured (observations, not assertions)', () 
     // eslint-disable-next-line no-console
     console.log(`\n${text}\n`);
     expect(text).toContain('ended on kills');
+  });
+});
+
+describe('BOTPLAY-SWEEP: every pairing, looking for outliers', () => {
+  /**
+   * A tool the Analyzer runs for evidence, **not a CI gate** — and the tests
+   * here are about the tool, never about the balance it reports. A bot that does
+   * not focus-fire, bait or hold a cooldown is not ground truth (session-12
+   * OQ #2), so a win rate it produces is a flag to investigate. Asserting a band
+   * would be asserting that the bot is a good player.
+   */
+  const sweep = playSweep({
+    map: ARENA, roster, characters: CHARACTERS, format: '2v2', matchesPerPairing: 1,
+  });
+
+  it('covers every ordered pairing, and every character appears', () => {
+    // Ordered, not unordered: a character that only wins from team 0's spawn is
+    // exactly the outlier worth catching, and an unordered sweep hides it.
+    expect(sweep.pairings, '9 characters, every ordered pair').toBe(9 * 8);
+    expect(sweep.rows).toHaveLength(CHARACTERS.length);
+    for (const r of sweep.rows) expect(r.matches, `${r.characterId} played`).toBeGreaterThan(0);
+  });
+
+  it('the tally reconciles — wins never exceed matches, and both sides are counted', () => {
+    for (const r of sweep.rows) {
+      expect(r.wins, `${r.characterId} won more than it played`).toBeLessThanOrEqual(r.matches);
+      expect(r.winPct).toBe(Math.round((r.wins * 100) / r.matches));
+    }
+    // Every match books one appearance for each side, so the totals must agree
+    // with the pairing count exactly. A sweep that quietly dropped a match would
+    // still look plausible row by row.
+    const appearances = sweep.rows.reduce((n, r) => n + r.matches, 0);
+    expect(appearances).toBe(sweep.pairings * sweep.matchesPerPairing * 2);
+  });
+
+  it('and it replays exactly, so any row can be reproduced', () => {
+    const again = playSweep({
+      map: ARENA, roster, characters: CHARACTERS, format: '2v2', matchesPerPairing: 1,
+    });
+    expect(again.rows).toEqual(sweep.rows);
+  });
+
+  it('prints the sweep', () => {
+    const text = formatSweep(sweep);
+    // eslint-disable-next-line no-console
+    console.log(`\n${text}\n`);
+    expect(text).toContain('pairing sweep');
+    expect(text, 'and says what it is not').toContain('never a balance number');
   });
 });

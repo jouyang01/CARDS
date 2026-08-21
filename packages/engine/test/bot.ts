@@ -399,6 +399,120 @@ export function playSeason(
   };
 }
 
+// ── BOTPLAY-SWEEP — every pairing, looking for outliers ─────────────────────
+
+/** One character's record across every pairing it appeared in. */
+export interface SweepRow {
+  characterId: string;
+  matches: number;
+  wins: number;
+  /** Percentage points, integer — no float ever reaches a comparison. */
+  winPct: number;
+  /** Total damage this character's team took per match, as a crude TTK proxy. */
+  deathsFor: number;
+  deathsAgainst: number;
+}
+
+export interface SweepReport {
+  rows: SweepRow[];
+  pairings: number;
+  matchesPerPairing: number;
+  /** Rows whose win rate sits outside the band — the whole point of the sweep. */
+  outliers: SweepRow[];
+}
+
+/**
+ * Play every unordered pair of characters against every other, and rank them.
+ *
+ * **This is a tool the Analyzer runs for evidence, not a CI gate**, and the
+ * distinction is load-bearing: a bot that does not focus-fire, bait, or hold a
+ * cooldown is not ground truth (session-12 OQ #2), so a win rate here is a
+ * flag to investigate rather than a number to balance against. The human
+ * playtest is the primary validation and this does not replace it.
+ *
+ * Deterministic like everything else in this file — the seed for each pairing is
+ * derived from its index, so the whole sweep replays exactly and any row can be
+ * reproduced by naming the seed the runner prints.
+ */
+export function playSweep(opts: {
+  map: MapDef;
+  roster: Roster;
+  characters: readonly CharacterDef[];
+  format: FormatId;
+  /** Matches per ordered pairing. Small by default — the sweep is wide, not deep. */
+  matchesPerPairing?: number;
+  /** Win rate outside ±this many points of 50 is called an outlier. */
+  band?: number;
+}): SweepReport {
+  const perPairing = opts.matchesPerPairing ?? 2;
+  const band = opts.band ?? 20;
+  const tally = new Map<string, SweepRow>();
+  const row = (id: string): SweepRow => {
+    const found = tally.get(id);
+    if (found !== undefined) return found;
+    const fresh: SweepRow = {
+      characterId: id, matches: 0, wins: 0, winPct: 0, deathsFor: 0, deathsAgainst: 0,
+    };
+    tally.set(id, fresh);
+    return fresh;
+  };
+
+  let pairings = 0;
+  let seed = 1;
+  // Every ORDERED pair, so spawn side is not silently baked into a result: a
+  // character that only wins from team 0 is exactly the outlier worth catching.
+  for (const a of opts.characters) {
+    for (const b of opts.characters) {
+      if (a.id === b.id) continue;
+      pairings += 1;
+      for (let i = 0; i < perPairing; i++) {
+        const result = playMatch({
+          seed: seed++, map: opts.map, roster: opts.roster, format: opts.format,
+          teams: [[a, a], [b, b]] as [CharacterDef[], CharacterDef[]],
+        });
+        const left = row(a.id);
+        const right = row(b.id);
+        left.matches += 1;
+        right.matches += 1;
+        if (result.winner === 0) left.wins += 1;
+        if (result.winner === 1) right.wins += 1;
+        left.deathsFor += result.kills[1];
+        left.deathsAgainst += result.kills[0];
+        right.deathsFor += result.kills[0];
+        right.deathsAgainst += result.kills[1];
+      }
+    }
+  }
+
+  const rows = [...tally.values()]
+    .map((r) => ({ ...r, winPct: r.matches === 0 ? 0 : Math.round((r.wins * 100) / r.matches) }))
+    // Sorted by id after the rate so two characters on the same number always
+    // come out in the same order — a report that reshuffles is a report nobody
+    // can diff against last week's.
+    .sort((x, y) => y.winPct - x.winPct || x.characterId.localeCompare(y.characterId));
+
+  return {
+    rows,
+    pairings,
+    matchesPerPairing: perPairing,
+    outliers: rows.filter((r) => Math.abs(r.winPct - 50) > band),
+  };
+}
+
+/** The sweep as a human reads it. */
+export function formatSweep(r: SweepReport): string {
+  const pad = (s: string, n: number): string => s.padEnd(n);
+  return [
+    `── pairing sweep — ${r.pairings} pairings x ${r.matchesPerPairing} matches ────────────`,
+    ...r.rows.map((x) => `  ${pad(x.characterId, 9)} ${String(x.winPct).padStart(3)}%  `
+      + `${x.wins}/${x.matches}   kills ${x.deathsAgainst} · deaths ${x.deathsFor}`),
+    r.outliers.length === 0
+      ? '  no outlier outside the band'
+      : `  OUTLIERS: ${r.outliers.map((x) => `${x.characterId} ${x.winPct}%`).join(', ')}`,
+    '  NB: greedy bots, no focus fire — a flag to investigate, never a balance number.',
+  ].join('\n');
+}
+
 /** The report as a human reads it — printed by `npm run botplay`. */
 export function formatReport(title: string, r: SeasonReport): string {
   const pct = (n: number): string => `${Math.round((n / (r.count || 1)) * 100)}%`;
