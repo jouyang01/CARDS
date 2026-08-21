@@ -1,0 +1,14 @@
+{
+  "id": "aegis",
+  "clips": [
+    "aegis_idle",
+    "aegis_smash",
+    "aegis_ultimate",
+    "intercept_cast",
+    "knocked_down",
+    "sword_and_shield_death",
+    "sword_and_shield_impact",
+    "sword_and_shield_run",
+    "warding_wall_cast"
+  ]
+}

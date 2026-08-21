@@ -5435,3 +5435,93 @@ retuned deliberately alongside — not a line appended to a scenery commit.
 No new assets, so `ASSET-WEIGHT-BUDGET` is still not in play — `MAP_PIPELINE.md` phase 4 is
 what triggers it, and it now has two callers, since `ART_PIPELINE.md` §5 needs the same loader
 and the same budget number for character `.glb` files.
+## 2026-08-17 — INTERCEPT-GUARD: Aegis's thesis ability (Designer, owner directive)
+
+The owner rebuilt Intercept from a generic teleport-plus-self-shield into the Bodyguard's
+thesis: teleport adjacent to an ally within 5, and for the rest of that turn damage that
+ally would take is dealt to Aegis instead, with an 18 self-shield sized to cover most but
+not all of one regular attack (the shipped non-support basic band is 20–26; 18 covers 90%
+of a 20 and 69% of a 26). Full spec in `docs/design/intercept-guard.md`. The owner's
+one-line argument is recorded because it IS the design: **Dash resolves before Blast — he
+arrives, and then the damage lands on him.** The phase order makes bodyguarding mechanically
+real: the enemy aimed at the ally during Decision, and their locked Blast finds Aegis
+standing there. It turns the game's core read (aim where they will be) into a kit.
+
+Calls worth remembering. **(1) `guard` is the first new EFFECT_KIND since DOT-HOT**, and it
+clears the same bar: no composition of existing kinds expresses "your damage goes to him."
+**(2) The redirect is bounded on three sides** — damage only (a bodyguard takes the bullet,
+not the leash: statuses and displacement still land on the ally), enemy-dealt only (the
+ally's own recoil is their recklessness, and redirecting Ravok's selfDamagePct to Aegis was
+a degenerate combo waiting to be found), and live-turn only (end-of-turn DoT ticks are not
+hits). **(3) The amount is what would have reached the ally** — attacker's mods and the
+ally's cover compose as if the hit landed, then Aegis's shields and HP absorb it; his own
+cover is not recomputed because he is not where the shot was aimed. **(4) Ally-bound
+targeting reuses the chase pattern** (unit id in the order) rather than square-aim-near-an-
+ally, which is ambiguous at 4v4. Landing is the nearest open orthogonal adjacent at Dash
+start, fixed-order tiebreak, fizzle if surrounded. **(5) The 1v1 fallback keeps the
+self-applicability rule honest**: with no living ally the ability degrades to exactly the
+square-target escape it used to be. **(6) The playtest lever is the shield, never the
+redirect** — if the guarded carry proves unkillable at 2v2, 18 becomes 14; the redirect is
+the identity and does not move.
+
+---
+
+## 2026-08-21 — Builder session 13 (the model load path: the missing call site, and four decisions around it)
+
+**(MODEL-PRELOAD) A fail-soft asset path needs its call site pinned by a spec.** Phase 8 shipped
+`character-clips.ts`, `character-model.ts` and the `renderer3d.ts` wiring, all tested, all
+working — and nothing ever called `preloadCharacters`. The board drew boxes exactly as it had
+before, silently, because a fallback that fires quietly is indistinguishable from a feature
+nobody switched on. `app.ts` now kicks the preload off with the match's distinct character ids,
+and `character-preload.test.ts` asserts it: one call per match, deduplicated by character id,
+never the whole roster. Verified by removing the call — all three specs fail.
+
+**(MODEL-LATE) Models arrive after the first paint, and the renderer rebuilds rather than the
+app awaiting.** The opening paint must stay synchronous (VISION1-opening: anything awaited
+before it reintroduces the frame where the enemy team is unfogged), and a `.glb` is a network
+fetch, so on any cold load the board is drawn before the models exist. `buildUnit` decides
+box-or-model once and `show()` caches the group, so `preloadCharacters` ends by dropping the
+groups of units whose model has since landed (`staleUnitGroups`, pure and unit-tested) and the
+next paint rebuilds them. The alternative — awaiting the preload before the opening paint —
+trades a correctness invariant for a loading screen, which is the wrong direction. Dropping is
+safe only for box-drawn units, and that is why the check excludes rigged ones: a box owns its
+geometry and materials outright, while a `SkeletonUtils.clone` shares both with the scene it
+came from, so disposing one would blank every later instance of that character.
+
+**(MODEL-AUDIT) A model with no idle clip falls back to the box; any other missing clip only
+warns.** Idle is what a unit plays whenever nothing else is happening, so a `.glb` without it
+leaves the unit in its bind pose — a T-pose standing on the board, which reads far more broken
+than the box it replaced. Every other clip costs one animation and nothing structural. The
+same pass also warns per character when no model loads at all: eight of nine having no art yet
+is ordinary, but "no art yet" and "the path is wrong" draw the identical box, and only one of
+them is fine.
+
+**(MODEL-CACHE) The mesh URL carries a content hash from the manifest.** Vite fingerprints
+`dist/assets/` and not `public/`, where the models live, so `aegis.glb` ships under that exact
+name every build and a browser holding the previous rig keeps serving it. `build_glb.py` now
+stamps a 12-hex hash of the exported bytes into the manifest; the client revalidates the
+manifest (`cache: 'no-cache'` — it is a few hundred bytes) and appends the hash to the mesh
+URL. Mesh and manifest can then never disagree about which clips exist, which is the stale case
+that matters: the model loads and the clip the manifest names is not in it.
+
+## Open Questions for the Analyzer — 2026-08-21 (art assets)
+
+1. **One clip set, or nine copies of it?** `build_glb.py` writes every clip into every
+   character's `.glb`, including the generic ones the roster shares — four of Aegis's nine are
+   stock Mixamo. Estimated cost is ~1 MB per 4v4 cold load and ~1.2 MB across the roster, spent
+   on duplicates; animation keyframes, not the mesh, are the bulk of these files. Written up in
+   full with three options in `ART_PIPELINE.md` §18. **Owner/Designer call, and it wants making
+   before the other eight characters are rigged** — retrofitting means re-exporting all of them.
+   Not decided here: it changes the shape of what the build emits, which is past a Builder call.
+
+2. **`ASSET-WEIGHT-BUDGET` is now live, not hypothetical.** The 300 kB gz budget counts `.js`
+   in `dist/assets/` and nothing in `public/`. Phase 8 means `public/models/` is a real,
+   growing directory that no CI number watches. The backlog item exists; the models now exist
+   too.
+
+3. **The 2× headroom argument for the 300 kB budget is stale.** `bundle-budget.mjs` and the
+   BUNDLE1 entry above both justify 300 kB as roughly double the then-current 145 kB. It is
+   210.1 kB today, so the margin is 1.43×, and "you have to double the bundle to trip it" no
+   longer holds. Not changed — whether to raise it, ratchet it, or hold at 300 and code-split
+   `renderer3d.ts` when it trips is a call worth making deliberately rather than in passing.
+
