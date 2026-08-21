@@ -17,152 +17,182 @@ PR to `main` every session.**
 
 > ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set; QUOTA-RUNAWAY guards the quota. Keep green.
 
-> 🎨 **Art / animation / VFX reference (owner Dev Note 2026-08-21 #1).** Any item touching how a unit is
-> drawn, rigged, animated, or how a hit is sold — read **`docs/ART_PIPELINE.md`** (the pipeline, the §7
-> build order, and the §8 role briefs for Builder/Analyzer/Designer) **and PR #100** (which added it)
-> first. **No engine change is required by that pipeline** — projectile timing derives from the existing
-> `ability`→`impact` cue gap; anything that looks like an engine need is an `ENGINE ASK` for the owner, not
-> a commit. The pipeline is not being built this session (playtest first), but the reference is live now so
-> nobody specs or builds art work without it.
+> 🎨 **Art / animation / VFX reference (owner Dev Note 2026-08-21).** Any item touching how a unit is
+> drawn, rigged, animated, or how a hit is sold — read **`docs/ART_PIPELINE.md`** (pipeline, §7 build
+> order, §8 role briefs) **and PR #100/#108/#109** first. **No engine change is required by that
+> pipeline** — anything that looks like one is an `ENGINE ASK` for the owner. Clip selection is pure and
+> lives in the renderer (`character-clips.ts`), never in `sampleFrame()` or the engine.
 
 ## ✅ COMPLETE
 
-- The full hot-seat game + AR parity + the whole M3 networked loop + deploy + Dev Notes batches 1–3 +
-  AIM-PREVIEW-TRUE + DEATH-HANG.
-- **PR #97–#100:** WARDING-WALL + `wall` shape + `perTile` traps + per-trap `triggers`; BASTION-RAM-LINE;
-  CD-BAND-DASH/BLAST/INVARIANT; DOWN-SEAT-SKIP; TRAP-SHOVE-DEFAULT; WALL-ROTATE; the character-art-pipeline
-  doc (`docs/ART_PIPELINE.md`).
-- **PR #103 (session 10):** WALL-CAST-FIX (the wall casts; `app-harness.ts` records `show()`),
-  RAM-LINE-PREVIEW-FIX (superseded — see PR #105), FRAG-SELF (`selfHarm` opt-out from CASTER-SAFE).
-- **PR #104 (docs):** review of PR #102/#103; the WALL-HIT-ONCE and RAM-PREVIEW-REVERT specs; TTK approved.
-- **PR #105 (session 11):** **RAM-PREVIEW-REVERT** (the charge draws no lane outline; the `chargeHits`
-  number-correctness fix kept), **WALL-HIT-ONCE** (a wall bills one unit once and stays a multi-target
-  barrier — ruled in edge-cases, verified N-safe), and the **TTK package** — HP band (median 100→130),
-  tiered 1.25× skill damage (eleven values), Lumen's Mending Light 25→20, 2v2 turn limit 16→20, and
-  **TTK-INVARIANT** enforcing the HP ladder + damage tiers in `content.test.ts`.
+- The full hot-seat game + AR parity + the whole M3 networked loop + deploy + AIM-PREVIEW-TRUE + DEATH-HANG.
+- **PR #97–#105:** WARDING-WALL + `wall` shape + `perTile` traps + `triggers`; WALL-ROTATE; WALL-CAST-FIX;
+  WALL-HIT-ONCE; TRAP-SHOVE-DEFAULT; BASTION-RAM-LINE + RAM-PREVIEW-REVERT; CD-BAND-*; DOWN-SEAT-SKIP;
+  FRAG-SELF; the **TTK package** (HP band, tiered skill damage, Lumen heal, 2v2 turn limit, TTK-INVARIANT).
+- **PR #106 (docs):** greenlit PLAYTEST; specced NET-E2E + the doc-debt items.
+- **PR #107 (session 12):** **NET-E2E** (two real clients, one real room — death/reconnect/rotated-wall
+  relay), **GAMESPEC-HP-UPDATE**, **ROSTER-CEILINGS-UPDATE**, **BOTPLAY** (a scripted opponent + 400
+  matches of evidence).
+- **PR #108–#110 (art + roster):** the character-art pipeline (Aegis spike → mesh → Mixamo rig → Phase 8
+  client load + animate; `character-model.ts` lazy-loads `GLTFLoader`, `character-clips.ts` pure clip
+  selection) and roster v1. **Engine untouched.**
 
-Current suite: **2644 tests** (1366 + 976 + 302), typecheck clean, purity clean.
+Current suite: **2695 tests** (1410 + 983 + 302), typecheck clean, purity clean. Engine src unchanged for
+two sessions.
 
-### Where the project is
+### Build order and dependencies
 
-**Path A's entire pre-playtest program is done and verified.** The two client bugs, the two ability fixes,
-and the TTK tuning are all shipped; the game is deployed and, by the suite, correct. The owner has
-greenlit playtesting (Dev Note #2). So this session's spec is **not** a stack of engine items — it is the
-**PLAYTEST milestone** (owner-run, with the checklist below) plus a small **Builder batch that de-risks and
-supports a live networked playtest**: NET-E2E first, then two doc-debt cleanups. Order:
-**NET-E2E → GAMESPEC-HP-UPDATE → ROSTER-CEILINGS-UPDATE**, running alongside the owner's playtest.
+**INTERCEPT-GUARD → SUDDEN-DEATH-TEST**, then, as capacity allows, **NET-E2E-EXPAND** and **BOTPLAY-SWEEP**.
+INTERCEPT-GUARD is the one substantial feature (a new `guard` mechanic, one commit); SUDDEN-DEATH-TEST is a
+small test-only lock on a ruling. No dependency between the two — do them in the listed order (size). The
+human **PLAYTEST** runs in parallel (owner); its findings arrive as Dev Notes and re-prioritise this list.
 
 ---
 
-## 🎮 PLAYTEST — the active milestone (owner + humans; GO per Dev Note 2026-08-21 #2)
+## Engine + data + client — Aegis's thesis ability (the session's main work)
 
-**Addresses Dev Note: "We should start playtesting."** Nothing in the Builder backlog blocks it (Builder
-session-11 OQ #8). A real **two-machine internet playtest** of the live deploy — prioritise the
-**asymmetric 3-player 2v2** (a two-player team vs. one player running both characters), the least-exercised
-path. Not a Builder code item; the Builder's job is to fix what it surfaces and to ship NET-E2E alongside.
+### INTERCEPT-GUARD. Intercept becomes the Bodyguard's redirect (ENGINE + DATA + CLIENT) — UNBLOCKED (first)
+**Addresses Dev Note: "Make sure you see Aegis' intercept change and spec it for the builder."** The
+Designer's redesign is complete and **RULED** (owner directive) — the authority is
+**`docs/design/intercept-guard.md`** (numbers, the seven `guard` rulings, targeting, client, and the eight
+required tests), plus the edge-cases entry and the 2026-08-17 DECISIONS note. **Read that doc; this item is
+the build contract, it does not restate every ruling.** A genuinely new mechanic (a `guard` EFFECT_KIND,
+first since DOT-HOT), so per golden rule #2 it gets a generic, reusable implementation. **Ships as ONE
+engine+data+client commit** — nothing rides ahead (no data-only change is expressible without the engine).
 
-**What to watch — the questions this build was tuned to answer:**
-- **The TTK goal (the whole point):** does one caught-in-the-open turn leave the victim a *decision*
-  rather than an instant death? Two ults on the squishiest now take 85% of a bar (was 100% — a kill from
-  full). Confirm burst no longer one-shots.
-- **Match length:** a 20-turn 2v2 should pace to ~19.7 turns for 4 kills. Does it end on **kills**, not the
-  **clock**? Does 20 turns *drag*?
-- **Skim at 30** — the only ability at the 1.25 ceiling and **86% of Kestrel's ultimate** on a 4-turn
-  cooldown. Does it crowd her ult? **Fallback 26** is pre-agreed if it plays badly.
-- **Chain Hook at 23 + pull 2** — the roster's only pull ≥ 2, now a real threat (AR-normal per Rampart's
-  Fusion Lance, but a big change in what the ability is).
-- **Lumen at heal 20** — a healer comp should now be beatable (~12.5 turns/kill, was outlasting the match).
-- **Warding Wall — judge power as ONE question (Builder OQ #3):** WALL-HIT-ONCE (a unit is hit once, so
-  walking its length is 25 not 75) **and** WALL-REACH (~7 tiles from Aegis after WALL-ROTATE) together. Is
-  the wall now too weak, or does the reach carry it? Either lever moves alone if needed.
-- **Ram Charge** — the preview is back to route + landing marker, **no lane outline**. Does it read fine?
-- **DEATH-HANG** — a mid-match death must stay playable for **both** sides (the M3 bug that started Path A).
-- **Cooldown-band tempo** (dashes 4–5, non-basic blasts 3–4) and the shove-into-trap play (TRAP-SHOVE).
-- **Networked seams** — reconnect/handoff, the per-player timer, and a **rotated-wall order relayed**
-  between two clients (still verified only by reading the protocol — the reason NET-E2E is next).
+*AC — data (`data/characters/aegis.json`, `intercept`):* `phase: "dash"`, `cooldown: 5`, `energyGain: 5`,
+**`range: 5`**, **ally-targeted** (bound to an ally unit id, the `chaseTargetId` pattern on the ally side —
+not a square that lands near an ally); effects become `teleport` + **`guard { duration: 1 }`** + `shield
+{ amount: 18, duration: 1 }` **applied to Aegis only**; the old `impact` block and the ally-shield are
+**removed**; description rewritten to the redirect.
 
-**Output:** a short, prioritised list of felt problems → a tuning pass, mostly data (numbers). File it as
-Dev Notes; the Analyzer routes it into backlog items.
+*AC — engine (new `guard` EFFECT_KIND, beneficial polarity, caster id via the DOT-HOT `StatusInstance`
+attribution):*
+- **Redirects damage only** — statuses, knockback/pull, and Move-loss still land on the **ally**.
+- **Enemy-dealt, guard-live damage only** — direct Blast hits and **enemy trap** damage the ally triggers
+  in Dash/Move redirect; the ally's own `selfHarm`/`selfDamagePct` recoil and **end-of-turn DoT ticks** do
+  **not**.
+- **Amount = what would have reached the ally** — attacker's Might/Weaken **and the ally's cover** compose
+  as if the hit landed on the ally, then that number applies to **Aegis's shields, then HP** (Aegis's own
+  cover is not recomputed — he is not where the shot was aimed).
+- **Duration = the rest of the cast turn** — applied in Dash, covers Blast + Move, expires end-of-turn.
+- **Aegis dies mid-turn → the guard dies with him**; damage after his death lands on the ally normally. A
+  redirected hit that kills Aegis credits the attacker's team (standard attribution).
+- **Refresh-not-stack** — one guard per ally; a second application replaces the first (latest caster wins,
+  deterministic by resolution order).
+- **Simultaneity untouched** — redirection changes *where* damage applies, not *when*; guard is applied in
+  Dash strictly before any Blast sub-step; PHASE-STATUS-FIRST and mutual-kill semantics stand.
+
+*AC — targeting / landing:* landing is the **nearest open orthogonally-adjacent** square to the ally **at
+Dash-phase start**, fixed-direction-order tiebreak; **all four blocked → fizzle, cooldown spent** (teleport
+precedent). A guarded ally who dashes away **stays guarded** (bound to the unit). **1v1 fallback:** with no
+living ally, Intercept targets a **square** within 5 → teleport + the 18 shield, no guard; with a living
+ally, square-targeting an empty square is **invalid** (the fallback is a fallback, not a choice).
+
+*AC — client:* aim = click an ally within 5; preview shows the landing square + a guard link (ally
+highlighted, line to Aegis's landing); a `guard` status pip (shield-with-figure, blue) on the **ally**;
+events **`guardApplied { casterId, allyId }`** and **`damageRedirected { from, to, amount }`**; playback
+**shows the shot bending** to Aegis and the combat log prints it (drive the real wiring — a redirect that
+does not visibly bend reads as a miss bug).
+
+*AC — the eight tests the design owes (verbatim from `intercept-guard.md` §6):* (1) enemy Blast at the
+ally's square → damage lands on Aegis (shield first), ally takes zero; (2) ally's cover reduces the
+redirected amount, Aegis's own cover does not; (3) knockback at the ally still displaces the **ally**
+(damage redirected, push not); (4) enemy trap the ally steps on in Move redirects, an end-of-turn DoT tick
+on the ally does not, the ally's own recoil does not; (5) Aegis killed by the first redirected hit → the
+second hit lands on the ally; (6) landing determinism — blocked adjacents pick in fixed order, all four
+blocked → fizzle with cooldown spent; (7) 1v1 — no living ally → square fallback works, ally alive →
+square-targeting an empty square is invalid; (8) mirror 4v4 — a second guard on the same ally replaces the
+first.
+
+**Spec Notes.** Files: `packages/engine/src/types.ts` (`EFFECT_KIND` + `guard` polarity; the redirect
+plumbing), `packages/engine/src/resolve.ts` (apply `guard` in Dash; redirect in `runBlast` and in
+`triggerTrapsOnEntry`'s damage path; the amount composition), `packages/engine/src/status.ts` (the
+`guard` status + refresh), `data/characters/aegis.json`, and the client (aim/preview/pips/events/log).
+**Gotchas:** the redirect must compose the ally's cover but not Aegis's (design §4.3) — get the amount from
+the same path that would have applied to the ally, then reroute the *result*; the enemy-trap redirect means
+`triggerTrapsOnEntry` needs to know a live guard exists on the victim; the DoT-tick exclusion means the
+end-of-turn tick path must **not** consult the guard. **Out of scope:** multi-turn guards (v1 is one
+turn); guarding against statuses/displacement (damage only); redirecting recoil (explicitly excluded);
+Shadowstep/Bullrush's `impact` (they keep it — only Intercept leaves the `impact` list). **Playtest lever
+is the shield (18 → 14), never the redirect** — the redirect is the identity.
+
+---
+
+## Engine test — lock the sudden-death ruling
+
+### SUDDEN-DEATH-TEST. "The next kill wins" is enforced by a test (TEST) — UNBLOCKED
+**Addresses Dev Note: "Rule on sudden death: The rule is that in Sudden Death, the next kill wins."** Ruled
+in edge-cases (SUDDEN-DEATH); the behaviour **already ships** (`resolveOutcome`, `resolve.ts:2925` re-runs
+the `turn >= turnLimit` check every turn, so the first kill differential wins). `formats.test.ts` proves
+sudden death is *entered* but never that a kill *ends* it — lock that. *AC:* in `formats.test.ts`, from a
+state past the turn limit with `suddenDeath` true and kills tied, (a) a turn producing a **kill
+differential** → `status finished`, `winner` = the leader; (b) a turn that stays tied → still `active`,
+`suddenDeath` still true, turn advances; (c) a simultaneous Double KO that carries **both** teams to
+`killsToWin` from a tie → `draw` (the one surviving draw, per the Mutual-damage ruling); (d) a Double KO
+**below** the target stays tied and continues. **Spec Notes.** Test-only — **no production change**; if any
+assertion needs a production change to pass, the ruling and the code have diverged and that is a finding,
+not a test edit. Extend `formats.test.ts`; reuse its `holdTurn`/`run` helpers. Out of scope: an artificial
+turn cap or alternate tiebreak (the owner ruled unbounded, next kill wins).
 
 ---
 
-## Builder batch — de-risk and support the networked playtest
+## Secondary — as capacity allows, behind the two above
 
-### NET-E2E. Automated two-client coverage of the networked loop (SERVER + CLIENT) — UNBLOCKED (first)
-**Why now:** the networked relay is the one seam pure-function tests never touch, and it is exactly what a
-live networked playtest exercises. DEATH-HANG was such a bug (a downed seat froze the client); session-9
-OQ #4 (a rotated-wall order surviving the relay) and session-11 remain "verified by reading the protocol,
-not a two-client test." A playtest that hits a relay bug with no regression net is how a fixed bug returns.
-*AC:*
-- **A test drives two `app-harness.ts` controllers through one match over a loopback/fake transport**
-  (or the real Durable Object in a test worker — Builder's call on the seam): lobby → both seats submit →
-  resolve → next turn, asserting both clients reach the **same** resolved state each turn.
-- **The three scenarios that have bitten or are unverified:** (1) a unit **dies/downs** mid-match and the
-  next turn is playable for both the downed seat and its opponent (DEATH-HANG, networked); (2) a
-  **reconnect/handoff** mid-match resumes correctly; (3) a **rotated Warding Wall** order (`aimStep` on the
-  wire) relays and resolves identically on the receiving client (closes session-9 OQ #4 for real).
-- **Deterministic and CI-safe** — no wall-clock waits; drive the injected clock, as the existing timer
-  tests do.
+### NET-E2E-EXPAND. Two-seats-on-one-team and the rest of the networked surface (TEST) — UNBLOCKED
+**Addresses Builder session-12 OQ #3.** NET-E2E covers death/reconnect/rotated-wall; the highest-value gap
+is **two seats controlling one team** — the asymmetric 3-player 2v2 that PLAYTEST prioritises and the
+least-exercised path in the whole game. *AC:* the two-client harness gains a match where one team is two
+seats and the other is one seat running both characters; assert per-team order merging and identical
+resolved state on all clients. **Then, if time:** the per-player timer expiring over the wire, a disconnect
+during **playback** (not Decision), and a reconnecting seat's lobby→match handoff. **Spec Notes.** Extend
+`packages/client/test/net-harness.ts`; injected clock only. Out of scope: the Durable-Object-level harness
+(see DO-E2E, flagged) — this stays at the `RoomHub`/client seam.
 
-**Spec Notes.** Files: `packages/server/test/` and/or `packages/client/test/` (a new two-controller
-harness), likely a small shared test seam over the existing net protocol. **Reuse the injected clock and
-`app-harness.ts`** — do not add real timers or real sockets. This is the "flagged for four sessions" item;
-scope it to the three scenarios above, not to every networked edge — breadth can grow once the harness
-exists. Out of scope: new networked *features* (rematch, idle-kick — still flagged-future); changing the
-protocol. **Watch:** keep the two-client harness off the 300 kB JS bundle-budget path (it is test-only).
-
-### GAMESPEC-HP-UPDATE. GAME_SPEC's HP baseline reflects the TTK band (DOCS) — UNBLOCKED
-**Addresses Builder session-11 OQ #7.** `GAME_SPEC.md` still describes `maxHp` as "baseline ~100"; after
-TTK-HP-BAND the median is **130** and the band runs **100–175**. *AC:* the HP reference in `GAME_SPEC.md`
-(the Builder cited ~line 119) reads the new band (median 130, range 100–175, archetype ladder
-firepower < support < frontline); no other rule text changes. **Spec Notes.** One factual correction in the
-ruleset doc — the number, not the mechanic. Trivial; grouped here so it is not forgotten. Out of scope:
-re-deriving TTK (done — see `docs/reviews/2026-09-27.md`); the format table (already updated by
-TTK-TURN-LIMIT).
-
-### ROSTER-CEILINGS-UPDATE. `roster-v1.md` §4's balance ceilings reflect the TTK numbers (DOCS → Designer) — UNBLOCKED
-**Addresses Builder session-11 OQ #6 (Designer-owned).** Four §4 ceilings went stale when TTK landed:
-undelayed skill cap **24→30** (Kestrel's Skim), nuke ceiling **34→33**, sustain ceiling **25→20** (Lumen),
-and "time-to-kill 4–5 connected hits on a 100 HP target" → **~5.9 on bars of 100–175**. §1's kit table
-should also gain the HP ladder and the damage-tier rule, which it has never carried. *AC:* the four numbers
-and the two structural rules in `roster-v1.md` match the shipped values. **Spec Notes.** Designer-owned
-doc; if the Builder touches it, keep it to the numbers. **Not a blocker** — TTK-INVARIANT enforces the live
-values in `content.test.ts` meanwhile. Evidence: `docs/reviews/2026-09-27.md`.
+### BOTPLAY-SWEEP. The bot harness sweeps pairings for balance outliers (TEST/TOOLING) — UNBLOCKED
+**Addresses Builder session-12 OQ #6.** BOTPLAY is 48 matches, one map, two comps. *AC:* a sweep mode that
+runs every character pairing (and optionally 4v4 / 1v1 / both maps) and reports **outliers** — TTK,
+damage-per-turn, win-rate skew — as a summary, not a CI gate. **Spec Notes.** Keep the deterministic,
+~1s-per-run discipline; the sweep is a **tool the Analyzer runs for evidence**, not a green/red gate (a bot
+that does not focus-fire is not ground truth — see OQ #2). Out of scope: making balance decisions from it;
+the human playtest is the primary validation. Lower priority than the two items above and than reacting to
+PLAYTEST Dev Notes.
 
 ---
+
+## 🎮 PLAYTEST — the active validation milestone (owner + humans; ongoing)
+
+Greenlit last session and running. Two evidence streams now: **BOTPLAY** (400 deterministic matches, in
+hand) and the **human playtest**. Prioritise the **asymmetric 3-player 2v2** (two seats vs. one player
+running both — the least-exercised path). **The specific question BOTPLAY raised (session-12 OQ #2):**
+76–87% of *bot* matches ended on the clock, not on kills — the thing TTK-TURN-LIMIT was meant to fix. That
+is caveated hard (the bot does not focus-fire), so **ask humans the question directly: does a real 2v2 end
+on kills or the clock?** Do **not** re-tune the turn limit off the bot number. Also watch, unchanged from
+last session: the TTK burst goal (two ults no longer one-shot the squishiest), 20-turn pacing, Skim at 30
+(fallback 26), Chain Hook 23 + pull 2, Lumen at heal 20, the wall's power (WALL-HIT-ONCE + ~7-tile reach
+judged together), Ram Charge's reverted preview, DEATH-HANG, and the networked seams. **Output:** a
+prioritised list of felt problems → Dev Notes → tuning items.
 
 ## Routed to Designer / flags
 
-- **ASSET-WEIGHT-BUDGET (flagged, from `docs/ART_PIPELINE.md` §8 Analyzer brief).** The 300 kB gz JS cap
-  (`scripts/bundle-budget.mjs`) does **not** cover `.glb` meshes + textures, and the art pipeline will grow
-  that weight unwatched. The pipeline's own Analyzer brief names "recommend a budget for it" as a good
-  first backlog item. **Spec when art work is scheduled:** track total asset bytes as a separate CI number
-  with a cap, and flag `GLTFLoader`'s addition to the JS bundle when it lands. Not scheduled this session
-  (playtest first); registered so it is ready when the pipeline starts.
-- **Warding Wall power (Builder OQ #3, playtest).** WALL-HIT-ONCE (one hit per unit) + WALL-REACH (~7-tile
-  reach after WALL-ROTATE) are **one** question — judge them together in the playtest, move one lever if
-  needed. Ruled in edge-cases (WALL-HIT-ONCE, WALL-ROTATE).
-- **Kestrel's Skim at 30 / Bastion's Chain Hook at 23 (playtest flags).** Skim is the sole 1.25-ceiling
-  ability at 86% of her ult — **fallback 26**. Chain Hook more than doubled on the roster's only pull ≥ 2.
-- **FRAG-SELF zoning nerf (session-10 OQ #4, playtest).** Frag Grenade now catches its own thrower; the
-  next `selfHarm` ability with a status rider will apply that status to its own caster (edge-cases, ruled).
-- **WALL-BLINK-ONTO (owner confirmation).** Every mine bites a blink that lands on it; the wall still does
-  not (its authored *"a blink goes around it"*). One array entry aligns them if the owner wants it.
-- **Aegis beam distinctness; self-lethal recoil warning; burn/regen pip glyphs; Warding Halo's dead
-  `weaken`; trap count cap; inspect-panel chips hoverable; chase-preview detour; Solar Flare DoT ceiling;
-  Thorn mine carpet** — unchanged flags.
+- **ASSET-WEIGHT-BUDGET (near-term, from `ART_PIPELINE.md` §8 Analyzer brief).** `GLTFLoader`+`SkeletonUtils`
+  (~77 kB gz) are correctly **code-split** (dynamic import), so the main JS bundle is protected — confirm
+  `scripts/bundle-budget.mjs` still passes as models land. **The `.glb` + texture total is NOT in that
+  budget** and will grow per character; **spec a separate asset-weight cap** the day a second character's
+  `.glb` is committed (only Aegis is spiked today, so not urgent). Track it as its own CI number.
+- **DO-E2E (flagged, from session-12 OQ #4).** The Durable Object wrapper around `RoomHub` is only
+  miniflare-smoke-tested; a DO-level networked harness is a distinct future item.
+- **Warding Wall power (playtest); Kestrel Skim 30 / Chain Hook 23 (playtest); FRAG-SELF zoning nerf
+  (playtest); WALL-BLINK-ONTO (owner confirmation); INTERCEPT-GUARD shield 18→14 lever (playtest); Aegis
+  beam distinctness; self-lethal recoil warning; burn/regen pip glyphs; Warding Halo's dead `weaken`; trap
+  count cap; inspect-panel chips hoverable; chase-preview detour; Solar Flare DoT ceiling; Thorn mine
+  carpet** — unchanged flags.
 
 ## Flagged future (not scheduled)
 
-- **The art / animation / VFX pipeline** (`docs/ART_PIPELINE.md`) — hitstop/flash/shake first (no assets),
-  then generation → Mixamo rig → asset build → renderer integration → weapons/VFX. **No engine change**;
-  spike **Aegis** (frontline, melee `shield_bash`). ASSET-WEIGHT-BUDGET pairs with it. Owner directs when.
-- **M3-REMATCH, IDLE-KICK, LOBBY-TEAM-CHOICE** (room lifecycle — the natural follow to NET-E2E).
-  **All-seats-downed resolves on the timer** (session-8 OQ #4 — rare, safe; needs the resolve-loop guard).
-  **same-turn-buff preview**, **route-around-bodies dash impact preview** — unchanged.
-
-## Observed-not-requested / playtest (not Builder-blocking)
-
-- Folded into **PLAYTEST** above: the TTK goal (burst no longer one-shots), match length at 20 turns,
-  Skim/Chain Hook/Lumen numbers, the wall's power, Ram Charge's reverted preview, the cooldown-band feel,
-  DEATH-HANG, and the networked seams NET-E2E covers.
+- **The rest of the art / animation / VFX pipeline** (`docs/ART_PIPELINE.md`) — the remaining eight
+  characters through generation → rig → clips; hitstop/flash/shake VFX; ASSET-WEIGHT-BUDGET pairs with it.
+  Owner directs when.
+- **M3-REMATCH, IDLE-KICK, LOBBY-TEAM-CHOICE** (room lifecycle). **All-seats-downed resolves on the timer**
+  (needs the resolve-loop guard). **same-turn-buff preview**, **route-around-bodies dash impact preview** —
+  unchanged.
