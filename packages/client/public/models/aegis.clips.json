@@ -1,0 +1,35 @@
+{
+  "id": "aegis",
+  "version": "15c5e50be255",
+  "clips": [
+    "aegis_idle",
+    "aegis_smash",
+    "aegis_ultimate",
+    "intercept_cast",
+    "knocked_down",
+    "sword_and_shield_death",
+    "sword_and_shield_impact",
+    "sword_and_shield_run",
+    "warding_wall_cast"
+  ],
+  "map": {
+    "idle": "aegis_idle",
+    "run": "sword_and_shield_run",
+    "hit": "sword_and_shield_impact",
+    "death": "sword_and_shield_death",
+    "knockback": "knocked_down",
+    "abilities": {
+      "shield_bash": "aegis_smash",
+      "barrier_pulse": "warding_wall_cast",
+      "intercept": "intercept_cast",
+      "warding_wall": "warding_wall_cast",
+      "warding_halo": "aegis_ultimate"
+    }
+  },
+  "posture": {
+    "dropShoulder": "left",
+    "dropShoulderDeg": 9,
+    "hunchDeg": 13,
+    "headForwardDeg": 7
+  }
+}

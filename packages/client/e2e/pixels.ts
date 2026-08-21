@@ -1,4 +1,5 @@
 import { inflateSync } from 'node:zlib';
+import { onSkyRamp } from '../src/sky.js';
 
 /**
  * A minimal PNG reader for RENDER-VERIFY.
@@ -228,12 +229,22 @@ export const isDecoyPurple = (px: Rgb): boolean =>
   px.b > 60 && px.r > 40 && px.r - px.g > 20 && px.b - px.g > 30 && Math.abs(px.r - px.b) < 70;
 
 /**
- * The scene background (`#12141a`) — what shows *around* the board when the whole
- * board is in frame. Matched tightly: it is a flat unlit clear colour, not a
- * Lambert-shaded surface, so it arrives at very close to its literal value.
+ * The sky — what shows *around* the board when the whole board is in frame.
+ *
+ * SKY-DOME replaced the flat `#12141a` clear colour with a vertical ramp, so
+ * this can no longer be one literal. It delegates to `onSkyRamp`, which is
+ * defined beside the palette the renderer draws from: a hand-copied hex here
+ * would stop matching the moment anyone retuned the gradient, and the failure
+ * would look like a clipped board rather than a stale constant.
+ *
+ * It is also a **stronger** check than the literal it replaces. The lit floor
+ * composites at rgb(18, 20, 27) under BOARD-LIT and the old background was
+ * `#12141a` — within one count on every channel, so the previous matcher
+ * accepted the floor as readily as the void and "no rank is clipped" could not
+ * actually fail. Both ends of the ramp now clear the floor by more than the
+ * tolerance.
  */
-export const isSceneBackground = (px: Rgb): boolean =>
-  Math.abs(px.r - 0x12) <= 4 && Math.abs(px.g - 0x14) <= 4 && Math.abs(px.b - 0x1a) <= 4;
+export const isSceneBackground = (px: Rgb): boolean => onSkyRamp(px);
 
 
 /**

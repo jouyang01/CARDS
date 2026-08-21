@@ -25,6 +25,7 @@ import type { HotSeatUI, NetPlay } from '../src/app.js';
 import type {
   HighlightLayer, PathLayer, ProjectionName, RenderDecoy, RenderTrap, RenderUnit, Renderer,
 } from '../src/renderer3d.js';
+import type { ClipSet } from '../src/character-clips.js';
 
 /** What the stub renderer was told to draw, by layer. */
 export interface DrawLog {
@@ -50,6 +51,15 @@ export interface DrawLog {
 
 export interface StubRenderer extends Renderer {
   readonly draw: DrawLog;
+  /**
+   * Pretend these characters have models loaded.
+   *
+   * Without it `clipsFor` returns undefined for everything, which is the
+   * box-drawing path — so every clip request the controller makes is skipped
+   * and no spec can see them. Install a set and the animation wiring becomes
+   * assertable headlessly.
+   */
+  withClips(sets: Readonly<Record<string, ClipSet>>): void;
 }
 
 /**
@@ -66,8 +76,10 @@ export function stubRenderer(): StubRenderer {
     board: { units: [], decoys: [], traps: [] },
   };
   let orbit = false;
+  let clipSets: Readonly<Record<string, ClipSet>> = {};
   return {
     draw,
+    withClips: (sets) => { clipSets = sets; },
     show: (units, decoys = [], traps = []) => {
       draw.board = {
         units: units.map((u) => ({ ...u })),
@@ -92,9 +104,9 @@ export function stubRenderer(): StubRenderer {
     setUnitClip: (unitId, choice) => {
       draw.clips.push({ unitId, clip: choice.clip, loop: choice.loop });
     },
-    // No models headless, so no character has clips — which is exactly the
-    // fallback path every unit takes today, and the one that must stay working.
-    clipsFor: () => undefined,
+    // Undefined unless a spec installs a set: that is the box path, and it is
+    // the one every character without art still takes.
+    clipsFor: (characterId) => (characterId === undefined ? undefined : clipSets[characterId]),
     setSpotlight: () => {},
     setOrbitEnabled: (on) => { orbit = on; },
     orbitEnabled: () => orbit,

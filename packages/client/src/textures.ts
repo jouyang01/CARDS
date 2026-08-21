@@ -15,7 +15,7 @@
  * that use them; only the *rasterising* moved.
  */
 
-import { CanvasTexture } from 'three';
+import { CanvasTexture, SRGBColorSpace } from 'three';
 import { ULT_COST } from '@cards/engine';
 import {
   GLYPH_BOX, GLYPH_STROKE, statusGlyph, type StatusPip,
@@ -23,6 +23,50 @@ import {
 import {
   ICON_GAP_PX, ICON_PX, PLATE_PAD_PX, PLATE_PX, nameplateKey, plateLayout, type Nameplate,
 } from './nameplates.js';
+import { SKY, SKY_PX } from './sky.js';
+
+/**
+ * SKY-DOME — the background ramp, rasterised once for the life of the page.
+ *
+ * A **screen-space** gradient rather than a sky sphere, and that is a choice the
+ * projection makes rather than a shortcut. Under an orthographic camera every
+ * ray is parallel, so a dome large enough to enclose the camera is sampled
+ * across only a few degrees of its own curve — the gradient painted on it would
+ * arrive very nearly flat, which is the thing being fixed. A background texture
+ * is drawn as a full-screen quad, so the ramp lands exactly as authored.
+ *
+ * Eight pixels wide because the ramp is purely vertical; the sampler stretches
+ * it across the canvas for free. `SRGBColorSpace` is not optional — without it
+ * three treats the canvas bytes as linear and the composite comes back visibly
+ * lighter than `skyAt()` predicts, which would quietly break the e2e matcher
+ * that shares this ramp.
+ */
+let skyCache: CanvasTexture | null | undefined;
+
+export function skyTexture(): CanvasTexture | null {
+  if (skyCache !== undefined) return skyCache;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 8;
+  canvas.height = SKY_PX;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) {
+    skyCache = null;
+    return null;
+  }
+
+  const hex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
+  const ramp = ctx.createLinearGradient(0, 0, 0, SKY_PX);
+  ramp.addColorStop(0, hex(SKY.top));
+  ramp.addColorStop(1, hex(SKY.bottom));
+  ctx.fillStyle = ramp;
+  ctx.fillRect(0, 0, 8, SKY_PX);
+
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  skyCache = texture;
+  return texture;
+}
 
 /** The canvas a nameplate is rasterised at. World size is `renderer3d`'s. */
 const PLATE_PX_W = PLATE_PX.w;

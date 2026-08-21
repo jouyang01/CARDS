@@ -17,7 +17,8 @@ import type { ClipChoice, ClipSet } from './character-clips.js';
 export interface CharacterManifest {
   id: string;
   clips: string[];
-  map: ClipSet;
+  /** Absent in manifests written before the map existed — treated as unusable. */
+  map?: ClipSet;
   posture?: PostureSpec;
   /** Content hash of the `.glb` beside it. See `modelUrl`. */
   version?: string;
@@ -54,7 +55,10 @@ export interface ClipAudit {
  * broken than the box it replaced. Any other missing clip costs one animation
  * and nothing else, so it is worth a warning and not a fallback.
  */
-export function auditClips(map: ClipSet, available: readonly string[]): ClipAudit {
+export function auditClips(map: ClipSet | undefined, available: readonly string[]): ClipAudit {
+  // A manifest written before the map existed, or hand-edited: not a crash, and
+  // not a usable model either. Reported as unusable so the caller says so.
+  if (map === undefined) return { usable: false, missing: [] };
   const have = new Set(available);
   const wanted = [map.idle, map.run, map.hit, map.death, map.knockback, ...Object.values(map.abilities)];
   return { usable: have.has(map.idle), missing: [...new Set(wanted.filter((n) => !have.has(n)))] };
@@ -150,6 +154,13 @@ export class CharacterModels {
           const res = await fetch(`${base}/${id}.clips.json`, { cache: 'no-cache' });
           if (!res.ok) throw new Error(`manifest ${res.status}`);
           const manifest = (await res.json()) as CharacterManifest;
+          // Checked before the mesh is fetched: a manifest with no clip map names
+          // nothing to play, so the megabyte behind it would be downloaded only
+          // to be discarded. `build_glb.py` writes the map from data/art/<id>.json;
+          // one without it was built by an older version of the script.
+          if (manifest.map === undefined) {
+            throw new Error('the manifest has no clip map — rebuild it with tools/art/build_glb.py');
+          }
           const gltf = await loader.loadAsync(modelUrl(base, id, manifest.version));
           const clips = gltf.animations;
           const audit = auditClips(manifest.map, clips.map((c) => c.name));
@@ -198,7 +209,7 @@ export class CharacterModels {
     let current: AnimationAction | undefined;
     let currentName = '';
 
-    return {
+    const inst: ModelInstance = {
       root,
       play(choice, beatSeconds) {
         const clip = byName.get(choice.clip);
@@ -229,5 +240,17 @@ export class CharacterModels {
         mixer.uncacheRoot(root);
       },
     };
+
+    // Start idling immediately, before anyone asks.
+    //
+    // A model with no action playing renders in its BIND POSE — arms straight
+    // out, the T-pose Mixamo required for rigging — and that is what shipped:
+    // clips were only ever selected during turn playback, so for the whole
+    // Decision phase, which is most of a match, every character stood on the
+    // board with its arms out. Idle-by-default makes the resting pose a
+    // property of having a model rather than of something else remembering.
+    const idle = entry.manifest.map?.idle;
+    if (idle !== undefined) inst.play({ clip: idle, loop: true, since: 0 }, 1);
+    return inst;
   }
 }
