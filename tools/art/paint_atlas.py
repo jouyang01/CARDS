@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import random
 import sys
@@ -155,8 +156,17 @@ def paint_face(atlas: Atlas, pal: dict, face: dict) -> None:
     atlas.polygon("head_front", [(256, 0), (210, 0), (226, 120), (256, 140)], mix(skin, shadow, 0.35))
     atlas.polygon("head_front", [(0, 206), (256, 206), (256, 256), (0, 256)], mix(skin, shadow, 0.4))
 
+    # Hairline. The portrait is projected from chin to crown, so the top of this
+    # rectangle lands on the top of the skull — that has to be hair, not skin.
+    hair_top = mix(hex_rgb(pal["leather"]), (0, 0, 0), 0.25)
+    atlas.box("head_front", (0, 0, 256, 30), hair_top)
+    rng_local = atlas.rng
+    for x in range(0, 256, 3):
+        depth_px = 30 + int(9 * math.sin(x * 0.055) + rng_local.randint(-3, 4))
+        atlas.box("head_front", (x, 26, x + 3, max(28, depth_px)), hair_top)
+
     # Forehead furrows. Three of them, unevenly spaced — held tension, not a frown.
-    for y, alpha in ((44, 0.30), (56, 0.22), (67, 0.14)):
+    for y, alpha in ((52, 0.28), (63, 0.20), (73, 0.13)):
         atlas.line("head_front", [(64, y), (128, y - 3), (192, y)], mix(skin, shadow, alpha), width=3)
 
     # Sunken sockets: a broad soft well the eyes sit down inside.

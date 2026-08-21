@@ -96,6 +96,16 @@ Nobody models a face at this scale. The face is drawn into a texture, and becaus
 script builds the head it also **assigns the UVs** — the layout is a decision, not a
 discovery. No unwrapping, no seams, no Blender UI.
 
+The head is **not** a box. An earlier version made it one, on the reasoning that mapping a
+rectangle onto a face needs a flat quad. That constraint is not real: instead of handing one
+quad the whole rectangle, the portrait is **planar-projected** from the front onto a tapered
+form, so it wraps around the skull the way a face actually sits on one. Each face of the head
+picks its projection from where it sits — front gets the portrait, back gets hair, the sides
+get their own region, and the horizontal caps project from above rather than from the front
+(project a cap from the front and every vertex shares one `v`, so the whole cap samples a
+one-pixel strip). The painted face region carries a **hairline** across its top, because the
+projection runs chin-to-crown and the top of that rectangle lands where hair belongs.
+
 Atlas layout (1024²):
 
 | Region | Pixels | Contents |

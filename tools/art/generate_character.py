@@ -298,6 +298,73 @@ def taper(*stops):
     return list(stops)
 
 
+def add_head(bm, uv_layer, centre_z, r, sides=14, exponent=2.7):
+    """A rounded head with the painted portrait projected onto its front.
+
+    The head used to be a box, because per-face UV assignment needs a flat quad
+    to map a rectangle onto. That constraint is not real: instead of giving one
+    face the whole rectangle, project the texture PLANAR-ly from the front, so
+    the portrait wraps around the curve the way a face actually sits on a skull.
+
+    Each face picks its projection from its own normal:
+      - facing -Y  ->  head_front   (the portrait), projected from the front
+      - facing +Y  ->  head_back    (hair), mirrored so it is not reversed
+      - facing +/-X ->  head_sides  , projected from the side
+      - facing +Z  ->  crown
+
+    One tapered profile then does the work three separate pieces used to: chin,
+    jaw, cheekbone, temple, crown.
+    """
+    bottom = centre_z - r * 0.98
+    top = centre_z + r * 1.16
+    profile = taper(
+        (0.00, r * 0.40, r * 0.44),   # chin
+        (0.16, r * 0.64, r * 0.70),   # jaw
+        (0.38, r * 0.88, r * 0.92),   # cheekbone, the widest point
+        (0.60, r * 0.95, r * 0.95),   # temple
+        (0.82, r * 0.88, r * 0.86),
+        (1.00, r * 0.58, r * 0.56),   # crown
+    )
+    faces = add_tube(bm, uv_layer, "z", (0, 0, bottom), (0, 0, top), profile,
+                     "skin", sides=sides, exponent=exponent,
+                     cap_start=True, cap_end=True)
+
+    half_w = r * 0.95
+    half_d = r * 0.95
+    span_z = top - bottom
+
+    def place(face, region, axis, flip=False):
+        u0, v0, u1, v1 = uv_rect(region)
+        for loop in face.loops:
+            co = loop.vert.co
+            if axis == "z":                       # horizontal cap, seen from above
+                fu = (co.x / (2 * half_w)) + 0.5
+                fv = (co.y / (2 * half_d)) + 0.5
+            else:
+                lateral = co.x if axis == "y" else co.y
+                fu = (lateral / (2 * (half_w if axis == "y" else half_d))) + 0.5
+                fv = (co.z - bottom) / span_z
+            if flip:
+                fu = 1.0 - fu
+            loop[uv_layer].uv = (u0 + (u1 - u0) * min(max(fu, 0.0), 1.0),
+                                 v0 + (v1 - v0) * min(max(fv, 0.0), 1.0))
+
+    for face in faces:
+        c = face.calc_center_median()
+        if c.z > top - span_z * 0.04:
+            place(face, "crown", "z")
+        elif c.z < bottom + span_z * 0.04:
+            place(face, "head_sides", "z")
+        elif abs(c.y) >= abs(c.x):
+            if c.y < 0:
+                place(face, "head_front", "y")      # the portrait
+            else:
+                place(face, "head_back", "y", flip=True)
+        else:
+            place(face, "head_sides", "x", flip=c.x < 0)
+    return faces
+
+
 # ── the character ───────────────────────────────────────────────────────────
 
 def build_body(spec):
@@ -325,44 +392,24 @@ def build_body(spec):
                         sides=sides, exponent=exp, **kw)
 
     # ── head ──
-    # Stays a box on purpose: the painted face needs a flat plane to sit on, and
-    # a subdivided head would smear it. The bevel modifier softens its edges
-    # without curving the face.
-    add_box(bm, (0, 0, head_z), (head_r * 1.9, head_r * 1.8, head_r * 1.72), {
-        "front": "head_front", "back": "head_back",
-        "left": "head_sides", "right": "head_sides",
-        "top": "crown", "bottom": "skinShadow",
-    }, uv)
+    # One tapered form, portrait projected onto its front. Was a box plus a
+    # bolted-on cranium plus a bolted-on jaw; the taper does all three jobs.
+    add_head(bm, uv, head_z, head_r, sides=max(sides, 14), exponent=2.7)
 
-    # Cranium: a rounded cap above the face plane. The head has to stay a box
-    # where the portrait lives, but nothing says the skull above it does.
-    tube("z", (0, -head_r * 0.05, head_z + head_r * 0.80),
-         (0, -head_r * 0.05, head_z + head_r * 1.32), taper(
-             (0.00, head_r * 0.94, head_r * 0.90),
-             (0.45, head_r * 0.88, head_r * 0.86),
-             (1.00, head_r * 0.52, head_r * 0.52),
-         ), "leather")
-
-    # Jaw: narrows to a chin, which is most of what stops a head reading as a box.
-    tube("z", (0, -head_r * 0.08, head_z - head_r * 0.96),
-         (0, -head_r * 0.08, head_z - head_r * 0.52), taper(
-             (0.00, head_r * 0.60, head_r * 0.62),
-             (0.55, head_r * 0.80, head_r * 0.80),
-             (1.00, head_r * 0.92, head_r * 0.88),
-         ), "skin")
-
-    fy = -head_r * 0.9
+    # Nose and brow ridge still get real geometry — without them the projected
+    # portrait reads as a decal at any angle off dead-centre.
+    fy = -head_r * 0.86
     add_wedge(bm,
-              (0, fy - head_r * 0.30, head_z - head_r * 0.10),
-              (-head_r * 0.15, fy, head_z + head_r * 0.18),
-              (head_r * 0.15, fy, head_z + head_r * 0.18),
-              (0, fy, head_z - head_r * 0.44), uv, "skin")
+              (0, fy - head_r * 0.26, head_z - head_r * 0.06),
+              (-head_r * 0.14, fy, head_z + head_r * 0.16),
+              (head_r * 0.14, fy, head_z + head_r * 0.16),
+              (0, fy, head_z - head_r * 0.40), uv, "skin")
     for side in (-1, 1):
         add_wedge(bm,
-                  (side * head_r * 0.42, fy - head_r * 0.14, head_z + head_r * 0.44),
-                  (side * head_r * 0.10, fy, head_z + head_r * 0.32),
-                  (side * head_r * 0.76, fy, head_z + head_r * 0.32),
-                  (side * head_r * 0.44, fy, head_z + head_r * 0.58), uv, "skinShadow")
+                  (side * head_r * 0.38, fy - head_r * 0.12, head_z + head_r * 0.42),
+                  (side * head_r * 0.08, fy, head_z + head_r * 0.30),
+                  (side * head_r * 0.70, fy, head_z + head_r * 0.30),
+                  (side * head_r * 0.40, fy, head_z + head_r * 0.54), uv, "skinShadow")
 
     # ── neck ──
     tube("z", (0, 0, neck_z - 0.08), (0, 0, neck_z + 0.04),
