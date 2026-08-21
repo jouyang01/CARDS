@@ -5391,3 +5391,88 @@ that matters: the model loads and the clip the manifest names is not in it.
    longer holds. Not changed — whether to raise it, ratchet it, or hold at 300 and code-split
    `renderer3d.ts` when it trips is a call worth making deliberately rather than in passing.
 
+
+## 2026-08-21 — Builder session 13 (INTERCEPT-GUARD, SUDDEN-DEATH-TEST, NET-E2E-EXPAND, BOTPLAY-SWEEP)
+
+**INTERCEPT-GUARD's redirect is one chokepoint, and the two paths that do NOT call it are the ruling.**
+`landDamage` is called by Blast hits, Dash hits and enemy traps; `tickOverTime` and the recoil path
+deliberately still call `applyDamage` directly. Writing the exclusions as *absences* rather than as
+`if (!isTick && !isRecoil)` inside the chokepoint means a future damage source has to opt **in** to the
+redirect, which is the safe direction: a new source that forgets lands where it was aimed, rather than
+silently redirecting something the ruling excludes.
+
+**The guard dies with its guardian, enforced at the READ.** `guardianOf` returns nothing when the named
+unit is dead, rather than the death path hunting down and stripping the status. One place to be right, and
+a new way of dying cannot miss it.
+
+**A fizzled Intercept does nothing at all — no teleport, no guard, no shield — but spends its cooldown.**
+The design says *"fizzles harmlessly (teleport precedent: fizzle, cooldown spent)"*. The teleport precedent
+strictly covers only the *movement*, so this is an interpretation: I took the whole-ability reading because
+"fizzles harmlessly" reads that way and because it is the minimal-power option — never grant something on a
+failure. Flagged below; the other reading (shield still lands) is one line away.
+
+**`allyTarget` is a def flag on a `square` shape, not a new shape.** The 1v1 fallback aims at a bare
+square, so both halves of the contract are the one-square shape and a new `ally` shape would have needed
+the square case anyway. `validate.ts` refuses `allyTarget` on any other shape for the same reason
+`wallLength` is refused off a wall: a field the engine cannot read on that shape is a number nobody can
+find.
+
+**The landing is resolved once, at the start of Dash, into a map keyed by unit id.** The ruling says "the
+ally's position at the start of the Dash phase", and it is also the only order-independent reading —
+computing it inside the resolution loop would make Aegis's landing depend on whether the ally happened to
+dash earlier in `orderedPlans`, which is a rule nobody could reason about from the board.
+
+**The plan-time area had to move with the landing.** `expandShape` runs at plan time around the *ally's*
+square, and `applySelfEffects` gates the shield on the caster standing inside the area — so swapping the
+aim without swapping the area produced a bodyguard who arrived with no shield. Caught by the thesis test,
+worth writing down because it is invisible from the diff.
+
+**Two `duration: 1` statuses cannot be asserted from post-turn state** — the WALL-HIT-ONCE lesson, one
+ability later. Guard and shield are applied in Dash and swept by the same turn's end-of-turn tick, so
+`state.statuses` afterwards is empty whether or not the ability worked. The tests read `statusApplied` off
+the event log instead.
+
+**`playTurn` in `net-e2e.test.ts` had a latent bug NET-E2E-EXPAND found:** it locked in once per **seat**,
+and Lock In advances one **character** at a time. Every previous test was 1v1, where those are the same
+number; the asymmetric 3-player 2v2 is the first case where they are not.
+
+**SUDDEN-DEATH-TEST needed no production change.** The Spec Notes said a required change would be a finding
+rather than a test edit — the ruling and `resolveOutcome` agree exactly, including the Double-KO draw.
+
+### BOTPLAY-SWEEP, first run (2v2, duel-arena, every ordered pairing, 1 match each)
+
+cinder 100% · bastion 81% · vex 69% · kestrel 56% · thorn 50% · wisp 31% · aegis 25% · lumen 25% ·
+ravok 0%. **Read with the standing caveat**: greedy bots, no focus fire, no baiting, no held cooldowns.
+Both extremes look like bot artifacts rather than balance — Cinder's burn ticks whether or not the bot
+plays well, and Ravok's Whirling Cleave charges him half its damage, which a policy that always fires the
+biggest available thing pays over and over. Reproduce with `npm run botplay`; every row replays exactly.
+
+## Open Questions for the Analyzer — 2026-08-21
+
+1. **The fizzle reading is an interpretation** (`docs/design/intercept-guard.md` §3, backlog
+   INTERCEPT-GUARD). I made all-four-blocked mean the **whole ability** does nothing but spend its
+   cooldown. The doc's parenthetical cites the *teleport* precedent, which strictly covers the movement
+   only — so "no teleport but the shield still lands" is also a defensible read. Confirm which, or the
+   playtest will discover it the hard way.
+
+2. **`guard` is beneficial, so a future ability carrying BOTH `impact` and `guard` would hand a guard to
+   every ally in the blast** — plural bodyguarding from one cast, which the ruling never considered.
+   Intercept has no `impact` so nothing turns on it today. Worth a sentence in edge-cases before a second
+   `guard` ability is authored.
+
+3. **A guarded ally who is *untargetable* is not specially handled.** UNTGT1 skips the victim before the
+   damage is composed, so the guard never sees the hit — correct, I think, but it is a composition of two
+   rulings rather than either of them, and it is the kind of interaction a playtest surfaces as "my
+   bodyguard did nothing".
+
+4. **BOTPLAY-SWEEP's two extremes want a human eye** (Cinder 100%, Ravok 0%). My reading is that both are
+   bot artifacts and neither is a balance finding, but the sweep exists precisely so that call is not mine.
+   Ravok in particular: the sweep is the first evidence that RAVOK-RECOIL is punishing, and a greedy bot is
+   the worst possible pilot for a recoil kit.
+
+5. **NET-E2E-EXPAND covered the asymmetric 2v2 only.** Still uncovered, from the item's "then, if time"
+   list: the per-player timer expiring over the wire, a disconnect during **playback** rather than
+   Decision, and a reconnecting seat's lobby→match handoff.
+
+6. **The `guardPath` render layer is new** (`renderer3d.ts`). One more `PathLayer`; nothing else uses it.
+   Flagging because render layers are a small shared vocabulary and a new one should be deliberate.
