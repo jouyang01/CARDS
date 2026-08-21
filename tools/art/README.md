@@ -34,6 +34,23 @@ source of truth; the outputs are always rebuildable.
 Output is deterministic: weathering and tally placement seed from the character
 id, so the same character weathers identically on every machine.
 
+## After Mixamo
+
+```bash
+blender --background --python tools/art/build_glb.py -- aegis ~/path/to/mixamo-downloads
+```
+
+Point it at the folder of Mixamo downloads. It finds the **With Skin** export by
+detecting which file brought a mesh (rather than trusting a filename), takes the action
+out of every other file, re-applies the atlas, and writes one `.glb` plus a
+`<id>.clips.json` manifest into `packages/client/public/models/`.
+
+Clip names come from filenames: `Falling Back Death.fbx` becomes `falling_back_death`.
+
+Mixamo exports in centimetres and the client works in metres, so the script applies the
+armature's scale on import. Skipping that lands a 1.7 m character at 170 units — not
+subtly wrong, off the board entirely.
+
 ## Then what
 
 Zip `<id>.fbx` together with `<id>_atlas.png` and upload **that** to Mixamo.
