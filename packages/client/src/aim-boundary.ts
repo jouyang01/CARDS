@@ -322,7 +322,7 @@ export function aimBoundaries(
   const dir = aimDirectionOf(from, ability, aim, aimStep);
   const reach = dir === undefined ? 0 : Math.min(ability.range, depthReached(from, dir, covered));
   return memoised(boundaryKey(unit, ability, aim, dir, reach, covered.length),
-    () => tessellate(from, ability, aim[0], dir, reach, covered.length, aim));
+    () => tessellate(from, ability, aim[0], dir, reach, covered.length));
 }
 
 /**
@@ -364,15 +364,10 @@ function boundaryKey(
   coveredCount: number,
 ): string {
   const t = aim[0];
-  // RAM-LINE-PREVIEW-FIX: a `path` is the one shape whose outline depends on the
-  // WHOLE aim rather than on its first square — two routes to the same corner
-  // draw different lanes. Its tiles go in the key; every other shape contributes
-  // only `aim[0]`, exactly as before, so nothing else pays for this.
-  const route = a.shape === 'path' ? aim.map((p) => `${p.x},${p.y}`).join(';') : '';
   return [
     unit.unitId, unit.pos.x, unit.pos.y,
     a.id, a.shape, a.range, a.radius, a.innerRadius, a.beamWidth, a.axisBonus, a.wallLength,
-    t?.x, t?.y, dir?.x, dir?.y, reach, coveredCount, route,
+    t?.x, t?.y, dir?.x, dir?.y, reach, coveredCount,
   ].join('|');
 }
 
@@ -441,8 +436,6 @@ function tessellate(
   dir: Vec2 | undefined,
   reach: number,
   coveredCount: number,
-  /** RAM-LINE-PREVIEW-FIX: the charge's route, for the one shape that is a route. */
-  path: readonly Vec2[] = [],
 ): Pt[][] {
   switch (ability.shape) {
     case 'self':
@@ -492,59 +485,27 @@ function tessellate(
       const start: Pt = { x: target.x - dir.x, y: target.y - dir.y };
       return [laneBoundary(start, dir, length, HALF)];
     }
-    case 'path': {
-      // RAM-LINE-PREVIEW-FIX. A charge drew **no outline at all** — the one
-      // attack shape with nothing on the shape layer — so it read as a movement
-      // route with tiles under it rather than as an attack. *"Bastion's Ram
-      // Charge is still not a linear dash/attack preview."* Every other shape
-      // has drawn its continuous locus since AIM-PREVIEW-TRUE; this is a charge
-      // finally drawing its own.
+    case 'path':
+      // RAM-PREVIEW-REVERT. A charge draws **no shape-layer outline** — it is
+      // the one attack shape that is deliberately bare.
       //
-      // A route may bend (MV4 allows diagonals and a waypointed charge turns
-      // corners), so it is drawn as **one lane per straight run** rather than as
-      // a single rectangle. For the common straight ram that is exactly the one
-      // lane a `line` gets, which is the whole point.
+      // RAM-LINE-PREVIEW-FIX gave it a lane per straight run of its route, on
+      // the reasoning that every other shape has drawn its continuous locus
+      // since AIM-PREVIEW-TRUE and this was the only one that did not. The owner
+      // played it and rejected it: *"Ram Charge line attack preview is not
+      // working, just go back to how it was before."* So a charge is back to
+      // route tiles + the landing marker + per-enemy numbers, and nothing here.
       //
-      // `laneBoundary` spans `(0, reach]` from its origin, so each run starts
-      // one step *before* its first tile — putting that tile at a = 1 and the
-      // last at a = length, precisely the squares the path lists. The near edge
-      // is inset (`a > 0`), so the tile a run starts from — the caster's square
-      // for the first run, the corner tile for the others — stays outside its
-      // own lane and keeps whatever the previous run gave it.
-      return runsOf(path).map(({ from, dir, length }) =>
-        laneBoundary({ x: from.x - dir.x, y: from.y - dir.y }, dir, length, HALF));
-    }
+      // The **numbers** are not reverted with it — a first-only charge still
+      // stamps damage on the first enemy alone (`preview-numbers.ts`), because
+      // the "before" for that half was a preview that lied.
+      //
+      // Note for anyone re-adding an outline: the reason a charge is unlike the
+      // other shapes is that its aim is a *route*, not a direction and a reach,
+      // so its locus depends on the whole aim rather than on `aim[0]` — which is
+      // why `boundaryKey` would need the route back in it too.
+      return [];
   }
-}
-
-/**
- * A path split into maximal straight runs: where each starts, which way it goes,
- * and how many tiles long it is.
- *
- * Integer throughout — `direction8` of two adjacent squares is a unit step, and
- * two steps are the same run when both components match.
- */
-function runsOf(path: readonly Vec2[]): { from: Vec2; dir: Vec2; length: number }[] {
-  const runs: { from: Vec2; dir: Vec2; length: number }[] = [];
-  for (let i = 0; i < path.length; i++) {
-    const here = path[i]!;
-    const prev = path[i - 1];
-    const dir = prev === undefined ? undefined : direction8(prev, here);
-    const open = runs[runs.length - 1];
-    if (dir !== undefined && open !== undefined && open.dir.x === dir.x && open.dir.y === dir.y) {
-      open.length += 1;
-      continue;
-    }
-    // A new run. Its direction is the step that reached this tile; the very
-    // first tile has no predecessor in the path, so it takes the step that
-    // leads *out* of it instead — a one-tile path with no direction at all
-    // draws nothing, which is the honest answer for an aim that is not a route.
-    const next = path[i + 1];
-    const heading = dir ?? (next === undefined ? undefined : direction8(here, next));
-    if (heading === undefined || (heading.x === 0 && heading.y === 0)) continue;
-    runs.push({ from: { ...here }, dir: heading, length: 1 });
-  }
-  return runs;
 }
 
 /**

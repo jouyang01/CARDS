@@ -6,7 +6,6 @@ import {
 } from '@cards/engine';
 import { startHotSeat } from '../src/app.js';
 import { chargeHitList } from '../src/targeting.js';
-import { boundaryContains } from '../src/aim-boundary.js';
 import { OPEN_MAP, aimAt, armAbility, layer, mountUI } from './app-harness.js';
 import catalystData from '../../../data/catalysts.json';
 import bastion from '../../../data/characters/bastion.json';
@@ -14,39 +13,36 @@ import kestrel from '../../../data/characters/kestrel.json';
 import vex from '../../../data/characters/vex.json';
 
 /**
- * RAM-LINE-PREVIEW-FIX — *"Bastion's Ram Charge is still not a linear dash/attack
- * preview."*
+ * RAM-PREVIEW-REVERT — *"Ram Charge line attack preview is not working, just go
+ * back to how it was before."*
  *
- * The backlog's diagnosis was that nothing marked the crossed enemies and no
- * damage number showed along the line. **That turned out not to be what was
- * wrong** — driving the real controller shows the route lit and a `15` stamped on
- * each crossed enemy, and has done since BASTION-RAM-LINE. Two other things were,
- * and both are real:
+ * This file was written for RAM-LINE-PREVIEW-FIX (PR #103), which did **two
+ * separable things**. The owner has played the result and rejected one of them,
+ * so the file now pins the line between them:
  *
- * **1. A charge drew no outline at all.** Every attack shape has drawn its
- * continuous locus since AIM-PREVIEW-TRUE — a line gets a lane, a cone a wedge,
- * a circle a disc — and `path` returned `[]`. So the charge was tiles and a
- * route line with nothing on the shape layer, which is precisely the difference
- * between "an attack that covers this lane" and "a way to walk over there". It
- * now draws one lane per straight run of its route.
+ * **Reverted — the lane outline.** `tessellate`'s `path` case drew one lane per
+ * straight run of the route, on the reasoning that every other attack shape has
+ * drawn its continuous locus since AIM-PREVIEW-TRUE and a charge was the only one
+ * that did not. The owner's verdict is the one that counts. A charge is back to
+ * route tiles + the landing marker + per-enemy numbers, and **nothing on the
+ * shape layer** — the first two tests below are the old outline assertions
+ * turned around, and they fail before the revert.
  *
- * **2. The numbers ignored `chargeHits`.** The route covers everybody standing
- * on it, but `chargeHits` decides how many of them are hit — `"all"` for Ram
- * Charge and Tempest Run, first-only for everything else. Kestrel's Skim was
- * stamping 12 on *every* enemy on the route and hitting one. That is a preview
- * that lies, in the class PREVIEW-NUMBERS-AUDIT exists to prevent; the audit
- * never saw it because it sweeps one enemy at a fixed aim, and one enemy cannot
- * tell "first" from "all".
- *
- * Both fixes read the engine: `chargedUnits` finds who is on the route and
- * `chargeVictims` applies ALLY-SAFE and `chargeHits`, and `runDash` now calls the
- * same two functions it did inline before.
+ * **Kept — the `chargeHits` numbers.** The route covers everybody standing on
+ * it; `chargeHits` decides how many are hit — `"all"` for Ram Charge and Tempest
+ * Run, first-only by omission for everything else. Kestrel's Skim was stamping
+ * its damage on *every* enemy on the route and hitting one. That is not part of
+ * "how it was before" worth restoring: it is a preview that lies, of the class
+ * PREVIEW-NUMBERS-AUDIT exists to prevent, and it is invisible to Ram Charge
+ * anyway (`chargeHits:"all"` hits everyone the numbers name). The rest of this
+ * file is that half, unchanged.
  */
 
 const BASTION = bastion as unknown as CharacterDef;
 const KESTREL = kestrel as unknown as CharacterDef;
 const VEX = vex as unknown as CharacterDef;
 const RAM = BASTION.abilities.find((a) => a.id === 'ram_charge')!;
+const HOOK = BASTION.abilities.find((a) => a.id === 'chain_hook')!;
 const SKIM = KESTREL.abilities.find((a) => a.id === 'skim')!;
 const RAM_DAMAGE = RAM.effects.find((e) => e.kind === 'damage')!.amount!;
 const SKIM_DAMAGE = SKIM.effects.find((e) => e.kind === 'damage')!.amount!;
@@ -81,42 +77,34 @@ const key = (p: Vec2): string => `${p.x},${p.y}`;
 
 beforeEach(() => { document.body.replaceChildren(); });
 
-describe('RAM-LINE-PREVIEW-FIX: the charge reads as a line attack', () => {
-  it('draws a continuous outline down its route, like a line attack does', () => {
-    // The fix. On `main` this is zero: `path` was the only attack shape with
-    // nothing on the shape layer, which is what made it read as a route.
+describe('RAM-PREVIEW-REVERT: the charge draws no outline again', () => {
+  it('aiming Ram Charge puts nothing on the shape layer', () => {
+    // The revert, stated as the assertion it is: this fails on PR #103's
+    // preview, where the charge drew a lane per straight run of its route.
     const b = queued(BASTION);
     armAbility(b.controls, RAM.name);
     aimAt(b.board, { x: 12, y: 10 }, 'mousemove');
-    expect(b.renderer.draw.shapes.length, 'an outline was drawn').toBeGreaterThan(0);
+    expect(b.renderer.draw.shapes, 'no lane polygon for a charge').toEqual([]);
   });
 
-  it('and the outline contains exactly the tiles the charge covers', () => {
-    // AIM-PREVIEW-TRUE's standing rule, earned for the new outline rather than
-    // assumed: a tile lights iff its centre is inside the drawn figure.
+  it('and that is about the shape, not about the harness', () => {
+    // The control, because "nothing was drawn" is exactly the assertion that
+    // passes for the wrong reason if the recording ever breaks. Same character,
+    // same board, same stub: Bastion's Chain Hook is a `line` and still draws
+    // its lane, so an empty list above means the charge chose to draw nothing.
     const b = queued(BASTION);
-    armAbility(b.controls, RAM.name);
+    armAbility(b.controls, HOOK.name);
     aimAt(b.board, { x: 12, y: 10 }, 'mousemove');
-    const lit = new Set(layer(b.renderer, 'aim').map(key));
-    expect(lit.size, 'a run of tiles').toBeGreaterThan(1);
-    // Every lit tile is inside some drawn lane…
-    for (const k of lit) {
-      const [x, y] = k.split(',').map(Number);
-      const hit = b.renderer.draw.shapes.some((o) => boundaryContains(o, { x: x!, y: y! }));
-      expect(hit, `lit tile ${k} inside the outline`).toBe(true);
-    }
-    // …and the caster's own square, which the charge does not cover, is not.
-    const casterInside = b.renderer.draw.shapes.some((o) => boundaryContains(o, { x: 8, y: 10 }));
-    expect(casterInside, 'the caster is not inside its own charge').toBe(false);
+    expect(b.renderer.draw.shapes.length, 'a line attack still outlines').toBeGreaterThan(0);
   });
 
-  it('marks EVERY crossed enemy for a chargeHits:"all" charge', () => {
-    // The half that already worked, pinned so the `chargeHits` gate below cannot
-    // over-correct and take it away.
+  it('the route tiles are still lit', () => {
+    // "How it was before" is not "nothing at all": BASTION-RAM-LINE's preview
+    // stands. The tiles the charge covers are still the aim layer's answer.
     const b = queued(BASTION);
     armAbility(b.controls, RAM.name);
     aimAt(b.board, { x: 12, y: 10 }, 'mousemove');
-    expect(readouts()).toEqual([String(RAM_DAMAGE), String(RAM_DAMAGE)]);
+    expect(new Set(layer(b.renderer, 'aim').map(key)).size, 'a run of tiles').toBeGreaterThan(1);
   });
 
   it('and the landing marker is still there', () => {
@@ -125,13 +113,23 @@ describe('RAM-LINE-PREVIEW-FIX: the charge reads as a line attack', () => {
     aimAt(b.board, { x: 12, y: 10 }, 'mousemove');
     expect(layer(b.renderer, 'impact').map(key)).toEqual(['12,10']);
   });
+
+  it('and a chargeHits:"all" charge still numbers EVERY crossed enemy', () => {
+    // The third thing "before" had and keeps. Pinned here so a revert that
+    // reached one function too far would be caught.
+    const b = queued(BASTION);
+    armAbility(b.controls, RAM.name);
+    aimAt(b.board, { x: 12, y: 10 }, 'mousemove');
+    expect(readouts()).toEqual([String(RAM_DAMAGE), String(RAM_DAMAGE)]);
+  });
 });
 
-describe('RAM-LINE-PREVIEW-FIX: a first-only charge previews one hit', () => {
+describe('RAM-PREVIEW-REVERT keeps the fix: a first-only charge previews one hit', () => {
   it('Kestrel\'s Skim numbers the FIRST enemy on the route and no other', () => {
-    // The lie. Skim is `path` with no `chargeHits`, so the engine hits one — and
-    // the preview was stamping 12 on both. Nothing in the roster sweep could see
-    // it: one enemy at a fixed aim reads the same under either rule.
+    // The half that is NOT going back. Skim is `path` with no `chargeHits`, so
+    // the engine hits one — and the preview stamped its damage on both. Nothing
+    // in the roster sweep could see it: one enemy at a fixed aim reads the same
+    // under either rule.
     const b = queued(KESTREL);
     armAbility(b.controls, SKIM.name);
     aimAt(b.board, { x: 12, y: 10 }, 'mousemove');
