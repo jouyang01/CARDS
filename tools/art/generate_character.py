@@ -313,7 +313,7 @@ def build_body(spec):
     limb = 0.055 * b["limbThickness"]
     depth = 0.115 * b["torsoDepth"]
 
-    hip_z = h * 0.47
+    hip_z = h * 0.505
     chest_z = h * 0.72
     neck_z = chest_z + 0.10 * b["neckLength"]
     head_z = neck_z + head_r
@@ -334,6 +334,23 @@ def build_body(spec):
         "top": "crown", "bottom": "skinShadow",
     }, uv)
 
+    # Cranium: a rounded cap above the face plane. The head has to stay a box
+    # where the portrait lives, but nothing says the skull above it does.
+    tube("z", (0, -head_r * 0.05, head_z + head_r * 0.80),
+         (0, -head_r * 0.05, head_z + head_r * 1.32), taper(
+             (0.00, head_r * 0.94, head_r * 0.90),
+             (0.45, head_r * 0.88, head_r * 0.86),
+             (1.00, head_r * 0.52, head_r * 0.52),
+         ), "leather")
+
+    # Jaw: narrows to a chin, which is most of what stops a head reading as a box.
+    tube("z", (0, -head_r * 0.08, head_z - head_r * 0.96),
+         (0, -head_r * 0.08, head_z - head_r * 0.52), taper(
+             (0.00, head_r * 0.60, head_r * 0.62),
+             (0.55, head_r * 0.80, head_r * 0.80),
+             (1.00, head_r * 0.92, head_r * 0.88),
+         ), "skin")
+
     fy = -head_r * 0.9
     add_wedge(bm,
               (0, fy - head_r * 0.30, head_z - head_r * 0.10),
@@ -348,8 +365,10 @@ def build_body(spec):
                   (side * head_r * 0.44, fy, head_z + head_r * 0.58), uv, "skinShadow")
 
     # ── neck ──
-    tube("z", (0, 0, neck_z - 0.09), (0, 0, neck_z + 0.03),
-         taper((0.0, limb * 2.0, limb * 1.9), (1.0, limb * 1.6, limb * 1.5)), "leather")
+    tube("z", (0, 0, neck_z - 0.08), (0, 0, neck_z + 0.04),
+         taper((0.0, limb * 1.60, limb * 1.55),
+               (0.5, limb * 1.44, limb * 1.40),
+               (1.0, limb * 1.34, limb * 1.30)), "skinShadow")
 
     # ── torso ──
     # Tapered: wide at the chest, narrow at the waist, deeper at the ribs. This
@@ -357,9 +376,9 @@ def build_body(spec):
     tube("z", (0, 0, hip_z - 0.02), (0, 0, chest_z + 0.04), taper(
         (0.00, shoulder * 0.62, depth * 0.80),
         (0.22, shoulder * 0.58, depth * 0.76),
-        (0.55, shoulder * 0.70, depth * 0.95),
-        (0.85, shoulder * 0.80, depth * 1.00),
-        (1.00, shoulder * 0.74, depth * 0.88),
+        (0.55, shoulder * 0.64, depth * 0.92),
+        (0.85, shoulder * 0.72, depth * 0.98),
+        (1.00, shoulder * 0.66, depth * 0.86),
     ), "iron")
 
     # Armour as discrete overlapping plates, not lines painted on a flat slab.
@@ -378,16 +397,17 @@ def build_body(spec):
          "leather")
 
     if g.get("collar") == "high":
-        tube("z", (0, 0, chest_z + 0.01), (0, 0, chest_z + 0.10),
-             taper((0.0, shoulder * 0.56, depth * 0.80),
-                   (1.0, shoulder * 0.44, depth * 0.62)), "ironDark")
+        tube("z", (0, 0, chest_z - 0.01), (0, 0, chest_z + 0.11),
+             taper((0.00, shoulder * 0.74, depth * 0.92),
+                   (0.55, shoulder * 0.70, depth * 0.86),
+                   (1.00, shoulder * 0.62, depth * 0.74)), "ironDark")
 
     if g.get("skirt") == "tassets":
         for side in (-1, 1):
-            tube("z", (side * shoulder * 0.50, 0, hip_z - 0.20),
-                 (side * shoulder * 0.50, 0, hip_z + 0.01),
-                 taper((0.0, shoulder * 0.30, depth * 0.70),
-                       (1.0, shoulder * 0.36, depth * 0.84)), "iron")
+            tube("z", (side * shoulder * 0.46, 0, hip_z - 0.26),
+                 (side * shoulder * 0.46, 0, hip_z + 0.01),
+                 taper((0.0, shoulder * 0.26, depth * 0.60),
+                       (1.0, shoulder * 0.30, depth * 0.74)), "iron")
 
     # ── arms, still a strict T-pose ──
     arm_z = chest_z - 0.05
@@ -400,10 +420,12 @@ def build_body(spec):
 
         # Pauldron: a dome that overhangs the arm, which is most of what makes a
         # stylised silhouette read as armoured rather than as a tube.
-        tube("x", (side * gap * 0.80, 0, arm_z), (side * (gap + limb * 1.15 * pad), 0, arm_z),
-             taper((0.0, limb * 1.75 * pad, limb * 1.85 * pad),
-                   (0.55, limb * 1.95 * pad, limb * 2.05 * pad),
-                   (1.0, limb * 1.55 * pad, limb * 1.60 * pad)),
+        tube("x", (side * gap * 0.94, 0, arm_z + limb * 0.55),
+             (side * (gap + limb * 1.35 * pad), 0, arm_z + limb * 0.30),
+             taper((0.0, limb * 1.45 * pad, limb * 1.55 * pad),
+                   (0.40, limb * 1.80 * pad, limb * 1.90 * pad),
+                   (0.78, limb * 1.72 * pad, limb * 1.80 * pad),
+                   (1.0, limb * 1.30 * pad, limb * 1.36 * pad)),
              "iron" if heavy else "ironDark")
 
         ax = gap + limb * 0.95 * pad
@@ -414,15 +436,16 @@ def build_body(spec):
 
         bx = ax + arm_len * 0.52
         tube("x", (side * bx, 0, arm_z), (side * (bx + arm_len * 0.52), 0, arm_z),
-             taper((0.0, limb * 1.7, limb * 1.7),
-                   (0.45, limb * 1.5, limb * 1.5),
-                   (1.0, limb * 1.35, limb * 1.35)), "leather")
+             taper((0.0, limb * 1.70, limb * 1.70),
+                   (0.45, limb * 1.48, limb * 1.48),
+                   (1.0, limb * 1.34, limb * 1.34)), "iron")
 
         cx = bx + arm_len * 0.52
-        tube("x", (side * cx, 0, arm_z), (side * (cx + 0.095), 0, arm_z),
-             taper((0.0, limb * 1.7, limb * 1.9),
-                   (0.6, limb * 1.9, limb * 2.1),
-                   (1.0, limb * 1.4, limb * 1.6)), "leather")
+        tube("x", (side * cx, 0, arm_z), (side * (cx + 0.115), 0, arm_z),
+             taper((0.00, limb * 1.30, limb * 1.45),
+                   (0.30, limb * 1.72, limb * 1.95),
+                   (0.72, limb * 1.76, limb * 2.00),
+                   (1.00, limb * 1.30, limb * 1.50)), "ironDark")
 
     # ── legs ──
     for side in (-1, 1):
