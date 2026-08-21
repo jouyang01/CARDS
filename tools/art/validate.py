@@ -119,6 +119,16 @@ def main():
           f"hip {hip_w:.3f} vs leg {leg_w:.3f}"
           + ("" if leg_w <= hip_w else f"  ({leg_w - hip_w:+.3f} overhang)"))
 
+    # Head must clear whatever is under it. A jaw resting exactly on a collar
+    # passes every still render and punches through it on the first head turn.
+    near_axis = [v for v in vs if abs(v.x) < max(xs) * 0.16 and v.z > lo + (hi - lo) * 0.62]
+    if near_axis:
+        skinlike = [v.z for v in near_axis if v.z > lo + (hi - lo) * 0.80]
+        gap = (min(skinlike) - max(v.z for v in near_axis if v.z < lo + (hi - lo) * 0.80)
+               if skinlike else 0.0)
+        check("head clears collar", gap > 0.012 or gap < -0.02,
+              f"{gap:+.4f} between neck stack and head")
+
     # Feet on the floor: Mixamo assumes the character stands at the origin.
     check("feet near origin", abs(lo) < 0.12, f"lowest z {lo:+.3f}")
 

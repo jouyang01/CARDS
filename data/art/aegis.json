@@ -3,9 +3,9 @@
   "thesis": "He doesn't shield you, he takes it. Exhaustion and a little contempt, not devotion. He'd rather eat the hit than trust you to avoid it.",
   "build": {
     "height": 1.78,
-    "headScale": 1.62,
+    "headScale": 1.25,
     "shoulderWidth": 1.32,
-    "neckLength": 0.42,
+    "neckLength": 0.82,
     "torsoDepth": 1.15,
     "limbThickness": 1.55
   },

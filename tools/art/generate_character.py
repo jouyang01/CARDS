@@ -318,8 +318,8 @@ def taper(*stops):
     return list(stops)
 
 
-FRONT_ARC = 0.52      # lower = the portrait wraps further around the head
-FACE_ZOOM = 1.34      # >1 magnifies the features on the front of the head
+FRONT_ARC = 0.46      # lower = the portrait wraps further around the head
+FACE_ZOOM = 1.52      # >1 magnifies the features on the front of the head
 FACE_ANCHOR = 0.42    # the v the zoom is centred on: where the features sit
 
 
@@ -470,10 +470,10 @@ def build_body(spec):
          "leather")
 
     if g.get("collar") == "high":
-        tube("z", (0, 0, chest_z - 0.01), (0, 0, chest_z + 0.11),
-             taper((0.00, shoulder * 0.74, depth * 0.92),
-                   (0.55, shoulder * 0.70, depth * 0.86),
-                   (1.00, shoulder * 0.62, depth * 0.74)), "ironDark")
+        tube("z", (0, 0, chest_z - 0.02), (0, 0, chest_z + 0.072),
+             taper((0.00, shoulder * 0.76, depth * 0.94),
+                   (0.55, shoulder * 0.72, depth * 0.88),
+                   (1.00, shoulder * 0.64, depth * 0.76)), "ironDark")
 
     if g.get("skirt") == "tassets":
         for side in (-1, 1):
