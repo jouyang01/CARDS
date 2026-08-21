@@ -20,9 +20,10 @@
     "knockback": "knocked_down",
     "abilities": {
       "shield_bash": "aegis_smash",
-      "barrier_pulse": "aegis_ultimate",
+      "barrier_pulse": "warding_wall_cast",
       "intercept": "intercept_cast",
-      "warding_wall": "warding_wall_cast"
+      "warding_wall": "warding_wall_cast",
+      "warding_halo": "aegis_ultimate"
     }
   },
   "posture": {

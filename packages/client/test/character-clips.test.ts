@@ -167,8 +167,12 @@ describe('clip mappings match the shipped roster', () => {
     it(`${id}: every ability has a clip, and no clip names a missing ability`, () => {
       const character = read(`data/characters/${id}.json`) as {
         abilities: { id: string }[];
+        ultimate: { id: string };
       };
-      const shipped = new Set(character.abilities.map((a) => a.id));
+      // The ULTIMATE counts. Leaving it out is how `warding_halo` went unmapped
+      // while this spec stayed green: Aegis's ultimate played his idle, and the
+      // clip downloaded as `aegis_ultimate` sat on a different ability.
+      const shipped = new Set([...character.abilities.map((a) => a.id), character.ultimate.id]);
       const mapped = new Set(Object.keys(clips.abilities ?? {}));
 
       expect([...shipped].filter((a) => !mapped.has(a))).toEqual([]);

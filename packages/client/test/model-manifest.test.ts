@@ -88,15 +88,12 @@ describe('MODEL-MANIFEST: the ability map has not drifted from the roster', () =
     expect(missing, 'ability with no clip — it would play idle instead').toEqual([]);
   });
 
-  it('does not yet animate the ultimate, and that is a known gap', () => {
+  it('animates the ultimate too', () => {
     if (m === undefined) return;
-    // Deliberately asserting the CURRENT state rather than the desired one.
-    // `warding_halo` has no clip, so Aegis's ultimate plays his idle — while the
-    // clip literally downloaded as `aegis_ultimate` is bound to `barrier_pulse`.
-    // Which clip answers which ability is Designer-owned (data/art/<id>.json), so
-    // this records the gap loudly instead of a Builder quietly reassigning it.
-    // When the Designer fixes the mapping, this spec flips to the line below it.
-    expect(mapped).not.toContain(AEGIS.ultimate.id);
-    expect(AEGIS.ultimate.id).toBe('warding_halo');
+    // The owner's call (2026-08-21): `warding_halo` is the ultimate and takes the
+    // clip downloaded for it, and `barrier_pulse` shares `warding_wall_cast` with
+    // `warding_wall`. Two abilities on one clip is fine — clips resolve by name.
+    expect(mapped, 'the ultimate would otherwise play idle').toContain(AEGIS.ultimate.id);
+    expect(m.map?.abilities[AEGIS.ultimate.id]).toBe('aegis_ultimate');
   });
 });
