@@ -345,14 +345,22 @@ def add_head(bm, uv_layer, centre_z, r, sides=14, exponent=2.7):
     bottom = centre_z - r * 0.80
     top = centre_z + r * 1.16
     # (t, half-width across, half-depth front-to-back, backward shift)
+    #
+    # Above the occiput the radius falls off on a circular arc — sqrt(1 - u^2) —
+    # and converges near zero at the crown. A single jump from a wide ring to the
+    # cap leaves a flat disc on top of the skull, because add_tube closes a tube
+    # with an n-gon whatever radius the last ring happens to be.
     profile = taper(
-        (0.00, r * 0.46, r * 0.56, -r * 0.04),   # chin — narrow, pushed forward
-        (0.14, r * 0.66, r * 0.80,  r * 0.00),   # jaw
-        (0.34, r * 0.84, r * 1.02,  r * 0.03),   # cheekbone — widest across
-        (0.56, r * 0.90, r * 1.10,  r * 0.07),   # temple — deepest
-        (0.78, r * 0.86, r * 1.04,  r * 0.11),   # occiput — the skull's overhang
-        (0.92, r * 0.72, r * 0.84,  r * 0.10),
-        (1.00, r * 0.52, r * 0.56,  r * 0.07),   # crown
+        (0.000, r * 0.46, r * 0.56, -r * 0.04),   # chin — narrow, pushed forward
+        (0.140, r * 0.66, r * 0.80,  r * 0.00),   # jaw
+        (0.340, r * 0.84, r * 1.02,  r * 0.03),   # cheekbone — widest across
+        (0.560, r * 0.90, r * 1.10,  r * 0.07),   # temple — deepest
+        (0.760, r * 0.86, r * 1.04,  r * 0.11),   # occiput — the skull's overhang
+        (0.856, r * 0.77, r * 0.93,  r * 0.11),   # dome begins
+        (0.928, r * 0.62, r * 0.75,  r * 0.10),
+        (0.972, r * 0.45, r * 0.55,  r * 0.09),
+        (0.994, r * 0.27, r * 0.33,  r * 0.08),
+        (1.000, r * 0.10, r * 0.12,  r * 0.07),   # crown — all but a point
     )
     faces = add_tube(bm, uv_layer, "z", (0, 0, bottom), (0, 0, top), profile,
                      "skin", sides=sides, exponent=exponent,
