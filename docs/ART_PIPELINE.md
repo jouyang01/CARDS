@@ -379,23 +379,50 @@ angle-based smooth shading, so curved surfaces round out while genuine corners s
 
 ---
 
+## 6b. The anatomy spec — every proportion, as a number
+
+Prose gets skipped. These are the numbers, and **most of them are enforced by
+`validate.py`**, so a regression fails the build rather than waiting to be spotted by eye.
+
+Each row exists because it was got wrong once and had to be found by looking at a render.
+
+| Rule | Target | Enforced | Why it exists |
+|---|---|---|---|
+| **Head scale** | 1.25, roster-wide | data | 1.62 read chibi and fought the character's thesis. Mixed values across a team read as a bug. |
+| **Shoulder height** | 72–86% of total height | ✅ `shoulder height` | At 81% *up the torso* the arms read as sprouting from mid-chest. |
+| **Arm reach** | lowered fingertip lands 31–47% of height (mid-thigh ≈ 39%) | ✅ `arm reach` | Arms were 0.692 long, landing the fingertip at 31% — past mid-thigh, ape-like. |
+| **Shoulder bulk** | pauldron depth ≤ 1.45 × torso depth | ✅ `shoulder bulk` | One pauldron was 0.207 deep against a 0.130 torso and 0.414 tall against a 0.473 torso. It swallowed the shoulder and punched out front and back. |
+| **Legs inside hips** | leg half-width ≤ hip half-width | ✅ `legs inside hips` | Widening the stance to unfuse the feet pushed the legs outboard of the pelvis. |
+| **Pelvis flare** | widest point of the lower torso | data | The torso used to taper to nothing at the hip, so the legs had nothing to hang inside. |
+| **Feet separated** | > 0.008 between soles | ✅ `feet separated` | Feet at 0.58 × shoulder with boots 1.9 × limb wide overlapped through the midline. |
+| **Crotch gap** | no geometry on the midline through the upper leg | ✅ `crotch gap` | Fused limbs are the most common auto-rig failure. |
+| **Armpit gap** | arm clear of torso at chest height | ✅ `armpit gap` | Same reason. |
+| **Head clears collar** | > 0.012 | ✅ `head clears collar` | `head_z = neck_z + head_r`, so shrinking the head *lowers* it. Aegis's jaw sat on the collar at +0.001 — fine standing still, clipping on the first head turn. |
+| **Joint landmarks mirrored** | exactly | ✅ `joint landmarks` | Decoration may be asymmetric; joints may not. A pauldron's scale was feeding the arm chain's origin. |
+| **T-pose arms** | centreline drift < 0.01 | ✅ `T-pose arms` | Measured on the **centreline**; raw z-spread at the tips just measures hand thickness. |
+| **Feet near origin** | \|lowest z\| < 0.12 | ✅ `feet near origin` | Mixamo assumes the character stands at the origin. |
+| **No UV seam wrap** | no quad with u-span > 8× median | ✅ `no UV seam wrap` | Catches the modulo bug that striped every limb. Verified by reintroducing the bug: 57 failing quads with it, 0 without. |
+| **Hand roundness** | exponent ≈ 2.1, below the armour's | data | Hands read blocky because they inherited the armour's superellipse exponent; a hand has no flat planes at all. |
+| **Armour wear** | pieces unwrap across a whole swatch cell | `--verify` | Sampling one pixel makes scratched plate impossible by construction. |
+| **Buried ends uncapped** | `cap_start` / `cap_end` `False` where an end sits inside another form | — | Capped buried ends are interior faces: invisible, cost triangles, cast shadow from inside. |
+| **No brow-ridge wedges** | — | — | Sized for a flat-faced box, they punch through a curved head beside each eye and read as spikes. |
+
+The unenforced rows are the ones no static check can express. They are still rules.
+
 ## 7. Phase 4 — validate before you rig
 
 ```bash
 blender --background --python tools/art/validate.py -- aegis
 ```
 
-Nine checks, each corresponding to a way the auto-rigger fails or builds a bad skeleton:
+Fourteen checks. Nine cover the ways the auto-rigger fails or builds a bad skeleton; five
+enforce the proportion spec in §6b.
 
-1. single mesh
-2. triangle budget
-3. **joint landmarks mirrored**
-4. T-pose arm centreline drift
-5. crotch gap
-6. armpit gap
-7. legs inside hips
-8. head clears collar
-9. feet near origin
+```
+single mesh · triangle budget · joint landmarks mirrored · T-pose arms
+crotch gap · armpit gap · legs inside hips · head clears collar · feet near origin
+shoulder height · arm reach · feet separated · shoulder bulk · no UV seam wrap
+```
 
 Two seconds here beats discovering the same problem after rigging and collecting eight clips.
 
