@@ -132,6 +132,74 @@ def main():
     # Feet on the floor: Mixamo assumes the character stands at the origin.
     check("feet near origin", abs(lo) < 0.12, f"lowest z {lo:+.3f}")
 
+    # ── proportion spec ──────────────────────────────────────────────────────
+    # Every one of these encodes a mistake that was made and had to be found by
+    # eye. A rule written only in prose gets skipped; a rule that fails the build
+    # does not.
+    H = hi - lo
+
+    def frac(z):
+        return (z - lo) / H
+
+    arm_x = max(xs)
+    arm_verts = [v for v in vs if abs(v.x) > arm_x * 0.55]
+    arm_z = (min(v.z for v in arm_verts) + max(v.z for v in arm_verts)) / 2
+
+    # Shoulders belong at the top of the ribcage. At 81% up the torso the arms
+    # read as sprouting from mid-chest.
+    check("shoulder height", 0.72 <= frac(arm_z) <= 0.86,
+          f"{frac(arm_z) * 100:.0f}% of height (want 72-86%)")
+
+    # A lowered fingertip should reach mid-thigh — roughly 0.39 of height.
+    # Shoulder anchor: the widest TORSO vertex at shoulder height. Measuring the
+    # widest thing in that z-window instead returns the outstretched arm itself,
+    # which makes the reach come out as ~0.
+    shoulder_x = max((abs(v.x) for v in vs
+                      if abs(v.x) < arm_x * 0.32 and abs(v.z - arm_z) < H * 0.06),
+                     default=0.0)
+    reach = arm_x - shoulder_x                  # fingertip minus shoulder
+    landing = frac(arm_z - reach)
+    check("arm reach", 0.31 <= landing <= 0.47,
+          f"lowered fingertip lands at {landing * 100:.0f}% of height (mid-thigh ~39%)")
+
+    # Feet must not fuse. The crotch check covers the upper leg; this is the sole.
+    sole = [v for v in vs if v.z < lo + H * 0.09]
+    left = [v.x for v in sole if v.x < 0]
+    right = [v.x for v in sole if v.x > 0]
+    foot_gap = (min(right) - max(left)) if left and right else 0.0
+    check("feet separated", foot_gap > 0.008, f"{foot_gap:+.4f} between soles")
+
+    # A pauldron is a cap over the joint, not a sleeve around it. One early
+    # version was deeper than the torso and punched out front and back.
+    torso_d = max((abs(v.y) for v in vs if abs(v.x) < arm_x * 0.30), default=0.0)
+    shoulder_d = max((abs(v.y) for v in vs
+                      if arm_x * 0.30 <= abs(v.x) <= arm_x * 0.62), default=0.0)
+    check("shoulder bulk", shoulder_d <= torso_d * 1.45,
+          f"shoulder depth {shoulder_d:.3f} vs torso {torso_d:.3f}")
+
+    # UV outliers. A face whose UV area dwarfs its neighbours' is the signature of
+    # a wrapped seam — the modulo bug that striped every limb. Region-mapped faces
+    # (head, torso, door) are legitimately large, so compare against the median
+    # rather than an absolute.
+    # QUADS only, and on u-span alone. A wrapped seam is a tube quad whose u runs
+    # the full width of its swatch cell instead of 1/sides of it. An n-gon cap is
+    # legitimately large in both axes — comparing raw area flags the chin cap and
+    # calls a clean mesh broken.
+    uv_layer = body.data.uv_layers.active
+    if uv_layer:
+        spans = []
+        for poly in body.data.polygons:
+            if len(poly.vertices) != 4:
+                continue
+            us = [uv_layer.data[i].uv.x for i in poly.loop_indices]
+            spans.append((max(us) - min(us), poly.index))
+        if spans:
+            ordered = sorted(sp for sp, _ in spans)
+            med_u = ordered[len(ordered) // 2]
+            bad = [i for sp, i in spans if med_u > 0 and sp > med_u * 8]
+            check("no UV seam wrap", not bad,
+                  f"{len(bad)} quad(s) with u-span >8x median ({med_u:.4f})")
+
     print()
     if fails:
         print(f"  {len(fails)} FAILED: {', '.join(fails)}")

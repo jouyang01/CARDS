@@ -85,5 +85,19 @@
     "sides": 10
   },
   "weaponClass": "door",
-  "_weaponClassNote": "A salvaged bulkhead strapped to one arm. That arm is never free."
+  "_weaponClassNote": "A salvaged bulkhead strapped to one arm. That arm is never free.",
+  "clips": {
+    "_comment": "Clip names as they appear in build/.../aegis.glb, from the Mixamo downloads. Per character by nature \u2014 Aegis's attack is aegis_smash, not a generic 'attack'. The ability mapping is a Designer call; these are a first reading of which clip suits which ability.",
+    "idle": "aegis_idle",
+    "run": "sword_and_shield_run",
+    "hit": "sword_and_shield_impact",
+    "death": "sword_and_shield_death",
+    "knockback": "knocked_down",
+    "abilities": {
+      "shield_bash": "aegis_smash",
+      "barrier_pulse": "aegis_ultimate",
+      "intercept": "intercept_cast",
+      "warding_wall": "warding_wall_cast"
+    }
+  }
 }
