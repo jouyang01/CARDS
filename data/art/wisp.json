@@ -1,0 +1,6 @@
+{
+  "id": "wisp",
+  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
+  "weaponClass": "dual",
+  "_weaponClassNote": "A blade in each hand. Fast, asymmetric, never a wind-up."
+}

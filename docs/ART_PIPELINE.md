@@ -1,6 +1,11 @@
 # ART_PIPELINE.md — from `data/art/*.json` to rigged, armed, animated characters
 
-**Status:** planned, not built. Nothing in this document exists in `packages/` yet.
+**Status:** phase 1 partially built — see `tools/art/`. Aegis is the spike character
+(`data/art/aegis.json`). Nothing in this document exists in `packages/` yet.
+
+`paint_atlas.py` is written and verified — it produces Aegis's atlas today.
+`generate_character.py` is written but **not yet executed**: it needs Blender, which the
+authoring session did not have. First run is on the owner's machine and may need fixes.
 **Owner directive:** characters are to be *generated*, not hand-modelled. The repo owner has
 no Blender, animation or art skills, and the pipeline is designed around that constraint
 rather than in spite of it.
@@ -31,7 +36,7 @@ from near-ground-level to straight down.
 | Phase | Owner | Produces |
 |---|---|---|
 | 0 · Setup & style lock | human | Blender installed, spike character chosen |
-| 1 · Character generator | Builder | `<id>.fbx` + `<id>_atlas.png` |
+| 1 · Character generator | Builder | `<id>.fbx` (Blender) + `<id>_atlas.png` (no Blender) |
 | 2 · Rigging & clips | human, in Mixamo | 1 rigged FBX + 8 animation FBX |
 | 3 · Asset build | Builder | one `.glb`, all clips named |
 | 4 · Renderer integration | Builder | boxes replaced |
@@ -44,8 +49,15 @@ Exactly one phase is hands-on: dragging five markers onto a model in Mixamo's we
 
 Blender runs headless — `blender --background --python script.py`. It is in the pipeline
 because **Mixamo exports FBX and the client needs glTF**, and something has to convert,
-merge clips onto one skeleton, and optimize. Nobody opens its interface. Require 4.2 LTS
-or newer.
+merge clips onto one skeleton, and optimize. Nobody opens its interface.
+
+Require 4.2 LTS or newer. Verified working on **5.2.0 LTS / macOS**. Since 4.2 Blender has
+been migrating bundled add-ons to its extensions system, so confirm the two exporters this
+pipeline needs are actually present before assuming they are:
+
+```
+blender --background --python-expr "import bpy; print(hasattr(bpy.ops.export_scene,'fbx'), hasattr(bpy.ops.export_scene,'gltf'))"
+```
 
 ## 3. Character generation (Phase 1)
 
@@ -84,6 +96,16 @@ Nobody models a face at this scale. The face is drawn into a texture, and becaus
 script builds the head it also **assigns the UVs** — the layout is a decision, not a
 discovery. No unwrapping, no seams, no Blender UI.
 
+The head is **not** a box. An earlier version made it one, on the reasoning that mapping a
+rectangle onto a face needs a flat quad. That constraint is not real: instead of handing one
+quad the whole rectangle, the portrait is **planar-projected** from the front onto a tapered
+form, so it wraps around the skull the way a face actually sits on one. Each face of the head
+picks its projection from where it sits — front gets the portrait, back gets hair, the sides
+get their own region, and the horizontal caps project from above rather than from the front
+(project a cap from the front and every vertex shares one `v`, so the whole cap samples a
+one-pixel strip). The painted face region carries a **hairline** across its top, because the
+projection runs chin-to-crown and the top of that rectangle lands where hair belongs.
+
 Atlas layout (1024²):
 
 | Region | Pixels | Contents |
@@ -95,8 +117,14 @@ Atlas layout (1024²):
 | Flat swatches | `512,256–1024,512` | Solid colours for limbs, boots, gloves |
 
 That last row is the economy of the whole approach: most of the body points at a single
-solid-coloured pixel. Only the face earns real pixel detail. Drawing happens with Pillow,
-which ships inside Blender's bundled Python — no extra install.
+solid-coloured pixel. Only the face earns real pixel detail.
+
+**Texture generation is a separate script that does not use Blender.** Painting a face into a
+PNG is plain 2D image drawing; Blender builds geometry and assigns UVs, and never touches
+pixels. That split is deliberate — the texture step then runs and tests without launching
+Blender, it mirrors how `textures.ts` already generates textures in the client, and it
+removes any question about what Blender's bundled Python does or does not ship. Plain Python
+with Pillow, or Node with canvas to match the client, are both fine.
 
 ### Rules the rotating camera imposes
 
@@ -120,13 +148,34 @@ which ships inside Blender's bundled Python — no extra install.
 
 ## 4. Mixamo (Phase 2 — the human step)
 
+**Mixamo is two separate screens.** Conflating them is the single most confusing thing
+about this step, so they are documented separately here.
+
+### Screen 1 — the Auto-Rigger
+
 1. mixamo.com, free Adobe account.
 2. **Upload Character** → the `.zip` from Phase 1 (FBX + atlas together, so the texture is
    visible in the preview and you can confirm UVs survived).
 3. Drag five markers: chin, both wrists, both elbows, both knees, groin.
 4. Choose the **"No Fingers"** skeleton — fewer bones, smaller file, and fingers are
    invisible at isometric distance.
-5. Download the base character, then each clip.
+5. Confirm the preview walks correctly, then accept the rig.
+
+There are **no animation options on this screen** — no format, no fps, no "In Place".
+Nothing has been animated yet. Accepting the rig moves you to screen 2.
+
+### Screen 2 — the animation library
+
+Your character in a viewport, a searchable animation list down the left. The clip names in
+the table below are **search terms**, not sections or categories.
+
+Selecting a clip opens a **settings panel on the right** with sliders for that clip
+(Overdrive, Character Arm-Space, Trim). **"In Place" is a checkbox in that panel**, and it
+appears only for clips that actually travel — idle, attack and death clips do not offer it,
+because they have no root motion to strip.
+
+Download the base character once (search `T-Pose`, apply, download **With Skin**), then each
+clip **Without Skin** so they all share one skeleton.
 
 | Setting | Base character | Each animation |
 |---|---|---|
@@ -134,7 +183,7 @@ which ships inside Blender's bundled Python — no extra install.
 | Pose / Skin | T-pose, **With Skin** | **Without Skin** |
 | Frames per second | — | 30 |
 | Keyframe Reduction | — | None |
-| In Place | — | **Checked** on all locomotion |
+| In Place | not offered | **Checked**, on travelling clips only |
 
 > **"In Place" is the failure mode that hides.** The engine owns unit positions on the grid.
 > If the animation also translates the character, the two fight and units drift off their
@@ -143,16 +192,19 @@ which ships inside Blender's bundled Python — no extra install.
 
 Clips, mapped onto the cue kinds in `choreograph.ts`:
 
-| Game moment | Mixamo search | In Place |
+| Game moment | Search term | In Place |
 |---|---|---|
-| Resting | `idle` | — |
-| Prep phase | `casting spell` | — |
-| Dash phase | `running` | yes |
-| Blast phase | `shooting` / `sword slash` | — |
-| Move phase | `walking` | yes |
-| Taking damage | `hit reaction` | — |
-| Death | `falling back death` | — |
-| Knockback | `knocked out` | — |
+| Resting | `idle` | not offered |
+| Prep phase | `casting spell` | not offered |
+| Dash phase | `running` | **tick it** |
+| Blast phase | `shooting` / `sword slash` | not offered |
+| Move phase | `walking` | **tick it** |
+| Taking damage | `hit reaction` | not offered |
+| Death | `falling back death` | not offered |
+| Knockback | `knocked out` | not offered |
+
+If a clip you expect to travel offers no In Place checkbox, it has no root motion and needs
+nothing done — that is not a problem.
 
 ## 5. Asset build (Phase 3)
 
@@ -176,6 +228,28 @@ static assets and are **not** counted by that script — see the Analyzer brief 
 The box at `renderer3d.ts:541` becomes a `GLTFLoader`-loaded `SkinnedMesh` with an
 `AnimationMixer`, cloned per unit via `SkeletonUtils.clone`, driven from the existing cue
 timeline.
+
+### Scale: the model does not fit the board as authored
+
+`renderer3d.ts:52` sets `TILE = 1` and line 53 sets `UNIT_HEIGHT = 0.6`. Aegis is built at
+human scale and measures **1.733 world units tall — 2.9x the box he replaces, and 1.73
+tiles.**
+
+Footprint is fine: the body is 0.486 x 0.310 inside a 1.0 tile, comfortably clear. Height is
+not. Two things break at 1.73 tiles:
+
+- **Occlusion.** Eight characters nearly two tiles tall on an 18x15 board hide each other
+  and the ground they stand on, worst at the ~8 degree pitch the free orbit allows.
+- **Nameplates.** `PLATE_H = 0.66`, positioned at `PLATE_H / 2 + 0.14` = 0.47 — which on
+  this model is mid-thigh. Every nameplate would render inside the character.
+
+Author at human metres regardless: Mixamo expects it and the animations read naturally. Then
+apply a **board scale** at load. Clips are bone rotations and In Place exports carry no root
+translation, so scale costs nothing and is fully reversible.
+
+The number to pick is what a tile represents on the ground. At 1.5 m per tile a 1.78 m
+character is 1.19 tiles — tall enough to read, short enough to see past. That is a game
+design decision, so it belongs in data rather than hard-coded in the renderer.
 
 > **Clip selection lives in the renderer, never in `sampleFrame()`.** That function is pure,
 > Three-free and unit-tested, and its contract is that dropping every frame changes nothing
@@ -328,7 +402,8 @@ Owns `data/art/<id>.json` for all nine characters, and the per-ability VFX table
 
 ## 10. First steps
 
-1. Human: install Blender 4.2 LTS or newer; confirm `blender --version` runs from a terminal.
+1. Human: install Blender 4.2 LTS or newer; confirm `blender --version` runs from a terminal,
+   then confirm the FBX and glTF exporters are present with the `--python-expr` check in §2.
 2. Human: confirm the spike character. **Aegis** is the recommendation — `frontline`
    archetype, shield, chunky silhouette, and `shield_bash` is `melee: true`, so the
    rig-and-animate loop can be proven without any projectile VFX.

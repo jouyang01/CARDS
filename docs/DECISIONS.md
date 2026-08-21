@@ -4638,7 +4638,11 @@ tooling. `docs/ART_PIPELINE.md` is the full plan; the judgment calls behind it a
 2. **Blender is a build dependency, not a tool anyone opens.** `blender --background --python`.
    It is required because Mixamo exports FBX and the client needs glTF; something has to convert,
    merge clips onto one skeleton and optimize. Rejecting the install would mean depending on web
-   converters for a step that runs on every asset rebuild. Require 4.2 LTS or newer.
+   converters for a step that runs on every asset rebuild. Require 4.2 LTS or newer; verified on
+   5.2.0 LTS / macOS. **Blender builds geometry only — it never generates textures.** Painting the
+   face atlas is plain 2D image drawing, so it is a separate script that runs without Blender:
+   testable on its own, mirrors how `textures.ts` already works, and sidesteps any dependence on
+   what Blender's bundled Python happens to ship.
 
 3. **Faces are painted into a texture, never modelled.** Because the generator builds the head it
    also assigns the UVs, so the atlas layout is a decision rather than a discovery — no unwrapping,

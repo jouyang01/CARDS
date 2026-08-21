@@ -1,0 +1,6 @@
+{
+  "id": "vex",
+  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
+  "weaponClass": "rifle",
+  "_weaponClassNote": "Shouldered rifle. Two-handed, one hand always on the foregrip."
+}

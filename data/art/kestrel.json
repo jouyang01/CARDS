@@ -1,0 +1,6 @@
+{
+  "id": "kestrel",
+  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
+  "weaponClass": "bow",
+  "_weaponClassNote": "Draw and loose. Both hands, and a hold at full draw."
+}

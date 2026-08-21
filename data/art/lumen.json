@@ -1,0 +1,6 @@
+{
+  "id": "lumen",
+  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
+  "weaponClass": "cast",
+  "_weaponClassNote": "Nothing held. The hands do the work."
+}
