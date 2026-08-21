@@ -1,14 +1,15 @@
 # MAP_PIPELINE.md — from a grid of boxes to an arena with life
 
 **Status:** phase 1 built (`BOARD-LIT`, `GRID-SEAMS`, `SCENE-DIORAMA`, `SKY-DOME` — all in
-`renderer3d.ts`, `sky.ts` and `textures.ts`). Phases 2–5 are unbuilt. **Nothing in this
-pipeline requires an art asset until phase 4**, which is the whole reason it is sequenced
-this way.
+`renderer3d.ts`, `sky.ts` and `textures.ts`). Phases 2, 3 and 5 are unbuilt; phase 4 was
+largely shipped by the character pipeline and needs reusing rather than rebuilding.
+**Nothing in this pipeline requires an art asset until phase 5**, which is the whole reason
+it is sequenced this way.
 
 The counterpart to `docs/ART_PIPELINE.md`, which covers *characters* — modelling, rigging,
 animation, weapons. That document says nothing about terrain, and this one says nothing
-about characters. They meet in exactly one place: the asset-loading path (phase 4 here,
-phase 3–4 there), which neither should build twice.
+about characters. They meet in exactly one place: the asset-loading path, which neither
+should build twice — and as of `character-model.ts`, one of them has built it.
 
 Read this before changing how the **board** is drawn, before adding scenery or ambient
 motion, and before proposing that the maps get "textures".
@@ -71,15 +72,16 @@ single most visible gap and phase 2 closes it.
 ## 3. The phases
 
 These are **not a strict fidelity ladder**, and treating them as one is the mistake to avoid.
-Phase 2 is schema work and phase 3 is content work; they are independent. Phase 4's cost is
-dominated by infrastructure that has nothing to do with textures.
+Phase 2 is schema work and phase 3 is content work; they are independent. Phase 4 turned out
+to be infrastructure with nothing to do with textures — which is why the character pipeline
+finished it first, and why terrain inherits it.
 
 | Phase | Needs art? | Produces |
 |---|---|---|
 | 1 · Light, ground, arena, sky | no | form, countable squares, a place — **built** |
 | 2 · Themes as data | no | a map declares its own look in JSON |
 | 3 · Procedural surfaces + ambient motion | no | grain, and the first thing that moves |
-| 4 · Asset loading | no (infrastructure) | `GLTFLoader`, `public/`, async boot, asset budget |
+| 4 · Asset loading | no (infrastructure) | **mostly shipped by the character pipeline** — what remains is the asset-weight budget |
 | 5 · Props and set pieces | **yes** | the skyline, the machinery, the crowd |
 
 ### Phase 2 — themes as data
@@ -111,22 +113,31 @@ headless fallback.
 
 Ambient motion belongs here too, and see §4 for the prerequisite it carries.
 
-### Phase 4 — asset loading
+### Phase 4 — asset loading (**mostly already built — reuse it**)
 
-**Nothing in this repository has ever loaded a non-JS asset.** No `GLTFLoader`, no
-`TextureLoader`, no runtime `fetch` for content, not one `.png` or `.glb` in the tree, and no
-`packages/client/public/`. All twelve content imports in `main.ts` are JSON bundled at build
-time.
+This section originally said no asset-loading path existed anywhere in the repo, and argued
+that terrain and characters should share one rather than build two. Between that being
+written and this being merged, the character pipeline shipped exactly that path. The argument
+holds; the work is largely done, and **terrain should reuse it rather than write a second one.**
 
-So this phase is not a texture change. It is: a loader, a `public/` directory, an async boot
-path, a loading state, a failure path for an asset that does not arrive, and the
-asset-weight CI number that `BACKLOG.md`'s **ASSET-WEIGHT-BUDGET** already flags as missing.
+`packages/client/src/character-model.ts` already carries every hard part:
 
-**`ART_PIPELINE.md` §5 needs all of it too** — it specifies `packages/client/public/models/`
-for character `.glb` files and flags the same budget gap independently. Build this once,
-deliberately, serving both pipelines. Burying it inside a cosmetic terrain change means the
-character pipeline later inherits whatever shape it happened to take under unrelated
-pressures.
+- **Dynamic import of the loader.** `GLTFLoader` + `SkeletonUtils` are ~77 kB gz — over half
+  the bundle headroom — so they are imported only when a match actually contains a character
+  with a model. A terrain-asset path should stay behind the same kind of gate.
+- **A manifest fetched `no-cache`, carrying a content hash** that cache-busts the `.glb` beside
+  it. That solves the stale-mesh-against-fresh-manifest problem terrain will have too.
+- **Failure is ordinary, not exceptional.** A missing or 404ing asset is recorded and the
+  character keeps its box; it warns rather than throwing. Terrain wants the identical posture —
+  a theme whose texture does not arrive should fall back to phase 3's procedural surface, not
+  break the board.
+
+`packages/client/public/models/` exists and ships `aegis.glb`.
+
+**What is still missing is the budget number.** `scripts/bundle-budget.mjs` counts gzipped
+**JS** only; nothing in CI watches `public/`. That is `BACKLOG.md`'s **ASSET-WEIGHT-BUDGET**,
+and it is now the whole of this phase rather than a footnote to it. Two pipelines are shipping
+bytes it does not see.
 
 ### Phase 5 — props and set pieces
 
@@ -222,8 +233,9 @@ decisions do not. `sky.ts` deliberately has **no `three` import** so `e2e/pixels
 the exact ramp the renderer draws from; a hand-copied hex in the test would drift silently.
 
 ### Analyzer
-**ASSET-WEIGHT-BUDGET is the item to spec before phase 4 lands**, and it now has two callers
-rather than one. Also worth a review: whether the tile-seam and rim contrast survive on a poor
+**ASSET-WEIGHT-BUDGET is now overdue rather than upcoming.** `public/models/aegis.glb` ships
+today and `scripts/bundle-budget.mjs` counts gzipped JS only, so CI already watches none of
+it; terrain will be the second pipeline feeding the same blind spot. Also worth a review: whether the tile-seam and rim contrast survive on a poor
 monitor, and whether `boardSpan()` framing the *arena* rather than the board changed anything
 about how the auto-camera follows the action.
 
@@ -258,4 +270,7 @@ touches `packages/engine`, so the ask is to the *renderer*, not the simulation.
 1. Phase 2, themes as data — small, unblocks everything, and immediately stops Duel Arena and
    Iron Basin looking identical.
 2. The ambient freeze hook, before any motion exists to need it.
-3. Then phase 3, and only then decide whether phase 4's infrastructure is worth it.
+3. Then phase 3. Phase 4 is no longer a decision point of its own now that the loader exists —
+   but **ASSET-WEIGHT-BUDGET should land before terrain starts shipping bytes too**, since a
+   second pipeline feeding an unwatched directory is how that gap turns into a regression
+   nobody sees.

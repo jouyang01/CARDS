@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LAYER_LIFT, PITCH, SHAPE_LIFT, TERRAIN_HEIGHT, onBoard, squareToWorldXZ, worldXZToSquare } from '../src/renderer3d.js';
+import { LAYER_LIFT, PITCH, SHAPE_LIFT, TERRAIN_HEIGHT, onBoard, squareToWorldXZ, staleUnitGroups, worldXZToSquare } from '../src/renderer3d.js';
+import type { BuiltUnit } from '../src/renderer3d.js';
 import type { Vec2 } from '@cards/engine';
 
 /**
@@ -98,5 +99,50 @@ describe('tile overlays clear the terrain they are drawn over', () => {
 
   it('leaves the whole band well under a unit, so nothing floats over a body', () => {
     expect(SHAPE_LIFT).toBeLessThan(0.1);
+  });
+});
+
+/**
+ * MODEL-LATE — a unit built before its model arrived does not keep the box.
+ *
+ * `buildUnit` decides box-or-model once, when it creates the group, and `show()`
+ * caches that group by unit id for the rest of the match. Models come off the
+ * network and the opening paint is deliberately synchronous (VISION1-opening),
+ * so on any cold load the board is drawn FIRST and the models land after. Which
+ * makes the late arrival the normal path, not an edge case — and without a
+ * rebuild every unit would wear the box it was born with all game.
+ */
+describe('staleUnitGroups', () => {
+  const box = (characterId: string | undefined): BuiltUnit => ({ characterId, hasModel: false });
+  const rigged = (characterId: string): BuiltUnit => ({ characterId, hasModel: true });
+  const loaded = (...ids: string[]) => (id: string): boolean => ids.includes(id);
+
+  it('rebuilds a box whose model has since loaded', () => {
+    expect(staleUnitGroups([['u1', box('aegis')]], loaded('aegis'))).toEqual(['u1']);
+  });
+
+  it('leaves a box alone while its character still has no model', () => {
+    // Eight of the nine. This is the steady state, and it must not churn the
+    // scene graph every time another character finishes loading.
+    expect(staleUnitGroups([['u1', box('thorn')]], loaded('aegis'))).toEqual([]);
+  });
+
+  it('never rebuilds a unit that is already rigged', () => {
+    // The re-entrancy guard: `preloadCharacters` can be called again, and
+    // rebuilding a live model would drop its mixer mid-animation.
+    expect(staleUnitGroups([['u1', rigged('aegis')]], loaded('aegis'))).toEqual([]);
+  });
+
+  it('ignores units with no character at all', () => {
+    // Fog ghosts are built from a remembered position and carry no characterId.
+    expect(staleUnitGroups([['ghost', box(undefined)]], loaded('aegis'))).toEqual([]);
+  });
+
+  it('rebuilds every unit of the character, not just the first', () => {
+    // A mirror match: four units, two characters, and only the aegis pair moves.
+    const built: [string, BuiltUnit][] = [
+      ['a1', box('aegis')], ['b1', box('bastion')], ['a2', box('aegis')], ['b2', rigged('bastion')],
+    ];
+    expect(staleUnitGroups(built, loaded('aegis'))).toEqual(['a1', 'a2']);
   });
 });

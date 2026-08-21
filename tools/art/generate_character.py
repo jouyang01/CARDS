@@ -283,8 +283,15 @@ def add_tube(bm, uv_layer, axis, start, end, profile, swatch,
     ts = [stop[0] for stop in profile]
 
     def cyl_uv(ring_i, t):
-        """Cylindrical unwrap: around the tube -> u, along it -> v."""
-        fu = (ring_i % sides) / float(sides)
+        """Cylindrical unwrap: around the tube -> u, along it -> v.
+
+        NO modulo on ring_i. The VERTEX index wraps — face `sides-1` closes the
+        ring back onto vertex 0 — but its UV must not. Wrapping the UV made the
+        closing quad run u from (sides-1)/sides straight back to 0, squeezing the
+        whole texture cell backwards into a single face: a bright seam stripe
+        down the length of every arm, leg and torso.
+        """
+        fu = ring_i / float(sides)
         return (u0 + (u1 - u0) * fu, v0 + (v1 - v0) * min(max(t, 0.0), 1.0))
 
     made = []
@@ -525,17 +532,21 @@ def build_body(spec):
         # Upper arm starts clear of the torso; the pauldron above bridges the gap.
         ax = gap + limb * 1.02
         seg = arm_len * 0.52
+        # cap_start False: that end is buried inside the pauldron, and a capped
+        # buried end is an interior face — it costs triangles and casts shadow.
         tube("x", (side * ax, 0, arm_z), (side * (ax + seg), 0, arm_z),
              taper((0.0, limb * 1.26, limb * 1.26),
                    (0.5, limb * 1.14, limb * 1.14),
-                   (1.0, limb * 1.02, limb * 1.02)), "iron")
+                   (1.0, limb * 1.02, limb * 1.02)), "iron",
+             cap_start=False, cap_end=False)
 
         bx = ax + seg
         tube("x", (side * bx, 0, arm_z), (side * (bx + seg), 0, arm_z),
              taper((0.0, limb * 1.10, limb * 1.10),
                    (0.16, limb * 1.04, limb * 1.04),
                    (0.45, limb * 0.92, limb * 0.92),
-                   (1.0, limb * 0.84, limb * 0.84)), "leather")
+                   (1.0, limb * 0.84, limb * 0.84)), "leather",
+             cap_start=False, cap_end=False)
 
         # Hand: a rounded mitt. It read as blocky because it inherited the
         # armour's superellipse exponent; a hand is the one part with no flat

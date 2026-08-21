@@ -174,6 +174,24 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > lit tile's outer half sits outside the line" is the ruling working as specified — a **playtest note
 > for the owner**, not a defect.
 
+> **⚠ NOT YET FOLDED IN — `INTERCEPT-GUARD`, Aegis's thesis ability, 2026-08-17 (Designer;
+> owner directive).** Full spec with rulings, numbers and the Builder's test list:
+> `docs/design/intercept-guard.md`. The rebuild: Intercept becomes **teleport adjacent to an
+> ally within 5; for the rest of that turn, damage that ally would take is dealt to Aegis
+> instead; Aegis alone gains an 18 shield** (most-but-not-all of the 20–26 basic band). The
+> owner's argument is the design: *Dash resolves before Blast — he arrives, and then the
+> damage lands on him.* One new `EFFECT_KIND` **`guard`** (first since DOT-HOT; beneficial
+> polarity; caster id via the DOT-HOT attribution plumbing). Key rulings the Builder must
+> not re-derive: damage only (statuses and displacement still hit the ally); enemy-dealt
+> only (no recoil, no end-of-turn DoT ticks; enemy traps DO redirect); amount = what would
+> have reached the ally (attacker mods + ally's cover), applied to Aegis's shields then HP;
+> guard dies with Aegis mid-turn; refresh-not-stack, latest caster wins; ally-bound
+> targeting via the `chaseTargetId` pattern on the ally side; landing = nearest open
+> orthogonal adjacent at Dash start, fixed-order tiebreak, fizzle if none; **1v1 fallback**
+> to square-target teleport + shield (the self-applicability rule stands). Old ally-shield
+> `impact` removed. Events `guardApplied`/`damageRedirected` so playback shows the shot
+> bending. Whole rebuild ships in ONE engine+data+client commit — nothing rides ahead.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
@@ -1978,8 +1996,27 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   "convoys" where a follower steps into a leader's vacating square are not expressible.
   Irrelevant at one unit per side; revisit when 2v2 lands (crossing paths that start on
   free squares already resolve correctly via the step-synchronised resolver).
-- **RULED — Turn-12 tiebreak order.** Win check runs at end of turn after all phases:
-  kills compared first; if tied, sudden death continues with normal turns.
+- **RULED — SUDDEN-DEATH: at the turn limit, the next kill wins (owner Dev Note 2026-08-21;
+  closes Builder session-12 OQ #1; SUPERSEDES the "turn-12 tiebreak" note below).** The win check runs at
+  end of turn after all phases, per the match format (`resolveOutcome`, `formats.ts`):
+  - **Before the limit:** first team to `killsToWin` wins. A simultaneous **Double KO** that puts *both*
+    teams at the kill target in the same turn is a **draw** ("Double KO") — the one genuine tie the game
+    keeps (see "RULED — Mutual damage").
+  - **At the turn limit (`turn >= turnLimit`):** if one team leads on kills, it wins; **if the teams are
+    tied, the match enters Sudden Death** (`suddenDeath = true`) and continues with normal turns.
+  - **In Sudden Death, the next kill wins** — *verbatim owner ruling.* Because the win check re-runs the
+    `turn >= turnLimit` comparison every subsequent turn, the first turn that produces a **kill
+    differential** ends the match for the leader; a turn that stays tied (no kill, or a balanced trade)
+    continues. This is the behaviour already shipped — the ruling formalises it, it is not a new mechanic.
+  - **Sudden Death is unbounded — no artificial turn cap, no alternate tiebreak** (not total damage, not
+    first blood). The owner's rule is that a *kill* decides it, so play continues until one lands. (BOTPLAY
+    found ~6% of bot brawls still tied at 3× the limit; that is a bot artifact — bots do not focus-fire —
+    not a reason to invent a tiebreak the owner did not ask for. If a hard safety cap is ever wanted for
+    pathological games, that is a separate owner call.)
+  - **The one Sudden-Death draw:** a simultaneous Double KO that carries *both* teams to `killsToWin` from
+    a tie (e.g. 3–3 → 4–4 at `killsToWin` 4) is still a draw, consistent with the Mutual-damage ruling — no
+    single team got "the next kill." A Double KO *below* the target (e.g. 2–2 → 3–3) is still tied and
+    Sudden Death simply continues. **Locked by a test** (backlog SUDDEN-DEATH-TEST).
 - **OPEN — Simultaneous disconnect/timeout handling** (matters at M3): if a player
   never submits, does their character sprint-hold or full-hold? Current lean: hold
   position, no ability. Decide when building the server.

@@ -34,6 +34,23 @@ source of truth; the outputs are always rebuildable.
 Output is deterministic: weathering and tally placement seed from the character
 id, so the same character weathers identically on every machine.
 
+## After Mixamo
+
+```bash
+blender --background --python tools/art/build_glb.py -- aegis ~/path/to/mixamo-downloads
+```
+
+Point it at the folder of Mixamo downloads. It finds the **With Skin** export by
+detecting which file brought a mesh (rather than trusting a filename), takes the action
+out of every other file, re-applies the atlas, and writes one `.glb` plus a
+`<id>.clips.json` manifest into `packages/client/public/models/`.
+
+Clip names come from filenames: `Falling Back Death.fbx` becomes `falling_back_death`.
+
+Mixamo exports in centimetres and the client works in metres, so the script applies the
+armature's scale on import. Skipping that lands a 1.7 m character at 170 units — not
+subtly wrong, off the board entirely.
+
 ## Then what
 
 Zip `<id>.fbx` together with `<id>_atlas.png` and upload **that** to Mixamo.
@@ -92,10 +109,15 @@ game asset — the previews set `Standard`.
 blender --background --python tools/art/validate.py -- aegis
 ```
 
-Every check corresponds to a way Mixamo's auto-rigger fails or builds a bad
-skeleton: single mesh, triangle budget, mirrored joint landmarks, T-pose arm
-centreline, crotch gap, armpit gap, feet near the origin. Two seconds here beats
-discovering the same problem after rigging and collecting eight clips.
+Fourteen checks. Nine cover the ways the auto-rigger fails or builds a bad skeleton
+(single mesh, triangle budget, mirrored joint landmarks, T-pose arm centreline, crotch
+gap, armpit gap, legs inside hips, head clears collar, feet near origin). Five enforce
+the proportion spec in `docs/ART_PIPELINE.md` §6b — shoulder height, arm reach, feet
+separated, shoulder bulk, no UV seam wrap.
+
+Each of those five exists because the rule was got wrong once and had to be found by
+eye. Prose gets skipped; a failing build does not. Two seconds here beats discovering
+the same problem after rigging and collecting eight clips.
 
 It distinguishes **decoration** asymmetry from **landmark** asymmetry. A heavier
 pauldron on one shoulder changes vertex counts without moving a joint, and is an

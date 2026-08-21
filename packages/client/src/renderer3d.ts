@@ -20,6 +20,7 @@
 import {
   AmbientLight,
   CanvasTexture,
+  Box3,
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
@@ -47,6 +48,8 @@ import {
   WebGLRenderer,
   type Material,
 } from 'three';
+import type { CharacterModels, ModelInstance } from './character-model.js';
+import type { ClipChoice, ClipSet } from './character-clips.js';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
@@ -55,6 +58,19 @@ import { intentTexture, plateTexture, skyTexture } from './textures.js';
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
 const UNIT_HEIGHT = 0.6;
+/**
+ * How tall a rigged character stands, in tiles.
+ *
+ * Characters are authored at human metres because Mixamo expects it, which puts
+ * Aegis at 1.73 tiles — nearly two — where eight of them occlude each other and
+ * the ground at low pitch. Scaling here rather than in the asset keeps the source
+ * at the size the animations were made for.
+ *
+ * This is the board-scale decision (ART_PIPELINE.md §11) in its cheapest form: a
+ * character 1.15 tiles tall implies roughly 1.5 m per tile. Change this number
+ * once characters can actually be seen on the board.
+ */
+const MODEL_HEIGHT_TILES = 1.15;
 const WALL_HEIGHT = 0.9;
 const COVER_HEIGHT = 0.45;
 
@@ -479,6 +495,8 @@ const PAD_COLOUR: Record<PowerupType, number> = {
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
   unitId: string;
+  /** Which character this is, so the renderer can find its model. */
+  characterId?: string;
   owner: 0 | 1;
   pos: Vec2;
   hp: number;
@@ -549,6 +567,15 @@ export interface Renderer {
   setUnitAt(unitId: string, x: number, y: number, lift?: number): void;
   /** Fade a unit (deferred death visuals). 1 = solid. */
   setUnitFade(unitId: string, alpha: number): void;
+  /**
+   * Fetch rigged models for these characters. Resolves either way — a character
+   * with no `.glb` keeps the box, which is the ordinary case for eight of nine.
+   */
+  preloadCharacters(characterIds: readonly string[]): Promise<void>;
+  /** Play an animation on a unit. A no-op for units still drawn as boxes. */
+  setUnitClip(unitId: string, choice: ClipChoice, beatSeconds: number): void;
+  /** This character's clip names, or undefined if it has no model loaded. */
+  clipsFor(characterId: string | undefined): ClipSet | undefined;
   /**
    * Spotlight: dim everything except these units. Used on Prep/Dash/Blast only —
    * Move is simultaneous and dimming it would hide the whole point (owner).
@@ -622,6 +649,39 @@ const toWorld = (map: MapDef, p: Vec2): Vector3 => {
 };
 
 const toSquare = (map: MapDef, v: Vector3): Vec2 => worldXZToSquare(map, v.x, v.z);
+
+/** One built unit group, as the rebuild check sees it. */
+export interface BuiltUnit {
+  characterId: string | undefined;
+  /** Whether the group it built is a rigged model rather than the fallback box. */
+  hasModel: boolean;
+}
+
+/**
+ * Which built unit groups are now out of date because their model has landed.
+ *
+ * `buildUnit` decides box-or-model **once**, when the group is created, and
+ * `show()` caches that group by unit id forever after. Models arrive over the
+ * network, so on any cold load the first paint happens first — and the opening
+ * paint is deliberately synchronous (VISION1-opening in `app.ts`: nothing may
+ * await before it, or the enemy team flashes unfogged). "The models land late"
+ * is therefore the normal case, not the exception, and without this every unit
+ * would keep the box it was born with for the whole match.
+ *
+ * Dropping the group is the whole fix: the next `show()` rebuilds it, and
+ * `show()` runs on every paint.
+ */
+export function staleUnitGroups(
+  built: Iterable<readonly [string, BuiltUnit]>,
+  isLoaded: (characterId: string) => boolean,
+): string[] {
+  const out: string[] = [];
+  for (const [unitId, unit] of built) {
+    if (unit.hasModel || unit.characterId === undefined) continue;
+    if (isLoaded(unit.characterId)) out.push(unitId);
+  }
+  return out;
+}
 
 export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   open: number; wall: number; cover: number; brush: number; team0: number; team1: number; background: number;
@@ -852,9 +912,40 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     (mesh.material as MeshBasicMaterial).needsUpdate = true;
   };
 
+  /**
+   * Undefined until a match actually needs rigged characters.
+   *
+   * Importing this module eagerly pulls Three's animation and skinning systems
+   * into the main bundle — around 66 kB gzipped on top of the loaders, for a
+   * feature eight of the nine characters do not use yet. Deferring it keeps the
+   * cost with the matches that pay it.
+   */
+  let models: CharacterModels | undefined;
+  const instances = new Map<string, ModelInstance>();
+  /** unitId → the character its group was built for, for `staleUnitGroups`. */
+  const unitCharacter = new Map<string, string | undefined>();
+
   const buildUnit = (unit: RenderUnit): Group => {
     const g = new Group();
     g.name = unit.unitId;
+    unitCharacter.set(unit.unitId, unit.characterId);
+
+    const instance = unit.characterId === undefined ? undefined : models?.instance(unit.characterId);
+    if (instance !== undefined) {
+      // Scale from the model's own bounds rather than a hard-coded factor, so a
+      // taller or shorter character still stands MODEL_HEIGHT_TILES high.
+      const box = new Box3().setFromObject(instance.root);
+      const height = box.max.y - box.min.y;
+      const scale = height > 0 ? (TILE * MODEL_HEIGHT_TILES) / height : 1;
+      instance.root.scale.setScalar(scale);
+      instance.root.position.y = -box.min.y * scale;
+      instance.root.name = 'body';
+      instances.set(unit.unitId, instance);
+      g.add(instance.root, buildBars());
+      world.add(g);
+      return g;
+    }
+
     const body = new Mesh(
       new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
       // Always `transparent`, even at full opacity: flipping the flag later
@@ -912,6 +1003,30 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     return g;
   };
 
+  /**
+   * Throw away a unit's scene object so `show()` rebuilds it.
+   *
+   * Only ever called for a unit currently drawn as a BOX (see
+   * `staleUnitGroups`), which is why disposing the whole tree is safe: a box and
+   * its bars own their geometry and materials outright. A model instance shares
+   * both with the loaded scene it was cloned from — `SkeletonUtils.clone` copies
+   * the bones and nothing else — so disposing one of those would blank every
+   * later instance of that character.
+   */
+  const dropUnitGroup = (unitId: string): void => {
+    const g = unitObjects.get(unitId);
+    if (g === undefined) return;
+    g.traverse((child) => {
+      if (child instanceof Mesh || child instanceof Line) {
+        child.geometry.dispose();
+        (child.material as Material).dispose();
+      }
+    });
+    world.remove(g);
+    unitObjects.delete(unitId);
+    unitCharacter.delete(unitId);
+  };
+
   const disposeChildren = (g: Group): void => {
     for (const child of [...g.children]) {
       g.remove(child);
@@ -937,7 +1052,16 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     const dimmed = spotlight !== null && !spotlight.has(unitId);
     const alpha = (baseAlpha.get(unitId) ?? 1) * (fadeOf.get(unitId) ?? 1) * (dimmed ? DIM_ALPHA : 1);
     const body = g.getObjectByName('body');
-    if (body instanceof Mesh) (body.material as MeshStandardMaterial).opacity = alpha;
+    // A box has one mesh; a rigged model is a tree of them. Traverse either way.
+    // The cast follows BOARD-LIT: board meshes are `MeshStandardMaterial` now,
+    // and a Lambert cast here would be a lie the compiler happens not to catch.
+    body?.traverse((o) => {
+      if (o instanceof Mesh) {
+        const mat = o.material as MeshStandardMaterial;
+        mat.transparent = true;
+        mat.opacity = alpha;
+      }
+    });
     const bars = g.getObjectByName('bars');
     if (bars !== undefined) bars.visible = alpha > 0.5;
   };
@@ -1134,9 +1258,27 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     applyCamera();
   }, { passive: false });
 
+  const performanceNow = (): number =>
+    typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
+
   let frameHandle: number | undefined;
   let afterFrame: (() => void) | undefined;
+  let lastFrameMs: number | undefined;
   const drawFrame = (): void => {
+    // Mixers advance on WALL time, not on cue time. Clip selection is already
+    // driven from the timeline; playback just has to run at the rate the clip
+    // was authored for, or it judders whenever the frame rate does.
+    const nowMs = performanceNow();
+    const delta = lastFrameMs === undefined ? 0 : Math.min((nowMs - lastFrameMs) / 1000, 0.1);
+    lastFrameMs = nowMs;
+    if (delta > 0) {
+      for (const [id, instance] of instances) {
+        // `show()` hides departed units rather than removing them, so without
+        // this every unit that ever existed keeps animating off-screen forever.
+        if (unitObjects.get(id)?.visible !== false) instance.update(delta);
+      }
+    }
+
     stepCamera();
     billboard();
     renderer.render(scene, camera);
@@ -1440,6 +1582,41 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     setUnitFade(unitId, alpha) {
       fadeOf.set(unitId, Math.max(0, Math.min(1, alpha)));
       refreshOpacity(unitId);
+    },
+
+    async preloadCharacters(characterIds) {
+      if (characterIds.length === 0) return;
+      try {
+        if (models === undefined) {
+          const mod = await import('./character-model.js');
+          models = new mod.CharacterModels();
+        }
+        await models.load(characterIds);
+      } catch (err) {
+        // The interface promises this resolves either way. `load()` already
+        // swallows a missing model per character; this catches the one thing it
+        // cannot — the dynamic import itself failing, on a stale chunk after a
+        // deploy or an offline reload. A board of boxes beats a dead frame loop.
+        console.warn(`[cards] character models unavailable, drawing boxes: ${String(err)}`);
+        return;
+      }
+      // Anything already on the board as a box, whose model has now arrived, is
+      // rebuilt on the next paint. Without this the first paint's decision —
+      // taken before the fetch could possibly have finished — would stand for
+      // the whole match.
+      const loaded = models;
+      for (const unitId of staleUnitGroups(
+        [...unitCharacter].map(([id, characterId]) => [id, { characterId, hasModel: instances.has(id) }] as const),
+        (characterId) => loaded.has(characterId),
+      )) dropUnitGroup(unitId);
+    },
+
+    setUnitClip(unitId, choice, beatSeconds) {
+      instances.get(unitId)?.play(choice, beatSeconds);
+    },
+
+    clipsFor(characterId) {
+      return characterId === undefined ? undefined : models?.manifest(characterId)?.map;
     },
 
     setSpotlight(unitIds) {

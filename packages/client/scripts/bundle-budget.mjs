@@ -1,7 +1,9 @@
 /**
  * BUNDLE1 — a budget on the shipped client bundle.
  *
- * Three.js put the bundle at ~145 kB gzipped, which is fine for GitHub Pages.
+ * Three.js put the bundle at ~145 kB gzipped when this was written; it has since
+ * grown with the client. Measure rather than trust that number — `npm run size`
+ * on a clean checkout is the only current figure.
  * The risk is not today's number, it is a regression nobody notices: an
  * accidental deep import, a second copy of a library, a dev-only module pulled
  * into the graph. The budget exists to make that loud.
