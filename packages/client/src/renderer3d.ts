@@ -448,6 +448,39 @@ const toWorld = (map: MapDef, p: Vec2): Vector3 => {
 
 const toSquare = (map: MapDef, v: Vector3): Vec2 => worldXZToSquare(map, v.x, v.z);
 
+/** One built unit group, as the rebuild check sees it. */
+export interface BuiltUnit {
+  characterId: string | undefined;
+  /** Whether the group it built is a rigged model rather than the fallback box. */
+  hasModel: boolean;
+}
+
+/**
+ * Which built unit groups are now out of date because their model has landed.
+ *
+ * `buildUnit` decides box-or-model **once**, when the group is created, and
+ * `show()` caches that group by unit id forever after. Models arrive over the
+ * network, so on any cold load the first paint happens first — and the opening
+ * paint is deliberately synchronous (VISION1-opening in `app.ts`: nothing may
+ * await before it, or the enemy team flashes unfogged). "The models land late"
+ * is therefore the normal case, not the exception, and without this every unit
+ * would keep the box it was born with for the whole match.
+ *
+ * Dropping the group is the whole fix: the next `show()` rebuilds it, and
+ * `show()` runs on every paint.
+ */
+export function staleUnitGroups(
+  built: Iterable<readonly [string, BuiltUnit]>,
+  isLoaded: (characterId: string) => boolean,
+): string[] {
+  const out: string[] = [];
+  for (const [unitId, unit] of built) {
+    if (unit.hasModel || unit.characterId === undefined) continue;
+    if (isLoaded(unit.characterId)) out.push(unitId);
+  }
+  return out;
+}
+
 export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   open: number; wall: number; cover: number; brush: number; team0: number; team1: number; background: number;
 }): Renderer {
@@ -571,10 +604,13 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
    */
   let models: CharacterModels | undefined;
   const instances = new Map<string, ModelInstance>();
+  /** unitId → the character its group was built for, for `staleUnitGroups`. */
+  const unitCharacter = new Map<string, string | undefined>();
 
   const buildUnit = (unit: RenderUnit): Group => {
     const g = new Group();
     g.name = unit.unitId;
+    unitCharacter.set(unit.unitId, unit.characterId);
 
     const instance = unit.characterId === undefined ? undefined : models?.instance(unit.characterId);
     if (instance !== undefined) {
@@ -644,6 +680,30 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       world.add(g);
     }
     return g;
+  };
+
+  /**
+   * Throw away a unit's scene object so `show()` rebuilds it.
+   *
+   * Only ever called for a unit currently drawn as a BOX (see
+   * `staleUnitGroups`), which is why disposing the whole tree is safe: a box and
+   * its bars own their geometry and materials outright. A model instance shares
+   * both with the loaded scene it was cloned from — `SkeletonUtils.clone` copies
+   * the bones and nothing else — so disposing one of those would blank every
+   * later instance of that character.
+   */
+  const dropUnitGroup = (unitId: string): void => {
+    const g = unitObjects.get(unitId);
+    if (g === undefined) return;
+    g.traverse((child) => {
+      if (child instanceof Mesh || child instanceof Line) {
+        child.geometry.dispose();
+        (child.material as Material).dispose();
+      }
+    });
+    world.remove(g);
+    unitObjects.delete(unitId);
+    unitCharacter.delete(unitId);
   };
 
   const disposeChildren = (g: Group): void => {
@@ -1193,11 +1253,29 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
     async preloadCharacters(characterIds) {
       if (characterIds.length === 0) return;
-      if (models === undefined) {
-        const mod = await import('./character-model.js');
-        models = new mod.CharacterModels();
+      try {
+        if (models === undefined) {
+          const mod = await import('./character-model.js');
+          models = new mod.CharacterModels();
+        }
+        await models.load(characterIds);
+      } catch (err) {
+        // The interface promises this resolves either way. `load()` already
+        // swallows a missing model per character; this catches the one thing it
+        // cannot — the dynamic import itself failing, on a stale chunk after a
+        // deploy or an offline reload. A board of boxes beats a dead frame loop.
+        console.warn(`[cards] character models unavailable, drawing boxes: ${String(err)}`);
+        return;
       }
-      await models.load(characterIds);
+      // Anything already on the board as a box, whose model has now arrived, is
+      // rebuilt on the next paint. Without this the first paint's decision —
+      // taken before the fetch could possibly have finished — would stand for
+      // the whole match.
+      const loaded = models;
+      for (const unitId of staleUnitGroups(
+        [...unitCharacter].map(([id, characterId]) => [id, { characterId, hasModel: instances.has(id) }] as const),
+        (characterId) => loaded.has(characterId),
+      )) dropUnitGroup(unitId);
     },
 
     setUnitClip(unitId, choice, beatSeconds) {

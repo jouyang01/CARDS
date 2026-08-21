@@ -19,6 +19,45 @@ export interface CharacterManifest {
   clips: string[];
   map: ClipSet;
   posture?: PostureSpec;
+  /** Content hash of the `.glb` beside it. See `modelUrl`. */
+  version?: string;
+}
+
+/**
+ * Where a character's mesh lives, cache-busted by the manifest's version.
+ *
+ * Vite fingerprints `dist/assets/`; it does NOT fingerprint `public/`, and the
+ * models live in `public/models/`. So a re-rigged `aegis.glb` can serve stale
+ * from a browser cache while the manifest beside it updates — mesh and manifest
+ * then disagree about which clips exist, and the unit stands in bind pose.
+ * `build_glb.py` stamps a content hash into the manifest; putting it in the
+ * query string makes the URL change exactly when the bytes do.
+ */
+export function modelUrl(base: string, id: string, version?: string): string {
+  const url = `${base}/${id}.glb`;
+  return version === undefined || version === '' ? url : `${url}?v=${encodeURIComponent(version)}`;
+}
+
+export interface ClipAudit {
+  /** False when the model is unusable and the box is the better fallback. */
+  usable: boolean;
+  /** Every clip the manifest maps that is not actually in the `.glb`. */
+  missing: string[];
+}
+
+/**
+ * Check a manifest's promises against what the `.glb` actually shipped.
+ *
+ * `usable` turns on the IDLE clip alone, and that asymmetry is the point: idle
+ * is what a unit plays whenever nothing else is happening, so a model without it
+ * sits in its **bind pose — a literal T-pose on the board**, which reads far more
+ * broken than the box it replaced. Any other missing clip costs one animation
+ * and nothing else, so it is worth a warning and not a fallback.
+ */
+export function auditClips(map: ClipSet, available: readonly string[]): ClipAudit {
+  const have = new Set(available);
+  const wanted = [map.idle, map.run, map.hit, map.death, map.knockback, ...Object.values(map.abilities)];
+  return { usable: have.has(map.idle), missing: [...new Set(wanted.filter((n) => !have.has(n)))] };
 }
 
 /**
@@ -105,18 +144,26 @@ export class CharacterModels {
       [...new Set(ids)].map(async (id) => {
         if (this.loaded.has(id) || this.missing.has(id)) return;
         try {
-          const res = await fetch(`${base}/${id}.clips.json`);
+          // `no-cache` revalidates rather than refetches. The manifest is a few
+          // hundred bytes and it is the one file that must never be stale,
+          // because it carries the version the mesh is then fetched at.
+          const res = await fetch(`${base}/${id}.clips.json`, { cache: 'no-cache' });
           if (!res.ok) throw new Error(`manifest ${res.status}`);
           const manifest = (await res.json()) as CharacterManifest;
-          const gltf = await loader.loadAsync(`${base}/${id}.glb`);
-          this.loaded.set(id, {
-            scene: gltf.scene as Group,
-            clips: gltf.animations,
-            manifest,
-          });
-        } catch {
-          // Ordinary, not exceptional. Eight characters have no model yet.
+          const gltf = await loader.loadAsync(modelUrl(base, id, manifest.version));
+          const clips = gltf.animations;
+          const audit = auditClips(manifest.map, clips.map((c) => c.name));
+          if (!audit.usable) throw new Error(`the .glb has no idle clip ("${manifest.map.idle}")`);
+          if (audit.missing.length > 0) {
+            console.warn(`[cards] ${id}: clip(s) named by the manifest but absent from the .glb — ${audit.missing.join(', ')}`);
+          }
+          this.loaded.set(id, { scene: gltf.scene as Group, clips, manifest });
+        } catch (err) {
+          // Ordinary, not exceptional — but not silent either. A character with
+          // no art yet and a character whose files 404 because the path is wrong
+          // draw the identical box, and only one of the two is fine.
           this.missing.add(id);
+          console.warn(`[cards] no model for "${id}", drawing a box: ${String(err)}`);
         }
       }),
     );

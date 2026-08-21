@@ -16,6 +16,7 @@ them. Downloading Without Skin keeps the clips mesh-free, which is what lets one
 animation set serve the whole roster instead of one set per character.
 """
 
+import hashlib
 import json
 import os
 import pathlib
@@ -324,9 +325,16 @@ def main():
     # needs a symmetric T-pose, so the hunch cannot live in the mesh).
     art_path = ROOT / "data" / "art" / f"{cid}.json"
     art = json.loads(art_path.read_text()) if art_path.exists() else {}
+    # Content hash of the .glb we just wrote. Vite fingerprints dist/assets/, but
+    # these files live in public/ and ship under their own names — so without a
+    # version in the URL a browser that cached the last rig keeps serving it
+    # while the manifest beside it updates, and the two then disagree about which
+    # clips exist. The client appends this as ?v= (see modelUrl).
+    version = hashlib.sha256(out.read_bytes()).hexdigest()[:12]
     manifest = out_dir / f"{cid}.clips.json"
     manifest.write_text(json.dumps({
         "id": cid,
+        "version": version,
         "clips": sorted(exported),
         "map": {k: v for k, v in (art.get("clips") or {}).items() if not k.startswith("_")},
         "posture": {k: v for k, v in (art.get("posture") or {}).items() if not k.startswith("_")},
