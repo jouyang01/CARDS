@@ -29,6 +29,30 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 
+def curve_count(action) -> int:
+    """Number of F-curves in an action, across Blender's two Action layouts.
+
+    Up to 4.3 an Action owned `fcurves` directly. From 4.4 onward actions are
+    "slotted": curves live in layers -> strips -> channelbags. Reading the old
+    attribute on a new Blender raises AttributeError.
+
+    This is only used for a progress line, so it must never be able to fail —
+    an earlier version let a cosmetic counter kill the whole build.
+    """
+    try:
+        fcurves = getattr(action, "fcurves", None)
+        if fcurves is not None:
+            return len(fcurves)
+        total = 0
+        for layer in getattr(action, "layers", []) or []:
+            for strip in getattr(layer, "strips", []) or []:
+                for bag in getattr(strip, "channelbags", []) or []:
+                    total += len(getattr(bag, "fcurves", []) or [])
+        return total
+    except Exception:
+        return -1
+
+
 def slug(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
     return re.sub(r"_+", "_", s)
@@ -74,6 +98,21 @@ def normalise_scale(arm, meshes):
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     return factor
+
+
+def read_glb_animations(path):
+    """Animation names actually present in a written GLB, read from its JSON chunk."""
+    try:
+        import struct
+        blob = pathlib.Path(path).read_bytes()
+        if blob[:4] != b"glTF":
+            return []
+        length, _ = struct.unpack_from("<II", blob, 12)
+        doc = json.loads(blob[20:20 + length].decode("utf-8"))
+        return [a.get("name", "?") for a in doc.get("animations", [])]
+    except Exception as exc:
+        print(f"  ! could not read back {path}: {type(exc).__name__}: {exc}")
+        return []
 
 
 def main():
@@ -148,16 +187,22 @@ def main():
         if path == base_path:
             continue
         arm, meshes, added = import_fbx(path)
-        action = arm.animation_data.action if arm and arm.animation_data else None
-        if action is None:
-            print(f"  ! {path.name}: no animation found, skipped")
-        else:
-            action.name = slug(path.stem)
-            action.use_fake_user = True          # survives the armature's deletion
-            clips.append(action.name)
-            print(f"  clip   {action.name:<24} {len(action.fcurves):>4} curves")
-        for o in added:
-            bpy.data.objects.remove(o, do_unlink=True)
+        try:
+            action = arm.animation_data.action if arm and arm.animation_data else None
+            if action is None:
+                print(f"  ! {path.name}: no animation found, skipped")
+            else:
+                action.name = slug(path.stem)
+                action.use_fake_user = True      # survives the armature's deletion
+                clips.append(action.name)
+                n = curve_count(action)
+                print(f"  clip   {action.name:<24} {n if n >= 0 else '?':>4} curves")
+        except Exception as exc:
+            # One bad file must not cost the other seven clips.
+            print(f"  ! {path.name}: {type(exc).__name__}: {exc}")
+        finally:
+            for o in added:
+                bpy.data.objects.remove(o, do_unlink=True)
 
     if not clips:
         print("  ! no clips found. Downloads must be Without Skin, one per clip.")
@@ -191,8 +236,23 @@ def main():
         export_lights=False,
     )
 
+    # Read the animations back out of the GLB rather than trusting the export.
+    # Blender 4.4+ moved to slotted actions, and an action whose slot the
+    # exporter cannot bind is skipped SILENTLY — the file is written, it just has
+    # no animations in it. Reporting what actually landed turns that into a loud
+    # failure instead of one discovered in the browser.
+    exported = read_glb_animations(out)
     size = out.stat().st_size // 1024
-    print(f"\n  -> {out}  ({size} kB, {len(clips)} clips)")
+    print(f"\n  -> {out}  ({size} kB)")
+    print(f"     collected {len(clips)} clip(s), {len(exported)} in the .glb")
+    if exported:
+        print(f"     {', '.join(sorted(exported))}")
+    missing = sorted(set(clips) - set(exported))
+    if missing:
+        print(f"\n  ! {len(missing)} clip(s) did NOT make it into the .glb:")
+        print(f"    {', '.join(missing)}")
+        print("    On Blender 4.4+ this is usually a slotted-action binding the")
+        print("    exporter could not resolve. The mesh is fine; the clips are not.")
     manifest = out_dir / f"{cid}.clips.json"
     manifest.write_text(json.dumps({"id": cid, "clips": sorted(clips)}, indent=2) + "\n")
     print(f"  -> {manifest.name}")
