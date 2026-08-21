@@ -5301,6 +5301,35 @@ Read every line with the floor caveat above. Reproduce with `npm run botplay`; a
    run 4v4 and 1v1, or run it on both maps. Not built — the dev note asked whether it could be done, and
    scope beyond that is the Analyzer's to set.
 
+## 2026-08-17 — INTERCEPT-GUARD: Aegis's thesis ability (Designer, owner directive)
+
+The owner rebuilt Intercept from a generic teleport-plus-self-shield into the Bodyguard's
+thesis: teleport adjacent to an ally within 5, and for the rest of that turn damage that
+ally would take is dealt to Aegis instead, with an 18 self-shield sized to cover most but
+not all of one regular attack (the shipped non-support basic band is 20–26; 18 covers 90%
+of a 20 and 69% of a 26). Full spec in `docs/design/intercept-guard.md`. The owner's
+one-line argument is recorded because it IS the design: **Dash resolves before Blast — he
+arrives, and then the damage lands on him.** The phase order makes bodyguarding mechanically
+real: the enemy aimed at the ally during Decision, and their locked Blast finds Aegis
+standing there. It turns the game's core read (aim where they will be) into a kit.
+
+Calls worth remembering. **(1) `guard` is the first new EFFECT_KIND since DOT-HOT**, and it
+clears the same bar: no composition of existing kinds expresses "your damage goes to him."
+**(2) The redirect is bounded on three sides** — damage only (a bodyguard takes the bullet,
+not the leash: statuses and displacement still land on the ally), enemy-dealt only (the
+ally's own recoil is their recklessness, and redirecting Ravok's selfDamagePct to Aegis was
+a degenerate combo waiting to be found), and live-turn only (end-of-turn DoT ticks are not
+hits). **(3) The amount is what would have reached the ally** — attacker's mods and the
+ally's cover compose as if the hit landed, then Aegis's shields and HP absorb it; his own
+cover is not recomputed because he is not where the shot was aimed. **(4) Ally-bound
+targeting reuses the chase pattern** (unit id in the order) rather than square-aim-near-an-
+ally, which is ambiguous at 4v4. Landing is the nearest open orthogonal adjacent at Dash
+start, fixed-order tiebreak, fizzle if surrounded. **(5) The 1v1 fallback keeps the
+self-applicability rule honest**: with no living ally the ability degrades to exactly the
+square-target escape it used to be. **(6) The playtest lever is the shield, never the
+redirect** — if the guarded carry proves unkillable at 2v2, 18 becomes 14; the redirect is
+the identity and does not move.
+
 ---
 
 ## 2026-08-21 — Builder session 13 (the model load path: the missing call site, and four decisions around it)

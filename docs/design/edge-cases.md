@@ -174,6 +174,24 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > lit tile's outer half sits outside the line" is the ruling working as specified — a **playtest note
 > for the owner**, not a defect.
 
+> **⚠ NOT YET FOLDED IN — `INTERCEPT-GUARD`, Aegis's thesis ability, 2026-08-17 (Designer;
+> owner directive).** Full spec with rulings, numbers and the Builder's test list:
+> `docs/design/intercept-guard.md`. The rebuild: Intercept becomes **teleport adjacent to an
+> ally within 5; for the rest of that turn, damage that ally would take is dealt to Aegis
+> instead; Aegis alone gains an 18 shield** (most-but-not-all of the 20–26 basic band). The
+> owner's argument is the design: *Dash resolves before Blast — he arrives, and then the
+> damage lands on him.* One new `EFFECT_KIND` **`guard`** (first since DOT-HOT; beneficial
+> polarity; caster id via the DOT-HOT attribution plumbing). Key rulings the Builder must
+> not re-derive: damage only (statuses and displacement still hit the ally); enemy-dealt
+> only (no recoil, no end-of-turn DoT ticks; enemy traps DO redirect); amount = what would
+> have reached the ally (attacker mods + ally's cover), applied to Aegis's shields then HP;
+> guard dies with Aegis mid-turn; refresh-not-stack, latest caster wins; ally-bound
+> targeting via the `chaseTargetId` pattern on the ally side; landing = nearest open
+> orthogonal adjacent at Dash start, fixed-order tiebreak, fizzle if none; **1v1 fallback**
+> to square-target teleport + shield (the self-applicability rule stands). Old ally-shield
+> `impact` removed. Events `guardApplied`/`damageRedirected` so playback shows the shot
+> bending. Whole rebuild ships in ONE engine+data+client commit — nothing rides ahead.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
