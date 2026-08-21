@@ -221,8 +221,11 @@ describe('DASH-IMPACT: the shipped roster', () => {
   const withImpact = characters.flatMap((c) =>
     [...c.abilities, c.ultimate].filter((a) => a.impact !== undefined).map((a) => ({ c, a })));
 
-  it('the three staged blocks are live, and every one validates', () => {
-    expect(withImpact.map(({ a }) => a.id).sort()).toEqual(['bullrush', 'intercept', 'shadowstep_strike']);
+  it('the staged blocks are live, and every one validates', () => {
+    // INTERCEPT-GUARD took Intercept off this list: its `impact` was the old
+    // ally-shield burst, and the guard replaces it outright — the ally's
+    // protection is the redirect now, not a shield handed out on arrival.
+    expect(withImpact.map(({ a }) => a.id).sort()).toEqual(['bullrush', 'shadowstep_strike']);
     for (const { a } of withImpact) expect(validateAbility(a, a.id)).toEqual([]);
   });
 

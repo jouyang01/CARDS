@@ -104,14 +104,24 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
       ],
       description: 'test',
     };
+    // INTERCEPT-GUARD: a sixth, because `allyTarget` is `square`-exclusive on
+    // the same argument again — the ally's square IS the aim, so a shape that
+    // takes a direction or a radius cannot also claim to be ally-bound.
+    const bodyguard: AbilityDef = {
+      id: 'u', name: 'U', phase: 'dash', shape: 'square', range: 5, cooldown: 5, energyGain: 5,
+      allyTarget: true,
+      effects: [{ kind: 'teleport' }, { kind: 'guard', duration: 1 }],
+      description: 'test',
+    };
     expect(validateAbility(charge, 'x')).toEqual([]);
     expect(validateAbility(wedge, 'y')).toEqual([]);
     expect(validateAbility(bomb, 'z')).toEqual([]);
     expect(validateAbility(twin, 'w')).toEqual([]);
     expect(validateAbility(barrier, 'v')).toEqual([]);
+    expect(validateAbility(bodyguard, 'u')).toEqual([]);
     expect([...new Set([
       ...Object.keys(charge), ...Object.keys(wedge), ...Object.keys(bomb), ...Object.keys(twin),
-      ...Object.keys(barrier),
+      ...Object.keys(barrier), ...Object.keys(bodyguard),
     ])].sort())
       .toEqual([...ABILITY_KEYS].sort());
   });
