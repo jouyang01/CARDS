@@ -270,15 +270,17 @@ def add_tube(bm, uv_layer, axis, start, end, profile, swatch,
     u0, v0, u1, v1 = swatch_cell(swatch)
 
     rings = []
-    for t, hw, hd in profile:
-        centre = start_v + span * t
+    for stop in profile:
+        t, hw, hd = stop[0], stop[1], stop[2]
+        shift = stop[3] if len(stop) > 3 else 0.0
+        centre = start_v + span * t + Vector(side_b) * shift
         ring = []
         for u, v in unit:
             offset = (Vector(side_a) * (u * hw)) + (Vector(side_b) * (v * hd))
             ring.append(bm.verts.new(centre + offset))
         rings.append(ring)
 
-    ts = [t for t, _, _ in profile]
+    ts = [stop[0] for stop in profile]
 
     def cyl_uv(ring_i, t):
         """Cylindrical unwrap: around the tube -> u, along it -> v."""
@@ -342,13 +344,15 @@ def add_head(bm, uv_layer, centre_z, r, sides=14, exponent=2.7):
     """
     bottom = centre_z - r * 0.80
     top = centre_z + r * 1.16
+    # (t, half-width across, half-depth front-to-back, backward shift)
     profile = taper(
-        (0.00, r * 0.52, r * 0.54),   # chin
-        (0.14, r * 0.74, r * 0.78),   # jaw
-        (0.36, r * 0.90, r * 0.93),   # cheekbone, the widest point
-        (0.60, r * 0.95, r * 0.95),   # temple
-        (0.82, r * 0.88, r * 0.86),
-        (1.00, r * 0.58, r * 0.56),   # crown
+        (0.00, r * 0.46, r * 0.56, -r * 0.04),   # chin — narrow, pushed forward
+        (0.14, r * 0.66, r * 0.80,  r * 0.00),   # jaw
+        (0.34, r * 0.84, r * 1.02,  r * 0.03),   # cheekbone — widest across
+        (0.56, r * 0.90, r * 1.10,  r * 0.07),   # temple — deepest
+        (0.78, r * 0.86, r * 1.04,  r * 0.11),   # occiput — the skull's overhang
+        (0.92, r * 0.72, r * 0.84,  r * 0.10),
+        (1.00, r * 0.52, r * 0.56,  r * 0.07),   # crown
     )
     faces = add_tube(bm, uv_layer, "z", (0, 0, bottom), (0, 0, top), profile,
                      "skin", sides=sides, exponent=exponent,
