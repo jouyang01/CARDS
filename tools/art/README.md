@@ -71,6 +71,21 @@ bundled one, and the GL packages because Workbench needs a rendering context eve
 in `--background`. Without the software-GL environment variables you get
 `Couldn't open libEGL.so.1` or `EGL_NOT_INITIALIZED`.
 
+## Reading the previews
+
+`preview.py` renders **lit** (Workbench STUDIO). That matters more than it sounds: the
+`FLAT` mode it used originally is *unlit* — pure albedo, no shading at all — so a dome and a
+flat disc come out pixel-identical. Any question about roundness, taper, bevels or
+silhouette depth is unanswerable in a FLAT render, and asking it there wastes rounds
+"fixing" geometry that was never wrong.
+
+One unlit frame is still emitted, as `palette.png`, because checking colour is the one job
+FLAT does better. Use it for colour, never for shape.
+
+Blender 4.x also defaults the view transform to AgX, a film emulation that deliberately
+crushes shadows and desaturates. Right for a photographic render, wrong for a flat-shaded
+game asset — the previews set `Standard`.
+
 ## Validating before you rig
 
 ```bash

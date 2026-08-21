@@ -58,14 +58,32 @@ def place_camera(cam, target, pitch_deg, yaw_deg, radius):
     cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
 
 
-def setup_scene(size):
+def setup_scene(size, light="STUDIO"):
+    """Workbench, lit by default.
+
+    FLAT is *unlit* — it renders pure albedo with no shading at all, so a dome
+    and a flat disc come out pixel-identical. An earlier version of this script
+    used FLAT throughout, which made it structurally incapable of showing form:
+    every judgement about roundness, bevels or taper was being made on an image
+    that could not express any of them. Shape questions need light.
+
+    FLAT is still useful for one thing — checking the palette without lighting
+    tinting it — so it is emitted once as `palette.png` rather than not at all.
+    """
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_WORKBENCH"
     shading = scene.display.shading
-    shading.light = "FLAT"
+    shading.light = light
     shading.color_type = "TEXTURE"
     shading.show_object_outline = False
     shading.show_shadows = False
+    # Blender 4.x defaults the view transform to AgX, which is a film emulation:
+    # it crushes shadows and desaturates on purpose. That is right for a
+    # photographic render and wrong for judging a flat-shaded game asset, where
+    # it turned a mid-grey palette into murk. Standard shows the values as lit.
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0.35 if light == "STUDIO" else 0.0
     scene.render.resolution_x = size
     scene.render.resolution_y = size
     scene.render.film_transparent = False
@@ -136,6 +154,14 @@ def main():
         scene.render.filepath = str(out_dir / f"{name}.png")
         bpy.ops.render.render(write_still=True)
         print(f"  {name:<12} pitch {pitch:>6.2f}°  yaw {yaw:>3}°")
+
+    # One unlit frame, purely as a palette reference.
+    setup_scene(512, light="FLAT")
+    place_camera(cam, target, ISO_PITCH, 0, radius=10.0)
+    scene.render.filepath = str(out_dir / "palette.png")
+    bpy.ops.render.render(write_still=True)
+    print(f"  {'palette':<12} unlit — colour reference only, shows no form")
+    setup_scene(512)
 
     # The honest test: how big a unit actually is on screen.
     scene.render.resolution_x = scene.render.resolution_y = 48
