@@ -5113,3 +5113,94 @@ ask about them.
 6. **The `.hud-rotate` row and WALL-CAST-FIX close session-9 OQ #4 only half way.** A rotated wall's
    order is now proven to survive lock-in and resolve in a **hot-seat**; the networked relay is still
    verified by reading the protocol. NET-E2E remains the real answer.
+
+## 2026-08-21 — Builder session 11 (RAM-PREVIEW-REVERT, WALL-HIT-ONCE, the TTK package)
+
+**RAM-PREVIEW-REVERT: no app.ts change was needed, and the Spec Notes expected one.** The notes name
+`app.ts` as a site to "remove the path-outline draw" from. There is no path-outline draw there —
+`app.ts`'s shape-layer call is generic over `aimBoundaries`, so the outline appeared and disappears
+entirely with `tessellate`'s `path` case. The only files touched are `aim-boundary.ts` (the case + the
+memo key) and the test file. Recorded because "the third file in the Spec Notes was already correct" is
+the kind of thing that looks like an omission in review.
+
+**The reverted outline left a comment saying why a charge is unlike every other shape.** A charge's aim
+is a *route*, not a direction and a reach, so its locus depends on the whole aim rather than on `aim[0]`
+— which is why re-adding an outline would also need the route back in `boundaryKey`. That is the one
+piece of the reverted work worth keeping, and it is now four lines of prose instead of thirty of code.
+
+**WALL-HIT-ONCE's dedup set is threaded, not stored.** The ruling allows either. It is threaded from
+`resolveTurn` through the trap-trigger callers, beside `displaced` and `pending`, because it is scratch
+belonging to one resolution: storing it on `GameState` would ship per-turn bookkeeping to every client
+and every saved room, and would need remembering to clear — a future `perTile` hazard with `lifetime: 2`
+would silently become "once per cast, ever" the day somebody removed the clear. Cost: one parameter on
+thirteen functions. The parameter is named `trapHits` rather than `hits` because `runBlast` already has a
+local `hits` (its blast-hit list), and two different `hits` in one file is a bug waiting to happen.
+
+**A `groupId` is "I am one tile of a bigger hazard", not an id every trap carries.** A single-tile trap
+is consumed by the first unit to set it off, so "once per unit" is already true of it; giving it a group
+would be an id that never changes an answer, and would invite a future reader to think the dedup is what
+makes a mine one-shot. The id is the trap id with the square left off — the part that is the *cast*
+rather than the tile — so two walls from two casters in one turn stay distinct and the same ability
+re-cast next turn is a new hazard.
+
+**The cross-phase WALL-HIT-ONCE test needed a bent charge, and the AC's own example would have been
+vacuous.** The AC suggests "dashes through in Dash and is shoved through in Blast". Built literally with
+a straight charge, that hits the *same* tile twice — consumed the first time — so it passes identically
+with and without the dedup. Only a victim who changed lane mid-turn can reach a second live tile of the
+same wall, so the test charges through, bends off the lane, and is hooked back across a different tile.
+
+**The TTK package shipped as one commit, against the "commit per item" habit.** The backlog says the five
+items "are one change and must land together — do not ship a partial package". Split into five commits,
+the middle three are red: the HP change alone breaks twelve tests that name old numbers. One green commit
+beats five where four cannot be bisected through.
+
+**Ten ability descriptions were updated to quote their new damage.** Not in any AC, and adjacent to
+"never rebalance" — but a description is what the inspect panel shows the player, and Skim reading "takes
+12 damage" beside a 30 is a tooltip that lies. Only the moved figure changed in each sentence; no other
+number, and no balance value.
+
+**Twelve tests asserted the old numbers; most now read them off the character def.** "Fix the tests, not
+the data" was the instruction. Where the literal was incidental — what a shield soaks, who a charge
+carries past whom — the assertion now derives from the data, so the next balance pass does not break it
+again. Where the number *is* the claim (the format table; the two turn-limit boundary assertions) it
+stays a literal.
+
+## Open Questions for the Analyzer — 2026-08-21
+
+1. **The first-only charge preview is the one bit of "before" not restored** (backlog RAM-PREVIEW-REVERT,
+   flagged in its own Spec Notes). Skim/Bullrush/Bramble Stride still preview one number, not one per
+   enemy on the route. Confirm with the owner that "go back to how it was before" did not include the
+   lying preview — I read the Spec Notes as saying it did not.
+
+2. **`groupId` is a new field on `TrapState` and therefore on the wire.** Traps reach the client in state.
+   Nothing renders it and nothing needs to, but it is a protocol-visible addition made without a protocol
+   item — flagging in case `docs/ARCHITECTURE.md`'s state contract should name it.
+
+3. **WALL-HIT-ONCE makes the wall meaningfully weaker and no number moved.** Walking its length cost 75
+   and now costs 25; the ~7-tile reach flagged as WALL-REACH (session-9 OQ #2) was partly justified by
+   that. Both are playtest calls, but they should be judged *together* rather than as two separate
+   nerfs/keeps. **Designer/playtest.**
+
+4. **The AC's cross-phase example cannot be built as written** (backlog WALL-HIT-ONCE AC, last bullet).
+   A straight dash-then-shove re-enters the tile the dash consumed, so the test would pass with the dedup
+   removed. My version bends the charge; worth re-spec'ing the bullet so the next reader does not write
+   the vacuous one.
+
+5. **TTK-INVARIANT enforces the tier rule, so the rule is now load-bearing for new content.** Any future
+   damaging skill must sit at `round_half_up(basic × shape × rider × delay)` exactly, or the build fails.
+   That is what the item asked for and I think it is right — but it means the Designer cannot author a
+   deliberate outlier without either a named exception in the test or a change to the rule. Confirm that
+   is intended before a tenth character is designed.
+
+6. **`roster-v1.md` §4's ceilings are now stale in four places** (already routed to the Designer in the
+   backlog). Restating only because the numbers landed this session: undelayed skill cap is 30, nuke
+   ceiling 33, sustain ceiling 20, and "4–5 connected hits on a 100 HP target" is now ~5.9 on bars of
+   100–175.
+
+7. **`GAME_SPEC.md:119` still says `maxHp` (baseline ~100)** — the median is 130 now and the band runs
+   100–175. I changed only §1's format-table cell, which is what TTK-TURN-LIMIT's AC named; widening a
+   docs edit in a file I do not own felt like the wrong call for one adjective. One-word fix, whoever's
+   it is.
+
+8. **PLAYTEST is unblocked as of this branch.** RAM-PREVIEW-REVERT, WALL-HIT-ONCE and all five TTK items
+   are in; WALL-CAST-FIX shipped in PR #103. Nothing in the Builder backlog blocks it.
