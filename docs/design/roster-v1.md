@@ -20,6 +20,22 @@ schema:
 | **Skills** | 3 | `cooldown ≥ 2`. Across the 3 skills, at least **two distinct phases** (prep/dash/blast) must appear. |
 | **Ultimate** | 1 | `cooldown: 0`, costs `ULT_COST` (100 energy, engine-level). Any phase. |
 
+Two roster-wide numeric rules the table never carried, both now enforced by
+`TTK-INVARIANT` in `packages/engine/test/content.test.ts` (so a new character that
+breaks either one fails the build rather than the review):
+
+- **The HP ladder.** `maxHp` runs **100–175, median 130**, ordered
+  **firepower < support < frontline**, with support at least 15% above firepower.
+  Shipped: wisp 100 · kestrel 105 · cinder 110 · vex 110 · thorn 130 · lumen 140 ·
+  aegis 155 · bastion 170 · ravok 175.
+- **The skill-damage tiers.** A damaging non-basic, non-ultimate skill deals exactly
+  `round_half_up(basic × shape × rider × delay)`, where **basic** is the character's
+  auto-attack damage, **shape** is 1.25 single-target / 1.00 area, **rider** is 1.00
+  none / 0.88 status / 0.76 displacement, and **delay** is 1.25 when `delayTurns ≥ 1`.
+  The tiers are load-bearing — a flat 1.25× would raise sustained output ~10% and
+  claw back part of the HP band. Traps are outside the rule (conditional damage has
+  no term in it), and a character with no damaging skill is simply not measured.
+
 ## 2. Archetypes
 
 Three archetypes. Every character belongs to exactly one (hybrids carry a primary
@@ -33,7 +49,7 @@ deliberately excluded in v1; no engine effect exists and shields/dashes cover th
 need). Range profiles vary across the archetype: Vex is long, Kestrel mid, Wisp
 melee. Firepowers may use traps (set in Prep, trigger on entry in any phase).
 
-**Contract:** maxHp 85–95 · auto 22–26 dmg · one escape/mitigation skill · at
+**Contract:** maxHp 100–110 · auto 22–26 dmg · one escape/mitigation skill · at
 least one ability with range ≥ 6 or a gap-closer.
 
 ### Frontline — the bully
@@ -43,7 +59,7 @@ close range (range ≤ 2 melee autos that ignore cover); every Frontline has a
 **damage-dealing dash** and at least one movement-hindering tool (knockback, pull,
 slow, root) plus one mitigation tool (shield or self-heal).
 
-**Contract:** maxHp 120–140 · auto 20–24 dmg at range ≤ 2 · damaging dash ·
+**Contract:** maxHp 155–175 · auto 20–24 dmg at range ≤ 2 · damaging dash ·
 ≥ 1 displacement or hard-CC effect · ≥ 1 shield/heal.
 
 ### Support — the enabler
@@ -55,7 +71,7 @@ effect a Support has must be self-applicable (aimed circles include the caster's
 own square; `self`/`square` shapes work alone), so a solo Support converts its
 support budget into sustain and wins by attrition and debuff trades, not burst.
 
-**Contract:** maxHp 100–110 · auto 16–18 dmg · ≥ 1 heal or shield usable on self
+**Contract:** maxHp 130–140 · auto 16–18 dmg · ≥ 1 heal or shield usable on self
 · ≥ 1 enemy debuff · one escape or control tool.
 
 ## 3. Themes (named sub-identities within archetypes)
@@ -78,13 +94,15 @@ character carries exactly one theme name; no two characters share one.
 ## 4. Balance budgets (integer-only, per GAME_SPEC)
 
 - **Damage per turn is bounded by the one-ability-per-turn rule** — a character's
-  realistic output is one ability's worth. Target time-to-kill on a 100 HP target:
-  **4–5 connected hits**; misses (the mind-game) stretch real TTK to 6+ turns.
-- **Skill nuke ceiling: 34** (Vex's delayed grenade — pays for its power with a
-  1-turn telegraph). Undelayed skill damage caps at 24.
+  realistic output is one ability's worth. On the shipped bars (100–175, median 130)
+  a basic takes ~17% of a health bar, so time-to-kill is **~5.9 connected hits**;
+  misses (the mind-game) stretch real TTK well past that.
+- **Skill nuke ceiling: 33** (Vex's delayed grenade — pays for its power with a
+  1-turn telegraph). Undelayed skill damage caps at **30** (Kestrel's Skim, the only
+  ability at the 1.25 single-target ceiling).
 - **Ultimate ceiling: 45 damage** (Vex) or an equivalent defensive/utility swing
   (Bastion's 50 shield + Might + Unstoppable for 2 turns).
-- **Sustain ceiling: 25 heal per 2-turn cooldown** (Lumen). Shields cap at 30 per
+- **Sustain ceiling: 20 heal per 2-turn cooldown** (Lumen). Shields cap at 30 per
   3-turn cooldown outside ults (Bastion).
 - **Energy:** autos grant 8 on hit; utility 4–6; high-commit skills 8–10. With
   passive +5 and a ~60% hit rate, ultimates come online **turns 8–10** — one ult

@@ -116,7 +116,10 @@ Every turn = **Decision Phase** then **Resolution**.
 
 ## 4. Characters and abilities
 
-- Each character: `maxHp` (baseline ~100), **4 abilities + 1 ultimate**, defined
+- Each character: `maxHp` — the shipped band runs **100–175, median 130**, laid out
+  as an archetype ladder **firepower < support < frontline** (TTK-HP-BAND; the
+  derivation is in `docs/reviews/2026-09-27.md`, and `content.test.ts` enforces both
+  the ladder and the ordering) — plus **4 abilities + 1 ultimate**, defined
   entirely in `data/characters/<id>.json`.
 - Ability schema (see `packages/engine/src/types.ts` for the authoritative type):
   `id, name, phase (prep|dash|blast), shape (line|cone|circle|path|square|self),
