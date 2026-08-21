@@ -209,7 +209,7 @@ export class CharacterModels {
     let current: AnimationAction | undefined;
     let currentName = '';
 
-    return {
+    const inst: ModelInstance = {
       root,
       play(choice, beatSeconds) {
         const clip = byName.get(choice.clip);
@@ -240,5 +240,17 @@ export class CharacterModels {
         mixer.uncacheRoot(root);
       },
     };
+
+    // Start idling immediately, before anyone asks.
+    //
+    // A model with no action playing renders in its BIND POSE — arms straight
+    // out, the T-pose Mixamo required for rigging — and that is what shipped:
+    // clips were only ever selected during turn playback, so for the whole
+    // Decision phase, which is most of a match, every character stood on the
+    // board with its arms out. Idle-by-default makes the resting pose a
+    // property of having a model rather than of something else remembering.
+    const idle = entry.manifest.map?.idle;
+    if (idle !== undefined) inst.play({ clip: idle, loop: true, since: 0 }, 1);
+    return inst;
   }
 }

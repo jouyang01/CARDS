@@ -924,6 +924,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   const instances = new Map<string, ModelInstance>();
   /** unitId → the character its group was built for, for `staleUnitGroups`. */
   const unitCharacter = new Map<string, string | undefined>();
+  /** Characters whose scaling has been reported. One line each, not one per unit. */
+  const measured = new Set<string>();
 
   const buildUnit = (unit: RenderUnit): Group => {
     const g = new Group();
@@ -937,6 +939,17 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       const box = new Box3().setFromObject(instance.root);
       const height = box.max.y - box.min.y;
       const scale = height > 0 ? (TILE * MODEL_HEIGHT_TILES) / height : 1;
+      // Reported once per character, because "he looks too big" and "the box
+      // measured wrong" are indistinguishable by eye and this is the number
+      // that separates them. `height` is the model's own metres; the last
+      // figure is what it ends up occupying on the board.
+      if (!measured.has(unit.characterId!)) {
+        measured.add(unit.characterId!);
+        console.info(
+          `[cards] ${unit.characterId}: model ${height.toFixed(3)}u -> scale ${scale.toFixed(3)}` +
+          ` -> ${(height * scale).toFixed(2)} tiles tall`,
+        );
+      }
       instance.root.scale.setScalar(scale);
       instance.root.position.y = -box.min.y * scale;
       instance.root.name = 'body';

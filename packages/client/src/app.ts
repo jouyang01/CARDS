@@ -336,6 +336,17 @@ const PREVIEW_TEXT: Record<PreviewNumber['kind'], (n: number) => string> = {
   heal: (n) => `+${n}`,
   shield: (n) => `+${n}`,
 };
+/**
+ * Seek past any clip's end. `play()` clamps with `Math.min(since * beat,
+ * duration)`, so this lands on the last frame whatever the clip's length.
+ *
+ * Module scope on purpose: the opening paint (VISION1-opening) runs during
+ * construction, above every `const` in the closure, and a closure-level
+ * constant would be in its temporal dead zone the first time a dead unit was
+ * painted — the same trap `pads` is a `function` to avoid.
+ */
+const CLIP_HOLD_LAST = 1e6;
+
 const now = (): number => performance.now();
 
 export function startHotSeat(
@@ -1127,8 +1138,10 @@ export function startHotSeat(
     // can never be on the board at once.
     // PADS-INDICATOR: pads are public terrain, so they are drawn from the map
     // and the authoritative state, with no fog view in the way.
+    const resting = [...toRenderUnits(view.units, team), ...toGhostUnits(view.ghosts)];
+    applyResting(resting);
     renderer.show(
-      [...toRenderUnits(view.units, team), ...toGhostUnits(view.ghosts)],
+      resting,
       // UI-NAMEPLATES: a decoy being taken for a real unit wears a real unit's
       // plate. `fogView` already decided which decoys this viewer sees and
       // whether each is being impersonated; this only dresses them.
@@ -2093,7 +2106,9 @@ export function startHotSeat(
       renderer.highlight('aim', [], AIM);
       renderer.highlight('select', [], IMPACT);
       clearReadouts();
-      renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
+      const rest = viewUnits(player.view);
+      applyResting(rest);
+      renderer.show(rest, viewDecoys(player.view), viewTraps(player.view), pads(player.view));
       renderer.highlight('camo', viewCamo(player.view), CAMO_RED, CAMO_OPACITY);
     };
     // The plan is committed, so its deadline is history. A clock still ticking
@@ -2176,6 +2191,31 @@ export function startHotSeat(
    * character has no model return no clip set and are silently skipped, which is
    * the path all nine take until their `.glb` exists.
    */
+  /**
+   * The pose a unit holds when no turn is playing.
+   *
+   * `applyClips` is driven by the playback timeline, so it only runs while a
+   * turn resolves. Decision is the other 90% of a match, and nothing was
+   * choosing a clip for it — every model stood in its bind pose (arms out, the
+   * rigging T-pose) from the moment playback stopped until the next one began.
+   *
+   * Idempotent by design: `play()` no-ops when the requested clip is already
+   * running, so calling this on every paint costs nothing and cannot hitch.
+   */
+  function applyResting(units: readonly RenderUnit[]): void {
+    for (const u of units) {
+      const clips = renderer.clipsFor(u.characterId);
+      if (clips === undefined) continue;
+      // A corpse holds the last frame of its death clip rather than standing
+      // back up to idle: `since` past the clip's length seeks to the end, and
+      // `loop: false` clamps it there.
+      const choice = u.alive
+        ? { clip: clips.idle, loop: true, since: 0 }
+        : { clip: clips.death, loop: false, since: CLIP_HOLD_LAST };
+      renderer.setUnitClip(u.unitId, choice, MS_PER_BEAT / 1000);
+    }
+  }
+
   function applyClips(cues: readonly Cue[], t: number, units: RenderUnit[]): void {
     for (const u of units) {
       const clips = renderer.clipsFor(u.characterId);
@@ -2306,7 +2346,9 @@ export function startHotSeat(
   function renderGameOver(): void {
     clearPreviewNumbers();
     const revealed = revealedView(state, currentSeat()?.team ?? 0);
-    renderer.show(toRenderUnits(revealed.units, currentSeat()?.team ?? 0), revealed.decoys, revealed.traps, pads());
+    const over = toRenderUnits(revealed.units, currentSeat()?.team ?? 0);
+    applyResting(over);
+    renderer.show(over, revealed.decoys, revealed.traps, pads());
     for (const layer of PLANNING_LAYERS) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
