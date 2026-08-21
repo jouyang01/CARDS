@@ -50,7 +50,7 @@ import {
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
-import { intentTexture, plateTexture } from './textures.js';
+import { intentTexture, plateTexture, skyTexture } from './textures.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -232,11 +232,83 @@ const GRID_OPACITY = 0.5;
  */
 const GRID_LIFT = 0.004;
 
-/** Seam ink: the floor colour, darkened. A grid is a shade of its floor. */
-export const gridInk = (open: number): number => {
+/** One colour, scaled per channel. Clamped, so a factor over 1 stays a colour. */
+export const shade = (hex: number, factor: number): number => {
   const channel = (shift: number): number =>
-    Math.round(((open >> shift) & 0xff) * GRID_DARKEN) << shift;
+    Math.max(0, Math.min(255, Math.round(((hex >> shift) & 0xff) * factor))) << shift;
   return channel(16) | channel(8) | channel(0);
+};
+
+/** Seam ink: the floor colour, darkened. A grid is a shade of its floor. */
+export const gridInk = (open: number): number => shade(open, GRID_DARKEN);
+
+/**
+ * SCENE-DIORAMA — the arena the board sits on.
+ *
+ * The board was a plane in a void: geometry that stops at the last rank with
+ * nothing underneath, which reads as an unfinished render rather than a place.
+ * A slab with a lit edge is the cheapest thing that turns it into an object —
+ * the same trick Atlas Reactor's maps use, where the playable grid is a small
+ * platform and everything around it is set dressing no rule ever consults.
+ *
+ * **Nothing here is ever asked about the rules.** Picking raycasts `ground`
+ * specifically (see `squareFromPoint`), not the scene, so scenery cannot steal a
+ * click no matter how far it extends. That separation is the whole reason this
+ * layer is safe to grow: it can become a skyline later without any of it
+ * becoming reachable.
+ */
+export const SCENERY = {
+  /** How far the ledge runs past the last rank, in tiles. */
+  margin: 1.5,
+  /** Slab depth. Only its top edge is seen, even at the orbit's lowest pitch. */
+  depth: 0.8,
+  /** The slab's top sits fractionally under the floor so the two cannot z-fight. */
+  top: -0.02,
+  /** How dark the slab is against the floor it carries. */
+  shade: 0.55,
+  /**
+   * The rim is deliberately **dim**. Every colour family the e2e counts —
+   * `isTeamBlue`, `isTeamRed`, `isAimOrange` — gates on a channel above 130,
+   * because those marks are things a player is meant to look *at*. A bright
+   * arena edge lands inside one of those families however its hue is chosen, and
+   * then "team 0's units are on screen" is satisfied by the furniture. Contrast
+   * against a near-black sky is what makes an edge read, not brightness, so the
+   * rim stays under the gate and loses nothing.
+   */
+  rim: { height: 0.1, thickness: 0.18, colour: 0x1e4552, emissive: 0.85 },
+  /** A team's marker, as a fraction of the edge it runs along. */
+  spawnSpan: 0.42,
+  /** Markers are a tint on the arena, not a second set of units: dimmer still. */
+  spawnShade: 0.3,
+  spawnEmissive: 0.7,
+} as const;
+
+/** Which side of the board a team enters from. */
+export type BoardEdge = 'west' | 'east' | 'north' | 'south';
+
+/**
+ * The platform edge a team spawns against.
+ *
+ * Read from `map.spawns` rather than assumed to be left/right: a map is free to
+ * put its spawns on the short axis, and a marker painted on the wrong edge is
+ * worse than no marker — it tells the player their back is somewhere it is not.
+ * Ties keep the first of a fixed order, so the answer is stable for a spawn
+ * cluster sitting dead centre rather than depending on iteration luck.
+ */
+export const spawnEdge = (map: MapDef, team: 0 | 1): BoardEdge => {
+  const spawns = map.spawns[team];
+  if (spawns.length === 0) return team === 0 ? 'west' : 'east';
+  const mx = spawns.reduce((sum, p) => sum + p.x, 0) / spawns.length;
+  const my = spawns.reduce((sum, p) => sum + p.y, 0) / spawns.length;
+  const gaps: ReadonlyArray<readonly [BoardEdge, number]> = [
+    ['west', mx],
+    ['east', map.width - 1 - mx],
+    ['north', my],
+    ['south', map.height - 1 - my],
+  ];
+  let best = gaps[0] as readonly [BoardEdge, number];
+  for (const gap of gaps) if (gap[1] < best[1]) best = gap;
+  return best[0];
 };
 
 /**
@@ -555,7 +627,9 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   open: number; wall: number; cover: number; brush: number; team0: number; team1: number; background: number;
 }): Renderer {
   const scene = new Scene();
-  scene.background = new Color(palette.background);
+  // SKY-DOME: a ramp rather than a flat clear colour. The fallback keeps a
+  // headless context (no 2d canvas) drawing something rather than nothing.
+  scene.background = skyTexture() ?? new Color(palette.background);
 
   // An orthographic camera has no perspective divide, so a tile is the same size
   // wherever it sits — which is exactly what a tactics board wants.
@@ -640,6 +714,76 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       box.receiveShadow = true;
       world.add(box);
     }
+  }
+
+  // ── Scenery (SCENE-DIORAMA) ───────────────────────────────────────────────
+  // Purely decorative: drawn, never consulted. It lives in `world` so it tracks
+  // the board's own transform, and in its own group so a later set piece has an
+  // obvious home that nothing rules-facing can reach into.
+  const scenery = new Group();
+  scenery.name = 'scenery';
+  world.add(scenery);
+
+  const slabW = map.width * TILE + SCENERY.margin * 2;
+  const slabH = map.height * TILE + SCENERY.margin * 2;
+
+  const slab = new Mesh(
+    new BoxGeometry(slabW, SCENERY.depth, slabH),
+    new MeshStandardMaterial({
+      color: shade(palette.open, SCENERY.shade), roughness: 0.95, metalness: 0.05,
+    }),
+  );
+  slab.position.y = SCENERY.top - SCENERY.depth / 2;
+  slab.receiveShadow = true;
+  scenery.add(slab);
+
+  /**
+   * A lit bar laid along the platform's top edge.
+   *
+   * Emissive rather than lit: the rim's job is to be the brightest line in the
+   * frame and describe the arena's extent at a glance, and a surface that only
+   * catches the sun loses that job the moment the orbit swings it away.
+   */
+  const edgeBar = (
+    width: number, depth: number, x: number, z: number, colour: number, emissive: number,
+  ): Mesh => {
+    const bar = new Mesh(
+      new BoxGeometry(width, SCENERY.rim.height, depth),
+      new MeshStandardMaterial({
+        color: colour, emissive: colour, emissiveIntensity: emissive,
+        roughness: 0.35, metalness: 0.1,
+      }),
+    );
+    // ON TOP of the slab, not inside it. The slab runs from `top` downward, so a
+    // bar centred below `top` is buried in the very geometry it is meant to edge.
+    bar.position.set(x, SCENERY.top + SCENERY.rim.height / 2, z);
+    return bar;
+  };
+
+  const inset = SCENERY.rim.thickness / 2;
+  for (const [w, d, x, z] of [
+    [slabW, SCENERY.rim.thickness, 0, -slabH / 2 + inset],
+    [slabW, SCENERY.rim.thickness, 0, slabH / 2 - inset],
+    [SCENERY.rim.thickness, slabH, -slabW / 2 + inset, 0],
+    [SCENERY.rim.thickness, slabH, slabW / 2 - inset, 0],
+  ] as const) {
+    scenery.add(edgeBar(w, d, x, z, SCENERY.rim.colour, SCENERY.rim.emissive));
+  }
+
+  // Each team's end of the arena, in its own colour. This is orientation, not
+  // gameplay: after a free orbit has spun the board 180° "which way is home"
+  // stops being obvious, and the fix belongs in the scenery rather than in
+  // another HUD element competing for the same corner.
+  for (const team of [0, 1] as const) {
+    const edge = spawnEdge(map, team);
+    const colour = shade(team === 0 ? palette.team0 : palette.team1, SCENERY.spawnShade);
+    const lengthwise = edge === 'west' || edge === 'east';
+    const span = (lengthwise ? slabH : slabW) * SCENERY.spawnSpan;
+    const offset = (lengthwise ? slabW : slabH) / 2 - SCENERY.rim.thickness * 1.6;
+    const [w, d, x, z] = lengthwise
+      ? [SCENERY.rim.thickness, span, edge === 'west' ? -offset : offset, 0] as const
+      : [span, SCENERY.rim.thickness, 0, edge === 'north' ? -offset : offset] as const;
+    scenery.add(edgeBar(w, d, x, z, colour, SCENERY.spawnEmissive));
   }
 
   // ── Keyed unit objects (A1's principle, in 3D) ────────────────────────────
@@ -808,7 +952,10 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   // pitch. Once the orbit can move them, the two stop being the same thing.
   let pitchDeg: number = PITCH.isometric;
   let yawDeg = 0;
-  let span = Math.max(map.width, map.height);
+  // SCENE-DIORAMA: the opening frame allows for the ledge. Fitting the board
+  // exactly put the platform and its lit rim just outside the frustum — drawn
+  // every frame and never once seen.
+  let span = Math.max(map.width, map.height) + SCENERY.margin * 2;
   let centre = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
   // Where the auto-camera is heading. The live camera eases toward it so the
   // frame glides between actors instead of cutting.
@@ -868,14 +1015,19 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     // Depth foreshortens by sin(pitch) — at true isometric the board is only
     // ~58% as tall on screen as it is deep, so framing by raw height would
     // leave the board floating in a letterbox.
-    const projectedDepth = map.height * Math.sin(rad(pitchDeg));
-    // `span` is the world height of the FULL canvas, so fitting the board into a
+    // SCENE-DIORAMA: the thing to frame is the *arena* — the board plus the
+    // ledge it sits on. Framing the board alone left the platform and its lit
+    // rim just outside the frustum, drawn every frame and never once seen.
+    const arenaW = map.width + SCENERY.margin * 2;
+    const arenaD = map.height + SCENERY.margin * 2;
+    const projectedDepth = arenaD * Math.sin(rad(pitchDeg));
+    // `span` is the world height of the FULL canvas, so fitting the arena into a
     // fraction of that canvas means scaling the requirement up by the reciprocal
-    // of that fraction. With no insets both terms collapse to the old
-    // `max(projectedDepth, map.width / aspect)` exactly.
+    // of that fraction. With no insets both terms collapse to
+    // `max(projectedDepth, arenaW / aspect)` exactly.
     return Math.max(
       projectedDepth * (height / visibleH()),
-      map.width * (height / visibleW()),
+      arenaW * (height / visibleW()),
     ) * 1.08;
   };
 
