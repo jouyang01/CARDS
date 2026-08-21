@@ -21,18 +21,22 @@ import {
   AmbientLight,
   CanvasTexture,
   BoxGeometry,
+  BufferAttribute,
   BufferGeometry,
   Color,
   DoubleSide,
   DirectionalLight,
   Group,
+  HemisphereLight,
   Line,
   LineBasicMaterial,
   LineDashedMaterial,
+  LineSegments,
   Mesh,
   MeshBasicMaterial,
-  MeshLambertMaterial,
+  MeshStandardMaterial,
   OrthographicCamera,
+  PCFSoftShadowMap,
   PlaneGeometry,
   Raycaster,
   Scene,
@@ -139,6 +143,132 @@ export type ShapeLayer = 'shape' | 'shapeBand' | 'shapeImpact' | 'shapeLocked';
  * its top surface the floor every tile overlay has to clear (FOG-ZORDER).
  */
 export const TERRAIN_HEIGHT = { brush: 0.02, cover: COVER_HEIGHT, wall: WALL_HEIGHT } as const;
+
+/**
+ * BOARD-LIT — the lighting rig, as data rather than four literals in the middle
+ * of scene construction.
+ *
+ * The board ran `AmbientLight(1.6)` against a `DirectionalLight(1.1)`: an
+ * ambient-*dominant* rig, where every face of every box receives nearly the same
+ * energy. Form is read from the difference between faces, so under that rig a
+ * wall is a flat rectangle and the map is "black and boxes" no matter what
+ * colour or texture is put on it. Ambient drops to a floor whose only job is to
+ * keep a shadowed face readable, and the directional light becomes the light
+ * that actually models the scene.
+ *
+ * The hemisphere light is what makes it cheap: cool from the sky, warm from the
+ * ground, so a box *top* and a box *side* differ in hue as well as in value
+ * before the sun reaches either. One light, and the silhouette reads.
+ *
+ * The `fill` is deliberately not a caster. It exists so the side facing away
+ * from the sun keeps an edge instead of going to ambient flat, and a second
+ * shadow map to buy that would be paying real per-frame cost for a detail
+ * nobody can point at.
+ *
+ * Intensities are physically scaled: three has been physically-correct by
+ * default since r165 and this workspace is on 0.185, which is why the sun is
+ * ~2 rather than the ~1 a legacy-lit scene wanted.
+ */
+export const LIGHTING = {
+  ambient: { intensity: 0.35 },
+  hemisphere: { sky: 0xa8c4ec, ground: 0x2b2118, intensity: 1.0 },
+  sun: { intensity: 2.2, position: [6, 11, 5] },
+  fill: { intensity: 0.45, position: [-7, 6, -6] },
+} as const;
+
+/**
+ * BOARD-LIT — how each surface answers the light.
+ *
+ * Every mesh on the board was `MeshLambertMaterial`, which has no notion of
+ * roughness: cover and floor and wall all scatter light identically and so all
+ * read as the same substance in three colours. Standard materials cost a little
+ * more per pixel and let a material say what it *is* — cover is a scuffed metal
+ * barricade, brush is matte foliage that should never catch a highlight, floor
+ * is dry stone.
+ *
+ * These are the Tier-0 values: no maps, no textures, no bytes. A later tier
+ * hangs canvas-drawn `map`/`normalMap` textures off these same entries without
+ * moving anything else.
+ */
+export const SURFACE = {
+  open: { roughness: 0.94, metalness: 0.02 },
+  wall: { roughness: 0.78, metalness: 0.14 },
+  cover: { roughness: 0.52, metalness: 0.42 },
+  brush: { roughness: 1.0, metalness: 0.0 },
+  unit: { roughness: 0.44, metalness: 0.22 },
+} as const;
+
+/** Shadow-map resolution. One 1024 map — the e2e opens several renderers. */
+const SHADOW_MAP_PX = 1024;
+
+/**
+ * The sun's shadow camera, sized to the board it has to cover.
+ *
+ * A `DirectionalLight` shadows through an orthographic camera that defaults to
+ * a ±5 box. Every shipped map is larger than that in both axes, so the default
+ * would shadow a patch in the middle and leave the rest unshadowed — which
+ * looks like a rendering bug, not like lighting. The radius is the board's
+ * half-diagonal (the light is off-axis, so the diagonal is the extent that
+ * matters) plus a margin for the shadow a wall throws past the last row.
+ *
+ * Pure and exported so the sizing is testable without a WebGL context, the way
+ * the board↔world mapping already is.
+ */
+export const shadowFrustum = (map: { width: number; height: number }): {
+  radius: number; near: number; far: number;
+} => ({
+  radius: Math.hypot(map.width, map.height) / 2 + 2,
+  near: 0.5,
+  far: 60,
+});
+
+/** How far the seam ink is darkened from the floor colour it sits on. */
+const GRID_DARKEN = 0.55;
+/** Seam opacity — present when looked for, invisible when not. */
+const GRID_OPACITY = 0.5;
+/**
+ * The seams sit just off the floor to beat z-fighting, and stay well under
+ * `OVERLAY_BASE` so no highlight has to compete with them (FOG-ZORDER).
+ */
+const GRID_LIFT = 0.004;
+
+/** Seam ink: the floor colour, darkened. A grid is a shade of its floor. */
+export const gridInk = (open: number): number => {
+  const channel = (shift: number): number =>
+    Math.round(((open >> shift) & 0xff) * GRID_DARKEN) << shift;
+  return channel(16) | channel(8) | channel(0);
+};
+
+/**
+ * GRID-SEAMS — the tile seams the renderer has always claimed to draw.
+ *
+ * The comment above the terrain loop said "faint tile seams so squares are
+ * countable — the grid IS the ruleset here", and nothing under it drew any: the
+ * floor was one undifferentiated plane, and a square only became visible when
+ * something was hovered over it. On a game where every rule is quoted in
+ * squares, a board at rest that cannot be counted is the bug.
+ *
+ * Returns the line-segment endpoints as a flat XYZ buffer. Squares are centred
+ * on integers by `squareToWorldXZ`, so tile *edges* land on half-integers and
+ * the board spans ±width/2 by ±height/2 — that is where the seams go.
+ *
+ * Pure and exported for the same reason `squareToWorldXZ` is: a grid that
+ * disagrees with the mapping is the click-target bug wearing a new coat.
+ */
+export const gridPositions = (map: { width: number; height: number }): Float32Array => {
+  const halfW = map.width / 2;
+  const halfH = map.height / 2;
+  const out: number[] = [];
+  for (let i = 0; i <= map.width; i++) {
+    const x = -halfW + i;
+    out.push(x, 0, -halfH, x, 0, halfH);
+  }
+  for (let i = 0; i <= map.height; i++) {
+    const z = -halfH + i;
+    out.push(-halfW, 0, z, halfW, 0, z);
+  }
+  return new Float32Array(out);
+};
 
 /**
  * Where the overlay band starts. FOG-ZORDER: the highlight layers used to run
@@ -436,10 +566,38 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   renderer.domElement.style.borderRadius = '8px';
   container.replaceChildren(renderer.domElement);
 
-  scene.add(new AmbientLight(0xffffff, 1.6));
-  const sun = new DirectionalLight(0xffffff, 1.1);
-  sun.position.set(4, 10, 6);
+  // BOARD-LIT — see `LIGHTING`. Ambient is a floor, not a fill; the sun models
+  // the scene and is the only caster; the hemisphere splits tops from sides by
+  // hue; the fill keeps the dark side's silhouette without a second shadow map.
+  scene.add(new AmbientLight(0xffffff, LIGHTING.ambient.intensity));
+  scene.add(new HemisphereLight(
+    LIGHTING.hemisphere.sky, LIGHTING.hemisphere.ground, LIGHTING.hemisphere.intensity,
+  ));
+
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = PCFSoftShadowMap;
+
+  const sun = new DirectionalLight(0xffffff, LIGHTING.sun.intensity);
+  sun.position.set(...LIGHTING.sun.position);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(SHADOW_MAP_PX, SHADOW_MAP_PX);
+  const frustum = shadowFrustum(map);
+  sun.shadow.camera.left = -frustum.radius;
+  sun.shadow.camera.right = frustum.radius;
+  sun.shadow.camera.top = frustum.radius;
+  sun.shadow.camera.bottom = -frustum.radius;
+  sun.shadow.camera.near = frustum.near;
+  sun.shadow.camera.far = frustum.far;
+  // Boxes sitting flush on a plane are the classic shadow-acne case; the normal
+  // bias is what keeps a wall from striping the floor it stands on.
+  sun.shadow.bias = -0.0012;
+  sun.shadow.normalBias = 0.02;
+  sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun);
+
+  const fill = new DirectionalLight(0xffffff, LIGHTING.fill.intensity);
+  fill.position.set(...LIGHTING.fill.position);
+  scene.add(fill);
 
   // ── Static terrain ────────────────────────────────────────────────────────
   const world = new Group();
@@ -447,23 +605,39 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   const ground = new Mesh(
     new PlaneGeometry(map.width * TILE, map.height * TILE),
-    new MeshLambertMaterial({ color: palette.open }),
+    new MeshStandardMaterial({ color: palette.open, ...SURFACE.open }),
   );
   ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
   world.add(ground);
 
-  // Faint tile seams so squares are countable — the grid IS the ruleset here.
-  for (const [squares, colour, height] of [
-    [map.brush, palette.brush, TERRAIN_HEIGHT.brush],
-    [map.cover, palette.cover, TERRAIN_HEIGHT.cover],
-    [map.walls, palette.wall, TERRAIN_HEIGHT.wall],
+  // GRID-SEAMS — faint tile seams so squares are countable. The grid IS the
+  // ruleset here, and until now this comment was the only part of it that
+  // existed: nothing drew seams, so a board at rest had no squares in it.
+  const grid = new LineSegments(
+    new BufferGeometry().setAttribute('position', new BufferAttribute(gridPositions(map), 3)),
+    new LineBasicMaterial({
+      color: gridInk(palette.open), transparent: true, opacity: GRID_OPACITY, depthWrite: false,
+    }),
+  );
+  grid.position.y = GRID_LIFT;
+  world.add(grid);
+
+  for (const [squares, colour, height, surface] of [
+    [map.brush, palette.brush, TERRAIN_HEIGHT.brush, SURFACE.brush],
+    [map.cover, palette.cover, TERRAIN_HEIGHT.cover, SURFACE.cover],
+    [map.walls, palette.wall, TERRAIN_HEIGHT.wall, SURFACE.wall],
   ] as const) {
     for (const p of squares) {
       const box = new Mesh(
         new BoxGeometry(TILE * 0.96, height, TILE * 0.96),
-        new MeshLambertMaterial({ color: colour }),
+        new MeshStandardMaterial({ color: colour, ...surface }),
       );
       box.position.copy(toWorld(map, p)).setY(height / 2);
+      // Brush is a 0.02-high lid: it has no silhouette to throw and casting from
+      // it only buys shadow acne on the tile it is lying on.
+      box.castShadow = height > TERRAIN_HEIGHT.brush;
+      box.receiveShadow = true;
       world.add(box);
     }
   }
@@ -543,9 +717,12 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       // needs a shader recompile (`needsUpdate`), and forgetting it makes every
       // fade and dim silently do nothing. Paying for blending up front is the
       // cheap, un-forgettable version.
-      new MeshLambertMaterial({ color: unit.owner === 0 ? palette.team0 : palette.team1, transparent: true }),
+      new MeshStandardMaterial({
+        color: unit.owner === 0 ? palette.team0 : palette.team1, transparent: true, ...SURFACE.unit,
+      }),
     );
     body.name = 'body';
+    body.castShadow = true;
     body.position.y = UNIT_HEIGHT / 2;
     g.add(body, buildBars());
     world.add(g);
@@ -616,7 +793,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     const dimmed = spotlight !== null && !spotlight.has(unitId);
     const alpha = (baseAlpha.get(unitId) ?? 1) * (fadeOf.get(unitId) ?? 1) * (dimmed ? DIM_ALPHA : 1);
     const body = g.getObjectByName('body');
-    if (body instanceof Mesh) (body.material as MeshLambertMaterial).opacity = alpha;
+    if (body instanceof Mesh) (body.material as MeshStandardMaterial).opacity = alpha;
     const bars = g.getObjectByName('bars');
     if (bars !== undefined) bars.visible = alpha > 0.5;
   };
@@ -952,7 +1129,9 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           // friendly unit — the opposite of impersonating an enemy.
           const body = new Mesh(
             new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-            new MeshLambertMaterial({ color: decoy.owner === 0 ? palette.team0 : palette.team1 }),
+            new MeshStandardMaterial({
+              color: decoy.owner === 0 ? palette.team0 : palette.team1, ...SURFACE.unit,
+            }),
           );
           body.position.copy(at).setY(UNIT_HEIGHT / 2);
           decoyLayer.add(body);
@@ -995,7 +1174,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       for (const p of squares) {
         const tile = new Mesh(
           new PlaneGeometry(TILE * LAYER_INSET[layer], TILE * LAYER_INSET[layer]),
-          new MeshLambertMaterial({ color, transparent: true, opacity }),
+          new MeshBasicMaterial({ color, transparent: true, opacity }),
         );
         tile.rotation.x = -Math.PI / 2;
         tile.position.copy(toWorld(map, p)).setY(LAYER_LIFT[layer]);

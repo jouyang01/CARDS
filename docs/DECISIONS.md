@@ -5300,3 +5300,63 @@ Read every line with the floor caveat above. Reproduce with `npm run botplay`; a
    two fixed comps. Worth an item if the Analyzer wants it: sweep every character pairing for outliers,
    run 4v4 and 1v1, or run it on both maps. Not built — the dev note asked whether it could be done, and
    scope beyond that is the Analyzer's to set.
+
+## 2026-08-21 — Builder session 13 (BOARD-LIT / GRID-SEAMS: the board stops being black boxes)
+
+**The complaint was "the maps are just black and boxes"; the cause was not missing textures.**
+Three things were making the board flat, and only the third is an art problem. Tier 0 fixes the
+first two and costs no asset bytes at all.
+
+**BOARD-LIT — the rig was ambient-dominant.** `AmbientLight(1.6)` against `DirectionalLight(1.1)`
+means every face of every box receives nearly the same energy. Form is read from the *difference*
+between faces, so under that rig a wall is a flat rectangle no matter what colour or texture is put
+on it — a texture pass would have been money spent on a problem it could not solve. Ambient is now
+a floor (0.35) whose only job is keeping a shadowed face readable, the sun models the scene at 2.2
+and is the only shadow caster, a `HemisphereLight` separates tops from sides by *hue* as well as
+value, and an un-shadowed fill keeps the dark side's silhouette. Intensities are physically scaled:
+three has been physically-correct by default since r165 and this workspace is on 0.185.
+
+**Materials now say what a thing is made of.** Every board mesh was `MeshLambertMaterial`, which has
+no notion of roughness, so floor and cover and wall scattered light identically and read as one
+substance in three colours. `SURFACE` gives each a roughness/metalness pair — cover is scuffed metal,
+brush is fully matte, floor is dry stone. The entries are the hook a later tier hangs canvas-drawn
+`map`/`normalMap` textures off without moving anything else.
+
+**Overlays are unlit now, and this was the one real trap in the change.** The tile-highlight
+material was also `MeshLambertMaterial`, which under `ambient 1.6` was full-brightness *by accident*.
+Dropping ambient to a floor would have darkened every aim, range and fog wash along with the board and
+quietly cost them the contrast they exist for — a lighting change turning into a rules-legibility bug.
+Overlays are UI, not scenery, so they are `MeshBasicMaterial`: what they were always pretending to be.
+Pads, traps, nameplates and intent tiles were already unlit and are untouched.
+
+**GRID-SEAMS — the seams were a comment, not a feature.** The line above the terrain loop has always
+read "faint tile seams so squares are countable — the grid IS the ruleset here", and nothing under it
+drew any. The floor was one undifferentiated plane and a square only became visible while something was
+hovered over it. On a game that quotes every rule in squares, a board at rest you cannot count is the
+bug; the seams are now drawn, as floor-coloured ink darkened 45%, below the overlay band so nothing the
+player is asked to read has to compete with them.
+
+**Judgment call — the shadow camera is sized from the map, not left at three's default.** A
+`DirectionalLight` shadows through a ±5 orthographic box, and *both* shipped maps are larger than that
+in both axes, so the default would shadow a patch in the middle of the board and leave the rest lit —
+which reads as a broken renderer rather than as lighting. `shadowFrustum()` takes the board's
+half-diagonal (the light is off-axis, so the diagonal is the extent that matters) plus a margin for the
+shadow a wall throws past the last row. One 1024 map, because the e2e opens several renderers.
+
+**Judgment call — the new configuration is exported as data and tested pure.** `renderer3d.test.ts`
+established that the renderer needs WebGL but its *decisions* do not: the board↔world mapping is pure
+and tested. `LIGHTING`, `SURFACE`, `shadowFrustum()`, `gridInk()` and `gridPositions()` follow that
+precedent, so the ambient-vs-sun ratio, the shadow coverage and the seam geometry all have real
+assertions without a GL context. The seam test checks the grid against `squareToWorldXZ` specifically:
+a grid that disagrees with the mapping is the old SVG click-target bug wearing a new coat.
+
+**Cost:** +0.8 kB gzipped (191.4 → 192.2, budget 300). No new assets, so `ASSET-WEIGHT-BUDGET`
+(`BACKLOG.md`) is not yet in play — the first `.glb` or `.png` is what triggers that item, and Tier 0
+deliberately does not add one.
+
+**Not done, and deliberately.** Tier 1 (procedural canvas textures via the `textures.ts` cache pattern),
+Tier 2 (`theme` as a `MapDef` field so a map's look ships as JSON per golden rule 2 — both shipped maps
+currently share one hardcoded `PALETTE` in `app.ts`, so Duel Arena and Iron Basin are the same six
+colours in a different shape), and Tier 3 (real assets, which needs the asset-weight CI number specced
+first). Also noted: `docs/ART_PIPELINE.md` covers *characters* only — there is no equivalent document for
+terrain, and Tier 2 onwards wants one.
