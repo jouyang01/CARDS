@@ -20,6 +20,7 @@
 import {
   AmbientLight,
   CanvasTexture,
+  Box3,
   BoxGeometry,
   BufferGeometry,
   Color,
@@ -43,6 +44,8 @@ import {
   WebGLRenderer,
   type Material,
 } from 'three';
+import type { CharacterModels, ModelInstance } from './character-model.js';
+import type { ClipChoice, ClipSet } from './character-clips.js';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
@@ -51,6 +54,19 @@ import { intentTexture, plateTexture } from './textures.js';
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
 const UNIT_HEIGHT = 0.6;
+/**
+ * How tall a rigged character stands, in tiles.
+ *
+ * Characters are authored at human metres because Mixamo expects it, which puts
+ * Aegis at 1.73 tiles — nearly two — where eight of them occlude each other and
+ * the ground at low pitch. Scaling here rather than in the asset keeps the source
+ * at the size the animations were made for.
+ *
+ * This is the board-scale decision (ART_PIPELINE.md §11) in its cheapest form: a
+ * character 1.15 tiles tall implies roughly 1.5 m per tile. Change this number
+ * once characters can actually be seen on the board.
+ */
+const MODEL_HEIGHT_TILES = 1.15;
 const WALL_HEIGHT = 0.9;
 const COVER_HEIGHT = 0.45;
 
@@ -277,6 +293,8 @@ const PAD_COLOUR: Record<PowerupType, number> = {
 /** What the renderer needs to draw one unit — the same shape the SVG used. */
 export interface RenderUnit {
   unitId: string;
+  /** Which character this is, so the renderer can find its model. */
+  characterId?: string;
   owner: 0 | 1;
   pos: Vec2;
   hp: number;
@@ -347,6 +365,15 @@ export interface Renderer {
   setUnitAt(unitId: string, x: number, y: number, lift?: number): void;
   /** Fade a unit (deferred death visuals). 1 = solid. */
   setUnitFade(unitId: string, alpha: number): void;
+  /**
+   * Fetch rigged models for these characters. Resolves either way — a character
+   * with no `.glb` keeps the box, which is the ordinary case for eight of nine.
+   */
+  preloadCharacters(characterIds: readonly string[]): Promise<void>;
+  /** Play an animation on a unit. A no-op for units still drawn as boxes. */
+  setUnitClip(unitId: string, choice: ClipChoice, beatSeconds: number): void;
+  /** This character's clip names, or undefined if it has no model loaded. */
+  clipsFor(characterId: string | undefined): ClipSet | undefined;
   /**
    * Spotlight: dim everything except these units. Used on Prep/Dash/Blast only —
    * Move is simultaneous and dimming it would hide the whole point (owner).
@@ -534,9 +561,37 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     (mesh.material as MeshBasicMaterial).needsUpdate = true;
   };
 
+  /**
+   * Undefined until a match actually needs rigged characters.
+   *
+   * Importing this module eagerly pulls Three's animation and skinning systems
+   * into the main bundle — around 66 kB gzipped on top of the loaders, for a
+   * feature eight of the nine characters do not use yet. Deferring it keeps the
+   * cost with the matches that pay it.
+   */
+  let models: CharacterModels | undefined;
+  const instances = new Map<string, ModelInstance>();
+
   const buildUnit = (unit: RenderUnit): Group => {
     const g = new Group();
     g.name = unit.unitId;
+
+    const instance = unit.characterId === undefined ? undefined : models?.instance(unit.characterId);
+    if (instance !== undefined) {
+      // Scale from the model's own bounds rather than a hard-coded factor, so a
+      // taller or shorter character still stands MODEL_HEIGHT_TILES high.
+      const box = new Box3().setFromObject(instance.root);
+      const height = box.max.y - box.min.y;
+      const scale = height > 0 ? (TILE * MODEL_HEIGHT_TILES) / height : 1;
+      instance.root.scale.setScalar(scale);
+      instance.root.position.y = -box.min.y * scale;
+      instance.root.name = 'body';
+      instances.set(unit.unitId, instance);
+      g.add(instance.root, buildBars());
+      world.add(g);
+      return g;
+    }
+
     const body = new Mesh(
       new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
       // Always `transparent`, even at full opacity: flipping the flag later
@@ -616,7 +671,14 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     const dimmed = spotlight !== null && !spotlight.has(unitId);
     const alpha = (baseAlpha.get(unitId) ?? 1) * (fadeOf.get(unitId) ?? 1) * (dimmed ? DIM_ALPHA : 1);
     const body = g.getObjectByName('body');
-    if (body instanceof Mesh) (body.material as MeshLambertMaterial).opacity = alpha;
+    // A box has one mesh; a rigged model is a tree of them. Traverse either way.
+    body?.traverse((o) => {
+      if (o instanceof Mesh) {
+        const mat = o.material as MeshLambertMaterial;
+        mat.transparent = true;
+        mat.opacity = alpha;
+      }
+    });
     const bars = g.getObjectByName('bars');
     if (bars !== undefined) bars.visible = alpha > 0.5;
   };
@@ -805,9 +867,27 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     applyCamera();
   }, { passive: false });
 
+  const performanceNow = (): number =>
+    typeof globalThis.performance?.now === 'function' ? globalThis.performance.now() : Date.now();
+
   let frameHandle: number | undefined;
   let afterFrame: (() => void) | undefined;
+  let lastFrameMs: number | undefined;
   const drawFrame = (): void => {
+    // Mixers advance on WALL time, not on cue time. Clip selection is already
+    // driven from the timeline; playback just has to run at the rate the clip
+    // was authored for, or it judders whenever the frame rate does.
+    const nowMs = performanceNow();
+    const delta = lastFrameMs === undefined ? 0 : Math.min((nowMs - lastFrameMs) / 1000, 0.1);
+    lastFrameMs = nowMs;
+    if (delta > 0) {
+      for (const [id, instance] of instances) {
+        // `show()` hides departed units rather than removing them, so without
+        // this every unit that ever existed keeps animating off-screen forever.
+        if (unitObjects.get(id)?.visible !== false) instance.update(delta);
+      }
+    }
+
     stepCamera();
     billboard();
     renderer.render(scene, camera);
@@ -1109,6 +1189,23 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     setUnitFade(unitId, alpha) {
       fadeOf.set(unitId, Math.max(0, Math.min(1, alpha)));
       refreshOpacity(unitId);
+    },
+
+    async preloadCharacters(characterIds) {
+      if (characterIds.length === 0) return;
+      if (models === undefined) {
+        const mod = await import('./character-model.js');
+        models = new mod.CharacterModels();
+      }
+      await models.load(characterIds);
+    },
+
+    setUnitClip(unitId, choice, beatSeconds) {
+      instances.get(unitId)?.play(choice, beatSeconds);
+    },
+
+    clipsFor(characterId) {
+      return characterId === undefined ? undefined : models?.manifest(characterId)?.map;
     },
 
     setSpotlight(unitIds) {

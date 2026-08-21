@@ -318,8 +318,19 @@ def main():
         print(f"    {', '.join(missing)}")
         print("    On Blender 4.4+ this is usually a slotted-action binding the")
         print("    exporter could not resolve. The mesh is fine; the clips are not.")
+    # The manifest is the client's single source for a character's animation
+    # setup: what is in the .glb, which clip answers which cue, and the posture
+    # offsets that are applied on top of the mixer rather than baked (Mixamo
+    # needs a symmetric T-pose, so the hunch cannot live in the mesh).
+    art_path = ROOT / "data" / "art" / f"{cid}.json"
+    art = json.loads(art_path.read_text()) if art_path.exists() else {}
     manifest = out_dir / f"{cid}.clips.json"
-    manifest.write_text(json.dumps({"id": cid, "clips": sorted(clips)}, indent=2) + "\n")
+    manifest.write_text(json.dumps({
+        "id": cid,
+        "clips": sorted(exported),
+        "map": {k: v for k, v in (art.get("clips") or {}).items() if not k.startswith("_")},
+        "posture": {k: v for k, v in (art.get("posture") or {}).items() if not k.startswith("_")},
+    }, indent=2) + "\n")
     print(f"  -> {manifest.name}")
 
 

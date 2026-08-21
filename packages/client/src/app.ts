@@ -33,6 +33,7 @@ import {
 import { createRenderer, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
+import { selectClip } from './character-clips.js';
 import { type Cue } from './choreograph.js';
 import {
   IDLE,
@@ -485,7 +486,7 @@ export function startHotSeat(
     // cannot disagree about what is on a unit even in principle.
     const plate = unitNameplate(u, roster, viewer);
     return {
-      unitId: u.unitId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
+      unitId: u.unitId, characterId: u.characterId, owner: u.owner, pos: u.pos, hp: u.hp, maxHp: u.maxHp,
       energy: u.energy, alive: u.alive, label: (u.characterId[0] ?? '?').toUpperCase(),
       shield: shieldOf(u),
       // STATUS-AUDIT / STATUS-ICONS: the status row rides *inside* the plate
@@ -2142,12 +2143,31 @@ export function startHotSeat(
       const tick = (): void => {
         if (cancelled()) return resolve();
         const t = start + (now() - t0) / MS_PER_BEAT;
-        applyFrame(sampleFrame(cues, Math.min(t, end)), units, posOf);
+        const now_t = Math.min(t, end);
+        applyFrame(sampleFrame(cues, now_t), units, posOf);
+        applyClips(cues, now_t, units);
         if (t >= end) return resolve();
         globalThis.requestAnimationFrame(tick);
       };
       globalThis.requestAnimationFrame(tick);
     });
+  }
+
+  /**
+   * Ask the renderer to play the right animation on every unit.
+   *
+   * Kept beside `applyFrame` rather than inside it: a `Frame` is board
+   * presentation and clip choice is character presentation, and the two are
+   * sampled from the same timeline without needing to share a type. Units whose
+   * character has no model return no clip set and are silently skipped, which is
+   * the path all nine take until their `.glb` exists.
+   */
+  function applyClips(cues: readonly Cue[], t: number, units: RenderUnit[]): void {
+    for (const u of units) {
+      const clips = renderer.clipsFor(u.characterId);
+      if (clips === undefined) continue;
+      renderer.setUnitClip(u.unitId, selectClip(cues, t, u.unitId, clips), MS_PER_BEAT / 1000);
+    }
   }
 
   /** Push one sampled `Frame` into the renderer. No game state is read here. */

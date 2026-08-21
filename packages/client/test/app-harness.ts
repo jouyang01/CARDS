@@ -31,6 +31,8 @@ export interface DrawLog {
   highlights: Map<HighlightLayer, Vec2[]>;
   paths: { squares: Vec2[]; layer: PathLayer | undefined }[];
   shapes: Vec2[][];
+  /** Every animation the app asked for, in order — Phase 8's assertable half. */
+  clips: { unitId: string; clip: string; loop: boolean }[];
   /**
    * WALL-CAST-FIX — the **board itself**, as of the last `show()`: the units,
    * decoys and traps the viewing seat can currently see.
@@ -58,7 +60,7 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
-    highlights: new Map(), paths: [], shapes: [],
+    highlights: new Map(), paths: [], shapes: [], clips: [],
     board: { units: [], decoys: [], traps: [] },
   };
   let orbit = false;
@@ -81,6 +83,15 @@ export function stubRenderer(): StubRenderer {
     objectFor: () => undefined,
     setUnitAt: () => {},
     setUnitFade: () => {},
+    // Headless: there are no models to fetch and no mixer to drive. Recording
+    // the clip requests rather than dropping them keeps them assertable.
+    preloadCharacters: async () => {},
+    setUnitClip: (unitId, choice) => {
+      draw.clips.push({ unitId, clip: choice.clip, loop: choice.loop });
+    },
+    // No models headless, so no character has clips — which is exactly the
+    // fallback path every unit takes today, and the one that must stay working.
+    clipsFor: () => undefined,
     setSpotlight: () => {},
     setOrbitEnabled: (on) => { orbit = on; },
     orbitEnabled: () => orbit,
