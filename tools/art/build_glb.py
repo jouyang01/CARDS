@@ -24,6 +24,10 @@ import sys
 
 import bpy
 
+# World units a clip's root may drift before it counts as root motion. Generous:
+# a genuine idle sways a little, a walk cycle travels metres.
+ROOT_MOTION_LIMIT = 0.15
+
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
@@ -98,6 +102,43 @@ def normalise_scale(arm, meshes):
     bpy.context.view_layer.objects.active = arm
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     return factor
+
+
+def root_travel(arm, action):
+    """How far the root bone travels over a clip, in world units.
+
+    This is the "In Place" check. A clip exported without it carries root motion,
+    which fights the engine for control of position and drifts units off their
+    squares — and it looks completely fine in isolation, which is what makes it
+    worth catching here rather than in playtesting.
+
+    Sampled from the pose rather than read out of fcurves, so it works the same
+    on Blender's old and slotted action layouts.
+    """
+    try:
+        root = None
+        for name in ("mixamorig:Hips", "mixamorigHips", "Hips"):
+            if name in arm.pose.bones:
+                root = arm.pose.bones[name]
+                break
+        if root is None:
+            root = arm.pose.bones[0]
+
+        start, end = (int(round(v)) for v in action.frame_range)
+        if end <= start:
+            return 0.0
+
+        positions = []
+        for frame in (start, (start + end) // 2, end):
+            bpy.context.scene.frame_set(frame)
+            bpy.context.view_layer.update()
+            co = (arm.matrix_world @ root.matrix).translation
+            positions.append((co.x, co.y))
+        xs = [p[0] for p in positions]
+        ys = [p[1] for p in positions]
+        return max(max(xs) - min(xs), max(ys) - min(ys))
+    except Exception:
+        return -1.0
 
 
 def read_glb_animations(path):
@@ -183,6 +224,7 @@ def main():
     # Import each clip, steal its action, throw the duplicate armature away. The
     # action retargets for free because the bone names are identical.
     clips = []
+    rooted = []
     for path in fbx:
         if path == base_path:
             continue
@@ -196,7 +238,12 @@ def main():
                 action.use_fake_user = True      # survives the armature's deletion
                 clips.append(action.name)
                 n = curve_count(action)
-                print(f"  clip   {action.name:<24} {n if n >= 0 else '?':>4} curves")
+                travel = root_travel(arm, action)
+                flag = ""
+                if travel > ROOT_MOTION_LIMIT:
+                    flag = f"  <-- ROOT MOTION {travel:.2f}u, re-export In Place"
+                    rooted.append(action.name)
+                print(f"  clip   {action.name:<24} {n if n >= 0 else '?':>4} curves{flag}")
         except Exception as exc:
             # One bad file must not cost the other seven clips.
             print(f"  ! {path.name}: {type(exc).__name__}: {exc}")
@@ -207,10 +254,28 @@ def main():
     if not clips:
         print("  ! no clips found. Downloads must be Without Skin, one per clip.")
 
+    if rooted:
+        print(f"\n  ! {len(rooted)} clip(s) carry ROOT MOTION: {', '.join(rooted)}")
+        print("    The engine owns unit position; a clip that also moves the character")
+        print("    fights it and drifts units off their squares. Re-download those from")
+        print("    Mixamo with the In Place checkbox ticked.")
+
     # Every action must be reachable from the base armature or the exporter
     # will not see it.
     if base_arm.animation_data is None:
         base_arm.animation_data_create()
+
+    # Purge everything we did not collect. The FBX importer leaves its own
+    # actions behind — "Armature|mixamo.com|Layer0" and friends from the base
+    # and from any file that carried more than one — and ACTIONS export mode
+    # ships every action in the blend, not just the ones we named. Without this
+    # the .glb carries phantom clips the client would have to know to ignore.
+    wanted = set(clips)
+    strays = [a for a in bpy.data.actions if a.name not in wanted]
+    for a in strays:
+        bpy.data.actions.remove(a)
+    if strays:
+        print(f"  purged {len(strays)} stray action(s) left by the importer")
 
     out_dir = ROOT / "packages" / "client" / "public" / "models"
     out_dir.mkdir(parents=True, exist_ok=True)
