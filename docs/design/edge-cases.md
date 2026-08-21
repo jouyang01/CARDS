@@ -198,6 +198,24 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   a reversal of it. **Previews must show the self number** (11 on Ravok's own tile for the whirl, 19
   for Seismic, nothing for Shockwave) — the caster's own square is a previewed victim when
   `selfDamagePct` is present (backlog PREVIEW-NUMBERS-AUDIT).
+- **RULED — FRAG-SELF: `selfHarm` is a second, distinct exit from CASTER-SAFE — presence, not price
+  (owner Dev Note 2026-09-27 #1; backlog FRAG-SELF shipped PR #103; closes Builder session-10 OQ #3).**
+  CASTER-SAFE excludes the caster from its own *area* harmful effects. An ability may now opt a single
+  effect out of that exclusion with **`selfHarm: true`**, meaning **the caster is just another unit
+  standing in the blast** — it is caught iff it is inside the area, and costs nothing if it is not. This
+  is deliberately **not** RECOIL: `selfDamagePct` is a *price of firing* (charged even on a whiff, from
+  the caster's own square); `selfHarm` is *presence in the area* (charged only when the caster stands in
+  it). **The two are mutually exclusive** and validation refuses the pair. Applied at both sites
+  CASTER-SAFE excludes a caster from an area (`runBlast`, `detonateDelayedBlasts`) so a delayed grenade
+  and an undelayed one agree; the Prep/Dash `applySelfEffects` path (self-*targeted* effects) is
+  untouched. Shipped on **Vex's Frag Grenade** (34 damage, radius-2, delayed — now catches its own
+  thrower). This is a per-ability opt-out on top of CASTER-SAFE, not a reversal of it — every other
+  area ability still spares its caster.
+  - **`selfHarm` applies the effect's RIDERS to the caster too (session-10 OQ #5, flagged forward).**
+    Frag Grenade is damage-only so nothing turns on it today, but the next ability to take `selfHarm`
+    with a `slow`/`weaken`/`root` rider will apply that status to its own caster — because "just another
+    unit standing in the blast" means exactly that. This is the intended reading; recorded before content
+    depends on it so it is a decision, not a surprise.
 - **RULED — batch-3 combat rulings verified (SHIPPED PR #82) and four Builder OQs closed
   (2026-09-18).** PHASE-STATUS-FIRST (statuses batch, then damage batches against post-status state,
   both teams together — phase order Prep→Dash→Blast→Move intact; mutual Weakens both blunt; mutual
@@ -851,6 +869,28 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     The preview (which reads `aimFor` directly) still draws, so it looks fine. Fixed by carrying the step
     for placed-rotatable shapes too, with an order-build/resolve regression. This is a client defect, not
     a rule question — the ruling above is correct as shipped in the engine.
+- **PROPOSED — WALL-HIT-ONCE: a multi-tile hazard hits a given unit at most once per turn; it stays a
+  barrier that hits everyone who crosses (owner Dev Note 2026-09-28: "Warding Wall is not a trap that goes
+  away after being hit", disambiguated by the owner to "barrier, but each unit hit once"; backlog
+  WALL-HIT-ONCE — engine).** Warding Wall is `perTile` — four independent one-shot traps — so a single unit
+  can be hit **multiple times by one wall**: walking *along* its length runs over three tiles for 75, and
+  even a perpendicular cross that clips two tiles double-hits. The owner wants a unit to take the wall's
+  25 + weaken **once**, while the wall **remains a multi-target barrier** — a second, different enemy
+  crossing it the same turn is still hit. So the fix is a **per-unit-per-cast dedup, not consumption of the
+  whole wall**: the first tile of a wall to catch a unit fires and is consumed; further tiles of the *same
+  cast* do **not** fire on *that same unit* this turn (and are **not** consumed — they wait for other
+  enemies). This is generic: any future `perTile` hazard inherits it. **Ruling:** a trap carries a
+  **group id** stamped at placement (all tiles of one `perTile` cast share it; a single-tile trap needs
+  none — it can only hit a unit once anyway); resolution keeps a per-turn set of `unitId × groupId` already
+  hit, and `triggerTrapsOnEntry` skips (does not fire, does not consume) a tile whose group has already
+  hit this unit this turn. The set spans the whole turn (a unit could dash through in Dash and be shoved
+  through in Blast — still one hit from that wall). **The barrier is unchanged in every other respect:**
+  it still hits *every distinct* enemy who crosses, still expires end of turn (lifetime 1), and a unit
+  crossing **two separate walls** takes 25 from **each**. Not whole-wall-consumption — the owner chose to
+  keep the multi-target barrier (see the answered Dev Note). Determinism/N-safety: the dedup is a keyed
+  set, order-independent. **Ships with tests:** a unit walking along a 3-tile wall takes 25 once (not 75);
+  two different units each crossing it each take 25; a unit crossing two separate walls takes 25 twice; an
+  ordinary single-tile mine is unaffected.
 - **RULED — TRAP-TRIGGER: what counts as setting off a trap, as a list of arrivals
   (owner Dev Notes 2026-09-25; backlog TRAP-SHOVE-DEFAULT — engine; SUPERSEDES the
   2026-08-14 "knockback/pull do NOT trigger traps in v1" ruling below, and closes

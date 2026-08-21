@@ -17,12 +17,11 @@ same commit.** **A genuinely new mechanic gets a generic, reusable implementatio
 > ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set; QUOTA-RUNAWAY guards the quota. Keep green.
 
 > ⚠️⚠️ **The bug class that keeps shipping green: "pure function passes, real UI broken."** WALL-CAST-FIX
-> (top of this backlog) is the newest instance: WALL-ROTATE's engine + preview are correct and fully
-> tested, yet the ability **cannot be cast**, because the ONE untested seam — the client building and
-> submitting the order (`toUnitOrders` → lock-in → resolve) — drops the wall's rotation. **No client test
-> drives select → click → lock-in → resolve for `warding_wall`.** Every fix below ships a test that drives
-> **`app-harness.ts` end-to-end**, not the pure helper. If a test would still pass with the order-build
-> unwired, it is the wrong test.
+> (PR #103) fixed it once — a wall the engine placed correctly but the client could not cast, because the
+> order-build seam had no coverage. `app-harness.ts` now records `show()`, so the board itself is testable.
+> **Keep that discipline:** every client fix below ships a test that drives `app-harness.ts` end-to-end
+> (select → click → lock-in → resolve, or the real preview), not the pure helper. If a test would still
+> pass with the wiring broken, it is the wrong test.
 
 ## ✅ COMPLETE
 
@@ -37,90 +36,101 @@ same commit.** **A genuinely new mechanic gets a generic, reusable implementatio
   runs along the chosen cardinal; a four-button rotate row; ruled in edge-cases — WALL-ROTATE). *(WALL-ROTATE
   is correct in the engine and preview but exposed a client order-build bug — see WALL-CAST-FIX.)*
 - **PR #100:** a character-art-pipeline doc (generation → Mixamo → weapons → VFX). Docs only.
+- **PR #101 (docs):** the WALL-ROTATE ruling + WALL-CAST-FIX / RAM-LINE-PREVIEW-FIX specs.
+- **PR #102 (docs):** the TTK package spec (`docs/reviews/2026-09-27.md` + the five TTK items below).
+- **PR #103 (Builder session 10):** **WALL-CAST-FIX** (`toUnitOrders` now carries a placed-rotatable
+  shape's `aimStep`; the wall casts; `app-harness.ts` records `show()`), **RAM-LINE-PREVIEW-FIX** (a lane
+  outline for charges + a `chargeHits` number fix — *the outline is being reverted, see RAM-PREVIEW-REVERT;
+  the number fix stays*), **FRAG-SELF** (`selfHarm` opt-out from CASTER-SAFE; Vex's Frag Grenade catches
+  its own thrower — ruled in edge-cases).
 
-Current suite: **2610 tests** (1347 + 961 + 302), typecheck clean, purity clean.
+Current suite: **2630 tests** (1365 + 963 + 302), typecheck clean, purity clean.
 
 ### Build order and dependencies
 
-**WALL-CAST-FIX → RAM-LINE-PREVIEW-FIX → the five TTK items → PLAYTEST → NET-E2E.** Both bug fixes are
-first and **blocking**: they gate the playtest — a playtest of Warding Wall and Ram Charge is worthless
-while one cannot be cast and the other cannot be read. No dependency between them; do them in the listed
-order (severity).
-
-**The TTK package (owner directive 2026-09-27) sits between the fixes and the playtest.** It is Path A's
-tuning pass arriving early — from measurement rather than from felt play — and the argument for putting it
-*before* PLAYTEST is that a playtest of numbers we already intend to change spends the scarcest resource
-in the project on values that will not ship. **This ordering is the owner's call** (review §5 / OQ 1); if
-the preference is to playtest current numbers first, the five items move behind PLAYTEST with their specs
-unchanged. **The five must land as one change** — HP alone makes a healer comp outlast the match, and HP
-without the turn limit ends every 2v2 on the clock.
+**RAM-PREVIEW-REVERT → WALL-HIT-ONCE → the five TTK items (HP → SKILL-DAMAGE → LUMEN-HEAL → TURN-LIMIT →
+INVARIANT) → PLAYTEST → NET-E2E.** The two ability fixes are quick and clean up freshly-shipped work the
+owner flagged this session (Dev Notes #2, #3); no dependency between them. The TTK package is the
+owner-directed batch (Dev Note #1: *"give to builder to implement"*) and **must land as one change** — HP
+alone makes a healer comp outlast the match, and HP without the turn limit ends every 2v2 on the clock. It
+lands before PLAYTEST because a playtest of numbers we already intend to change spends the project's
+scarcest resource — real humans — on values that will not ship (review 2026-09-27 §5). Skim-at-30 vs 26 and
+`KILLS_TO_WIN` staying 4 remain owner flags, neither blocking.
 
 ---
 
-## Client bugs — the two abilities that don't work for a human (do first; they gate the playtest)
+## Two ability fixes on freshly-shipped work (do first; they clean up what the owner flagged)
 
-### WALL-CAST-FIX. Warding Wall cannot be cast — the client drops the rotation from the order (CLIENT, HIGH) — UNBLOCKED (first)
-**Addresses Dev Note: "Aegis's Warding Wall does not cast successfully."** **Root cause found.** WALL-ROTATE
-(PR #99) made a wall's aim require **both** an anchor square and a rotation step — the engine's `aimIsLegal`
-for `'wall'` ends `... && isAimStep(aimStep)` (`resolve.ts`), so a wall order **with no step is refused**.
-The client computes the rotation into `draft.aimStep` (`aimFor` `'wall'`) and shows the rotate row
-(`isPlacedRotatable`), **but `toUnitOrders` only copies `aimStep` into the order when `isRotatable(ability)`
-is true**, and `isRotatable` is `line || cone` only (`targeting.ts:176`, used at `:995`). A wall is
-`isPlacedRotatable`, **not** `isRotatable`, so the rotation is **dropped at order-build**, the engine gets a
-stepless wall, and refuses it → the wall never casts. The preview reads `aimFor` directly, so it draws
-correctly and hides the bug.
-
-*AC:*
-- **A failing test, added first, driving the REAL controller end-to-end** (`app-harness.ts`): select
-  Warding Wall the way the UI does, click a target square, (optionally pick a rotation), **Lock In**, and
-  **resolve** — assert a 4-tile wall of traps is in the resolved state, anchored at the clicked tile,
-  running in the selected (or default) direction. This must **fail on `main`** (the order has no `aimStep`,
-  the engine refuses it, no wall appears) and pass after the fix.
-- **The fix carries the step for a placed-rotatable shape.** In `toUnitOrders` (`targeting.ts:995`), gate
-  the `aimStep` write on `isRotatable(ability) || isPlacedRotatable(ability)` (or simply on
-  `isAimStep(draft.aimStep)` — the engine ignores a step on shapes that don't read one). A wall's chosen
-  rotation reaches the engine.
-- **A defaulted wall still casts:** a player who never touches the rotate row commits with `aimFor`'s
-  default (`WALL_ROTATIONS[0]`), so the order carries that step and the wall lands.
-- **The selected rotation is the one that lands:** picking a different arrow and committing produces a wall
-  running that way (assert against the resolved trap tiles).
-
-**Spec Notes.** Files: `packages/client/src/targeting.ts` (the `toUnitOrders` gate), tests in
-`packages/client/test/` driving `app-harness.ts` through **lock-in and resolve** (not preview). **No engine
-change** — the engine is correct; the client drops the field. Keep the existing preview tests green. The
-real lesson to bank: `warding_wall` had 24 engine + a preview test and still could not be cast, because the
-order-build seam had no coverage — this fix closes that seam for the wall for good. Out of scope: the wall's
-geometry/mechanics (correct per WALL-ROTATE); other abilities.
-
-### RAM-LINE-PREVIEW-FIX. Ram Charge does not preview as a line attack (CLIENT) — UNBLOCKED (after WALL-CAST-FIX)
-**Addresses Dev Note: "Bastion's Ram Charge is still not a linear dash/attack preview."** The **engine is
-correct** (`bastion.ram_charge` has `chargeHits:"all"`; `walkCharge` damages every enemy the path crosses).
-The preview draws the route tiles (`covered`, `app.ts`) and the landing marker (the BASTION-RAM-LINE
-addition), **but nothing marks the crossed ENEMIES as hit and no damage number shows along the line** —
-`ram_charge` has no `impact` field, so `impactPreview`'s discs are empty, and there is **no client mirror of
-`walkCharge`/`chargeHits`.** A real `line` attack lights its whole tile run (`lineSquares`) and
-`previewNumbers` stamps every enemy on it; a `path` charge never reaches that path, so it reads as a
-movement route, not an attack.
+### RAM-PREVIEW-REVERT. Take Ram Charge's preview back to how it was — drop the lane outline (CLIENT) — UNBLOCKED (first)
+**Addresses Dev Note: "Ram Charge line attack preview is not working, just go back to how it was before."**
+This **answers Builder session-10 OQ #1** — RAM-LINE-PREVIEW-FIX (PR #103) added a lane outline for `path`
+shapes and the owner has rejected it. Revert the **visible outline change**, keep the correctness fix that
+rode alongside it. RAM-LINE-PREVIEW-FIX did two separable things: (1) a **lane outline** for charges
+(`tessellate`'s `path` case, previously `return []`, plus the route in the boundary memo key, plus the
+app.ts path-outline draw) — *this is what the owner wants gone*; and (2) a **`chargeHits` number fix**
+(first-only charges no longer stamp damage on enemies they cannot hit) — *this is a correctness fix and
+stays*; reverting it restores a preview that lies (Kestrel's Skim showing 12 on every enemy on the route),
+and it is invisible to Ram Charge anyway (`chargeHits:"all"`).
 
 *AC:*
-- **The preview reads as a line attack:** every enemy the charge path crosses is marked with its **15**
-  damage (the same tell a `line`/blast attack shows — reuse that path, do not invent a second), **plus** the
-  existing landing marker. A `chargeHits:"all"` dash previews **all** crossed enemies, not just the first.
-- **A test driving the REAL preview** (`app-harness.ts`): with enemies along Bastion's charge line, aim Ram
-  Charge and assert the preview reports **every** crossed enemy hit for 15 (and the landing marker present).
-  Property-style (PREVIEW-NUMBERS-AUDIT): the previewed hit set == the set the engine's `chargeHits:"all"`
-  resolution damages, for the roster.
-- **A non-`chargeHits:"all"` dash is unchanged** (a first-enemy-only or teleport dash previews as before).
+- **The charge draws no shape-layer outline again** — `tessellate`'s `path` case returns `[]`
+  (`aim-boundary.ts`), the `path` route is removed from the boundary memo key, and the app.ts draw of the
+  path outline is removed. Ram Charge previews as it did after BASTION-RAM-LINE: route tiles (`covered`) +
+  the landing marker + per-enemy damage numbers, and **no lane polygon**.
+- **The `chargeHits` number-correctness fix is KEPT** — a first-only charge (Skim, Bullrush, Bramble
+  Stride) still previews its damage on the **first** enemy only, not every enemy on the route.
+- **A test driving the REAL preview** (`app-harness.ts`): aiming Ram Charge records **no** `path` shape on
+  the shape layer (the assertion that fails today, before the revert); the route tiles and landing marker
+  are still present; a first-only charge still previews one number.
 
-**Spec Notes.** Files: `packages/client/src/targeting.ts` (compute the crossed-enemy hit set for a
-`chargeHits:"all"` path the way `walkCharge` does — **read the engine's derivation, don't recompute a
-parallel one**), `packages/client/src/app.ts` (draw the damage tell on the crossed enemies, same layer a
-line attack uses). Preview-only — the engine already hits everyone. Ties off session-7 OQ #3 for real. Out
-of scope: the `chargeHits` engine mechanic (correct); Ram Charge's numbers/cooldown (correct); other dashes.
+**Spec Notes.** Files: `packages/client/src/aim-boundary.ts` (revert the `path` tessellate case + memo
+key), `packages/client/src/app.ts` (remove the path-outline draw). **Do NOT revert**
+`packages/client/src/preview-numbers.ts` (the `chargeHits` fix) or the engine
+`chargedUnits`/`chargeVictims` export in `resolve.ts`/`targeting.ts` (harmless single-source-of-truth the
+number fix reads). The Builder's `ram-charge-line.test.ts` will need its outline assertions removed/flipped;
+keep the parts that assert the number correctness. **Flag to owner (one line):** first-only charges keep the
+corrected single-number preview — that is the one bit of "before" not being restored, because "before" was a
+lying preview. Out of scope: the engine's charge resolution (correct); Ram Charge's data (see
+TTK-SKILL-DAMAGE for its damage change).
+
+### WALL-HIT-ONCE. A wall hits a given unit at most once; it stays a multi-target barrier (ENGINE) — UNBLOCKED (after RAM-PREVIEW-REVERT)
+**Addresses Dev Note: "Warding Wall is not a trap that goes away after being hit."** — owner-disambiguated
+(2026-09-28) to **"barrier, but each unit hit once."** The engine is otherwise correct (a tile is consumed
+on trigger, the wall expires end of its placement turn, playback and render clear it). The issue is the
+`perTile` nature: a wall is four independent one-shot traps, so **one unit can be hit several times by the
+same wall** — walking its length runs over three tiles for 75, and a two-tile clip double-hits. The owner
+wants a unit to take the wall's 25 + weaken **once**, while the wall stays a **multi-target barrier** (a
+second, different enemy crossing it the same turn is still hit). Ruled PROPOSED in edge-cases (WALL-HIT-ONCE).
+
+*AC:*
+- **A per-unit-per-cast dedup, not whole-wall consumption.** The first tile of a wall to catch a unit fires
+  and is consumed; further tiles of the **same cast** do **not** fire on **that same unit** this turn, and
+  are **not** consumed (they remain for other enemies).
+- **The barrier is preserved:** two different units each crossing the wall each take 25; a unit crossing two
+  **separate** walls takes 25 from each; the wall still expires end of turn.
+- **Tests (engine):** a unit walking along a 3-tile wall takes **25 once, not 75**; two different units each
+  crossing take 25 each; a unit crossing two separate walls takes 25 twice; an ordinary single-tile mine
+  (Overwatch Trap, Snare Bloom, Barbed Sling) is **unaffected**; the dedup holds across phases (a unit that
+  dashes through in Dash and is shoved through in Blast is still hit once by that wall).
+
+**Spec Notes.** Files: `packages/engine/src/resolve.ts` (`placeTraps` stamps a **group id** on each tile of
+a `perTile` cast — all tiles of one cast share it; a single-tile trap needs none; `triggerTrapsOnEntry`
+keeps/consults a per-turn `unitId × groupId` set and skips — without firing or consuming — a tile whose
+group has already hit this unit), `packages/engine/src/types.ts` (a `groupId?` on `TrapState`). The dedup
+set is **resolution-scoped** — thread it through the trap-trigger callers (`walkCharge`, `stepMovers`,
+`applyDisplacements`) or hang it on the resolution context, so it spans the whole turn. Keep it a **keyed
+set** (order-independent, N-safe, deterministic). Generic by design: any future `perTile` hazard inherits
+"one hit per unit per cast" for free. Out of scope: whole-wall consumption (the owner chose the barrier);
+the wall's cast/rotation/lifetime (correct); single-tile traps (unchanged — a mine already can only hit a
+unit once, being consumed on the first trigger).
 
 ---
 
-## Data — the TTK package (owner directive 2026-09-27; Path A's tuning pass, arriving early)
+## Data — the TTK package (owner directive 2026-09-27; **now directed for implementation**, Dev Note 2026-09-28 #1)
+
+**Addresses Dev Note: "Make sure you review TTK changes in PR #102 to give to builder to implement."** The
+package was reviewed (2026-09-28 §1) and is sound; the owner now directs implementation, which also settles
+the sequencing question in its favour — it lands **before** PLAYTEST. All five items are UNBLOCKED.
 
 > **Owner directive, verbatim:** *"The package — 1. HP to the table above — raises TTK to AR parity and
 > fixes the ult burst. 2. Skill damage to 1.25x basic, single target skills should do more than aoe
@@ -253,11 +263,11 @@ The game is feature-complete for a 2v2 duel and **deployed live**, but the recen
 bands, Warding Wall + rotation, Ram Charge's line, TRAP-SHOVE, DEATH-HANG, AIM-PREVIEW-TRUE) are
 **unvalidated by real play**. Path A retires that risk before adding more.
 
-### PLAYTEST (owner + humans; not a Builder code item) — AFTER the two bug fixes ship
+### PLAYTEST (owner + humans; not a Builder code item) — AFTER the fixes and the TTK package ship
 A real **two-machine internet playtest** of the live deploy — ideally the **asymmetric 3-player 2v2**, the
-least-exercised path. **Prerequisite:** WALL-CAST-FIX and RAM-LINE-PREVIEW-FIX merged first — otherwise two
-abilities under test are unusable; and, per the build order, **the five TTK items** unless the owner rules
-otherwise. If the TTK package has landed, the playtest also answers: does a fight last long enough that a
+least-exercised path. **Prerequisite:** RAM-PREVIEW-REVERT and WALL-HIT-ONCE merged (the two ability fixes
+this session) and **the five TTK items** (owner-directed). WALL-CAST-FIX already shipped, so the wall casts.
+With the TTK package landed, the playtest also answers: does a fight last long enough that a
 single caught-in-the-open turn is survivable (the directive's whole point); does Kestrel's Skim at 30 crowd
 her ultimate (fallback 26); does Bastion's Chain Hook at 23 + pull 2 read as fair; does a 20-turn 2v2 drag. Watch: does a mid-match death stay playable for both sides (DEATH-HANG);
 do dashes at 4–5 and blasts at 3–4 improve the tempo; does the rotatable Warding Wall read and matter (and
@@ -286,6 +296,12 @@ Durable Object in a test worker). Scope it into a full item after the playtest.
 - **Kestrel's Skim at 30 (playtest flag).** The only ability at the 1.25 ceiling, and 86% of her own
   ultimate on a 4-turn cooldown. **Fallback 26.** — **Bastion's Chain Hook at 23** on the roster's only
   pull ≥ 2; AR-normal (Rampart's Fusion Lance: 25 + pull, cd3) but a big change in what the ability is.
+- **FRAG-SELF zoning nerf (session-10 OQ #4, playtest).** Vex's Frag Grenade now catches its own thrower
+  (34 in a radius-2 disc, no longer sparing Vex) — a real nerf to her zoning, delivered by a rules change
+  (FRAG-SELF), not a balance pass, and no number moved for it. (TTK-SKILL-DAMAGE separately takes its damage
+  34→33, unrelated to the self-harm.) **Designer/playtest call** whether it went too far. Also note the
+  forward rule (edge-cases, FRAG-SELF): the next ability to take `selfHarm` with a status rider will apply
+  that status to its own caster — a decision recorded before content depends on it.
 - **WALL-REACH (session-9 OQ #2, Designer).** After WALL-ROTATE, `warding_wall`'s far end can sit ~7 tiles
   from Aegis (anchor within 4, wall extends 4 along the cardinal); it was ~5 under the old centred geometry.
   No number changed and the Builder did not rebalance. **Designer/playtest call** whether `range` should
