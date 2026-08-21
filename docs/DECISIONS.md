@@ -5391,3 +5391,137 @@ that matters: the model loads and the clip the manifest names is not in it.
    longer holds. Not changed — whether to raise it, ratchet it, or hold at 300 and code-split
    `renderer3d.ts` when it trips is a call worth making deliberately rather than in passing.
 
+## 2026-08-21 — Builder session 13 (BOARD-LIT / GRID-SEAMS: the board stops being black boxes)
+
+**The complaint was "the maps are just black and boxes"; the cause was not missing textures.**
+Three things were making the board flat, and only the third is an art problem. Tier 0 fixes the
+first two and costs no asset bytes at all.
+
+**BOARD-LIT — the rig was ambient-dominant.** `AmbientLight(1.6)` against `DirectionalLight(1.1)`
+means every face of every box receives nearly the same energy. Form is read from the *difference*
+between faces, so under that rig a wall is a flat rectangle no matter what colour or texture is put
+on it — a texture pass would have been money spent on a problem it could not solve. Ambient is now
+a floor (0.35) whose only job is keeping a shadowed face readable, the sun models the scene at 2.2
+and is the only shadow caster, a `HemisphereLight` separates tops from sides by *hue* as well as
+value, and an un-shadowed fill keeps the dark side's silhouette. Intensities are physically scaled:
+three has been physically-correct by default since r165 and this workspace is on 0.185.
+
+**Materials now say what a thing is made of.** Every board mesh was `MeshLambertMaterial`, which has
+no notion of roughness, so floor and cover and wall scattered light identically and read as one
+substance in three colours. `SURFACE` gives each a roughness/metalness pair — cover is scuffed metal,
+brush is fully matte, floor is dry stone. The entries are the hook a later tier hangs canvas-drawn
+`map`/`normalMap` textures off without moving anything else.
+
+**Overlays are unlit now, and this was the one real trap in the change.** The tile-highlight
+material was also `MeshLambertMaterial`, which under `ambient 1.6` was full-brightness *by accident*.
+Dropping ambient to a floor would have darkened every aim, range and fog wash along with the board and
+quietly cost them the contrast they exist for — a lighting change turning into a rules-legibility bug.
+Overlays are UI, not scenery, so they are `MeshBasicMaterial`: what they were always pretending to be.
+Pads, traps, nameplates and intent tiles were already unlit and are untouched.
+
+**GRID-SEAMS — the seams were a comment, not a feature.** The line above the terrain loop has always
+read "faint tile seams so squares are countable — the grid IS the ruleset here", and nothing under it
+drew any. The floor was one undifferentiated plane and a square only became visible while something was
+hovered over it. On a game that quotes every rule in squares, a board at rest you cannot count is the
+bug; the seams are now drawn, as floor-coloured ink darkened 45%, below the overlay band so nothing the
+player is asked to read has to compete with them.
+
+**Judgment call — the shadow camera is sized from the map, not left at three's default.** A
+`DirectionalLight` shadows through a ±5 orthographic box, and *both* shipped maps are larger than that
+in both axes, so the default would shadow a patch in the middle of the board and leave the rest lit —
+which reads as a broken renderer rather than as lighting. `shadowFrustum()` takes the board's
+half-diagonal (the light is off-axis, so the diagonal is the extent that matters) plus a margin for the
+shadow a wall throws past the last row. One 1024 map, because the e2e opens several renderers.
+
+**Judgment call — the new configuration is exported as data and tested pure.** `renderer3d.test.ts`
+established that the renderer needs WebGL but its *decisions* do not: the board↔world mapping is pure
+and tested. `LIGHTING`, `SURFACE`, `shadowFrustum()`, `gridInk()` and `gridPositions()` follow that
+precedent, so the ambient-vs-sun ratio, the shadow coverage and the seam geometry all have real
+assertions without a GL context. The seam test checks the grid against `squareToWorldXZ` specifically:
+a grid that disagrees with the mapping is the old SVG click-target bug wearing a new coat.
+
+**Cost:** +0.8 kB gzipped (191.4 → 192.2, budget 300). No new assets, so `ASSET-WEIGHT-BUDGET`
+(`BACKLOG.md`) is not yet in play — the first `.glb` or `.png` is what triggers that item, and Tier 0
+deliberately does not add one.
+
+**Not done, and deliberately.** Tier 1 (procedural canvas textures via the `textures.ts` cache pattern),
+Tier 2 (`theme` as a `MapDef` field so a map's look ships as JSON per golden rule 2 — both shipped maps
+currently share one hardcoded `PALETTE` in `app.ts`, so Duel Arena and Iron Basin are the same six
+colours in a different shape), and Tier 3 (real assets, which needs the asset-weight CI number specced
+first). Also noted: `docs/ART_PIPELINE.md` covers *characters* only — there is no equivalent document for
+terrain, and Tier 2 onwards wants one.
+
+## 2026-08-21 — Builder session 13b (SCENE-DIORAMA / SKY-DOME: the board becomes a place)
+
+Follow-on to BOARD-LIT, and the first phase of the new `docs/MAP_PIPELINE.md` — the terrain
+counterpart to `ART_PIPELINE.md`, written this session because the owner asked for maps with
+the life Atlas Reactor's have and there was no document saying what that would take.
+
+**The idea the pipeline is built on.** In Atlas Reactor the arena you *play on* and the
+environment you *look at* are two different things: the playable grid is a small platform, and
+most of the screen is set dressing no rule ever consults. That separation is the architecture
+worth copying, and it fits the constitution exactly — `data/maps/*.json` stays gameplay truth
+and scenery is a decoration layer keyed to it. It also reframes the work: "replace the boxes
+with nicer boxes" has a disappointing ceiling; "build a diorama around the board" is where the
+life is. The separation is already *enforced* rather than merely intended, because
+`squareFromPoint` raycasts `ground` specifically rather than the scene — so scenery cannot
+steal a click however far it extends. That one line is why this layer is safe to grow.
+
+**SKY-DOME is screen-space, and that is the projection's decision, not a shortcut.** Under an
+orthographic camera every ray is parallel, so a dome large enough to enclose the camera is
+sampled across only a few degrees of its own curve and the gradient painted on it arrives very
+nearly flat — which is the thing being fixed. A background texture is drawn as a full-screen
+quad, so the ramp lands as authored.
+
+**`sky.ts` has no `three` import on purpose.** The e2e reads composited pixels and has to know
+what the sky should be; the alternative is a hand-copied hex in `e2e/pixels.ts` that silently
+stops matching the first time anyone retunes the ramp, and whose failure would look like a
+clipped board rather than a stale constant. Keeping the palette and ramp maths dependency-free
+lets the browser test import the same source the renderer draws from.
+
+**The ramp was retuned to make an existing test mean something.** Measured off a real
+composite, the lit floor arrives at `rgb(18, 20, 27)` and the old flat background was
+`#12141a` — within one count on every channel. So `isSceneBackground` matched the floor as
+readily as the void, and "no rank of the board is clipped" could not actually fail. The first
+ramp chosen passed close enough to the floor to keep that hole open; it was moved to a more
+saturated blue until the floor is off-ramp by a wide margin. The check is now stronger than
+the literal it replaces, not merely different.
+
+**Judgment call — every permanent fixture stays dim, and this is a constraint rather than a
+taste.** `e2e/pixels.ts` counts colour *families*, and `isTeamBlue`, `isTeamRed` and
+`isAimOrange` all gate on a channel above 130, because those marks are things a player is
+meant to look *at*. The first rim drawn was a bright cyan and composited at `(79, 173, 223)`,
+which satisfies `isTeamBlue` — so "team 0's units are on screen" would have been satisfied by
+the furniture. Worse, `isTeamRed` is asserted **equal to zero** to prove the unseen enemy team
+is not drawn, so a saturated red spawn marker would have broken a hidden-information guard
+outright. Every bright hue collides with *some* family, so the fix is not a different hue but
+a lower one: contrast against a near-black sky is what makes an edge read, not brightness. The
+rim now composites at `(49, 94, 112)` and the markers at about `(42, 60, 101)`. This is also
+the better design — furniture should be quieter than units.
+
+**Judgment call — `boardSpan()` now frames the *arena*, not the board.** The platform and its
+rim were built correctly and drawn every frame, and were invisible: the camera fits the board
+exactly, so a 1.5-tile ledge sits outside the frustum. Fixing it at the initial `span` did
+nothing because the auto-camera overwrites it, so the allowance belongs in `boardSpan()`,
+where "frame the whole board" is defined. The Analyzer may want to check whether that changed
+how the auto-camera follows the action.
+
+**A bug worth recording because the class of it will recur.** The rim bars were first placed at
+`SCENERY.top - height / 2`, which is *inside* the slab — the slab runs from `top` downward, so
+the bars were buried in the geometry they were meant to edge. Nothing errored and nothing
+looked wrong; the rim was simply absent. Scenery has no test that can catch "drawn but
+occluded", which is why the verification loop here was screenshot-and-scan rather than
+screenshot-and-look.
+
+**Deferred, deliberately: scene fog and bloom.** Both are in the original sketch of this step
+and both are held for the same reason — they shift *global* pixel values that tightly-tuned
+matchers depend on. `isFogged` requires `r < 18 && g < 20 && b < 26`, which bloom bleeding off
+a bright fixture will violate and which fog blending toward a horizon colour will violate too.
+Bloom also changes the render path every pixel test runs through, and the e2e is already ten
+minutes single-worker under SwiftShader. They want their own change, with the predicates
+retuned deliberately alongside — not a line appended to a scenery commit.
+
+**Cost:** the sky adds one 8×256 canvas texture and the arena adds seven meshes, on any map.
+No new assets, so `ASSET-WEIGHT-BUDGET` is still not in play — `MAP_PIPELINE.md` phase 4 is
+what triggers it, and it now has two callers, since `ART_PIPELINE.md` §5 needs the same loader
+and the same budget number for character `.glb` files.

@@ -22,18 +22,22 @@ import {
   CanvasTexture,
   Box3,
   BoxGeometry,
+  BufferAttribute,
   BufferGeometry,
   Color,
   DoubleSide,
   DirectionalLight,
   Group,
+  HemisphereLight,
   Line,
   LineBasicMaterial,
   LineDashedMaterial,
+  LineSegments,
   Mesh,
   MeshBasicMaterial,
-  MeshLambertMaterial,
+  MeshStandardMaterial,
   OrthographicCamera,
+  PCFSoftShadowMap,
   PlaneGeometry,
   Raycaster,
   Scene,
@@ -49,7 +53,7 @@ import type { ClipChoice, ClipSet } from './character-clips.js';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
-import { intentTexture, plateTexture } from './textures.js';
+import { intentTexture, plateTexture, skyTexture } from './textures.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -155,6 +159,204 @@ export type ShapeLayer = 'shape' | 'shapeBand' | 'shapeImpact' | 'shapeLocked';
  * its top surface the floor every tile overlay has to clear (FOG-ZORDER).
  */
 export const TERRAIN_HEIGHT = { brush: 0.02, cover: COVER_HEIGHT, wall: WALL_HEIGHT } as const;
+
+/**
+ * BOARD-LIT — the lighting rig, as data rather than four literals in the middle
+ * of scene construction.
+ *
+ * The board ran `AmbientLight(1.6)` against a `DirectionalLight(1.1)`: an
+ * ambient-*dominant* rig, where every face of every box receives nearly the same
+ * energy. Form is read from the difference between faces, so under that rig a
+ * wall is a flat rectangle and the map is "black and boxes" no matter what
+ * colour or texture is put on it. Ambient drops to a floor whose only job is to
+ * keep a shadowed face readable, and the directional light becomes the light
+ * that actually models the scene.
+ *
+ * The hemisphere light is what makes it cheap: cool from the sky, warm from the
+ * ground, so a box *top* and a box *side* differ in hue as well as in value
+ * before the sun reaches either. One light, and the silhouette reads.
+ *
+ * The `fill` is deliberately not a caster. It exists so the side facing away
+ * from the sun keeps an edge instead of going to ambient flat, and a second
+ * shadow map to buy that would be paying real per-frame cost for a detail
+ * nobody can point at.
+ *
+ * Intensities are physically scaled: three has been physically-correct by
+ * default since r165 and this workspace is on 0.185, which is why the sun is
+ * ~2 rather than the ~1 a legacy-lit scene wanted.
+ */
+export const LIGHTING = {
+  ambient: { intensity: 0.35 },
+  hemisphere: { sky: 0xa8c4ec, ground: 0x2b2118, intensity: 1.0 },
+  sun: { intensity: 2.2, position: [6, 11, 5] },
+  fill: { intensity: 0.45, position: [-7, 6, -6] },
+} as const;
+
+/**
+ * BOARD-LIT — how each surface answers the light.
+ *
+ * Every mesh on the board was `MeshLambertMaterial`, which has no notion of
+ * roughness: cover and floor and wall all scatter light identically and so all
+ * read as the same substance in three colours. Standard materials cost a little
+ * more per pixel and let a material say what it *is* — cover is a scuffed metal
+ * barricade, brush is matte foliage that should never catch a highlight, floor
+ * is dry stone.
+ *
+ * These are the Tier-0 values: no maps, no textures, no bytes. A later tier
+ * hangs canvas-drawn `map`/`normalMap` textures off these same entries without
+ * moving anything else.
+ */
+export const SURFACE = {
+  open: { roughness: 0.94, metalness: 0.02 },
+  wall: { roughness: 0.78, metalness: 0.14 },
+  cover: { roughness: 0.52, metalness: 0.42 },
+  brush: { roughness: 1.0, metalness: 0.0 },
+  unit: { roughness: 0.44, metalness: 0.22 },
+} as const;
+
+/** Shadow-map resolution. One 1024 map — the e2e opens several renderers. */
+const SHADOW_MAP_PX = 1024;
+
+/**
+ * The sun's shadow camera, sized to the board it has to cover.
+ *
+ * A `DirectionalLight` shadows through an orthographic camera that defaults to
+ * a ±5 box. Every shipped map is larger than that in both axes, so the default
+ * would shadow a patch in the middle and leave the rest unshadowed — which
+ * looks like a rendering bug, not like lighting. The radius is the board's
+ * half-diagonal (the light is off-axis, so the diagonal is the extent that
+ * matters) plus a margin for the shadow a wall throws past the last row.
+ *
+ * Pure and exported so the sizing is testable without a WebGL context, the way
+ * the board↔world mapping already is.
+ */
+export const shadowFrustum = (map: { width: number; height: number }): {
+  radius: number; near: number; far: number;
+} => ({
+  radius: Math.hypot(map.width, map.height) / 2 + 2,
+  near: 0.5,
+  far: 60,
+});
+
+/** How far the seam ink is darkened from the floor colour it sits on. */
+const GRID_DARKEN = 0.55;
+/** Seam opacity — present when looked for, invisible when not. */
+const GRID_OPACITY = 0.5;
+/**
+ * The seams sit just off the floor to beat z-fighting, and stay well under
+ * `OVERLAY_BASE` so no highlight has to compete with them (FOG-ZORDER).
+ */
+const GRID_LIFT = 0.004;
+
+/** One colour, scaled per channel. Clamped, so a factor over 1 stays a colour. */
+export const shade = (hex: number, factor: number): number => {
+  const channel = (shift: number): number =>
+    Math.max(0, Math.min(255, Math.round(((hex >> shift) & 0xff) * factor))) << shift;
+  return channel(16) | channel(8) | channel(0);
+};
+
+/** Seam ink: the floor colour, darkened. A grid is a shade of its floor. */
+export const gridInk = (open: number): number => shade(open, GRID_DARKEN);
+
+/**
+ * SCENE-DIORAMA — the arena the board sits on.
+ *
+ * The board was a plane in a void: geometry that stops at the last rank with
+ * nothing underneath, which reads as an unfinished render rather than a place.
+ * A slab with a lit edge is the cheapest thing that turns it into an object —
+ * the same trick Atlas Reactor's maps use, where the playable grid is a small
+ * platform and everything around it is set dressing no rule ever consults.
+ *
+ * **Nothing here is ever asked about the rules.** Picking raycasts `ground`
+ * specifically (see `squareFromPoint`), not the scene, so scenery cannot steal a
+ * click no matter how far it extends. That separation is the whole reason this
+ * layer is safe to grow: it can become a skyline later without any of it
+ * becoming reachable.
+ */
+export const SCENERY = {
+  /** How far the ledge runs past the last rank, in tiles. */
+  margin: 1.5,
+  /** Slab depth. Only its top edge is seen, even at the orbit's lowest pitch. */
+  depth: 0.8,
+  /** The slab's top sits fractionally under the floor so the two cannot z-fight. */
+  top: -0.02,
+  /** How dark the slab is against the floor it carries. */
+  shade: 0.55,
+  /**
+   * The rim is deliberately **dim**. Every colour family the e2e counts —
+   * `isTeamBlue`, `isTeamRed`, `isAimOrange` — gates on a channel above 130,
+   * because those marks are things a player is meant to look *at*. A bright
+   * arena edge lands inside one of those families however its hue is chosen, and
+   * then "team 0's units are on screen" is satisfied by the furniture. Contrast
+   * against a near-black sky is what makes an edge read, not brightness, so the
+   * rim stays under the gate and loses nothing.
+   */
+  rim: { height: 0.1, thickness: 0.18, colour: 0x1e4552, emissive: 0.85 },
+  /** A team's marker, as a fraction of the edge it runs along. */
+  spawnSpan: 0.42,
+  /** Markers are a tint on the arena, not a second set of units: dimmer still. */
+  spawnShade: 0.3,
+  spawnEmissive: 0.7,
+} as const;
+
+/** Which side of the board a team enters from. */
+export type BoardEdge = 'west' | 'east' | 'north' | 'south';
+
+/**
+ * The platform edge a team spawns against.
+ *
+ * Read from `map.spawns` rather than assumed to be left/right: a map is free to
+ * put its spawns on the short axis, and a marker painted on the wrong edge is
+ * worse than no marker — it tells the player their back is somewhere it is not.
+ * Ties keep the first of a fixed order, so the answer is stable for a spawn
+ * cluster sitting dead centre rather than depending on iteration luck.
+ */
+export const spawnEdge = (map: MapDef, team: 0 | 1): BoardEdge => {
+  const spawns = map.spawns[team];
+  if (spawns.length === 0) return team === 0 ? 'west' : 'east';
+  const mx = spawns.reduce((sum, p) => sum + p.x, 0) / spawns.length;
+  const my = spawns.reduce((sum, p) => sum + p.y, 0) / spawns.length;
+  const gaps: ReadonlyArray<readonly [BoardEdge, number]> = [
+    ['west', mx],
+    ['east', map.width - 1 - mx],
+    ['north', my],
+    ['south', map.height - 1 - my],
+  ];
+  let best = gaps[0] as readonly [BoardEdge, number];
+  for (const gap of gaps) if (gap[1] < best[1]) best = gap;
+  return best[0];
+};
+
+/**
+ * GRID-SEAMS — the tile seams the renderer has always claimed to draw.
+ *
+ * The comment above the terrain loop said "faint tile seams so squares are
+ * countable — the grid IS the ruleset here", and nothing under it drew any: the
+ * floor was one undifferentiated plane, and a square only became visible when
+ * something was hovered over it. On a game where every rule is quoted in
+ * squares, a board at rest that cannot be counted is the bug.
+ *
+ * Returns the line-segment endpoints as a flat XYZ buffer. Squares are centred
+ * on integers by `squareToWorldXZ`, so tile *edges* land on half-integers and
+ * the board spans ±width/2 by ±height/2 — that is where the seams go.
+ *
+ * Pure and exported for the same reason `squareToWorldXZ` is: a grid that
+ * disagrees with the mapping is the click-target bug wearing a new coat.
+ */
+export const gridPositions = (map: { width: number; height: number }): Float32Array => {
+  const halfW = map.width / 2;
+  const halfH = map.height / 2;
+  const out: number[] = [];
+  for (let i = 0; i <= map.width; i++) {
+    const x = -halfW + i;
+    out.push(x, 0, -halfH, x, 0, halfH);
+  }
+  for (let i = 0; i <= map.height; i++) {
+    const z = -halfH + i;
+    out.push(-halfW, 0, z, halfW, 0, z);
+  }
+  return new Float32Array(out);
+};
 
 /**
  * Where the overlay band starts. FOG-ZORDER: the highlight layers used to run
@@ -485,7 +687,9 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   open: number; wall: number; cover: number; brush: number; team0: number; team1: number; background: number;
 }): Renderer {
   const scene = new Scene();
-  scene.background = new Color(palette.background);
+  // SKY-DOME: a ramp rather than a flat clear colour. The fallback keeps a
+  // headless context (no 2d canvas) drawing something rather than nothing.
+  scene.background = skyTexture() ?? new Color(palette.background);
 
   // An orthographic camera has no perspective divide, so a tile is the same size
   // wherever it sits — which is exactly what a tactics board wants.
@@ -496,10 +700,38 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   renderer.domElement.style.borderRadius = '8px';
   container.replaceChildren(renderer.domElement);
 
-  scene.add(new AmbientLight(0xffffff, 1.6));
-  const sun = new DirectionalLight(0xffffff, 1.1);
-  sun.position.set(4, 10, 6);
+  // BOARD-LIT — see `LIGHTING`. Ambient is a floor, not a fill; the sun models
+  // the scene and is the only caster; the hemisphere splits tops from sides by
+  // hue; the fill keeps the dark side's silhouette without a second shadow map.
+  scene.add(new AmbientLight(0xffffff, LIGHTING.ambient.intensity));
+  scene.add(new HemisphereLight(
+    LIGHTING.hemisphere.sky, LIGHTING.hemisphere.ground, LIGHTING.hemisphere.intensity,
+  ));
+
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = PCFSoftShadowMap;
+
+  const sun = new DirectionalLight(0xffffff, LIGHTING.sun.intensity);
+  sun.position.set(...LIGHTING.sun.position);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(SHADOW_MAP_PX, SHADOW_MAP_PX);
+  const frustum = shadowFrustum(map);
+  sun.shadow.camera.left = -frustum.radius;
+  sun.shadow.camera.right = frustum.radius;
+  sun.shadow.camera.top = frustum.radius;
+  sun.shadow.camera.bottom = -frustum.radius;
+  sun.shadow.camera.near = frustum.near;
+  sun.shadow.camera.far = frustum.far;
+  // Boxes sitting flush on a plane are the classic shadow-acne case; the normal
+  // bias is what keeps a wall from striping the floor it stands on.
+  sun.shadow.bias = -0.0012;
+  sun.shadow.normalBias = 0.02;
+  sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun);
+
+  const fill = new DirectionalLight(0xffffff, LIGHTING.fill.intensity);
+  fill.position.set(...LIGHTING.fill.position);
+  scene.add(fill);
 
   // ── Static terrain ────────────────────────────────────────────────────────
   const world = new Group();
@@ -507,25 +739,111 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   const ground = new Mesh(
     new PlaneGeometry(map.width * TILE, map.height * TILE),
-    new MeshLambertMaterial({ color: palette.open }),
+    new MeshStandardMaterial({ color: palette.open, ...SURFACE.open }),
   );
   ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
   world.add(ground);
 
-  // Faint tile seams so squares are countable — the grid IS the ruleset here.
-  for (const [squares, colour, height] of [
-    [map.brush, palette.brush, TERRAIN_HEIGHT.brush],
-    [map.cover, palette.cover, TERRAIN_HEIGHT.cover],
-    [map.walls, palette.wall, TERRAIN_HEIGHT.wall],
+  // GRID-SEAMS — faint tile seams so squares are countable. The grid IS the
+  // ruleset here, and until now this comment was the only part of it that
+  // existed: nothing drew seams, so a board at rest had no squares in it.
+  const grid = new LineSegments(
+    new BufferGeometry().setAttribute('position', new BufferAttribute(gridPositions(map), 3)),
+    new LineBasicMaterial({
+      color: gridInk(palette.open), transparent: true, opacity: GRID_OPACITY, depthWrite: false,
+    }),
+  );
+  grid.position.y = GRID_LIFT;
+  world.add(grid);
+
+  for (const [squares, colour, height, surface] of [
+    [map.brush, palette.brush, TERRAIN_HEIGHT.brush, SURFACE.brush],
+    [map.cover, palette.cover, TERRAIN_HEIGHT.cover, SURFACE.cover],
+    [map.walls, palette.wall, TERRAIN_HEIGHT.wall, SURFACE.wall],
   ] as const) {
     for (const p of squares) {
       const box = new Mesh(
         new BoxGeometry(TILE * 0.96, height, TILE * 0.96),
-        new MeshLambertMaterial({ color: colour }),
+        new MeshStandardMaterial({ color: colour, ...surface }),
       );
       box.position.copy(toWorld(map, p)).setY(height / 2);
+      // Brush is a 0.02-high lid: it has no silhouette to throw and casting from
+      // it only buys shadow acne on the tile it is lying on.
+      box.castShadow = height > TERRAIN_HEIGHT.brush;
+      box.receiveShadow = true;
       world.add(box);
     }
+  }
+
+  // ── Scenery (SCENE-DIORAMA) ───────────────────────────────────────────────
+  // Purely decorative: drawn, never consulted. It lives in `world` so it tracks
+  // the board's own transform, and in its own group so a later set piece has an
+  // obvious home that nothing rules-facing can reach into.
+  const scenery = new Group();
+  scenery.name = 'scenery';
+  world.add(scenery);
+
+  const slabW = map.width * TILE + SCENERY.margin * 2;
+  const slabH = map.height * TILE + SCENERY.margin * 2;
+
+  const slab = new Mesh(
+    new BoxGeometry(slabW, SCENERY.depth, slabH),
+    new MeshStandardMaterial({
+      color: shade(palette.open, SCENERY.shade), roughness: 0.95, metalness: 0.05,
+    }),
+  );
+  slab.position.y = SCENERY.top - SCENERY.depth / 2;
+  slab.receiveShadow = true;
+  scenery.add(slab);
+
+  /**
+   * A lit bar laid along the platform's top edge.
+   *
+   * Emissive rather than lit: the rim's job is to be the brightest line in the
+   * frame and describe the arena's extent at a glance, and a surface that only
+   * catches the sun loses that job the moment the orbit swings it away.
+   */
+  const edgeBar = (
+    width: number, depth: number, x: number, z: number, colour: number, emissive: number,
+  ): Mesh => {
+    const bar = new Mesh(
+      new BoxGeometry(width, SCENERY.rim.height, depth),
+      new MeshStandardMaterial({
+        color: colour, emissive: colour, emissiveIntensity: emissive,
+        roughness: 0.35, metalness: 0.1,
+      }),
+    );
+    // ON TOP of the slab, not inside it. The slab runs from `top` downward, so a
+    // bar centred below `top` is buried in the very geometry it is meant to edge.
+    bar.position.set(x, SCENERY.top + SCENERY.rim.height / 2, z);
+    return bar;
+  };
+
+  const inset = SCENERY.rim.thickness / 2;
+  for (const [w, d, x, z] of [
+    [slabW, SCENERY.rim.thickness, 0, -slabH / 2 + inset],
+    [slabW, SCENERY.rim.thickness, 0, slabH / 2 - inset],
+    [SCENERY.rim.thickness, slabH, -slabW / 2 + inset, 0],
+    [SCENERY.rim.thickness, slabH, slabW / 2 - inset, 0],
+  ] as const) {
+    scenery.add(edgeBar(w, d, x, z, SCENERY.rim.colour, SCENERY.rim.emissive));
+  }
+
+  // Each team's end of the arena, in its own colour. This is orientation, not
+  // gameplay: after a free orbit has spun the board 180° "which way is home"
+  // stops being obvious, and the fix belongs in the scenery rather than in
+  // another HUD element competing for the same corner.
+  for (const team of [0, 1] as const) {
+    const edge = spawnEdge(map, team);
+    const colour = shade(team === 0 ? palette.team0 : palette.team1, SCENERY.spawnShade);
+    const lengthwise = edge === 'west' || edge === 'east';
+    const span = (lengthwise ? slabH : slabW) * SCENERY.spawnSpan;
+    const offset = (lengthwise ? slabW : slabH) / 2 - SCENERY.rim.thickness * 1.6;
+    const [w, d, x, z] = lengthwise
+      ? [SCENERY.rim.thickness, span, edge === 'west' ? -offset : offset, 0] as const
+      : [span, SCENERY.rim.thickness, 0, edge === 'north' ? -offset : offset] as const;
+    scenery.add(edgeBar(w, d, x, z, colour, SCENERY.spawnEmissive));
   }
 
   // ── Keyed unit objects (A1's principle, in 3D) ────────────────────────────
@@ -634,9 +952,12 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       // needs a shader recompile (`needsUpdate`), and forgetting it makes every
       // fade and dim silently do nothing. Paying for blending up front is the
       // cheap, un-forgettable version.
-      new MeshLambertMaterial({ color: unit.owner === 0 ? palette.team0 : palette.team1, transparent: true }),
+      new MeshStandardMaterial({
+        color: unit.owner === 0 ? palette.team0 : palette.team1, transparent: true, ...SURFACE.unit,
+      }),
     );
     body.name = 'body';
+    body.castShadow = true;
     body.position.y = UNIT_HEIGHT / 2;
     g.add(body, buildBars());
     world.add(g);
@@ -732,9 +1053,11 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     const alpha = (baseAlpha.get(unitId) ?? 1) * (fadeOf.get(unitId) ?? 1) * (dimmed ? DIM_ALPHA : 1);
     const body = g.getObjectByName('body');
     // A box has one mesh; a rigged model is a tree of them. Traverse either way.
+    // The cast follows BOARD-LIT: board meshes are `MeshStandardMaterial` now,
+    // and a Lambert cast here would be a lie the compiler happens not to catch.
     body?.traverse((o) => {
       if (o instanceof Mesh) {
-        const mat = o.material as MeshLambertMaterial;
+        const mat = o.material as MeshStandardMaterial;
         mat.transparent = true;
         mat.opacity = alpha;
       }
@@ -753,7 +1076,10 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   // pitch. Once the orbit can move them, the two stop being the same thing.
   let pitchDeg: number = PITCH.isometric;
   let yawDeg = 0;
-  let span = Math.max(map.width, map.height);
+  // SCENE-DIORAMA: the opening frame allows for the ledge. Fitting the board
+  // exactly put the platform and its lit rim just outside the frustum — drawn
+  // every frame and never once seen.
+  let span = Math.max(map.width, map.height) + SCENERY.margin * 2;
   let centre = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
   // Where the auto-camera is heading. The live camera eases toward it so the
   // frame glides between actors instead of cutting.
@@ -813,14 +1139,19 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     // Depth foreshortens by sin(pitch) — at true isometric the board is only
     // ~58% as tall on screen as it is deep, so framing by raw height would
     // leave the board floating in a letterbox.
-    const projectedDepth = map.height * Math.sin(rad(pitchDeg));
-    // `span` is the world height of the FULL canvas, so fitting the board into a
+    // SCENE-DIORAMA: the thing to frame is the *arena* — the board plus the
+    // ledge it sits on. Framing the board alone left the platform and its lit
+    // rim just outside the frustum, drawn every frame and never once seen.
+    const arenaW = map.width + SCENERY.margin * 2;
+    const arenaD = map.height + SCENERY.margin * 2;
+    const projectedDepth = arenaD * Math.sin(rad(pitchDeg));
+    // `span` is the world height of the FULL canvas, so fitting the arena into a
     // fraction of that canvas means scaling the requirement up by the reciprocal
-    // of that fraction. With no insets both terms collapse to the old
-    // `max(projectedDepth, map.width / aspect)` exactly.
+    // of that fraction. With no insets both terms collapse to
+    // `max(projectedDepth, arenaW / aspect)` exactly.
     return Math.max(
       projectedDepth * (height / visibleH()),
-      map.width * (height / visibleW()),
+      arenaW * (height / visibleW()),
     ) * 1.08;
   };
 
@@ -1092,7 +1423,9 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
           // friendly unit — the opposite of impersonating an enemy.
           const body = new Mesh(
             new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-            new MeshLambertMaterial({ color: decoy.owner === 0 ? palette.team0 : palette.team1 }),
+            new MeshStandardMaterial({
+              color: decoy.owner === 0 ? palette.team0 : palette.team1, ...SURFACE.unit,
+            }),
           );
           body.position.copy(at).setY(UNIT_HEIGHT / 2);
           decoyLayer.add(body);
@@ -1135,7 +1468,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       for (const p of squares) {
         const tile = new Mesh(
           new PlaneGeometry(TILE * LAYER_INSET[layer], TILE * LAYER_INSET[layer]),
-          new MeshLambertMaterial({ color, transparent: true, opacity }),
+          new MeshBasicMaterial({ color, transparent: true, opacity }),
         );
         tile.rotation.x = -Math.PI / 2;
         tile.position.copy(toWorld(map, p)).setY(LAYER_LIFT[layer]);
