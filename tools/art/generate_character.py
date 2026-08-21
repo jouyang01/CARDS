@@ -482,7 +482,10 @@ def build_body(spec):
                    (1.0, limb * 1.30 * pad, limb * 1.36 * pad)),
              "iron" if heavy else "ironDark")
 
-        ax = gap + limb * 0.95 * pad
+        # NOTE: deliberately not `pad`. Joint positions must be mirror-identical
+        # on both sides or the auto-rigger builds a lopsided skeleton; only the
+        # pauldron's own size varies.
+        ax = gap + limb * 0.95 * 1.5
         tube("x", (side * ax, 0, arm_z), (side * (ax + arm_len * 0.52), 0, arm_z),
              taper((0.0, limb * 2.0, limb * 2.0),
                    (0.5, limb * 1.8, limb * 1.8),

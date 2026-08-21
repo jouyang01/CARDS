@@ -71,6 +71,22 @@ bundled one, and the GL packages because Workbench needs a rendering context eve
 in `--background`. Without the software-GL environment variables you get
 `Couldn't open libEGL.so.1` or `EGL_NOT_INITIALIZED`.
 
+## Validating before you rig
+
+```bash
+blender --background --python tools/art/validate.py -- aegis
+```
+
+Every check corresponds to a way Mixamo's auto-rigger fails or builds a bad
+skeleton: single mesh, triangle budget, mirrored joint landmarks, T-pose arm
+centreline, crotch gap, armpit gap, feet near the origin. Two seconds here beats
+discovering the same problem after rigging and collecting eight clips.
+
+It distinguishes **decoration** asymmetry from **landmark** asymmetry. A heavier
+pauldron on one shoulder changes vertex counts without moving a joint, and is an
+art choice. A wrist or elbow at different coordinates on each side skews the
+skeleton, and is a defect — that is the hard failure.
+
 ## Verifying
 
 ```bash
