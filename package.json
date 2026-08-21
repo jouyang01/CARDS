@@ -12,6 +12,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "dev:server": "npm run dev -w @cards/server",
     "smoke": "npm run smoke -w @cards/server",
+    "botplay": "npm run botplay -w @cards/engine",
     "deploy": "npm run deploy -w @cards/server"
   }
 }
