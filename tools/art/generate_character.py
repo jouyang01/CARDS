@@ -415,8 +415,9 @@ def build_body(spec):
     obj, mesh, bm, uv = new_mesh("body")
 
     def tube(axis, a, c, profile, swatch, **kw):
-        return add_tube(bm, uv, axis, a, c, profile, swatch,
-                        sides=sides, exponent=exp, **kw)
+        kw.setdefault("sides", sides)
+        kw.setdefault("exponent", exp)
+        return add_tube(bm, uv, axis, a, c, profile, swatch, **kw)
 
     # ── head ──
     # One tapered form, portrait projected onto its front. Was a box plus a
@@ -482,45 +483,60 @@ def build_body(spec):
                        (1.0, shoulder * 0.30, depth * 0.76)), "iron")
 
     # ── arms, still a strict T-pose ──
-    arm_z = chest_z - 0.05
-    gap = shoulder * 0.74
-    arm_len = h * 0.255
+    #
+    # The shoulder sits at the TOP of the ribcage, not partway down it. arm_z was
+    # 0.05 below chest height, which put the joint at 81% up the torso and read
+    # as arms sprouting from the middle of the chest.
+    arm_z = chest_z + 0.005
+    gap = shoulder * 0.76           # the shoulder joint, at the torso's edge
+    arm_len = h * 0.224             # tuned so a lowered fingertip reaches mid-thigh
     for side in (-1, 1):
         pads = g.get("shoulderPads", {})
         heavy = pads.get("left" if side < 0 else "right", "light") == "heavy-riveted"
-        pad = 1.5 if heavy else 1.1
+        pad = 1.28 if heavy else 1.0
 
-        # Pauldron: a dome that overhangs the arm, which is most of what makes a
-        # stylised silhouette read as armoured rather than as a tube.
-        tube("x", (side * gap * 0.94, 0, arm_z + limb * 0.55),
-             (side * (gap + limb * 1.35 * pad), 0, arm_z + limb * 0.30),
-             taper((0.0, limb * 1.22 * pad, limb * 1.32 * pad),
-                   (0.40, limb * 1.52 * pad, limb * 1.62 * pad),
-                   (0.78, limb * 1.44 * pad, limb * 1.52 * pad),
-                   (1.0, limb * 1.06 * pad, limb * 1.12 * pad)),
+        # Pauldron: a CAP over the top of the shoulder, not a sleeve around it.
+        # The previous one had a cross-section radius of 0.207 against a torso
+        # half-depth of 0.130 — 0.41 tall, nearly the height of the whole torso —
+        # so it swallowed the shoulder and punched out the front and back. It is
+        # small now, and offset upward so it covers the top of the joint and
+        # leaves the underside of the arm clear.
+        pz = arm_z + limb * 0.40
+        tube("x", (side * gap * 0.82, 0, pz), (side * (gap + limb * 1.78), 0, pz - limb * 0.30),
+             taper((0.00, limb * 1.02 * pad, limb * 0.76 * pad),
+                   (0.34, limb * 1.42 * pad, limb * 1.02 * pad),
+                   (0.66, limb * 1.50 * pad, limb * 1.06 * pad),
+                   (0.86, limb * 1.44 * pad, limb * 0.98 * pad),
+                   (1.00, limb * 1.08 * pad, limb * 0.66 * pad)),
              "iron" if heavy else "ironDark")
 
-        # NOTE: deliberately not `pad`. Joint positions must be mirror-identical
-        # on both sides or the auto-rigger builds a lopsided skeleton; only the
-        # pauldron's own size varies.
-        ax = gap + limb * 0.95 * 1.5
-        tube("x", (side * ax, 0, arm_z), (side * (ax + arm_len * 0.52), 0, arm_z),
-             taper((0.0, limb * 1.62, limb * 1.62),
-                   (0.5, limb * 1.44, limb * 1.44),
-                   (1.0, limb * 1.28, limb * 1.28)), "iron")
+        # Upper arm starts clear of the torso; the pauldron above bridges the gap.
+        ax = gap + limb * 1.02
+        seg = arm_len * 0.52
+        tube("x", (side * ax, 0, arm_z), (side * (ax + seg), 0, arm_z),
+             taper((0.0, limb * 1.26, limb * 1.26),
+                   (0.5, limb * 1.14, limb * 1.14),
+                   (1.0, limb * 1.02, limb * 1.02)), "iron")
 
-        bx = ax + arm_len * 0.52
-        tube("x", (side * bx, 0, arm_z), (side * (bx + arm_len * 0.52), 0, arm_z),
-             taper((0.0, limb * 1.34, limb * 1.34),
-                   (0.45, limb * 1.16, limb * 1.16),
-                   (1.0, limb * 1.05, limb * 1.05)), "iron")
+        bx = ax + seg
+        tube("x", (side * bx, 0, arm_z), (side * (bx + seg), 0, arm_z),
+             taper((0.0, limb * 1.10, limb * 1.10),
+                   (0.16, limb * 1.04, limb * 1.04),
+                   (0.45, limb * 0.92, limb * 0.92),
+                   (1.0, limb * 0.84, limb * 0.84)), "leather")
 
-        cx = bx + arm_len * 0.52
-        tube("x", (side * cx, 0, arm_z), (side * (cx + 0.098), 0, arm_z),
-             taper((0.00, limb * 1.05, limb * 1.20),
-                   (0.30, limb * 1.42, limb * 1.62),
-                   (0.72, limb * 1.46, limb * 1.66),
-                   (1.00, limb * 1.05, limb * 1.24)), "ironDark")
+        # Hand: a rounded mitt. It read as blocky because it inherited the
+        # armour's superellipse exponent; a hand is the one part with no flat
+        # planes at all, so it gets a near-elliptical section and more stops.
+        cx = bx + seg
+        tube("x", (side * cx, 0, arm_z), (side * (cx + 0.105), 0, arm_z),
+             taper((0.00, limb * 0.80, limb * 0.92),
+                   (0.18, limb * 1.04, limb * 1.26),
+                   (0.46, limb * 1.14, limb * 1.42),
+                   (0.72, limb * 1.10, limb * 1.36),
+                   (0.90, limb * 0.92, limb * 1.10),
+                   (1.00, limb * 0.62, limb * 0.72)), "ironDark",
+             exponent=2.1, sides=max(sides, 12))
 
     # ── legs ──
     for side in (-1, 1):
