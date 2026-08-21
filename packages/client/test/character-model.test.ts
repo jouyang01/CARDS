@@ -130,6 +130,13 @@ describe('auditClips', () => {
     expect(auditClips(map, all.filter((n) => n !== 'aegis_idle')).usable).toBe(false);
   });
 
+  it('rejects a manifest with no clip map instead of throwing on it', () => {
+    // The shape build_glb.py wrote before the map existed: {id, clips}. Reading
+    // `map.idle` off undefined threw a TypeError that surfaced as a confusing
+    // "no model" warning; unusable-with-nothing-missing is the honest answer.
+    expect(auditClips(undefined, all)).toEqual({ usable: false, missing: [] });
+  });
+
   it('rejects a .glb that exported no animations at all', () => {
     // Blender 4.4+ can write a file with zero animations SILENTLY when it
     // cannot bind a slotted action. The mesh loads; nothing moves.
