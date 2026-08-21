@@ -2,7 +2,7 @@
   "id": "kestrel",
   "name": "Kestrel",
   "archetype": "firepower",
-  "maxHp": 90,
+  "maxHp": 105,
   "abilities": [
     {
       "id": "twin_bolts",
@@ -27,8 +27,8 @@
       "range": 4,
       "cooldown": 4,
       "energyGain": 5,
-      "effects": [{ "kind": "damage", "amount": 12 }],
-      "description": "Glide up to 4 squares; the first enemy passed takes 12 damage. The dodge is also the poke — dodges Blast attacks aimed at your old square."
+      "effects": [{ "kind": "damage", "amount": 30 }],
+      "description": "Glide up to 4 squares; the first enemy passed takes 30 damage. The dodge is also the poke — dodges Blast attacks aimed at your old square."
     },
     {
       "id": "slipstream",
@@ -53,7 +53,7 @@
       "cooldown": 3,
       "energyGain": 8,
       "effects": [
-        { "kind": "damage", "amount": 16 },
+        { "kind": "damage", "amount": 26 },
         { "kind": "slow", "duration": 1 }
       ],
       "description": "A long shot that Slows for a turn. Opens the gap that Skim spends."

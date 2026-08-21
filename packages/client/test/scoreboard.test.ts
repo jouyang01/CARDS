@@ -164,9 +164,9 @@ describe('SCORE1: the in-match readout', () => {
     const s = match();
     const readout = scoreReadout(s, names);
     expect(readout.killTarget, '2v2 is first to 4').toBe(4);
-    expect(readout.turnLimit).toBe(16);
+    expect(readout.turnLimit).toBe(20);
     expect(tally(readout.kills[0], readout.killTarget)).toBe('0 / 4');
-    expect(clock(readout.turn, readout.turnLimit)).toBe('Turn 1 of 16');
+    expect(clock(readout.turn, readout.turnLimit)).toBe('Turn 1 of 20');
   });
 
   it('gives one row per character, with HP and progress toward the ult', () => {

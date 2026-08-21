@@ -191,7 +191,7 @@ describe('PREVIEW-AUDIT: the numbers a tell was hiding', () => {
     // read as 30 when it is 30 and then 8 twice — the wrong number for the one
     // question a damage preview exists to answer.
     expect(damageTell(ability('cinder', 'solar_flare'))).toBe('30 dmg · 8 burn ×2');
-    expect(damageTell(ability('cinder', 'flare_burst'))).toBe('10 dmg · 6 burn ×2');
+    expect(damageTell(ability('cinder', 'flare_burst'))).toBe('12 dmg · 6 burn ×2');
   });
 
   it('a mine is a number too, even when the ability deals none directly', () => {

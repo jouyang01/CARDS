@@ -35,6 +35,7 @@ const THORN = load('thorn');
 const KESTREL = load('kestrel');
 const VEX = load('vex');
 const BRAMBLE = THORN.abilities.find((a) => a.id === 'bramble_stride')!;
+const STRIDE_DAMAGE = BRAMBLE.effects.find((e) => e.kind === 'damage')!.amount!;
 const TEMPEST = KESTREL.ultimate;
 
 const OPEN: MapDef = {
@@ -77,8 +78,8 @@ describe('DASH-STATUS: the riders in the data actually ride', () => {
       { x: 6, y: 10 }, { x: 7, y: 10 }, { x: 8, y: 10 },
     ]);
     expect(applied(res.events, enemies[0]!.unitId), 'the Root in its data').toContain('root');
-    expect(unit(res.state, enemies[0]!.unitId).hp, 'and the 10 it always dealt')
-      .toBe(VEX.maxHp - 10);
+    expect(unit(res.state, enemies[0]!.unitId).hp, 'and the damage in its data')
+      .toBe(VEX.maxHp - STRIDE_DAMAGE);
   });
 
   it('Tempest Run slows every unit it hits, not just the first', () => {

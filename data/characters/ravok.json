@@ -2,7 +2,7 @@
   "id": "ravok",
   "name": "Ravok",
   "archetype": "frontline",
-  "maxHp": 135,
+  "maxHp": 175,
   "abilities": [
     {
       "id": "cleave",
@@ -37,14 +37,14 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 14
+          "amount": 17
         },
         {
           "kind": "knockback",
           "amount": 1
         }
       ],
-      "description": "Charge in a straight line, then slam down where you stop: the first enemy hit and every enemy within 2 squares of the landing take 14 and are knocked back 1 square, losing their Move."
+      "description": "Charge in a straight line, then slam down where you stop: the first enemy hit and every enemy within 2 squares of the landing take 17 and are knocked back 1 square, losing their Move."
     },
     {
       "id": "blood_frenzy",
@@ -78,14 +78,14 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 12
+          "amount": 19
         },
         {
           "kind": "slow",
           "duration": 1
         }
       ],
-      "description": "Stomp: all enemies within 2 squares take 12 and are Slowed. Disruption when surrounded.",
+      "description": "Stomp: all enemies within 2 squares take 19 and are Slowed. Disruption when surrounded.",
       "melee": true
     }
   ],

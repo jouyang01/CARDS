@@ -2,7 +2,7 @@
   "id": "vex",
   "name": "Vex",
   "archetype": "firepower",
-  "maxHp": 95,
+  "maxHp": 110,
   "abilities": [
     {
       "id": "rail_shot",
@@ -34,7 +34,7 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 34
+          "amount": 33
         }
       ],
       "description": "Lobbed grenade that detonates at the aimed area NEXT turn \u2014 and it does not care whose boots are on it, yours included. Zone denial \u2014 forces the opponent to move where you want, and you to remember where you put it."

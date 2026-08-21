@@ -558,3 +558,161 @@ describe('CD-BAND-INVARIANT: every cooldown sits in its phase\'s band', () => {
     expect(inBand('blast', 5), 'and so is a 5-turn one').toBe(false);
   });
 });
+
+describe('TTK-INVARIANT: the HP ladder and the skill-damage tiers', () => {
+  /**
+   * The owner's TTK directive as an assertion instead of twenty data edits
+   * nobody can find again:
+   *
+   * > *"1. HP to the table above — raises TTK to AR parity and fixes the ult
+   * > burst. 2. Skill damage to 1.25x basic, single target skills should do more
+   * > than aoe skills. Skills that debuff should do less damage than skills that
+   * > do not."*
+   *
+   * Same reason CD-BAND-INVARIANT exists, and the same failure it prevents: a
+   * balance rule that lives only in a review document is a rule the next
+   * character silently breaks. `roster-v1.md` §1's kit table has never carried an
+   * HP or damage constraint at all, so until now nothing but the reviewer's
+   * memory stopped a tenth character shipping at 90 HP with a 40-damage skill.
+   *
+   * (b) is deliberately written as the **rule**, not as the table — every
+   * multiplier is read off the ability's own fields, so a new character is
+   * checked by the same arithmetic that produced these eleven numbers rather
+   * than by being absent from a list.
+   *
+   * Evidence and the derivation for every integer: `docs/reviews/2026-09-27.md`.
+   */
+
+  /** TTK-HP-BAND's ladder. Named here because it *is* the item's AC. */
+  const HP_LADDER: Record<string, number> = {
+    wisp: 100, kestrel: 105, cinder: 110, vex: 110, thorn: 130,
+    lumen: 140, aegis: 155, bastion: 170, ravok: 175,
+  };
+
+  /**
+   * The tier table, as the rule that generated it:
+   * `round_half_up(basic × shape × rider × delay)`.
+   *
+   * **The tiers are load-bearing, not decoration.** A flat 1.25× would raise
+   * sustained output ~10% and claw back part of the HP gain; the tiers land
+   * median output at 22.0/turn, exactly where it is today (review §3.1). Do not
+   * collapse them into one multiplier.
+   */
+  const SHAPE = { single: 1.25, area: 1.00 } as const;
+  const RIDER = { none: 1.00, status: 0.88, displacement: 0.76 } as const;
+  const DELAY = { now: 1.00, delayed: 1.25 } as const;
+  const STATUS_KINDS = new Set(['slow', 'weaken', 'root', 'reveal', 'damageOverTime']);
+  const DISPLACEMENT_KINDS = new Set(['knockback', 'pull']);
+
+  /** Round half **up** — 32.5 is Vex's grenade at 33, not 32. */
+  const roundHalfUp = (x: number): number => Math.floor(x + 0.5);
+
+  const damageOf = (a: { effects: readonly { kind: string; amount?: number }[] }): number | undefined =>
+    a.effects.find((e) => e.kind === 'damage')?.amount;
+
+  /**
+   * Every non-basic, non-ultimate ability that deals direct damage, with the
+   * class the formula puts it in.
+   *
+   * `abilities[0]` is the basic and the yardstick, so it is not measured against
+   * itself; the ultimate lives in its own field and is out of scope (the HP
+   * raise is what fixes the ult burst — review §2.1); and a **trap's** damage is
+   * conditional, with no term in the formula, so a trap effect is not a skill
+   * damage number.
+   */
+  const skills = characters.flatMap((c) => {
+    const basic = damageOf(c.abilities[0]!);
+    return c.abilities.slice(1).flatMap((a) => {
+      const damage = damageOf(a);
+      if (damage === undefined || basic === undefined) return [];
+      const kinds = new Set(a.effects.map((e) => e.kind));
+      const single = a.radius === undefined && a.impact === undefined && a.beamWidth === undefined;
+      const rider = [...kinds].some((k) => DISPLACEMENT_KINDS.has(k)) ? 'displacement'
+        : [...kinds].some((k) => STATUS_KINDS.has(k)) ? 'status' : 'none';
+      const delayed = (a.delayTurns ?? 0) >= 1;
+      const shape = single ? 'single' : 'area';
+      return [{
+        where: `${c.id}.${a.id}`, basic, damage, shape, rider, delayed,
+        expected: roundHalfUp(basic * SHAPE[shape] * RIDER[rider] * DELAY[delayed ? 'delayed' : 'now']),
+      }] as const;
+    });
+  });
+
+  it('every shipped maxHp is on the ladder', () => {
+    for (const c of characters) {
+      expect(c.maxHp, `${c.id} — TTK-HP-BAND's ladder puts it at ${HP_LADDER[c.id]}`)
+        .toBe(HP_LADDER[c.id]);
+    }
+    expect(Object.keys(HP_LADDER).sort(), 'the ladder covers exactly the shipped roster')
+      .toEqual(characters.map((c) => c.id).sort());
+  });
+
+  it('and the archetype ladder is firepower < support < frontline', () => {
+    // The shape the numbers exist to make, checked as an ordering rather than as
+    // nine literals — a tenth character joins a class and has to fit it. AR put
+    // supports 33% above firepower; the directive's floor here is 15%.
+    const median = (xs: number[]): number => {
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+    };
+    const byClass = (archetype: string): number[] =>
+      characters.filter((c) => c.archetype === archetype).map((c) => c.maxHp);
+    for (const archetype of ['firepower', 'support', 'frontline']) {
+      expect(byClass(archetype).length, `no ${archetype} to measure`).toBeGreaterThan(0);
+    }
+    const [fire, support, front] = ['firepower', 'support', 'frontline'].map((a) => median(byClass(a)));
+    expect(support, 'a support bar sits above a firepower bar').toBeGreaterThan(fire!);
+    expect(front!, 'and a frontline bar above a support one').toBeGreaterThan(support!);
+    expect(support! / fire!, 'supports are at least 15% above firepower (AR: 33%)')
+      .toBeGreaterThanOrEqual(1.15);
+  });
+
+  it('reads the whole roster, not a sample', () => {
+    // A guard that iterates nothing passes forever. Eleven is the shipped count
+    // of damaging skills; the bound is loose so adding a character is not a test
+    // failure, but zero or one would be.
+    expect(characters).toHaveLength(9);
+    expect(skills.length, 'damaging non-basic skills').toBeGreaterThanOrEqual(11);
+  });
+
+  it('every damaging skill sits at its class\'s multiple of the basic', () => {
+    for (const s of skills) {
+      const why = `${s.where}: ${s.shape} (×${SHAPE[s.shape]}) · ${s.rider} rider `
+        + `(×${RIDER[s.rider]})${s.delayed ? ` · delayed (×${DELAY.delayed})` : ''} `
+        + `on a ${s.basic} basic → ${s.expected}`;
+      expect(s.damage, why).toBe(s.expected);
+    }
+  });
+
+  it('and every class in the rule is actually populated', () => {
+    // Four one-sided tiers would pass vacuously. Each multiplier that is not 1.00
+    // has to be doing work somewhere in the roster, or the rule is prose again.
+    expect(skills.filter((s) => s.shape === 'single').length, 'single-target skills').toBeGreaterThan(0);
+    expect(skills.filter((s) => s.shape === 'area').length, 'area skills').toBeGreaterThan(0);
+    expect(skills.filter((s) => s.rider === 'none').length, 'riderless skills').toBeGreaterThan(0);
+    expect(skills.filter((s) => s.rider === 'status').length, 'debuffing skills').toBeGreaterThan(0);
+    expect(skills.filter((s) => s.rider === 'displacement').length, 'displacing skills').toBeGreaterThan(0);
+    expect(skills.filter((s) => s.delayed).length, 'delayed skills').toBeGreaterThan(0);
+  });
+
+  it('a character with no damaging skill is not an exception, it is empty', () => {
+    // Aegis has had no direct-damage skill since PR #97 and session-8 OQ #5
+    // closed that as intended. He is exempt from the tier check the way an empty
+    // list is exempt from a loop — never as a name in an allow-list, which is
+    // how a *second* character quietly stops being checked.
+    expect(skills.some((s) => s.where.startsWith('aegis.')), 'nothing of Aegis to check').toBe(false);
+    expect(characters.some((c) => c.id === 'aegis'), 'and he is still in the sweep').toBe(true);
+  });
+
+  it('and the rule would actually catch a skill that broke it', () => {
+    // The check on the check. Same arithmetic, hand-fed: a single-target skill
+    // with no rider on a 24 basic is 30, and a debuff on the same basic is less.
+    const at = (basic: number, shape: keyof typeof SHAPE, rider: keyof typeof RIDER, delayed = false): number =>
+      roundHalfUp(basic * SHAPE[shape] * RIDER[rider] * DELAY[delayed ? 'delayed' : 'now']);
+    expect(at(24, 'single', 'none')).toBe(30);
+    expect(at(24, 'single', 'status'), 'a debuff pays for itself').toBeLessThan(at(24, 'single', 'none'));
+    expect(at(24, 'area', 'none'), 'and an area skill pays too').toBeLessThan(at(24, 'single', 'none'));
+    expect(at(26, 'area', 'none', true), 'round half UP, not to even').toBe(33);
+  });
+});

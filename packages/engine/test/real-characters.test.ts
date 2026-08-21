@@ -14,6 +14,18 @@ const BASTION = bastion as unknown as CharacterDef;
 const WISP = wisp as unknown as CharacterDef;
 const ARENA = duelArena as unknown as MapDef;
 const roster = buildRoster([VEX, BASTION, WISP]);
+/**
+ * HP and damage read off the data, not restated here. TTK-HP-BAND moved all
+ * nine bars and TTK-SKILL-DAMAGE eleven ability numbers; every assertion below
+ * that used to name a literal was checking the balance table by hand, and broke
+ * the day the owner changed it. What these tests are actually about is the
+ * pipeline — who gets hit, where they end up, what a shield soaks — so they now
+ * say "full HP" and "minus the charge" instead of "130" and "80".
+ */
+const RAM_DAMAGE = BASTION.abilities.find((a) => a.id === 'ram_charge')!
+  .effects.find((e) => e.kind === 'damage')!.amount!;
+const FRAG_DAMAGE = VEX.abilities.find((a) => a.id === 'frag_grenade')!
+  .effects.find((e) => e.kind === 'damage')!.amount!;
 const OPEN = () => makeMap(Array.from({ length: 15 }, () => '.'.repeat(15)));
 
 const unit = (s: GameState, id: string) => s.units.find((u) => u.unitId === id)!;
@@ -23,9 +35,9 @@ describe('loading real characters', () => {
   it('createInitialState places each character at its spawn with full HP', () => {
     const state = createInitialState(ARENA, VEX, BASTION);
     expect(unit(state, 'vex-0').pos).toEqual({ x: 2, y: 6 });
-    expect(unit(state, 'vex-0').hp).toBe(95);
+    expect(unit(state, 'vex-0').hp).toBe(VEX.maxHp);
     expect(unit(state, 'bastion-0').pos).toEqual({ x: 15, y: 6 });
-    expect(unit(state, 'bastion-0').hp).toBe(130);
+    expect(unit(state, 'bastion-0').hp).toBe(BASTION.maxHp);
   });
 });
 
@@ -39,11 +51,12 @@ describe("Vex's frag grenade (delayTurns: 1)", () => {
       { team: 0, units: [{ unitId: 'vex-0', ability: { abilityId: 'frag_grenade', target: [{ x: 7, y: 7 }] } }] },
       { team: 1, units: [] },
     ], roster);
-    expect(unit(t1.state, 'bastion-0').hp).toBe(130); // armed only, no damage yet
+    expect(unit(t1.state, 'bastion-0').hp).toBe(BASTION.maxHp); // armed only, no damage yet
     expect(t1.state.delayed).toHaveLength(1);
 
     const t2 = resolveTurn(t1.state, OPEN(), [{ team: 0, units: [] }, { team: 1, units: [] }], roster);
-    expect(unit(t2.state, 'bastion-0').hp).toBe(96); // 34 detonation on a Bastion that held its ground
+    // The detonation, on a Bastion who held his ground.
+    expect(unit(t2.state, 'bastion-0').hp).toBe(BASTION.maxHp - FRAG_DAMAGE);
     expect(t2.state.delayed).toHaveLength(0);
     expect(t2.events.some((e) => e.type === 'abilityFired' && e.abilityId === 'frag_grenade')).toBe(true);
   });
@@ -59,7 +72,7 @@ describe("Vex's frag grenade (delayTurns: 1)", () => {
     ], roster);
     expect(unit(t1.state, 'bastion-0').pos).toEqual({ x: 11, y: 7 }); // walked clear
     const t2 = resolveTurn(t1.state, OPEN(), [{ team: 0, units: [] }, { team: 1, units: [] }], roster);
-    expect(unit(t2.state, 'bastion-0').hp).toBe(130); // detonation at (7,7) finds nobody
+    expect(unit(t2.state, 'bastion-0').hp).toBe(BASTION.maxHp); // detonation at (7,7) finds nobody
   });
 });
 
@@ -76,7 +89,7 @@ describe("Bastion's kit through the pipeline", () => {
       { team: 1, units: [] },
     ], roster);
     expect(unit(state, 'bastion-0').pos).toEqual({ x: 6, y: 7 }); // charged through Vex to the far side
-    expect(unit(state, 'vex-0').hp).toBe(80); // 15 charge damage off Vex's 95
+    expect(unit(state, 'vex-0').hp).toBe(VEX.maxHp - RAM_DAMAGE); // the charge, off a full bar
     expect(unit(state, 'vex-0').pos).toEqual({ x: 7, y: 7 }); // carried past the charger (R1c)
     expect(unit(state, 'vex-0').pos).not.toEqual(unit(state, 'bastion-0').pos); // no co-occupation
   });
@@ -88,7 +101,7 @@ describe("Bastion's kit through the pipeline", () => {
       { team: 0, units: [{ unitId: 'bastion-0', ability: { abilityId: 'bulwark', target: [] } }] },
       { team: 1, units: [{ unitId: 'vex-0', ability: { abilityId: 'rail_shot', target: [{ x: 5, y: 14 }] } }] },
     ], roster);
-    expect(unit(state, 'bastion-0').hp).toBe(130); // 26 rail fully soaked by the 30 shield
+    expect(unit(state, 'bastion-0').hp).toBe(BASTION.maxHp); // 26 rail fully soaked by the 30 shield
   });
 });
 

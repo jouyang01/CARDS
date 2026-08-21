@@ -34,7 +34,7 @@ Edge-case rulings live in `docs/design/edge-cases.md` and are part of this spec.
 
 | Format | Kills to win | Turn limit |
 |---|---|---|
-| 2v2 | 4 | 16 |
+| 2v2 | 4 | 20 |
 | 4v4 | 5 | 20 |
 | 1v1 | 3 | 12 |
 

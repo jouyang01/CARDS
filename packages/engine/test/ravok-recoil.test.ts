@@ -100,7 +100,7 @@ describe('RAVOK-RECOIL: Whirling Cleave costs Ravok 11', () => {
     // The ruling's middle position, and the one a careless generalisation eats.
     expect(SHOCKWAVE.selfDamagePct, 'no field on the stomp').toBeUndefined();
     const { self, foe } = swing('shockwave', { x: 11, y: 10 });
-    expect(foe).toBe(12);
+    expect(foe).toBe(SHOCKWAVE.effects.find((e) => e.kind === 'damage')!.amount);
     expect(self, 'CASTER-SAFE, undisturbed').toBe(0);
   });
 

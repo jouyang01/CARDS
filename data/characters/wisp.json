@@ -2,7 +2,7 @@
   "id": "wisp",
   "name": "Wisp",
   "archetype": "firepower",
-  "maxHp": 85,
+  "maxHp": 100,
   "abilities": [
     {
       "id": "dagger_flurry",
@@ -68,14 +68,14 @@
       "effects": [
         {
           "kind": "damage",
-          "amount": 12
+          "amount": 24
         },
         {
           "kind": "slow",
           "duration": 1
         }
       ],
-      "description": "Thrown bola: 12 damage and Slow for a turn. Wisp's tool for keeping Bastion off her and catching Vex mid-rotation."
+      "description": "Thrown bola: 24 damage and Slow for a turn. Wisp's tool for keeping Bastion off her and catching Vex mid-rotation."
     }
   ],
   "ultimate": {
