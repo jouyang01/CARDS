@@ -12,318 +12,157 @@ recompute them. **`@cards/server` imports `@cards/engine` only** (client may imp
 **types only**). **Movement is Manhattan (MET1); aiming is Euclidean.** **Every engine behavior change
 ships with a Vitest test in the same commit** — and a **bug fix ships with the regression test in that
 same commit.** **A genuinely new mechanic gets a generic, reusable implementation** (golden rule #2).
-**DRIVE THE REAL UI WIRING IN TESTS** (see the ⚠⚠ box). **Open/update a PR to `main` every session.**
+**DRIVE THE REAL UI WIRING IN TESTS** (`app-harness.ts` end-to-end, not the pure helper). **Open/update a
+PR to `main` every session.**
 
 > ⚠️ **`main` is LIVE** — a green push publishes. Deploy is set; QUOTA-RUNAWAY guards the quota. Keep green.
 
-> ⚠️⚠️ **The bug class that keeps shipping green: "pure function passes, real UI broken."** WALL-CAST-FIX
-> (PR #103) fixed it once — a wall the engine placed correctly but the client could not cast, because the
-> order-build seam had no coverage. `app-harness.ts` now records `show()`, so the board itself is testable.
-> **Keep that discipline:** every client fix below ships a test that drives `app-harness.ts` end-to-end
-> (select → click → lock-in → resolve, or the real preview), not the pure helper. If a test would still
-> pass with the wiring broken, it is the wrong test.
+> 🎨 **Art / animation / VFX reference (owner Dev Note 2026-08-21 #1).** Any item touching how a unit is
+> drawn, rigged, animated, or how a hit is sold — read **`docs/ART_PIPELINE.md`** (the pipeline, the §7
+> build order, and the §8 role briefs for Builder/Analyzer/Designer) **and PR #100** (which added it)
+> first. **No engine change is required by that pipeline** — projectile timing derives from the existing
+> `ability`→`impact` cue gap; anything that looks like an engine need is an `ENGINE ASK` for the owner, not
+> a commit. The pipeline is not being built this session (playtest first), but the reference is live now so
+> nobody specs or builds art work without it.
 
 ## ✅ COMPLETE
 
 - The full hot-seat game + AR parity + the whole M3 networked loop + deploy + Dev Notes batches 1–3 +
   AIM-PREVIEW-TRUE + DEATH-HANG.
-- **PR #97:** WARDING-WALL (a new `wall` shape + `perTile` trap placement + a per-trap `triggers` list),
-  BASTION-RAM-LINE (`chargeHits:"all"` + a landing marker), CD-BAND-DASH/BLAST/INVARIANT, DOWN-SEAT-SKIP.
-- **PR #98 (docs):** the TRAP-TRIGGER ruling.
-- **PR #99 (Builder session 9):** **TRAP-SHOVE-DEFAULT** (`DEFAULT_TRAP_ENTRIES` = all four; an ordinary
-  mine now fires on a knock-through, the guard flipped, blink-past still inert — verified against
-  TRAP-TRIGGER) and **WALL-ROTATE** (the wall aim now carries anchor **+** rotation; anchored-at-click,
-  runs along the chosen cardinal; a four-button rotate row; ruled in edge-cases — WALL-ROTATE). *(WALL-ROTATE
-  is correct in the engine and preview but exposed a client order-build bug — see WALL-CAST-FIX.)*
-- **PR #100:** a character-art-pipeline doc (generation → Mixamo → weapons → VFX). Docs only.
-- **PR #101 (docs):** the WALL-ROTATE ruling + WALL-CAST-FIX / RAM-LINE-PREVIEW-FIX specs.
-- **PR #102 (docs):** the TTK package spec (`docs/reviews/2026-09-27.md` + the five TTK items below).
-- **PR #103 (Builder session 10):** **WALL-CAST-FIX** (`toUnitOrders` now carries a placed-rotatable
-  shape's `aimStep`; the wall casts; `app-harness.ts` records `show()`), **RAM-LINE-PREVIEW-FIX** (a lane
-  outline for charges + a `chargeHits` number fix — *the outline is being reverted, see RAM-PREVIEW-REVERT;
-  the number fix stays*), **FRAG-SELF** (`selfHarm` opt-out from CASTER-SAFE; Vex's Frag Grenade catches
-  its own thrower — ruled in edge-cases).
+- **PR #97–#100:** WARDING-WALL + `wall` shape + `perTile` traps + per-trap `triggers`; BASTION-RAM-LINE;
+  CD-BAND-DASH/BLAST/INVARIANT; DOWN-SEAT-SKIP; TRAP-SHOVE-DEFAULT; WALL-ROTATE; the character-art-pipeline
+  doc (`docs/ART_PIPELINE.md`).
+- **PR #103 (session 10):** WALL-CAST-FIX (the wall casts; `app-harness.ts` records `show()`),
+  RAM-LINE-PREVIEW-FIX (superseded — see PR #105), FRAG-SELF (`selfHarm` opt-out from CASTER-SAFE).
+- **PR #104 (docs):** review of PR #102/#103; the WALL-HIT-ONCE and RAM-PREVIEW-REVERT specs; TTK approved.
+- **PR #105 (session 11):** **RAM-PREVIEW-REVERT** (the charge draws no lane outline; the `chargeHits`
+  number-correctness fix kept), **WALL-HIT-ONCE** (a wall bills one unit once and stays a multi-target
+  barrier — ruled in edge-cases, verified N-safe), and the **TTK package** — HP band (median 100→130),
+  tiered 1.25× skill damage (eleven values), Lumen's Mending Light 25→20, 2v2 turn limit 16→20, and
+  **TTK-INVARIANT** enforcing the HP ladder + damage tiers in `content.test.ts`.
 
-Current suite: **2630 tests** (1365 + 963 + 302), typecheck clean, purity clean.
+Current suite: **2644 tests** (1366 + 976 + 302), typecheck clean, purity clean.
 
-### Build order and dependencies
+### Where the project is
 
-**RAM-PREVIEW-REVERT → WALL-HIT-ONCE → the five TTK items (HP → SKILL-DAMAGE → LUMEN-HEAL → TURN-LIMIT →
-INVARIANT) → PLAYTEST → NET-E2E.** The two ability fixes are quick and clean up freshly-shipped work the
-owner flagged this session (Dev Notes #2, #3); no dependency between them. The TTK package is the
-owner-directed batch (Dev Note #1: *"give to builder to implement"*) and **must land as one change** — HP
-alone makes a healer comp outlast the match, and HP without the turn limit ends every 2v2 on the clock. It
-lands before PLAYTEST because a playtest of numbers we already intend to change spends the project's
-scarcest resource — real humans — on values that will not ship (review 2026-09-27 §5). Skim-at-30 vs 26 and
-`KILLS_TO_WIN` staying 4 remain owner flags, neither blocking.
+**Path A's entire pre-playtest program is done and verified.** The two client bugs, the two ability fixes,
+and the TTK tuning are all shipped; the game is deployed and, by the suite, correct. The owner has
+greenlit playtesting (Dev Note #2). So this session's spec is **not** a stack of engine items — it is the
+**PLAYTEST milestone** (owner-run, with the checklist below) plus a small **Builder batch that de-risks and
+supports a live networked playtest**: NET-E2E first, then two doc-debt cleanups. Order:
+**NET-E2E → GAMESPEC-HP-UPDATE → ROSTER-CEILINGS-UPDATE**, running alongside the owner's playtest.
 
 ---
 
-## Two ability fixes on freshly-shipped work (do first; they clean up what the owner flagged)
+## 🎮 PLAYTEST — the active milestone (owner + humans; GO per Dev Note 2026-08-21 #2)
 
-### RAM-PREVIEW-REVERT. Take Ram Charge's preview back to how it was — drop the lane outline (CLIENT) — UNBLOCKED (first)
-**Addresses Dev Note: "Ram Charge line attack preview is not working, just go back to how it was before."**
-This **answers Builder session-10 OQ #1** — RAM-LINE-PREVIEW-FIX (PR #103) added a lane outline for `path`
-shapes and the owner has rejected it. Revert the **visible outline change**, keep the correctness fix that
-rode alongside it. RAM-LINE-PREVIEW-FIX did two separable things: (1) a **lane outline** for charges
-(`tessellate`'s `path` case, previously `return []`, plus the route in the boundary memo key, plus the
-app.ts path-outline draw) — *this is what the owner wants gone*; and (2) a **`chargeHits` number fix**
-(first-only charges no longer stamp damage on enemies they cannot hit) — *this is a correctness fix and
-stays*; reverting it restores a preview that lies (Kestrel's Skim showing 12 on every enemy on the route),
-and it is invisible to Ram Charge anyway (`chargeHits:"all"`).
+**Addresses Dev Note: "We should start playtesting."** Nothing in the Builder backlog blocks it (Builder
+session-11 OQ #8). A real **two-machine internet playtest** of the live deploy — prioritise the
+**asymmetric 3-player 2v2** (a two-player team vs. one player running both characters), the least-exercised
+path. Not a Builder code item; the Builder's job is to fix what it surfaces and to ship NET-E2E alongside.
 
-*AC:*
-- **The charge draws no shape-layer outline again** — `tessellate`'s `path` case returns `[]`
-  (`aim-boundary.ts`), the `path` route is removed from the boundary memo key, and the app.ts draw of the
-  path outline is removed. Ram Charge previews as it did after BASTION-RAM-LINE: route tiles (`covered`) +
-  the landing marker + per-enemy damage numbers, and **no lane polygon**.
-- **The `chargeHits` number-correctness fix is KEPT** — a first-only charge (Skim, Bullrush, Bramble
-  Stride) still previews its damage on the **first** enemy only, not every enemy on the route.
-- **A test driving the REAL preview** (`app-harness.ts`): aiming Ram Charge records **no** `path` shape on
-  the shape layer (the assertion that fails today, before the revert); the route tiles and landing marker
-  are still present; a first-only charge still previews one number.
+**What to watch — the questions this build was tuned to answer:**
+- **The TTK goal (the whole point):** does one caught-in-the-open turn leave the victim a *decision*
+  rather than an instant death? Two ults on the squishiest now take 85% of a bar (was 100% — a kill from
+  full). Confirm burst no longer one-shots.
+- **Match length:** a 20-turn 2v2 should pace to ~19.7 turns for 4 kills. Does it end on **kills**, not the
+  **clock**? Does 20 turns *drag*?
+- **Skim at 30** — the only ability at the 1.25 ceiling and **86% of Kestrel's ultimate** on a 4-turn
+  cooldown. Does it crowd her ult? **Fallback 26** is pre-agreed if it plays badly.
+- **Chain Hook at 23 + pull 2** — the roster's only pull ≥ 2, now a real threat (AR-normal per Rampart's
+  Fusion Lance, but a big change in what the ability is).
+- **Lumen at heal 20** — a healer comp should now be beatable (~12.5 turns/kill, was outlasting the match).
+- **Warding Wall — judge power as ONE question (Builder OQ #3):** WALL-HIT-ONCE (a unit is hit once, so
+  walking its length is 25 not 75) **and** WALL-REACH (~7 tiles from Aegis after WALL-ROTATE) together. Is
+  the wall now too weak, or does the reach carry it? Either lever moves alone if needed.
+- **Ram Charge** — the preview is back to route + landing marker, **no lane outline**. Does it read fine?
+- **DEATH-HANG** — a mid-match death must stay playable for **both** sides (the M3 bug that started Path A).
+- **Cooldown-band tempo** (dashes 4–5, non-basic blasts 3–4) and the shove-into-trap play (TRAP-SHOVE).
+- **Networked seams** — reconnect/handoff, the per-player timer, and a **rotated-wall order relayed**
+  between two clients (still verified only by reading the protocol — the reason NET-E2E is next).
 
-**Spec Notes.** Files: `packages/client/src/aim-boundary.ts` (revert the `path` tessellate case + memo
-key), `packages/client/src/app.ts` (remove the path-outline draw). **Do NOT revert**
-`packages/client/src/preview-numbers.ts` (the `chargeHits` fix) or the engine
-`chargedUnits`/`chargeVictims` export in `resolve.ts`/`targeting.ts` (harmless single-source-of-truth the
-number fix reads). The Builder's `ram-charge-line.test.ts` will need its outline assertions removed/flipped;
-keep the parts that assert the number correctness. **Flag to owner (one line):** first-only charges keep the
-corrected single-number preview — that is the one bit of "before" not being restored, because "before" was a
-lying preview. Out of scope: the engine's charge resolution (correct); Ram Charge's data (see
-TTK-SKILL-DAMAGE for its damage change).
-
-### WALL-HIT-ONCE. A wall hits a given unit at most once; it stays a multi-target barrier (ENGINE) — UNBLOCKED (after RAM-PREVIEW-REVERT)
-**Addresses Dev Note: "Warding Wall is not a trap that goes away after being hit."** — owner-disambiguated
-(2026-09-28) to **"barrier, but each unit hit once."** The engine is otherwise correct (a tile is consumed
-on trigger, the wall expires end of its placement turn, playback and render clear it). The issue is the
-`perTile` nature: a wall is four independent one-shot traps, so **one unit can be hit several times by the
-same wall** — walking its length runs over three tiles for 75, and a two-tile clip double-hits. The owner
-wants a unit to take the wall's 25 + weaken **once**, while the wall stays a **multi-target barrier** (a
-second, different enemy crossing it the same turn is still hit). Ruled PROPOSED in edge-cases (WALL-HIT-ONCE).
-
-*AC:*
-- **A per-unit-per-cast dedup, not whole-wall consumption.** The first tile of a wall to catch a unit fires
-  and is consumed; further tiles of the **same cast** do **not** fire on **that same unit** this turn, and
-  are **not** consumed (they remain for other enemies).
-- **The barrier is preserved:** two different units each crossing the wall each take 25; a unit crossing two
-  **separate** walls takes 25 from each; the wall still expires end of turn.
-- **Tests (engine):** a unit walking along a 3-tile wall takes **25 once, not 75**; two different units each
-  crossing take 25 each; a unit crossing two separate walls takes 25 twice; an ordinary single-tile mine
-  (Overwatch Trap, Snare Bloom, Barbed Sling) is **unaffected**; the dedup holds across phases (a unit that
-  dashes through in Dash and is shoved through in Blast is still hit once by that wall).
-
-**Spec Notes.** Files: `packages/engine/src/resolve.ts` (`placeTraps` stamps a **group id** on each tile of
-a `perTile` cast — all tiles of one cast share it; a single-tile trap needs none; `triggerTrapsOnEntry`
-keeps/consults a per-turn `unitId × groupId` set and skips — without firing or consuming — a tile whose
-group has already hit this unit), `packages/engine/src/types.ts` (a `groupId?` on `TrapState`). The dedup
-set is **resolution-scoped** — thread it through the trap-trigger callers (`walkCharge`, `stepMovers`,
-`applyDisplacements`) or hang it on the resolution context, so it spans the whole turn. Keep it a **keyed
-set** (order-independent, N-safe, deterministic). Generic by design: any future `perTile` hazard inherits
-"one hit per unit per cast" for free. Out of scope: whole-wall consumption (the owner chose the barrier);
-the wall's cast/rotation/lifetime (correct); single-tile traps (unchanged — a mine already can only hit a
-unit once, being consumed on the first trigger).
+**Output:** a short, prioritised list of felt problems → a tuning pass, mostly data (numbers). File it as
+Dev Notes; the Analyzer routes it into backlog items.
 
 ---
 
-## Data — the TTK package (owner directive 2026-09-27; **now directed for implementation**, Dev Note 2026-09-28 #1)
+## Builder batch — de-risk and support the networked playtest
 
-**Addresses Dev Note: "Make sure you review TTK changes in PR #102 to give to builder to implement."** The
-package was reviewed (2026-09-28 §1) and is sound; the owner now directs implementation, which also settles
-the sequencing question in its favour — it lands **before** PLAYTEST. All five items are UNBLOCKED.
+### NET-E2E. Automated two-client coverage of the networked loop (SERVER + CLIENT) — UNBLOCKED (first)
+**Why now:** the networked relay is the one seam pure-function tests never touch, and it is exactly what a
+live networked playtest exercises. DEATH-HANG was such a bug (a downed seat froze the client); session-9
+OQ #4 (a rotated-wall order surviving the relay) and session-11 remain "verified by reading the protocol,
+not a two-client test." A playtest that hits a relay bug with no regression net is how a fixed bug returns.
+*AC:*
+- **A test drives two `app-harness.ts` controllers through one match over a loopback/fake transport**
+  (or the real Durable Object in a test worker — Builder's call on the seam): lobby → both seats submit →
+  resolve → next turn, asserting both clients reach the **same** resolved state each turn.
+- **The three scenarios that have bitten or are unverified:** (1) a unit **dies/downs** mid-match and the
+  next turn is playable for both the downed seat and its opponent (DEATH-HANG, networked); (2) a
+  **reconnect/handoff** mid-match resumes correctly; (3) a **rotated Warding Wall** order (`aimStep` on the
+  wire) relays and resolves identically on the receiving client (closes session-9 OQ #4 for real).
+- **Deterministic and CI-safe** — no wall-clock waits; drive the injected clock, as the existing timer
+  tests do.
 
-> **Owner directive, verbatim:** *"The package — 1. HP to the table above — raises TTK to AR parity and
-> fixes the ult burst. 2. Skill damage to 1.25x basic, single target skills should do more than aoe
-> skills. Skills that debuff should do less damage than skills that do not. 3. `TURN_LIMIT` 2v2: 16 → 20
-> — mandatory, or matches decide on the clock. 4. Lumen's Mending Light 25 → 20 — mandatory, or a healer
-> comp outlives the match."* Stated goal: *"I want to make sure time to kill is similar so that one error
-> doesn't cause an instant death."*
->
-> Evidence, the Atlas Reactor measurements, and the reasoning for every number:
-> **`docs/reviews/2026-09-27.md`**. **The integers below are final — implement them, do not re-derive
-> them.**
+**Spec Notes.** Files: `packages/server/test/` and/or `packages/client/test/` (a new two-controller
+harness), likely a small shared test seam over the existing net protocol. **Reuse the injected clock and
+`app-harness.ts`** — do not add real timers or real sockets. This is the "flagged for four sessions" item;
+scope it to the three scenarios above, not to every networked edge — breadth can grow once the harness
+exists. Out of scope: new networked *features* (rematch, idle-kick — still flagged-future); changing the
+protocol. **Watch:** keep the two-client harness off the 300 kB JS bundle-budget path (it is test-only).
 
-**Five items, in order: TTK-HP-BAND → TTK-SKILL-DAMAGE → TTK-LUMEN-HEAL → TTK-TURN-LIMIT →
-TTK-INVARIANT.** Four are data/config one-liners; the fifth is the test. **They are one change and must
-land together** — HP alone makes the healer grind outlast the match, and HP without the turn limit ends
-every 2v2 on the clock. Do not ship a partial package.
+### GAMESPEC-HP-UPDATE. GAME_SPEC's HP baseline reflects the TTK band (DOCS) — UNBLOCKED
+**Addresses Builder session-11 OQ #7.** `GAME_SPEC.md` still describes `maxHp` as "baseline ~100"; after
+TTK-HP-BAND the median is **130** and the band runs **100–175**. *AC:* the HP reference in `GAME_SPEC.md`
+(the Builder cited ~line 119) reads the new band (median 130, range 100–175, archetype ladder
+firepower < support < frontline); no other rule text changes. **Spec Notes.** One factual correction in the
+ruleset doc — the number, not the mechanic. Trivial; grouped here so it is not forgotten. Out of scope:
+re-deriving TTK (done — see `docs/reviews/2026-09-27.md`); the format table (already updated by
+TTK-TURN-LIMIT).
 
-**Out of scope for the whole batch, stated so nobody adds a "helpful" pass:** ultimate damage (the HP
-raise replaces the ult cap the 2026-09-23 review proposed — see review §2.1); `energyGain`, `ULT_COST`,
-`PASSIVE_ENERGY` (review §3.3); every shield value and every catalyst (they land in AR's band by
-themselves once the bars grow); `KILLS_TO_WIN`; all cooldowns, including Mending Light's — **only its
-amount changes**, so "Prep cooldowns are correct right now" still holds; traps; Aegis's kit (he has no
-direct-damage skill since PR #97 and session-8 OQ #5 closed that as intended).
+### ROSTER-CEILINGS-UPDATE. `roster-v1.md` §4's balance ceilings reflect the TTK numbers (DOCS → Designer) — UNBLOCKED
+**Addresses Builder session-11 OQ #6 (Designer-owned).** Four §4 ceilings went stale when TTK landed:
+undelayed skill cap **24→30** (Kestrel's Skim), nuke ceiling **34→33**, sustain ceiling **25→20** (Lumen),
+and "time-to-kill 4–5 connected hits on a 100 HP target" → **~5.9 on bars of 100–175**. §1's kit table
+should also gain the HP ladder and the damage-tier rule, which it has never carried. *AC:* the four numbers
+and the two structural rules in `roster-v1.md` match the shipped values. **Spec Notes.** Designer-owned
+doc; if the Builder touches it, keep it to the numbers. **Not a blocker** — TTK-INVARIANT enforces the live
+values in `content.test.ts` meanwhile. Evidence: `docs/reviews/2026-09-27.md`.
 
-### TTK-HP-BAND. HP rises ~30% and the archetype ladder is restored (DATA) — UNBLOCKED
-**Addresses owner directive #1.** Today's bars run 85–135 (median 100), so a basic takes **22.0%** of a
-health bar against Atlas Reactor's **17.3%**, and an ultimate takes **38%** against AR's **23%** — which
-is why **two ults deal exactly 85 to Wisp's 85 HP and kill from full**. Supports sit only 11% above
-firepower where AR put them 33% above. *AC: the nine `maxHp` values become —* `wisp` **85→100**,
-`kestrel` **90→105**, `cinder` **95→110**, `vex` **95→110**, `thorn` **100→130**, `lumen` **105→140**,
-`aegis` **120→155**, `bastion` **130→170**, `ravok` **135→175**; *no other field in any character file
-changes; both suites stay green.* **Spec Notes.** Nine one-field edits in `data/characters/*.json`.
-Lands median HP 130 (basic bite 16.9% vs AR's 17.3%, TTK 5.9 hits vs AR's 5.8), archetype ratio
-1 : 1.26 : 1.58 (AR 1 : 1.33 : 1.65), and the double-ult at 85% of the squishiest bar against AR's 83%.
-**This is why no ultimate is being nerfed** — do not also cut ult damage. Out of scope: everything in the
-batch-level list above.
-
-### TTK-SKILL-DAMAGE. Skill damage rises to a tiered 1.25× ceiling (DATA) — UNBLOCKED (after HP)
-**Addresses owner directive #2.** Skills currently deal **0.64×** their character's basic (AR: 0.96×), so
-damage is barbelled into the free basic and the ultimate with nothing in between — the basic is the
-damage-max pick on every single turn for seven of nine characters. *AC: the eleven damaging non-basic,
-non-ult abilities carry exactly these `damage` amounts —*
-
-| Character | Ability | Now | **New** |
-|---|---|---|---|
-| Kestrel | `skim` | 12 | **30** |
-| Vex | `frag_grenade` | 34 | **33** |
-| Kestrel | `kite_shot` | 16 | **26** |
-| Wisp | `bola` | 12 | **24** |
-| Bastion | `ram_charge` | 15 | **23** |
-| Bastion | `chain_hook` | 10 | **23** |
-| Ravok | `shockwave` | 12 | **19** |
-| Thorn | `bramble_stride` | 10 | **17** |
-| Ravok | `bullrush` | 14 | **17** |
-| Lumen | `dazzling_ray` | 12 | **15** |
-| Cinder | `flare_burst` | 10 | **12** |
-
-*— and nothing else on those abilities changes (riders, ranges, radii, cooldowns, `energyGain` all
-stand); no trap amount changes; no ultimate changes; both suites stay green.* **Spec Notes.** Eleven
-one-field edits in `data/characters/*.json`. The rule these came from, recorded for the **next**
-character rather than for re-deriving this table:
-`round_half_up(basic × shape × rider × delay)` where **basic** is `abilities[0]`'s headline `damage`
-(conditional bonuses like `axisBonus`/`innerBonus` excluded), **shape** = 1.25 single-target (no
-`radius`/`impact`/`beamWidth`) or 1.00 area, **rider** = 1.00 none / 0.88 status (`slow`, `weaken`,
-`root`, `reveal`, `damageOverTime`) / 0.76 displacement (`knockback`, `pull`), **delay** = 1.25 when
-`delayTurns ≥ 1`. **The tiers are load-bearing, not decoration:** a flat 1.25× would raise sustained
-output ~10% and claw back part of the HP gain, while the tiered table lands median output at **22.0/turn
-— exactly today's** (review §3.1). **Do not simplify them into a single multiplier.** Two numbers to
-watch in the playtest: `skim` is the only ability at the 1.25 ceiling and at 30 it is 86% of Kestrel's
-ultimate (fallback **26** if it crowds her ult), and `chain_hook` more than doubles on the roster's only
-pull ≥ 2 (AR's Rampart Fusion Lance is the precedent: 25 + pull, cd3). Out of scope: as above.
-
-### TTK-LUMEN-HEAL. Mending Light heals 20, not 25 (DATA) — UNBLOCKED (must ship with the HP change)
-**Addresses owner directive #4.** Heals are absolute numbers and do not scale with a bigger bar, so
-raising HP alone makes a healer comp **worse**: two attackers net 7.9 damage/turn through Lumen, and at
-the new bars that is **16.5 turns for a single kill — longer than the match**. At 20 it is 12.5. *AC:
-`data/characters/lumen.json` `mending_light` `heal` amount **25 → 20**; its* `cooldown` *stays* **2**;
-*no other Lumen value changes; both suites stay green.* **Spec Notes.** One field. Lumen's sustained
-throughput becomes 16.0/turn on a 140 bar = **11.4% of a health bar per turn**, inside AR's support band
-(median 9.7%, max 12.5%) for the first time — today she is at 17.6%, 1.4× AR's best support, because
-Radiant Lash heals 12 *while* dealing 14 so her 2-turn cooldown never leaves a gap. **The amount changes,
-not the cooldown** — the 2026-09-23 directive "Prep cooldowns are correct right now" is untouched.
-`roster-v1.md` §4's "sustain ceiling: 25 heal per 2-turn cooldown (Lumen)" becomes 20 and is routed to
-the Designer below. Out of scope: Verdant Veil, Blood Frenzy, Sanctuary, Overgrowth, every shield.
-
-### TTK-TURN-LIMIT. 2v2 runs to 20 turns, not 16 (ENGINE CONFIG) — UNBLOCKED (must ship with the HP change)
-**Addresses owner directive #3, and it is load-bearing.** At two attackers and `roster-v1.md` §4's 60%
-hit rate, 2v2 already paces to **15.2 turns for 4 kills against a 16-turn limit**; after the HP raise it
-is **19.7**. Without this change every 2v2 ends on the clock instead of on kills. (AR had slack because
-4v4 supplies four attackers per kill target; our default supplies two.) *AC:*
-`packages/engine/src/formats.ts` `FORMATS['2v2'].turnLimit` **16 → 20**; `killsToWin` *stays* **4**; *4v4
-and 1v1 untouched;* `docs/GAME_SPEC.md` §1's *format table row for 2v2 reads* `| 2v2 | 4 | 20 |`; *the
-two assertions in* `packages/engine/test/formats.test.ts` *that name 16 (`:22` — the `toEqual` on the
-whole 2v2 record — and `:61-67` — "2v2 decides on the leader after turn 16") are updated to 20 and still
-prove the same behaviour (still active at the old boundary, finished at the new one).* **Spec Notes.**
-One config value, one spec-table cell, two test updates. Not a "constant tweak" — it changes what a match
-is, which is why the review argues it in full (§2.3) and why it must not ship without the HP change or
-vice versa. Also check the client's clock/scoreboard read the limit from the format rather than a literal
-(`scoreboard.ts:145` takes `format.turnLimit`, so it should just follow — confirm, don't assume). Out of
-scope: `KILLS_TO_WIN` (staying at 4 is deliberate — see review §7.3, an open question for the owner, not
-a Builder call).
-
-### TTK-INVARIANT. The HP ladder and the damage tiers are enforced by a test (TEST) — BLOCKED on the four above
-**Why:** the same reason CD-BAND-INVARIANT exists — a balance rule that lives only in prose is a rule the
-next character silently breaks, and `roster-v1.md` §1's kit table has no HP or damage constraint at all.
-*AC:* `packages/engine/test/content.test.ts` *asserts, over all nine shipped characters:* (a) *every*
-`maxHp` *matches the shipped ladder and the archetype medians stay ordered* **firepower < support <
-frontline** *with support at least 15% above firepower;* (b) *every non-basic, non-ult ability carrying a*
-`damage` *effect sits at* `round_half_up(basic × shape × rider × delay)` *for its own class, per the table
-in TTK-SKILL-DAMAGE — computed in the test from the ability's own* `radius`/`impact`/`beamWidth`/`shape`,
-*its rider effect kinds, and its* `delayTurns`, *so a new character is checked by the same rule;* (c) *the
-failure message names the class and the expected multiplier, so an author reads the rule rather than a
-bare number.* **Spec Notes.** `content.test.ts` already imports all nine characters and is where the
-roster's structural rules live — extend it, do not add a file. **Aegis is legitimately exempt from (b)**
-(no direct-damage skill since PR #97; session-8 OQ #5 closed that as intended) — express that as "no
-damaging skills to check", never as a name in an allow-list. **Traps are out of (b) entirely** —
-conditional damage has no term in the formula. Keep `validate.ts` value-agnostic: a balance band is roster
-policy, and content tests are where policy belongs.
-
-### The risk, and it is mechanical
-Changing nine `maxHp` values and eleven damage values will break any test that asserts a specific
-remaining-HP number or a kill after N hits, and the turn-limit change breaks the two `formats.test.ts`
-assertions named above. Run the full suite and fix the **tests**, not the data — these integers are the
-owner's. Watch `packages/client/test/modes-ui.test.ts`, the one client test that references real
-character HP values.
-
-## Path A — validate before you build (the session direction; owner-chosen)
-
-The game is feature-complete for a 2v2 duel and **deployed live**, but the recent mechanics (cooldown
-bands, Warding Wall + rotation, Ram Charge's line, TRAP-SHOVE, DEATH-HANG, AIM-PREVIEW-TRUE) are
-**unvalidated by real play**. Path A retires that risk before adding more.
-
-### PLAYTEST (owner + humans; not a Builder code item) — AFTER the fixes and the TTK package ship
-A real **two-machine internet playtest** of the live deploy — ideally the **asymmetric 3-player 2v2**, the
-least-exercised path. **Prerequisite:** RAM-PREVIEW-REVERT and WALL-HIT-ONCE merged (the two ability fixes
-this session) and **the five TTK items** (owner-directed). WALL-CAST-FIX already shipped, so the wall casts.
-With the TTK package landed, the playtest also answers: does a fight last long enough that a
-single caught-in-the-open turn is survivable (the directive's whole point); does Kestrel's Skim at 30 crowd
-her ultimate (fallback 26); does Bastion's Chain Hook at 23 + pull 2 read as fair; does a 20-turn 2v2 drag. Watch: does a mid-match death stay playable for both sides (DEATH-HANG);
-do dashes at 4–5 and blasts at 3–4 improve the tempo; does the rotatable Warding Wall read and matter (and
-is its ~7-tile reach too long — session-9 OQ #2); does Ram Charge's line read as an attack; does a
-shove-into-trap play feel good (TRAP-SHOVE). **Output: a short list of felt problems → a tuning pass**,
-mostly data (numbers), not engine.
-
-### NET-E2E. Automated end-to-end networked test harness (SERVER + CLIENT) — FLAGGED, size TBD after playtest
-The biggest latent risk: DEATH-HANG was a networking-wiring bug pure-function tests could not catch, and
-session-9 OQ #4 (a committed wall's rotation across a replay) was "verified by reading the protocol, not a
-two-client test" — the same gap. There is **no automated two-client coverage** of the networked loop (lobby
-→ both clients submit → resolve → next turn → a death → reconnect → a rotated-wall order relayed). Path A's
-infrastructure payoff. **Not fully specced** — its shape depends on what the playtest surfaces and a
-Builder/owner call on the seam (two `app-harness.ts` controllers over a loopback transport, or the real
-Durable Object in a test worker). Scope it into a full item after the playtest.
+---
 
 ## Routed to Designer / flags
 
-- **`roster-v1.md` §4's balance ceilings go stale with the TTK package (Designer).** Three lines need
-  rewriting once TTK-HP-BAND / TTK-SKILL-DAMAGE / TTK-LUMEN-HEAL land: *"time-to-kill on a 100 HP target:
-  4–5 connected hits"* (bars are 100–175 now and TTK is ~5.9), *"undelayed skill damage caps at 24"* (the
-  cap becomes 30 — Kestrel's Skim) and *"skill nuke ceiling: 34"* (33), and *"sustain ceiling: 25 heal per
-  2-turn cooldown (Lumen)"* (20). §1's kit table should also gain the HP ladder and the damage-tier rule,
-  which it has never carried. **Documentation debt, not a blocker** — TTK-INVARIANT enforces the numbers in
-  `content.test.ts` meanwhile. Evidence: `docs/reviews/2026-09-27.md`.
-- **Kestrel's Skim at 30 (playtest flag).** The only ability at the 1.25 ceiling, and 86% of her own
-  ultimate on a 4-turn cooldown. **Fallback 26.** — **Bastion's Chain Hook at 23** on the roster's only
-  pull ≥ 2; AR-normal (Rampart's Fusion Lance: 25 + pull, cd3) but a big change in what the ability is.
-- **FRAG-SELF zoning nerf (session-10 OQ #4, playtest).** Vex's Frag Grenade now catches its own thrower
-  (34 in a radius-2 disc, no longer sparing Vex) — a real nerf to her zoning, delivered by a rules change
-  (FRAG-SELF), not a balance pass, and no number moved for it. (TTK-SKILL-DAMAGE separately takes its damage
-  34→33, unrelated to the self-harm.) **Designer/playtest call** whether it went too far. Also note the
-  forward rule (edge-cases, FRAG-SELF): the next ability to take `selfHarm` with a status rider will apply
-  that status to its own caster — a decision recorded before content depends on it.
-- **WALL-REACH (session-9 OQ #2, Designer).** After WALL-ROTATE, `warding_wall`'s far end can sit ~7 tiles
-  from Aegis (anchor within 4, wall extends 4 along the cardinal); it was ~5 under the old centred geometry.
-  No number changed and the Builder did not rebalance. **Designer/playtest call** whether `range` should
-  come down. Ruled in edge-cases (WALL-ROTATE flag). Watch it in the playtest.
-- **WALL-BLINK-ONTO (owner confirmation; session-9 OQ #3).** After TRAP-SHOVE-DEFAULT every mine bites a
-  blink that lands on it, but the wall still does not (its authored *"a blink goes around it"*). This is now
-  the *only* trap-trigger divergence. **Kept as authored; flag to owner** — one array entry (`teleport` on
-  `warding_wall.triggers`) + flipping the *"blink onto a wall tile"* test aligns them if wanted.
-- **Aegis has no cooldown'd Blast** (session-8 OQ #5) — **closed as intended** (owner "Aegis skill set is
-  good"). **Aegis beam distinctness** (now a 3-wide lane). **Self-lethal recoil warning** (a design call,
-  not scheduled). **Burn/regen pip glyphs** (art, a look on a real plate). **Warding Halo's dead `weaken`**,
-  **trap count cap**, **inspect-panel chips hoverable**, **chase-preview detour**, **Solar Flare DoT
-  ceiling**, **Thorn mine carpet** — unchanged flags.
+- **ASSET-WEIGHT-BUDGET (flagged, from `docs/ART_PIPELINE.md` §8 Analyzer brief).** The 300 kB gz JS cap
+  (`scripts/bundle-budget.mjs`) does **not** cover `.glb` meshes + textures, and the art pipeline will grow
+  that weight unwatched. The pipeline's own Analyzer brief names "recommend a budget for it" as a good
+  first backlog item. **Spec when art work is scheduled:** track total asset bytes as a separate CI number
+  with a cap, and flag `GLTFLoader`'s addition to the JS bundle when it lands. Not scheduled this session
+  (playtest first); registered so it is ready when the pipeline starts.
+- **Warding Wall power (Builder OQ #3, playtest).** WALL-HIT-ONCE (one hit per unit) + WALL-REACH (~7-tile
+  reach after WALL-ROTATE) are **one** question — judge them together in the playtest, move one lever if
+  needed. Ruled in edge-cases (WALL-HIT-ONCE, WALL-ROTATE).
+- **Kestrel's Skim at 30 / Bastion's Chain Hook at 23 (playtest flags).** Skim is the sole 1.25-ceiling
+  ability at 86% of her ult — **fallback 26**. Chain Hook more than doubled on the roster's only pull ≥ 2.
+- **FRAG-SELF zoning nerf (session-10 OQ #4, playtest).** Frag Grenade now catches its own thrower; the
+  next `selfHarm` ability with a status rider will apply that status to its own caster (edge-cases, ruled).
+- **WALL-BLINK-ONTO (owner confirmation).** Every mine bites a blink that lands on it; the wall still does
+  not (its authored *"a blink goes around it"*). One array entry aligns them if the owner wants it.
+- **Aegis beam distinctness; self-lethal recoil warning; burn/regen pip glyphs; Warding Halo's dead
+  `weaken`; trap count cap; inspect-panel chips hoverable; chase-preview detour; Solar Flare DoT ceiling;
+  Thorn mine carpet** — unchanged flags.
 
 ## Flagged future (not scheduled)
 
-- **All-seats-downed resolves on the timer, not at once** (session-8 OQ #4) — rare, safe; schedule only
-  with the resolve-loop guard specified. **M3-REMATCH**, **IDLE-KICK**, **LOBBY-TEAM-CHOICE** (room
-  lifecycle — the natural follow to NET-E2E). **same-turn-buff preview**, **route-around-bodies dash impact
-  preview** — unchanged.
+- **The art / animation / VFX pipeline** (`docs/ART_PIPELINE.md`) — hitstop/flash/shake first (no assets),
+  then generation → Mixamo rig → asset build → renderer integration → weapons/VFX. **No engine change**;
+  spike **Aegis** (frontline, melee `shield_bash`). ASSET-WEIGHT-BUDGET pairs with it. Owner directs when.
+- **M3-REMATCH, IDLE-KICK, LOBBY-TEAM-CHOICE** (room lifecycle — the natural follow to NET-E2E).
+  **All-seats-downed resolves on the timer** (session-8 OQ #4 — rare, safe; needs the resolve-loop guard).
+  **same-turn-buff preview**, **route-around-bodies dash impact preview** — unchanged.
 
 ## Observed-not-requested / playtest (not Builder-blocking)
 
-- Folded into **Path A / PLAYTEST**: exercise a death; shove-into-trap combos; the cooldown-band feel; the
-  rotatable Warding Wall and its reach; Ram Charge's line; the new HUD; AIM-PREVIEW-TRUE; Ravok's recoil.
+- Folded into **PLAYTEST** above: the TTK goal (burst no longer one-shots), match length at 20 turns,
+  Skim/Chain Hook/Lumen numbers, the wall's power, Ram Charge's reverted preview, the cooldown-band feel,
+  DEATH-HANG, and the networked seams NET-E2E covers.

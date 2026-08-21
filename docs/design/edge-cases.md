@@ -869,10 +869,10 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     The preview (which reads `aimFor` directly) still draws, so it looks fine. Fixed by carrying the step
     for placed-rotatable shapes too, with an order-build/resolve regression. This is a client defect, not
     a rule question — the ruling above is correct as shipped in the engine.
-- **PROPOSED — WALL-HIT-ONCE: a multi-tile hazard hits a given unit at most once per turn; it stays a
+- **RULED — WALL-HIT-ONCE: a multi-tile hazard hits a given unit at most once per turn; it stays a
   barrier that hits everyone who crosses (owner Dev Note 2026-09-28: "Warding Wall is not a trap that goes
-  away after being hit", disambiguated by the owner to "barrier, but each unit hit once"; backlog
-  WALL-HIT-ONCE — engine).** Warding Wall is `perTile` — four independent one-shot traps — so a single unit
+  away after being hit", disambiguated by the owner to "barrier, but each unit hit once"; SHIPPED PR #105).**
+  Warding Wall is `perTile` — four independent one-shot traps — so a single unit
   can be hit **multiple times by one wall**: walking *along* its length runs over three tiles for 75, and
   even a perpendicular cross that clips two tiles double-hits. The owner wants a unit to take the wall's
   25 + weaken **once**, while the wall **remains a multi-target barrier** — a second, different enemy
@@ -891,6 +891,35 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   set, order-independent. **Ships with tests:** a unit walking along a 3-tile wall takes 25 once (not 75);
   two different units each crossing it each take 25; a unit crossing two separate walls takes 25 twice; an
   ordinary single-tile mine is unaffected.
+  - **As shipped (PR #105), verified sound.** The dedup set (`trapHits`, keyed `unitId|groupId`) is
+    **threaded** from `resolveTurn` through the thirteen trap-trigger callers, not stored on `GameState` —
+    correct: it is one-resolution scratch, and storing it would ship per-turn bookkeeping to every client
+    and saved room and would need a clear that a future `lifetime: 2` `perTile` hazard could silently
+    depend on. `groupId` is stamped **only** on `perTile` tiles (a lone mine has none and is deduped by
+    consumption alone), and is the trap id with the square dropped — the *cast*, not the tile — so two
+    walls from two casters in one turn stay distinct and a re-cast next turn is a new hazard. N-safe,
+    order-independent, phase-order untouched. `groupId` is an additive `TrapState` field (Builder OQ #2):
+    benign and protocol-visible like `halt`/`triggers`/`expiresOnTurn`; nothing renders it, and the state
+    contract need not enumerate it — flagged only so a future ARCHITECTURE state-contract pass names it.
+  - **Cross-phase test correction (closes Builder OQ #4).** The original AC bullet — "dashes through in
+    Dash and is shoved through in Blast" — is **vacuous as written**: a straight dash-then-shove re-enters
+    the *same* tile the dash already consumed, so it passes identically with the dedup removed. A real
+    cross-phase test needs a victim who reaches a **second live tile** of the same wall: the Builder's
+    version charges through, **bends off the lane** (MV4 diagonal/waypoint), and is hooked back across a
+    *different* tile — one hit total. Any future WALL-HIT-ONCE-class test must change the victim's lane
+    between the two crossings, or it proves nothing.
+- **RULED — TTK-INVARIANT is load-bearing: a new damaging skill must sit on the tier, or carry a NAMED
+  exception (closes Builder session-11 OQ #5; SHIPPED PR #105).** `content.test.ts` now asserts every
+  non-basic, non-ult damaging ability equals `round_half_up(basic × shape × rider × delay)` for its own
+  class, and every `maxHp` is on the ladder. **This is intended, and it is a real constraint on new
+  content:** the Designer cannot author a deliberate damage outlier without either changing the rule or
+  adding a **named exception** in the test — a one-line entry naming the ability and a sentence of
+  justification, exactly as the existing exclusions read (**traps** — conditional damage has no term in
+  the formula; **Aegis** — no direct-damage skill since PR #97, session-8 OQ #5). This is the same
+  discipline CD-BAND-INVARIANT applies to cooldowns and STEP-STACK-INVARIANT to collisions: a balance rule
+  that lives only in prose is one the next character silently breaks. An outlier is legitimate; a *silent*
+  outlier is the failure. So: intentional exception → name it in the test with its reason; otherwise the
+  number is the tier.
 - **RULED — TRAP-TRIGGER: what counts as setting off a trap, as a list of arrivals
   (owner Dev Notes 2026-09-25; backlog TRAP-SHOVE-DEFAULT — engine; SUPERSEDES the
   2026-08-14 "knockback/pull do NOT trigger traps in v1" ruling below, and closes
