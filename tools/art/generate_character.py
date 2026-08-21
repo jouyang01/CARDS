@@ -57,18 +57,28 @@ def uv_rect(region: str):
     return (x0 / ATLAS, 1.0 - y1 / ATLAS, x1 / ATLAS, 1.0 - y0 / ATLAS)
 
 
-def swatch_uv(name: str):
-    """The centre of one flat-colour cell — a single point every dull face samples."""
+def swatch_cell(name: str):
+    """One swatch cell as a UV rect, inset so neighbours cannot bleed in.
+
+    Armour unwraps ACROSS this rect rather than sampling its centre pixel, which
+    is what lets a plate carry scratches at all — one pixel cannot be scratched.
+    """
     grid = LAYOUT["swatchGrid"]
-    order = LAYOUT["swatchOrder"]
-    i = order.index(name)
+    i = LAYOUT["swatchOrder"].index(name)
     r, c = divmod(i, grid["cols"])
     x0, y0, x1, y1 = LAYOUT["regions"]["swatches"]
     cw = (x1 - x0) / grid["cols"]
     ch = (y1 - y0) / grid["rows"]
-    px = x0 + cw * (c + 0.5)
-    py = y0 + ch * (r + 0.5)
-    return (px / ATLAS, 1.0 - py / ATLAS)
+    pad = LAYOUT.get("swatchInset", 4)
+    px0, py0 = x0 + cw * c + pad, y0 + ch * r + pad
+    px1, py1 = x0 + cw * (c + 1) - pad, y0 + ch * (r + 1) - pad
+    return (px0 / ATLAS, 1.0 - py1 / ATLAS, px1 / ATLAS, 1.0 - py0 / ATLAS)
+
+
+def swatch_uv(name: str):
+    """Centre of a swatch cell, for faces too small to be worth unwrapping."""
+    u0, v0, u1, v1 = swatch_cell(name)
+    return ((u0 + u1) / 2, (v0 + v1) / 2)
 
 
 # ── mesh building ───────────────────────────────────────────────────────────
@@ -257,7 +267,7 @@ def add_tube(bm, uv_layer, axis, start, end, profile, swatch,
     start_v, end_v = Vector(start), Vector(end)
     span = end_v - start_v
     unit = superellipse(sides, exponent)
-    uv = swatch_uv(swatch)
+    u0, v0, u1, v1 = swatch_cell(swatch)
 
     rings = []
     for t, hw, hd in profile:
@@ -268,18 +278,28 @@ def add_tube(bm, uv_layer, axis, start, end, profile, swatch,
             ring.append(bm.verts.new(centre + offset))
         rings.append(ring)
 
+    ts = [t for t, _, _ in profile]
+
+    def cyl_uv(ring_i, t):
+        """Cylindrical unwrap: around the tube -> u, along it -> v."""
+        fu = (ring_i % sides) / float(sides)
+        return (u0 + (u1 - u0) * fu, v0 + (v1 - v0) * min(max(t, 0.0), 1.0))
+
     made = []
-    for a, b in zip(rings, rings[1:]):
+    for k, (a, b) in enumerate(zip(rings, rings[1:])):
+        ta, tb = ts[k], ts[k + 1]
         for i in range(sides):
             j = (i + 1) % sides
             try:
                 f = bm.faces.new((a[i], a[j], b[j], b[i]))
             except ValueError:
                 continue
-            for loop in f.loops:
+            for loop, uv in zip(f.loops, (cyl_uv(i, ta), cyl_uv(i + 1, ta),
+                                          cyl_uv(i + 1, tb), cyl_uv(i, tb))):
                 loop[uv_layer].uv = uv
             made.append(f)
 
+    centre_uv = ((u0 + u1) / 2, (v0 + v1) / 2)
     for ring, want in ((rings[0], cap_start), (rings[-1], cap_end)):
         if not want:
             continue
@@ -288,7 +308,7 @@ def add_tube(bm, uv_layer, axis, start, end, profile, swatch,
         except ValueError:
             continue
         for loop in f.loops:
-            loop[uv_layer].uv = uv
+            loop[uv_layer].uv = centre_uv
         made.append(f)
     return made
 
@@ -405,18 +425,15 @@ def build_body(spec):
 
     # Nose and brow ridge still get real geometry — without them the projected
     # portrait reads as a decal at any angle off dead-centre.
-    fy = -head_r * 0.86
+    fy = -head_r * 0.80
     add_wedge(bm,
-              (0, fy - head_r * 0.26, head_z - head_r * 0.06),
+              (0, fy - head_r * 0.19, head_z - head_r * 0.06),
               (-head_r * 0.14, fy, head_z + head_r * 0.16),
               (head_r * 0.14, fy, head_z + head_r * 0.16),
               (0, fy, head_z - head_r * 0.40), uv, "skin")
-    for side in (-1, 1):
-        add_wedge(bm,
-                  (side * head_r * 0.38, fy - head_r * 0.12, head_z + head_r * 0.42),
-                  (side * head_r * 0.08, fy, head_z + head_r * 0.30),
-                  (side * head_r * 0.70, fy, head_z + head_r * 0.30),
-                  (side * head_r * 0.40, fy, head_z + head_r * 0.54), uv, "skinShadow")
+    # No brow-ridge wedges. They were sized for a flat-faced box; on a curved
+    # head they punch through the surface beside each eye and read as spikes.
+    # The painted brow is heavy enough to carry it without geometry.
 
     # ── neck ──
     tube("z", (0, 0, neck_z - 0.08), (0, 0, neck_z + 0.04),
@@ -458,15 +475,15 @@ def build_body(spec):
 
     if g.get("skirt") == "tassets":
         for side in (-1, 1):
-            tube("z", (side * shoulder * 0.46, 0, hip_z - 0.26),
-                 (side * shoulder * 0.46, 0, hip_z + 0.01),
+            tube("z", (side * shoulder * 0.52, 0, hip_z - 0.24),
+                 (side * shoulder * 0.52, 0, hip_z + 0.01),
                  taper((0.0, shoulder * 0.26, depth * 0.60),
                        (1.0, shoulder * 0.30, depth * 0.74)), "iron")
 
     # ── arms, still a strict T-pose ──
     arm_z = chest_z - 0.05
     gap = shoulder * 0.74
-    arm_len = h * 0.30
+    arm_len = h * 0.255
     for side in (-1, 1):
         pads = g.get("shoulderPads", {})
         heavy = pads.get("left" if side < 0 else "right", "light") == "heavy-riveted"
@@ -476,10 +493,10 @@ def build_body(spec):
         # stylised silhouette read as armoured rather than as a tube.
         tube("x", (side * gap * 0.94, 0, arm_z + limb * 0.55),
              (side * (gap + limb * 1.35 * pad), 0, arm_z + limb * 0.30),
-             taper((0.0, limb * 1.45 * pad, limb * 1.55 * pad),
-                   (0.40, limb * 1.80 * pad, limb * 1.90 * pad),
-                   (0.78, limb * 1.72 * pad, limb * 1.80 * pad),
-                   (1.0, limb * 1.30 * pad, limb * 1.36 * pad)),
+             taper((0.0, limb * 1.22 * pad, limb * 1.32 * pad),
+                   (0.40, limb * 1.52 * pad, limb * 1.62 * pad),
+                   (0.78, limb * 1.44 * pad, limb * 1.52 * pad),
+                   (1.0, limb * 1.06 * pad, limb * 1.12 * pad)),
              "iron" if heavy else "ironDark")
 
         # NOTE: deliberately not `pad`. Joint positions must be mirror-identical
@@ -487,41 +504,42 @@ def build_body(spec):
         # pauldron's own size varies.
         ax = gap + limb * 0.95 * 1.5
         tube("x", (side * ax, 0, arm_z), (side * (ax + arm_len * 0.52), 0, arm_z),
-             taper((0.0, limb * 2.0, limb * 2.0),
-                   (0.5, limb * 1.8, limb * 1.8),
-                   (1.0, limb * 1.6, limb * 1.6)), "iron")
+             taper((0.0, limb * 1.62, limb * 1.62),
+                   (0.5, limb * 1.44, limb * 1.44),
+                   (1.0, limb * 1.28, limb * 1.28)), "iron")
 
         bx = ax + arm_len * 0.52
         tube("x", (side * bx, 0, arm_z), (side * (bx + arm_len * 0.52), 0, arm_z),
-             taper((0.0, limb * 1.70, limb * 1.70),
-                   (0.45, limb * 1.48, limb * 1.48),
-                   (1.0, limb * 1.34, limb * 1.34)), "iron")
+             taper((0.0, limb * 1.34, limb * 1.34),
+                   (0.45, limb * 1.16, limb * 1.16),
+                   (1.0, limb * 1.05, limb * 1.05)), "iron")
 
         cx = bx + arm_len * 0.52
-        tube("x", (side * cx, 0, arm_z), (side * (cx + 0.115), 0, arm_z),
-             taper((0.00, limb * 1.30, limb * 1.45),
-                   (0.30, limb * 1.72, limb * 1.95),
-                   (0.72, limb * 1.76, limb * 2.00),
-                   (1.00, limb * 1.30, limb * 1.50)), "ironDark")
+        tube("x", (side * cx, 0, arm_z), (side * (cx + 0.098), 0, arm_z),
+             taper((0.00, limb * 1.05, limb * 1.20),
+                   (0.30, limb * 1.42, limb * 1.62),
+                   (0.72, limb * 1.46, limb * 1.66),
+                   (1.00, limb * 1.05, limb * 1.24)), "ironDark")
 
     # ── legs ──
     for side in (-1, 1):
-        lx = side * shoulder * 0.58
+        lx = side * shoulder * 0.66
         tube("z", (lx, 0, hip_z * 0.46), (lx, 0, hip_z + 0.02), taper(
-            (0.0, limb * 1.55, limb * 1.65),
-            (0.35, limb * 1.70, limb * 1.80),
-            (1.0, limb * 1.95, limb * 2.05),
+            (0.0, limb * 1.22, limb * 1.30),
+            (0.35, limb * 1.36, limb * 1.44),
+            (1.0, limb * 1.58, limb * 1.66),
         ), "ironDark")
         tube("z", (lx, 0, 0.055), (lx, 0, hip_z * 0.48), taper(
-            (0.0, limb * 1.30, limb * 1.40),
-            (0.45, limb * 1.55, limb * 1.65),
-            (1.0, limb * 1.60, limb * 1.70),
+            (0.0, limb * 1.02, limb * 1.12),
+            (0.45, limb * 1.22, limb * 1.32),
+            (1.0, limb * 1.28, limb * 1.36),
         ), "leather")
         # Boot: forward-biased so the foot reads as a foot from above.
-        tube("y", (lx, depth * 0.50, 0.045), (lx, -depth * 1.00, 0.045), taper(
-            (0.0, limb * 1.65, limb * 1.35),
-            (0.5, limb * 1.90, limb * 1.55),
-            (1.0, limb * 1.55, limb * 1.10),
+        tube("y", (lx, depth * 0.34, 0.042), (lx, -depth * 0.72, 0.042), taper(
+            (0.00, limb * 1.16, limb * 1.10),
+            (0.45, limb * 1.34, limb * 1.26),
+            (0.80, limb * 1.30, limb * 1.16),
+            (1.00, limb * 1.02, limb * 0.88),
         ), "ironDark")
 
     return finish(obj, mesh, bm)

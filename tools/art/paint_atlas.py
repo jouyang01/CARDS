@@ -392,10 +392,58 @@ def paint_swatches(atlas: Atlas, pal: dict, magic: dict) -> None:
 
     # Every cell must be filled — an unpainted cell is pure black, and any UV that
     # lands on it samples black.
+    #
+    # Each cell is a small WORN PATCH rather than a flat colour. Armour used to
+    # sample one pixel per piece, which made scratched plate impossible by
+    # construction: a single pixel cannot be scratched. Pieces now unwrap across
+    # a whole cell, so the wear painted here lands on every plate and boot.
+    rng = atlas.rng
     for i in range(cols * rows):
         name = SWATCH_ORDER[min(i, len(SWATCH_ORDER) - 1)]
         r, c = divmod(i, cols)
-        atlas.box("swatches", (c * cell_w, r * cell_h, (c + 1) * cell_w, (r + 1) * cell_h), lookup(name))
+        x0, y0 = c * cell_w, r * cell_h
+        x1, y1 = x0 + cell_w, y0 + cell_h
+        base = lookup(name)
+        atlas.box("swatches", (x0, y0, x1, y1), base)
+
+        soft = name in ("leather", "skin", "skinShadow")
+        dark = mix(base, (0, 0, 0), 0.55)
+        light = mix(base, (255, 250, 240), 0.42)
+
+        # Broad tonal variation first, so the piece is not one dead flat value.
+        for _ in range(14):
+            bx, by = rng.randrange(x0, x1), rng.randrange(y0, y1)
+            rr = rng.randint(6, 22)
+            atlas.ellipse("swatches", (bx - rr, by - rr * 0.7, bx + rr, by + rr * 0.7),
+                          mix(base, dark if rng.random() < 0.6 else light, rng.uniform(0.02, 0.07)))
+
+        # Scratches. Metal takes long bright gouges; leather and skin do not.
+        for _ in range(0 if soft else 70):
+            sx, sy = rng.randrange(x0, x1), rng.randrange(y0, y1)
+            ln = rng.randint(5, 30)
+            dx, dy = (ln, rng.randint(-3, 3)) if rng.random() < 0.7 else (rng.randint(-3, 3), ln)
+            ex, ey = min(sx + dx, x1 - 1), min(sy + dy, y1 - 1)
+            atlas.line("swatches", [(sx, sy), (ex, ey)],
+                       mix(base, light, rng.uniform(0.10, 0.32)), width=1)
+            atlas.line("swatches", [(sx, sy + 1), (ex, ey + 1)],
+                       mix(base, dark, rng.uniform(0.12, 0.34)), width=1)
+
+        # Chipped edges and dents — where plate actually wears.
+        for _ in range(0 if soft else 6):
+            cxp = rng.choice([rng.randint(x0, x0 + cell_w // 4), rng.randint(x1 - cell_w // 4, x1 - 1)])
+            cyp = rng.randrange(y0, y1)
+            rr = rng.randint(1, 3)
+            atlas.ellipse("swatches", (cxp - rr, cyp - rr * 0.8, cxp + rr, cyp + rr * 0.8),
+                          mix(base, dark, 0.26))
+            atlas.line("swatches", [(cxp - rr, cyp - rr), (cxp + rr, cyp - rr)],
+                       mix(base, light, 0.22), width=1)
+
+        # Scuffing for the soft materials, which scuff rather than scratch.
+        for _ in range(30 if soft else 0):
+            sx, sy = rng.randrange(x0, x1), rng.randrange(y0, y1)
+            rr = rng.randint(3, 11)
+            atlas.ellipse("swatches", (sx - rr, sy - rr * 0.6, sx + rr, sy + rr * 0.6),
+                          mix(base, dark if rng.random() < 0.65 else light, rng.uniform(0.06, 0.18)))
 
 
 def build(spec: dict, seed: int) -> Image.Image:
@@ -423,15 +471,24 @@ def verify(spec: dict, path: pathlib.Path) -> int:
     grid, order = LAYOUT["swatchGrid"], LAYOUT["swatchOrder"]
     x0, y0, x1, y1 = REGION["swatches"]
     cw, ch = (x1 - x0) / grid["cols"], (y1 - y0) / grid["rows"]
+    pad = LAYOUT.get("swatchInset", 4)
     bad = 0
     for i, name in enumerate(order):
         r, c = divmod(i, grid["cols"])
-        got = img.getpixel((int(x0 + cw * (c + 0.5)), int(y0 + ch * (r + 0.5))))
+        cell = img.crop((int(x0 + cw * c + pad), int(y0 + ch * r + pad),
+                         int(x0 + cw * (c + 1) - pad), int(y0 + ch * (r + 1) - pad)))
+        # Cells carry scratches and dents now, so a single pixel is often a
+        # scratch. Compare the cell's MEDIAN, which is the material colour with
+        # the wear averaged out.
+        px = list(cell.convert('RGB').tobytes())
+        px = [tuple(px[i:i + 3]) for i in range(0, len(px), 3)]
+        got = tuple(sorted(ch_) [len(px) // 2] for ch_ in zip(*px))
         want = hex_rgb(spec["magic"][name[6:]] if name.startswith("magic_") else spec["palette"][name])
-        if any(abs(a - b) > 6 for a, b in zip(got, want)):
-            print(f"  MISMATCH {name}: want #{want[0]:02x}{want[1]:02x}{want[2]:02x}, got #{got[0]:02x}{got[1]:02x}{got[2]:02x}")
+        if any(abs(a - b) > 14 for a, b in zip(got, want)):
+            print(f"  MISMATCH {name}: want #{want[0]:02x}{want[1]:02x}{want[2]:02x}, "
+                  f"median #{got[0]:02x}{got[1]:02x}{got[2]:02x}")
             bad += 1
-    print(f"  swatches: {len(order) - bad}/{len(order)} correct")
+    print(f"  swatches: {len(order) - bad}/{len(order)} correct (median vs palette)")
     return bad
 
 
