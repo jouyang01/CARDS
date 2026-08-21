@@ -565,6 +565,20 @@ export function startHotSeat(
   // makes it a property of the code rather than of the scheduler.
   paintFog(seats[0]?.team ?? 0);
 
+  // ── Rigged characters: fetched now, drawn whenever they arrive ────────────
+  // Deliberately NOT awaited. The opening paint above has to stay synchronous
+  // for the reason spelled out there, and a `.glb` is a network fetch — awaiting
+  // it would either delay the first frame or reintroduce precisely the async gap
+  // that comment warns about. The renderer handles the late arrival instead: a
+  // unit drawn as a box before its model landed is rebuilt on the next paint
+  // (`staleUnitGroups` in `renderer3d.ts`), so "the fetch finished after the
+  // board was already up" is the supported path rather than a race.
+  //
+  // Only the characters actually in this match — four at most in 2v2, eight in
+  // 4v4. Preloading the roster would fetch megabytes of art for characters
+  // nobody picked.
+  void renderer.preloadCharacters([...new Set(state.units.map((u) => u.characterId))]);
+
   const fitCamera = (): void => renderer.fitBoard();
   // Size from the VIEWPORT, never from the container: the canvas is the
   // container's only child, so measuring the container would feed the canvas its
