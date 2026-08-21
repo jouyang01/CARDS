@@ -444,12 +444,13 @@ def build_body(spec):
     # ── torso ──
     # Tapered: wide at the chest, narrow at the waist, deeper at the ribs. This
     # single change kills most of the "stack of cubes" read.
-    tube("z", (0, 0, hip_z - 0.02), (0, 0, chest_z + 0.04), taper(
-        (0.00, shoulder * 0.62, depth * 0.80),
-        (0.22, shoulder * 0.58, depth * 0.76),
-        (0.55, shoulder * 0.64, depth * 0.92),
-        (0.85, shoulder * 0.72, depth * 0.98),
-        (1.00, shoulder * 0.66, depth * 0.86),
+    tube("z", (0, 0, hip_z - 0.05), (0, 0, chest_z + 0.04), taper(
+        (0.00, shoulder * 0.86, depth * 0.84),   # pelvis — the legs hang INSIDE this
+        (0.10, shoulder * 0.92, depth * 0.88),
+        (0.30, shoulder * 0.62, depth * 0.76),   # waist
+        (0.60, shoulder * 0.66, depth * 0.92),
+        (0.88, shoulder * 0.74, depth * 0.98),   # chest
+        (1.00, shoulder * 0.68, depth * 0.86),
     ), "iron")
 
     # Armour as discrete overlapping plates, not lines painted on a flat slab.
@@ -475,10 +476,10 @@ def build_body(spec):
 
     if g.get("skirt") == "tassets":
         for side in (-1, 1):
-            tube("z", (side * shoulder * 0.52, 0, hip_z - 0.24),
-                 (side * shoulder * 0.52, 0, hip_z + 0.01),
-                 taper((0.0, shoulder * 0.26, depth * 0.60),
-                       (1.0, shoulder * 0.30, depth * 0.74)), "iron")
+            tube("z", (side * shoulder * 0.60, 0, hip_z - 0.22),
+                 (side * shoulder * 0.60, 0, hip_z + 0.01),
+                 taper((0.0, shoulder * 0.24, depth * 0.58),
+                       (1.0, shoulder * 0.30, depth * 0.76)), "iron")
 
     # ── arms, still a strict T-pose ──
     arm_z = chest_z - 0.05
@@ -523,23 +524,23 @@ def build_body(spec):
 
     # ── legs ──
     for side in (-1, 1):
-        lx = side * shoulder * 0.66
+        lx = side * shoulder * 0.435
         tube("z", (lx, 0, hip_z * 0.46), (lx, 0, hip_z + 0.02), taper(
-            (0.0, limb * 1.22, limb * 1.30),
-            (0.35, limb * 1.36, limb * 1.44),
-            (1.0, limb * 1.58, limb * 1.66),
+            (0.0, limb * 1.14, limb * 1.22),
+            (0.35, limb * 1.28, limb * 1.36),
+            (1.0, limb * 1.45, limb * 1.52),
         ), "ironDark")
         tube("z", (lx, 0, 0.055), (lx, 0, hip_z * 0.48), taper(
-            (0.0, limb * 1.02, limb * 1.12),
-            (0.45, limb * 1.22, limb * 1.32),
-            (1.0, limb * 1.28, limb * 1.36),
+            (0.0, limb * 0.96, limb * 1.06),
+            (0.45, limb * 1.14, limb * 1.24),
+            (1.0, limb * 1.20, limb * 1.28),
         ), "leather")
         # Boot: forward-biased so the foot reads as a foot from above.
         tube("y", (lx, depth * 0.34, 0.042), (lx, -depth * 0.72, 0.042), taper(
-            (0.00, limb * 1.16, limb * 1.10),
-            (0.45, limb * 1.34, limb * 1.26),
-            (0.80, limb * 1.30, limb * 1.16),
-            (1.00, limb * 1.02, limb * 0.88),
+            (0.00, limb * 0.94, limb * 1.06),
+            (0.45, limb * 1.06, limb * 1.22),
+            (0.80, limb * 1.02, limb * 1.12),
+            (1.00, limb * 0.80, limb * 0.86),
         ), "ironDark")
 
     return finish(obj, mesh, bm)

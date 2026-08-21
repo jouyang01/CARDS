@@ -104,6 +104,21 @@ def main():
     gap = (min(arm) - max(torso)) if torso and arm else 0.0
     check("armpit gap", gap > 0.0, f"{gap:+.4f}")
 
+    # Legs must hang INSIDE the pelvis. Spreading the stance to unfuse the feet
+    # is an easy way to push them outboard of the hip, which reads as legs
+    # sprouting from the sides of the torso and is invisible in a front view.
+    # Use WINDOWS, not thin slices: a tube only has vertices at its profile
+    # stops, so a narrow band can fall between rings and silently match nothing.
+    def widest(f0, f1):
+        z0, z1 = lo + (hi - lo) * f0, lo + (hi - lo) * f1
+        return max((abs(v.x) for v in vs if z0 <= v.z <= z1), default=0.0)
+
+    hip_w = widest(0.42, 0.54)
+    leg_w = widest(0.26, 0.40)
+    check("legs inside hips", leg_w <= hip_w + 1e-4,
+          f"hip {hip_w:.3f} vs leg {leg_w:.3f}"
+          + ("" if leg_w <= hip_w else f"  ({leg_w - hip_w:+.3f} overhang)"))
+
     # Feet on the floor: Mixamo assumes the character stands at the origin.
     check("feet near origin", abs(lo) < 0.12, f"lowest z {lo:+.3f}")
 
