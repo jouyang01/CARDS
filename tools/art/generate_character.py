@@ -298,6 +298,11 @@ def taper(*stops):
     return list(stops)
 
 
+FRONT_ARC = 0.52      # lower = the portrait wraps further around the head
+FACE_ZOOM = 1.34      # >1 magnifies the features on the front of the head
+FACE_ANCHOR = 0.42    # the v the zoom is centred on: where the features sit
+
+
 def add_head(bm, uv_layer, centre_z, r, sides=14, exponent=2.7):
     """A rounded head with the painted portrait projected onto its front.
 
@@ -315,12 +320,12 @@ def add_head(bm, uv_layer, centre_z, r, sides=14, exponent=2.7):
     One tapered profile then does the work three separate pieces used to: chin,
     jaw, cheekbone, temple, crown.
     """
-    bottom = centre_z - r * 0.98
+    bottom = centre_z - r * 0.80
     top = centre_z + r * 1.16
     profile = taper(
-        (0.00, r * 0.40, r * 0.44),   # chin
-        (0.16, r * 0.64, r * 0.70),   # jaw
-        (0.38, r * 0.88, r * 0.92),   # cheekbone, the widest point
+        (0.00, r * 0.52, r * 0.54),   # chin
+        (0.14, r * 0.74, r * 0.78),   # jaw
+        (0.36, r * 0.90, r * 0.93),   # cheekbone, the widest point
         (0.60, r * 0.95, r * 0.95),   # temple
         (0.82, r * 0.88, r * 0.86),
         (1.00, r * 0.58, r * 0.56),   # crown
@@ -346,6 +351,9 @@ def add_head(bm, uv_layer, centre_z, r, sides=14, exponent=2.7):
                 fv = (co.z - bottom) / span_z
             if flip:
                 fu = 1.0 - fu
+            if region == "head_front":
+                fu = 0.5 + (fu - 0.5) / FACE_ZOOM
+                fv = FACE_ANCHOR + (fv - FACE_ANCHOR) / FACE_ZOOM
             loop[uv_layer].uv = (u0 + (u1 - u0) * min(max(fu, 0.0), 1.0),
                                  v0 + (v1 - v0) * min(max(fv, 0.0), 1.0))
 
@@ -355,11 +363,10 @@ def add_head(bm, uv_layer, centre_z, r, sides=14, exponent=2.7):
             place(face, "crown", "z")
         elif c.z < bottom + span_z * 0.04:
             place(face, "head_sides", "z")
-        elif abs(c.y) >= abs(c.x):
-            if c.y < 0:
-                place(face, "head_front", "y")      # the portrait
-            else:
-                place(face, "head_back", "y", flip=True)
+        elif c.y < 0 and abs(c.y) >= abs(c.x) * FRONT_ARC:
+            place(face, "head_front", "y")          # the portrait
+        elif c.y > 0 and abs(c.y) >= abs(c.x) * FRONT_ARC:
+            place(face, "head_back", "y", flip=True)
         else:
             place(face, "head_sides", "x", flip=c.x < 0)
     return faces
@@ -415,7 +422,7 @@ def build_body(spec):
     tube("z", (0, 0, neck_z - 0.08), (0, 0, neck_z + 0.04),
          taper((0.0, limb * 1.60, limb * 1.55),
                (0.5, limb * 1.44, limb * 1.40),
-               (1.0, limb * 1.34, limb * 1.30)), "skinShadow")
+               (1.0, limb * 1.34, limb * 1.30)), "leather")
 
     # ── torso ──
     # Tapered: wide at the chest, narrow at the waist, deeper at the ribs. This

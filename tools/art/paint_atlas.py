@@ -159,14 +159,14 @@ def paint_face(atlas: Atlas, pal: dict, face: dict) -> None:
     # Hairline. The portrait is projected from chin to crown, so the top of this
     # rectangle lands on the top of the skull — that has to be hair, not skin.
     hair_top = mix(hex_rgb(pal["leather"]), (0, 0, 0), 0.25)
-    atlas.box("head_front", (0, 0, 256, 30), hair_top)
+    atlas.box("head_front", (0, 0, 256, 58), hair_top)
     rng_local = atlas.rng
     for x in range(0, 256, 3):
-        depth_px = 30 + int(9 * math.sin(x * 0.055) + rng_local.randint(-3, 4))
-        atlas.box("head_front", (x, 26, x + 3, max(28, depth_px)), hair_top)
+        depth_px = 58 + int(10 * math.sin(x * 0.055) + rng_local.randint(-4, 5))
+        atlas.box("head_front", (x, 54, x + 3, max(56, depth_px)), hair_top)
 
     # Forehead furrows. Three of them, unevenly spaced — held tension, not a frown.
-    for y, alpha in ((52, 0.28), (63, 0.20), (73, 0.13)):
+    for y, alpha in ((78, 0.26), (88, 0.18), (97, 0.12)):
         atlas.line("head_front", [(64, y), (128, y - 3), (192, y)], mix(skin, shadow, alpha), width=3)
 
     # Sunken sockets: a broad soft well the eyes sit down inside.
@@ -217,16 +217,16 @@ def paint_face(atlas: Atlas, pal: dict, face: dict) -> None:
             y = rng.randint(162, 240)
             if (x - 128) ** 2 / 5600 + (y - 206) ** 2 / 3400 > 1:
                 continue
-            if 92 < x < 164 and 182 < y < 202:   # lip exclusion zone
+            if 90 < x < 166 and 166 < y < 190:   # lip exclusion zone
                 continue
             atlas.box("head_front", (x, y, x + 1, y + 1), mix(skin, shadow, rng.uniform(0.35, 0.8)))
 
     # Mouth: a thin closed line with the corners pulled down. Set, not snarling.
-    atlas.line("head_front", [(98, 188), (128, 191), (158, 188)], mix(skin, shadow, 0.45), width=7)
-    atlas.line("head_front", [(96, 187), (128, 190), (160, 187)], deep, width=3)
-    atlas.line("head_front", [(96, 187), (89, 194)], deep, width=3)
-    atlas.line("head_front", [(160, 187), (167, 194)], deep, width=3)
-    atlas.line("head_front", [(104, 197), (152, 197)], mix(skin, shadow, 0.22), width=3)
+    atlas.line("head_front", [(98, 174), (128, 177), (158, 174)], mix(skin, shadow, 0.45), width=8)
+    atlas.line("head_front", [(96, 173), (128, 176), (160, 173)], deep, width=4)
+    atlas.line("head_front", [(96, 173), (88, 181)], deep, width=4)
+    atlas.line("head_front", [(160, 173), (168, 181)], deep, width=4)
+    atlas.line("head_front", [(104, 184), (152, 184)], mix(skin, shadow, 0.22), width=3)
 
     # Scar: thin, broken, desaturated. An old one he stopped noticing.
     scar = face.get("scar")
