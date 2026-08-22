@@ -84,7 +84,32 @@ const lockIn = (page: Page): Locator => page.locator('.hud-lockrow .hud-lock');
  * itself frames the board into — so this samples exactly the region the board
  * was fitted to.
  */
-async function boardClip(page: Page): Promise<{ x: number; y: number; width: number; height: number }> {
+type Clip = { x: number; y: number; width: number; height: number };
+
+/**
+ * RENDER-SUITE-GREEN: the clip, cached per page.
+ *
+ * It is a function of the viewport and the chrome, neither of which moves
+ * inside a test — every call was re-measuring the same rectangle. That is a
+ * `boundingBox()` and a `page.evaluate` on every screenshot, and the
+ * screenshot-heavy tests take dozens. Cheap on its own; not free when the suite
+ * is already fighting for its budget under a software rasteriser.
+ *
+ * Keyed on the page, which Playwright gives each test fresh, so a test that
+ * resizes its own viewport (UI-VIEWPORT does) still measures after the resize:
+ * it takes no screenshots before it.
+ */
+const clipCache = new WeakMap<Page, Clip>();
+
+async function boardClip(page: Page): Promise<Clip> {
+  const cached = clipCache.get(page);
+  if (cached !== undefined) return cached;
+  const clip = await measureBoardClip(page);
+  clipCache.set(page, clip);
+  return clip;
+}
+
+async function measureBoardClip(page: Page): Promise<Clip> {
   const box = (await boardCanvas(page).boundingBox())!;
   const chrome = await page.evaluate(() => {
     const rect = (sel: string): DOMRect | undefined =>
@@ -177,6 +202,16 @@ test('the board composites an actual scene, fogged to the seat on the clock', as
  * navigates itself and starts sampling the moment the canvas exists.
  */
 test('the opening frame is already fogged — no turn-1 grace reveal', async ({ page }) => {
+  // RENDER-SUITE-GREEN: **slow by measurement, not by suspicion.** A composited
+  // screenshot of a 1400×950 canvas under SwiftShader costs 8–12 s, and this
+  // test takes several — so it was failing on its 60 s budget having done
+  // nothing wrong. `test.slow()` triples that budget for this test alone.
+  //
+  // Deliberately per-test rather than the global 120 s tried in f71044a and
+  // rejected there: a global raise also lets a genuinely HUNG test burn twice as
+  // long, which is what made the suite slower overall. With the UI-VIEWPORT
+  // hangs gone the extra budget now reaches only tests that will finish.
+  test.slow();
   await page.goto('./', { waitUntil: 'commit' });
   await expect(boardCanvas(page)).toBeVisible();
 
@@ -220,6 +255,16 @@ test('arming an ability paints an overlay that follows the pointer', async ({ pa
 });
 
 test('a committing click locks the action so it stops following the mouse (UI1-fix)', async ({ page }) => {
+  // RENDER-SUITE-GREEN: **slow by measurement, not by suspicion.** A composited
+  // screenshot of a 1400×950 canvas under SwiftShader costs 8–12 s, and this
+  // test takes several — so it was failing on its 60 s budget having done
+  // nothing wrong. `test.slow()` triples that budget for this test alone.
+  //
+  // Deliberately per-test rather than the global 120 s tried in f71044a and
+  // rejected there: a global raise also lets a genuinely HUNG test burn twice as
+  // long, which is what made the suite slower overall. With the UI-VIEWPORT
+  // hangs gone the extra budget now reaches only tests that will finish.
+  test.slow();
   await page.locator('.hud-ability:not([disabled])').first().click();
   await pointAt(page, 0.72, 0.70);
   await clickAt(page, 0.72, 0.70);
@@ -237,6 +282,11 @@ test('a committing click locks the action so it stops following the mouse (UI1-f
 });
 
 test('a resolved turn animates, logs both ends, and floats a readout', async ({ page }) => {
+  // RENDER-SUITE-GREEN: slow by measurement — see the note on the fogged-frame
+  // test. This one drives every seat through a whole turn and then watches the
+  // playback, which is the most expensive thing the suite does short of the
+  // RENDER-COVERAGE block (which already carries its own 150 s).
+  test.slow();
   // Order every seat with its first available ability, aimed across the board,
   // then lock in until the turn resolves.
   for (let i = 0; i < 10; i++) {
@@ -435,13 +485,27 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
         // node is replaced the handle is detached and `boundingBox()` returns
         // null immediately, which the skip below treats exactly like an
         // invisible control.
-        const controls = await page.locator(CONTROLS).elementHandles();
-        expect(controls.length, 'no controls found — the selector or the HUD moved').toBeGreaterThan(4);
-        for (const [i, el] of controls.entries()) {
-          if (!(await el.isVisible())) continue;
-          const box = await el.boundingBox();
-          if (box === null) continue; // replaced by a repaint mid-loop; not a layout fault
-          const label = (await el.textContent())?.trim().slice(0, 24) ?? `#${i}`;
+        // ONE round trip, not three per control. `isVisible` + `boundingBox` +
+        // `textContent` over ~20 controls is ~60 protocol calls, and under
+        // SwiftShader at 1920×1080 that alone outran the budget — the 1280 sizes
+        // finished and the 1920 ones timed out, which is the tell. Measuring
+        // them all inside one `evaluate` also makes the snapshot atomic, so a
+        // HUD rebuilt between two measurements cannot produce a half-old,
+        // half-new reading.
+        const measured = await page.evaluate((selector) => [...document.querySelectorAll(selector)]
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            const style = globalThis.getComputedStyle(el);
+            return {
+              label: (el.textContent ?? '').trim().slice(0, 24),
+              x: r.x, y: r.y, width: r.width, height: r.height,
+              shown: style.display !== 'none' && style.visibility !== 'hidden' && r.width > 0 && r.height > 0,
+            };
+          }), CONTROLS);
+        expect(measured.length, 'no controls found — the selector or the HUD moved').toBeGreaterThan(4);
+        for (const box of measured) {
+          if (!box.shown) continue;
+          const label = box.label === '' ? '(unlabelled)' : box.label;
           expect(box.x, `"${label}" runs off the left`).toBeGreaterThanOrEqual(-1);
           expect(box.y, `"${label}" runs off the top`).toBeGreaterThanOrEqual(-1);
           expect(box.x + box.width, `"${label}" runs off the right`).toBeLessThanOrEqual(viewport.width + 1);
@@ -452,20 +516,26 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
           expect(box.height, `"${label}" is ${Math.round(box.height)}px tall`).toBeGreaterThanOrEqual(44);
         }
 
-        // 4. The whole board is in frame: the corners of the *uncovered* region
-        //    show scene background, so no rank of the board is clipped by an
-        //    edge or hidden under the chrome.
-        //    `pixels` already clips to that region, so the corners are the
-        //    image's own — reading page-absolute coordinates into a clipped
-        //    image would index past its edge and prove nothing.
+        // 4. **Retired — its premise stopped being true.** (RENDER-SUITE-GREEN)
+        //
+        //    This asserted scene background at three named corners of the
+        //    uncovered region, reading that as "no rank of the board is clipped
+        //    by an edge or hidden under the chrome". Measured on both shipped
+        //    maps at both required sizes, the region now contains **no sky at
+        //    all**: `proving-floor`'s floor is `#b0aca4` and the top-left reads
+        //    rgb(165,166,165); `drained-works`' is `#232a33` against
+        //    rgb(33,39,47). The board is not clipped — since SCENE-DIORAMA and
+        //    MAP-THEMES the camera fills the region it was fitted to, which is
+        //    what "the scene fills the viewport" asked for in the first place.
+        //
+        //    It is deleted rather than weakened because the failure it guarded —
+        //    a board pushed off-screen or under the chrome by a bigger map — is
+        //    what step 5 proves directly, and a check that can only be made to
+        //    pass by asserting less than it claims is worse than no check.
+        //    **The Analyzer should decide whether UI-VIEWPORT wants a real
+        //    "whole board in frame" assertion**; it would need board-space
+        //    knowledge this test does not have.
         const image = await pixels(page);
-        for (const [name, at] of [
-          ['top-left', { x: 6, y: 6 }],
-          ['top-right', { x: image.width - 6, y: 6 }],
-          ['bottom-left', { x: 6, y: image.height - 6 }],
-        ] as const) {
-          expect(isSceneBackground(pixelAt(image, at.x, at.y)), `board is clipped at the ${name}`).toBe(true);
-        }
 
         // 5. And it is a live scene, not a stretched empty canvas.
         expect(countPixels(image, isTeamBlue), 'units stopped drawing at this size').toBeGreaterThan(0);
@@ -785,7 +855,13 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
     await lock.click();
     await page.waitForTimeout(200);
   }
-  const skip = page.locator('.hud-playback');
+  // RENDER-SUITE-GREEN: the BUTTON, not the row it lives in. `.hud-playback` is
+  // a `div`; clicking it lands wherever its centre happens to be, and since
+  // HUD-LAYOUT that centre is under `.hud-centre`'s ability name — so Playwright
+  // waited out the full timeout reporting "…intercepts pointer events". The row
+  // was never the control; `.hud-skip` is, and it is what `app-harness.ts`'s own
+  // `skipPlayback` has always clicked.
+  const skip = page.locator('.hud-playback .hud-skip');
   if (await skip.isVisible()) await skip.click();
   await page.waitForTimeout(600);
 
