@@ -114,6 +114,30 @@ describe('selectClip', () => {
   });
 });
 
+describe('STRIDE-MATCH: locomotion is time-scaled, everything else is not', () => {
+  const clips: ClipSet = {
+    idle: 'idle', run: 'run', hit: 'hit', death: 'death', knockback: 'kb', abilities: { a: 'cast' },
+  };
+  const move = (t: number) => [{
+    kind: 'move' as const, t: 1, dur: 1, unitId: 'u', from: { x: 0, y: 0 }, to: { x: 1, y: 0 },
+  }];
+
+  it('asks for a stride while moving', () => {
+    // The field is what tells the renderer this clip has feet on the ground.
+    // Without it Aegis crossed a tile in 2.07 steps — a frantic little shuffle.
+    expect(selectClip(move(1), 1.5, 'u', clips).stride).toBe(2);
+  });
+
+  it('does not ask for one when standing still', () => {
+    expect(selectClip([], 0, 'u', clips).stride).toBeUndefined();
+  });
+
+  it('takes the count from the art data when a clip is not a Mixamo cycle', () => {
+    const single: ClipSet = { ...clips, stridesPerCycle: 1 };
+    expect(selectClip(move(1), 1.5, 'u', single).stride).toBe(1);
+  });
+});
+
 describe('strideTimeScale', () => {
   it('leaves a clip alone when its cycle already matches the ground', () => {
     // 2 strides per cycle, 0.76s per stride on the ground, clip is 1.52s.
