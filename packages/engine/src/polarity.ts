@@ -36,6 +36,9 @@ export const BENEFICIAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'stealth',
   'untargetable', // R7 (2026-08-19): concealing/protecting a unit is friendly
   'healOverTime', // DOT-HOT: a heal is a heal, own team only
+  // INTERCEPT-GUARD: taking somebody's hits for them is the most friendly thing
+  // in the game. Own team only, like every other protection here.
+  'guard',
 ]);
 export const NEUTRAL_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   'teleport',

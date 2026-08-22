@@ -45,23 +45,16 @@
       "name": "Intercept",
       "phase": "dash",
       "shape": "square",
-      "range": 4,
+      "allyTarget": true,
+      "range": 5,
       "cooldown": 5,
       "energyGain": 5,
-      "impact": {
-        "destination": 1
-      },
       "effects": [
-        {
-          "kind": "teleport"
-        },
-        {
-          "kind": "shield",
-          "amount": 12,
-          "duration": 1
-        }
+        { "kind": "teleport" },
+        { "kind": "guard", "duration": 1 },
+        { "kind": "shield", "amount": 18, "duration": 1 }
       ],
-      "description": "Dash to a square within 4; Aegis and every ally within 1 square of the landing gain a 12-point shield. Resolves before Blast — arrive at the ally being dived and cover them, or leave the trap you're standing in."
+      "description": "Teleport beside an ally within 5 and take their hits. For the rest of the turn, damage aimed at that ally is dealt to Aegis instead \u2014 and Aegis alone gains an 18 shield, most but not all of one regular attack. Resolves in Dash, before Blast: he arrives, and then the blow lands on him. Alone, it is just the teleport and the shield."
     },
     {
       "id": "warding_wall",

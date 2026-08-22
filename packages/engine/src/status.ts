@@ -48,6 +48,13 @@ const STATUS_KINDS: ReadonlySet<EffectKind> = new Set<EffectKind>([
   // BRUSH-BREAK: a timed marker like the rest. Nothing about the tick, the
   // refresh or the expiry is new.
   'brushBroken',
+  // INTERCEPT-GUARD: a timed instance like the rest — applied in Dash with
+  // `duration: 1`, so it covers Blast and Move and expires on the same
+  // end-of-turn tick as everything else. Refresh-not-stack is what gives the
+  // "one guard per ally, latest caster wins" ruling for free, and the refresh
+  // takes the new `sourceUnitId` with it, which is the right answer: the
+  // second bodyguard to step in is the one standing there.
+  'guard',
 ]);
 
 /** Is `kind` something that lives on `unit.statuses` (vs. an instant effect)? */

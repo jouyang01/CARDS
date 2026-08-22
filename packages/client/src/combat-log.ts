@@ -133,6 +133,22 @@ export function logEntriesForTurn(turn: number, events: readonly TurnEvent[], na
       case 'respawn':
         out.push({ turn, tone: 'respawn', unitId: e.unitId, text: `${who(e.unitId)} respawned at ${at(e.pos)}` });
         break;
+      // INTERCEPT-GUARD: the two lines the redirect owes the reader. Without
+      // them a bodyguarded turn reads as an attack that missed and a teammate
+      // who lost HP for no reason — the mechanic is invisible in the one place
+      // players go to find out what happened.
+      case 'guardApplied':
+        out.push({
+          turn, tone: 'status', unitId: e.casterId,
+          text: `${who(e.casterId)} is guarding ${who(e.allyId)}`,
+        });
+        break;
+      case 'damageRedirected':
+        out.push({
+          turn, tone: 'status', unitId: e.to,
+          text: `${who(e.to)} took ${e.amount} for ${who(e.from)}`,
+        });
+        break;
       case 'trapTriggered':
         out.push({ turn, tone: 'status', unitId: e.unitId, text: `${who(e.unitId)} triggered a trap` });
         break;

@@ -11,9 +11,11 @@
 
 import {
   ULT_COST,
+  aimInRange,
   buildBoard,
   type Board,
   createMatch,
+  guardLanding,
   movementBudget,
   resolveTurn,
   type AbilityDef,
@@ -1281,8 +1283,26 @@ export function startHotSeat(
     const chargeLanding = chosen?.shape === 'path' && impact.landing !== undefined
       ? [impact.landing]
       : [];
+    // INTERCEPT-GUARD — the guard link: the square the bodyguard will actually
+    // stand on, and a line from where he is to it. Without the landing marker
+    // the preview shows a highlighted ally and nothing else, which reads as
+    // "this ability does something to my teammate" — the opposite of the truth.
+    //
+    // The square is the ENGINE's own answer (`guardLanding`), not a second
+    // implementation: a marker drawn from parallel logic is a marker that can
+    // disagree with where he ends up.
+    const guardAlly = chosen?.allyTarget === true && preview.aim.length > 0
+      ? state.units.find((u) => u.alive && u.owner === unit.owner
+        && u.unitId !== unit.unitId
+        && u.pos.x === preview.aim[0]!.x && u.pos.y === preview.aim[0]!.y)
+      : undefined;
+    const guardTo = guardAlly === undefined
+      ? undefined
+      : guardLanding(previewBoard(), state, unit, guardAlly);
+    renderer.drawPath(guardTo === undefined ? [] : [unit.pos, guardTo], IMPACT, true, 'guardPath');
     const layer = impactLayer(
-      [...impact.origin, ...impact.destination, ...chargeLanding],
+      [...impact.origin, ...impact.destination, ...chargeLanding,
+        ...(guardTo === undefined ? [] : [guardTo])],
       refusedAim(map, state, unit, chosen, interaction, draft.aimStep),
       refusedSquare,
     );
@@ -1804,6 +1824,19 @@ export function startHotSeat(
     return state.units.filter((u) => u.alive && u.owner !== me.owner && shown.has(u.unitId));
   }
 
+  /**
+   * INTERCEPT-GUARD — the allies an ally-targeted ability may name: living
+   * teammates, never the caster, inside the ability's range.
+   *
+   * The same three conditions `allyTargetOf` checks engine-side, which is the
+   * point — an aimable set that disagreed with what the engine accepts is a
+   * preview offering an order that will be dropped.
+   */
+  function guardableAllies(me: UnitState, ability: AbilityDef): UnitState[] {
+    return state.units.filter((u) => u.alive && u.owner === me.owner
+      && u.unitId !== me.unitId && aimInRange(me.pos, u.pos, ability.range));
+  }
+
   /** A chaseable enemy's display name, for the HUD's "Chase <name>" label. */
   const roster0 = (unitId: string): CharacterDef | undefined => {
     const u = unitById(unitId);
@@ -1889,6 +1922,20 @@ export function startHotSeat(
     if (interaction.mode === 'aim') {
       const ability = draftAbility(characterFor(unit), draft);
       if (ability === undefined) return;
+      // INTERCEPT-GUARD: an ally-targeted ability names a UNIT, so the click
+      // resolves to whoever is standing on the square — the `chase` pattern,
+      // on the ally side. Clicking bare ground leaves the slot armed rather
+      // than recording an order the engine will refuse, which is the same
+      // AIM-RANGE promise every other slot already makes.
+      //
+      // The 1v1 fallback is deliberately NOT offered here: with a living ally
+      // to name, the engine refuses a square aim, so letting the player commit
+      // one would be a preview that lies about a legal order.
+      if (ability.allyTarget === true) {
+        const ally = guardableAllies(unit, ability).find((u) => u.pos.x === sq.x && u.pos.y === sq.y);
+        if (ally === undefined && guardableAllies(unit, ability).length > 0) return;
+        draft.allyTargetId = ally?.unitId;
+      }
       // Exactly the aim the hover was already painting — one resolver, so what
       // you saw is what you committed.
       // WALL-ROTATE: the draft's rotation goes in so the committed wall is the

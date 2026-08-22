@@ -144,7 +144,11 @@ export type HighlightLayer =
  * one turn (DASH-CAT-ROUTE), and one shared layer would mean the second erased
  * the first.
  */
-export type PathLayer = 'path' | 'catalystPath';
+// INTERCEPT-GUARD adds `guardPath`: the line from a bodyguard to the square he
+// will interpose on. Its own layer rather than sharing the route line, because
+// both can be on the board at once and they mean opposite things — one is where
+// this unit is going, the other is who it is going to stand in front of.
+export type PathLayer = 'path' | 'catalystPath' | 'guardPath';
 
 /**
  * AIM-PREVIEW-TRUE's boundary layers. Three families, three colours: the
