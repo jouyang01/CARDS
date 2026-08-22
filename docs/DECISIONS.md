@@ -5805,7 +5805,10 @@ green before adding a second.
 
 ---
 
-## 2026-08-22 — Builder session 14 (DEATH-HANG-2, INTERCEPT-LANDING-CHOICE, CHASE-AUDIT)
+## 2026-08-22 — Builder session 14 (the first playtest's six, plus ASSET-WEIGHT-BUDGET)
+
+DEATH-HANG-2 → INTERCEPT-LANDING-CHOICE → CHASE-AUDIT → TEAMMATE-PLAN-VISIBLE → WALL-SLOW →
+NAMEPLATE-DEPTH, then ASSET-WEIGHT-BUDGET. All seven shipped; nothing was skipped.
 
 **DEATH-HANG-2 — the turn nobody can take resolves itself.** DOWN-SEAT-SKIP removes a seat with
 no living character from `#answering()`. When *every* seat is down that set is empty and
@@ -5851,3 +5854,71 @@ depend on which of them `orderedPlans` visits first. Making the snapshot live wo
 cosmetic lag against a mutual chase whose outcome depends on iteration order, which is the worse
 fault. Left alone, and the reasoning is pinned in `chase-audit.test.ts` so the next audit does not
 re-open it from scratch.
+
+**Judgment call — TEAMMATE-PLAN-VISIBLE keeps relayed plans out of `drafts`.** The obvious
+implementation merges a teammate's relayed order into the same `drafts` map the render loop
+already reads, and one line of code would have done it. It is wrong in a way that would not show
+up for a while: `drafts` is what this seat is *editing* and what `collectOrders`/`toUnitOrders`
+send at Lock In, so a relayed entry in it is a plan this client could submit on somebody else's
+behalf. Kept in `teamPlans`, replaced wholesale on every relay (an empty list is how the wire
+says "the turn resolved"), and read-only at every use.
+
+**Judgment call — `drawPaths` beside `drawPath` rather than more path layers.** A path layer is
+cleared and rewritten on every draw, so a per-teammate `drawPath` call leaves only the last route
+on the board. At 4v4 a seat has three teammates, each with a route and possibly a guard link. The
+shape already existed one method along: `drawShape` takes a *list* of outlines into one layer for
+exactly this reason, and `drawPaths` mirrors it.
+
+**Judgment call — the asset budget is two caps, not one.** ASSET-WEIGHT-BUDGET's AC asks for "the
+total `public/models/` byte weight … with a cap", and a total-only cap does not work as a guard
+here: the roster is *expected* to grow from one rigged character to nine, so any total generous
+enough to admit that growth cannot tell "one more character" from "one character got twice as
+heavy". So the per-character ceiling (1.5 MB, ~25% over Aegis's 1.16 MB) is the live guard, and
+the total (12 MB) is the ceiling the finished roster must fit inside — set above nine at today's
+weight (~10.5 MB) and below nine at the per-character cap (13.5 MB). **Both numbers are Builder
+estimates and want an owner's eye**, because the honest total depends on `ART_PIPELINE.md` §18's
+still-open clip-duplication decision: Option A would drop it by ~1.2 MB across the roster and make
+a much tighter cap the right one.
+
+**Judgment call — `bundle-budget.mjs` checks that GLTFLoader is still split, without changing its
+total.** The AC asks that the loader "stays code-split and out of the main JS number". Making the
+budget cap only the *entry* chunk would have done that and would also have quietly loosened the
+300 kB cap by ~17 kB, which is a deliberate call the backlog explicitly puts out of scope. So the
+total still counts every chunk, and the split is checked by the existence of a `GLTFLoader-*.js`
+chunk instead — if it were statically imported, Vite would have no reason to emit one.
+
+## Open Questions for the Analyzer — 2026-08-22
+
+1. **`validate.ts` still does not refuse `guard` alongside `impact`** — RULED in
+   `docs/design/edge-cases.md` (closing my session-13 OQ #2), with no backlog item to carry it. I
+   did not implement it this session: it is a ruling rather than a scheduled item, and the brief
+   says not to invent scope. It is small (one check in `validateAbility` plus a content test) and
+   nothing in `data/` violates it today, so it is a guard against a future kit rather than a fix.
+   Worth an item, or worth closing as "covered by review"?
+
+2. **The asset budget's two numbers want an owner's ratification** (see the judgment call above).
+   1.5 MB per character and 12 MB total are mine, derived from Aegis and from §18's arithmetic. If
+   §18 lands on Option A, both should come down — and the tighter they are, the more the budget is
+   actually doing. Related: the 300 kB JS budget is now 1.29× the real 233 kB, which the backlog
+   already flags as a stale-headroom call.
+
+3. **A relayed teammate plan is drawn from the plan, not from a preview the teammate saw.** The
+   two agree today because both go through `abilityPreview`, but the relayed order carries no
+   `aimStep` for shapes that do not send one and no waypoint marks at all — so a teammate's
+   composed route is drawn as the router's path rather than as the corners they clicked. That is
+   correct (the corners are gesture state, and golden rule #5 aside, nobody else needs them), but
+   it means a teammate's line can differ in shape from the one they are looking at. Worth a look
+   in the next playtest before anybody calls it a bug.
+
+4. **CHASE-AUDIT's declined suspect is a design fork, not a closed question.** A chaser pursuing a
+   *chasing* target still goes to that target's pre-chase square, because every chaser reads one
+   frozen board (CHASE1's convergence design). I left it alone and wrote the reasoning into
+   `chase-audit.test.ts`. If the owner's report turns out to have been about that case rather than
+   the stale-memory one I fixed, the fix is a second chase clock — chasers who are themselves
+   chased resolve first — and that is a design item, not a bug fix.
+
+5. **DEATH-HANG-2's `MAX_AUTO_RESOLVES = 4` is a backstop with no test that reaches it.** Four
+   consecutive all-down turns inside one message is not a state I could construct — respawns land
+   before it — so the constant is there to bound a runaway rather than to implement a rule. If the
+   Analyzer can build a case that hits it, the right cap might be different; if not, it is dead
+   weight that is still cheaper than the alternative.
