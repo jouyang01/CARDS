@@ -290,6 +290,24 @@ const PLATE_INK = {
  */
 const intentTextures = new Map<string, CanvasTexture>();
 
+/**
+ * The largest font from `max` down to `min` at which `text` fits `width` px.
+ *
+ * Returns the `min` size when nothing fits, rather than overflowing or
+ * truncating: a name clipped mid-word reads as a rendering bug, and a slightly
+ * small one still says which ability it is.
+ */
+function fitFont(
+  ctx: CanvasRenderingContext2D, text: string, width: number, max: number, min: number,
+): string {
+  for (let size = max; size > min; size--) {
+    const font = `700 ${size}px system-ui, sans-serif`;
+    ctx.font = font;
+    if (ctx.measureText(text).width <= width) return font;
+  }
+  return `700 ${min}px system-ui, sans-serif`;
+}
+
 export function intentTexture(label: string, locked: boolean): CanvasTexture | null {
   const key = `${label}|${locked ? 'L' : ''}`;
   const cached = intentTextures.get(key);
@@ -310,10 +328,14 @@ export function intentTexture(label: string, locked: boolean): CanvasTexture | n
   ctx.strokeStyle = locked ? '#6fbf73' : '#e0c04f';
   ctx.lineWidth = 3;
   ctx.stroke();
-  ctx.font = '700 26px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = locked ? '#b6f0c0' : '#f4e3a6';
+  // TEAMMATE-MOVE-VISIBLE: the label is an ability NAME now, not a digit, so the
+  // type has to fit the tile rather than the tile the type. Shrink to fit down
+  // to a floor and let the longest names ride at the floor — the tile is a fixed
+  // size in world units and growing it would push it into the nameplate under it.
+  ctx.font = fitFont(ctx, label, 136, 26, 15);
   ctx.fillText(label, 80, 27);
 
   const texture = new CanvasTexture(canvas);
