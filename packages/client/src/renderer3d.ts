@@ -964,14 +964,26 @@ export function createRenderer(
    * see `grainTexture`. An empty object when the theme grains nothing, so a flat
    * theme allocates no texture and keeps phase 2's look exactly.
    */
-  const grainMap = (spec: GrainSpec, _tile: number, repeatX: number, repeatY: number): {
+  const grainClones = new Map<string, ReturnType<typeof grainTexture>>();
+  const grainMap = (spec: GrainSpec, repeatX: number, repeatY: number): {
     map?: ReturnType<typeof grainTexture>;
   } => {
-    const texture = grainTexture(grainSeedFor(spec), spec);
-    if (texture === null) return {};
-    const cloned = texture.clone();
+    const base = grainTexture(grainSeedFor(spec), spec);
+    if (base === null) return {};
+    // **Cached by repeat, not cloned per mesh.** `repeat` lives on the texture
+    // rather than the material, so a different repeat genuinely needs a
+    // different texture object — but every terrain box wants the same (1, 1),
+    // and the first draft cloned regardless. That put ~50 copies of one 64px
+    // image on the GPU per board, which is invisible on real hardware and very
+    // much not under SwiftShader: it doubled the browser suite's wall clock and
+    // starved the timing-sensitive tests into failing.
+    const key = `${grainSeedFor(spec)}|${spec.style}|${spec.speckle}|${repeatX}|${repeatY}`;
+    const cached = grainClones.get(key);
+    if (cached !== undefined) return { map: cached };
+    const cloned = base.clone();
     cloned.needsUpdate = true;
     cloned.repeat.set(repeatX, repeatY);
+    grainClones.set(key, cloned);
     return { map: cloned };
   };
 
@@ -1013,7 +1025,7 @@ export function createRenderer(
       color: palette.open,
       ...palette.surface.open,
       vertexColors: true,
-      ...grainMap(palette.grain.open, 1, map.width, map.height),
+      ...grainMap(palette.grain.open, map.width, map.height),
     }),
   );
   ground.rotation.x = -Math.PI / 2;
@@ -1047,7 +1059,7 @@ export function createRenderer(
         new MeshStandardMaterial({
           color: shade(colour, tileTint(grainSeed, p.x, p.y, grain.tint)),
           ...surface,
-          ...grainMap(grain, 1, 1, 1),
+          ...grainMap(grain, 1, 1),
         }),
       );
       box.position.copy(toWorld(map, p)).setY(height / 2);
