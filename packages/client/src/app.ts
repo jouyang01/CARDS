@@ -32,7 +32,7 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
-import { browserAmbient } from './ambient.js';
+import { browserAmbient, browserModels } from './render-flags.js';
 import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
@@ -666,7 +666,13 @@ export function startHotSeat(
   // Only the characters actually in this match — four at most in 2v2, eight in
   // 4v4. Preloading the roster would fetch megabytes of art for characters
   // nobody picked.
-  void renderer.preloadCharacters([...new Set(state.units.map((u) => u.characterId))]);
+  // MODEL-FREEZE: skipped when `?models=off`, which the browser suite sets. The
+  // models render ~3x slower under SwiftShader and land at an arbitrary moment,
+  // and that combination is what took the pixel suite from 3 failures to 14 —
+  // all of them timeouts. See `render-flags.ts`.
+  if (browserModels()) {
+    void renderer.preloadCharacters([...new Set(state.units.map((u) => u.characterId))]);
+  }
 
   /**
    * Re-frame after a resize.

@@ -26,12 +26,23 @@ export default defineConfig({
   reporter: process.env.CI !== undefined ? [['github'], ['list']] : [['list']],
 
   use: {
-    // AMBIENT-FREEZE: every test navigates relative to this, so the whole suite
-    // runs with decorative motion off. `render.spec.ts` compares frames
-    // byte-for-byte to prove a committed aim stops following the pointer, and a
-    // single moving prop would break that permanently — with a failure message
-    // accusing the aim rather than the scenery. See `src/ambient.ts`.
-    baseURL: 'http://127.0.0.1:4173/?ambient=off',
+    // RENDER-FLAGS: every test navigates relative to this, so the whole suite
+    // runs with decorative motion off and rigged models off.
+    //
+    // AMBIENT-FREEZE — `render.spec.ts` compares frames byte-for-byte to prove a
+    // committed aim stops following the pointer, and a single moving prop would
+    // break that permanently, with a failure message accusing the aim.
+    //
+    // MODEL-FREEZE — measured: after the character pipeline landed, this suite
+    // went from 3 failures to 14, and every one was a *timeout* rather than a
+    // failed assertion. Rendering a SkinnedMesh under SwiftShader costs roughly
+    // 3x per frame, so the long tests crossed the 60s limit; models also land at
+    // an arbitrary moment and rebuild a unit mid-test, changing its pixels from
+    // flat team colour to a textured atlas partway through a comparison.
+    // `models.spec.ts` covers the model path on its own budget instead.
+    //
+    // See `src/render-flags.ts` for both.
+    baseURL: 'http://127.0.0.1:4173/',
     trace: 'retain-on-failure',
   },
 

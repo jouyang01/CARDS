@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ambientEnabled } from '../src/ambient.js';
+import { ambientEnabled, modelsEnabled } from '../src/render-flags.js';
 
 /**
  * AMBIENT-FREEZE — the guard shipped before the hazard.
@@ -56,5 +56,31 @@ describe('the decision is pure, so it can be trusted before it is used', () => {
     const env = { search: '?ambient=off', reducedMotion: false };
     expect(ambientEnabled(env)).toBe(ambientEnabled(env));
     expect(ambientEnabled({ ...env, search: '' })).toBe(true);
+  });
+});
+
+describe('MODEL-FREEZE keeps the board suite on the renderer it was written for', () => {
+  it('loads models by default — a player gets the characters', () => {
+    expect(modelsEnabled()).toBe(true);
+    expect(modelsEnabled({ search: '?map=iron-basin' })).toBe(true);
+  });
+
+  it('honours ?models=off, which the browser suite sets', () => {
+    for (const v of ['off', 'none', '0', 'false', 'OFF']) {
+      expect(modelsEnabled({ search: `?models=${v}` }), v).toBe(false);
+    }
+  });
+
+  it('is independent of the ambient switch', () => {
+    // Two different hazards: one is motion, one is an asset arriving late. A
+    // test may well want to freeze one and not the other.
+    expect(modelsEnabled({ search: '?ambient=off' })).toBe(true);
+    expect(ambientEnabled({ search: '?models=off' })).toBe(true);
+  });
+
+  it('ignores reduced-motion — a still model is still a model', () => {
+    // Unlike ambient motion, a character mesh is not decoration; suppressing it
+    // for an accessibility preference would remove content, not calm it.
+    expect(modelsEnabled({ reducedMotion: true })).toBe(true);
   });
 });
