@@ -1279,16 +1279,18 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
     // fraction of that canvas means scaling the requirement up by the reciprocal
     // of that fraction. With no insets both terms collapse to
     // `max(projectedDepth, arenaW / aspect)` exactly.
+    //
+    // BOARD_ZOOM then divides that: the frame is deliberately tighter than the
+    // arena, so the map runs off the edges and everything on it reads bigger.
+    // Floored at SPAN_LIMITS.min so a small map cannot zoom past the wheel's
+    // own limit.
     return Math.max(
       Math.max(
         projectedDepth * (height / visibleH()),
-        map.width * (height / visibleW()),
+        arenaW * (height / visibleW()),
       ) * 1.08 / BOARD_ZOOM,
       SPAN_LIMITS.min,
     );
-      projectedDepth * (height / visibleH()),
-      arenaW * (height / visibleW()),
-    ) * 1.08;
   };
 
   /**
