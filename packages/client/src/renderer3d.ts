@@ -81,7 +81,7 @@ const TILE = 1;
  * Scaling here rather than in the asset keeps the source at the size Mixamo and
  * the animations were authored for.
  */
-const MODEL_HEIGHT_TILES = 1.9;
+export const MODEL_HEIGHT_TILES = 1.9;
 
 /**
  * How tall a unit with no model yet stands.
@@ -151,6 +151,82 @@ const DECOY_PLATE_LIFT = 0.05;
 /** Plate size in world units. Its canvas resolution lives in `textures.ts`. */
 const PLATE_W = 1.7;
 const PLATE_H = 0.66;
+/**
+ * NAMEPLATE-DEPTH: where the overhead label sits in the transparent pass.
+ *
+ * Well above anything else the renderer draws, because a nameplate that loses a
+ * sort to a highlight quad is the same bug in a different costume — and the
+ * plate is the one thing on screen whose entire purpose is to be read.
+ */
+export const PLATE_ORDER = 1000;
+
+/**
+ * NAMEPLATE-DEPTH — *"Nameplate still is hidden by Aegis' character model."*
+ *
+ * The plate hangs `topY + 0.34` above the unit, which clears a BOX and does
+ * not clear a rigged character: Aegis's shield and shoulders reach into that
+ * band, and because the plate is a camera-facing quad *inside* the scene, the
+ * mesh in front of it wins the depth test and eats the name.
+ *
+ * Raising it would only move the problem to the next taller model and the
+ * next steeper camera angle. The plate is **UI drawn in world space** — its
+ * whole job is to be readable — so it opts out of depth entirely and
+ * composites after the scene. `renderOrder` orders it against the other
+ * transparent things rather than leaving it to sorting, and it is per-MESH
+ * because a Group's `renderOrder` does not reach its children.
+ */
+const asOverlay = (mesh: Mesh, order: number): Mesh => {
+  (mesh.material as MeshBasicMaterial).depthTest = false;
+  mesh.renderOrder = order;
+  return mesh;
+};
+
+/**
+ * The overhead furniture: one nameplate quad and the intent tile above it.
+ *
+ * UI-NAMEPLATES replaced three coloured strips with a single **drawn plate**,
+ * because half of what the screenshot shows cannot be done with quads at all —
+ * the HP numeral lives *inside* its bar and the ULT tag is a word. One texture
+ * also means one draw and one cache entry per distinct plate, instead of three
+ * meshes whose widths are re-set every frame. Since NAMEPLATE-LAYOUT the status
+ * row is part of that plate rather than a second thing hanging under it.
+ *
+ * Both live in their own group so they billboard and resist zoom: a nameplate is
+ * only useful if it is the same legible size at any framing.
+ *
+ * `topY` is the height of the thing being labelled. Passed rather than fixed at
+ * the box's height: a model stands MODEL_HEIGHT_TILES tall, so a plate pinned to
+ * UNIT_HEIGHT sat across its chest.
+ *
+ * **Exported for NAMEPLATE-DEPTH's test.** The renderer as a whole needs a WebGL
+ * context; the object graph it hangs over a unit does not, so the depth policy
+ * can be asserted on the real meshes rather than on a description of them.
+ */
+export const buildBars = (topY: number): Group => {
+  const bars = new Group();
+  bars.name = 'bars';
+  bars.position.y = topY + 0.34;
+  const plate = asOverlay(new Mesh(
+    new PlaneGeometry(PLATE_W, PLATE_H),
+    new MeshBasicMaterial({ transparent: true, depthWrite: false }),
+  ), PLATE_ORDER);
+  plate.name = 'plate';
+  bars.add(plate);
+  // UI-INTENT's tile sits above the nameplate — the plan is the newest thing
+  // on screen and the one a teammate is scanning for, so it leads.
+  // The intent tile rides the same overlay pass, one step above the plate it
+  // sits on: two pieces of the same label, and half of it clipping behind a
+  // shoulder while the other half floats free is worse than either.
+  const intent = asOverlay(new Mesh(
+    new PlaneGeometry(0.62, 0.2),
+    new MeshBasicMaterial({ transparent: true, depthWrite: false }),
+  ), PLATE_ORDER + 1);
+  intent.name = 'intent';
+  intent.position.y = PLATE_H / 2 + 0.14;
+  intent.visible = false;
+  bars.add(intent);
+  return bars;
+};
 
 /**
  * Trap markers: a little smaller than a tile so the grid still reads, and lifted
@@ -1060,46 +1136,6 @@ export function createRenderer(
   /** Loose meshes that must face the camera — decoy nameplates, so far. */
   let billboards: Mesh[] = [];
 
-  /**
-   * The overhead furniture: one nameplate quad and the status row under it.
-   *
-   * UI-NAMEPLATES replaced three coloured strips with a single **drawn plate**,
-   * because half of what the screenshot shows cannot be done with quads at all
-   * — the HP numeral lives *inside* its bar and the ULT tag is a word. One
-   * texture also means one draw and one cache entry per distinct plate, instead
-   * of three meshes whose widths are re-set every frame.
-   *
-   * Both live in their own group so they billboard and resist zoom: a nameplate
-   * is only useful if it is the same legible size at any framing.
-   */
-  /**
-   * `topY` is the height of the thing being labelled. Passed rather than fixed
-   * at the box's height: a model stands MODEL_HEIGHT_TILES tall, so a plate
-   * pinned to UNIT_HEIGHT sat across its chest.
-   */
-  const buildBars = (topY: number): Group => {
-    const bars = new Group();
-    bars.name = 'bars';
-    bars.position.y = topY + 0.34;
-    const plate = new Mesh(
-      new PlaneGeometry(PLATE_W, PLATE_H),
-      new MeshBasicMaterial({ transparent: true, depthWrite: false }),
-    );
-    plate.name = 'plate';
-    bars.add(plate);
-    // UI-INTENT's tile sits above the nameplate — the plan is the newest thing
-    // on screen and the one a teammate is scanning for, so it leads.
-    const intent = new Mesh(
-      new PlaneGeometry(0.62, 0.2),
-      new MeshBasicMaterial({ transparent: true, depthWrite: false }),
-    );
-    intent.name = 'intent';
-    intent.position.y = PLATE_H / 2 + 0.14;
-    intent.visible = false;
-    bars.add(intent);
-    return bars;
-  };
-
   /** Point a unit's intent tile at the right texture, or hide it. */
   const setIntent = (bars: Group, intent: { label: string; locked: boolean } | undefined): void => {
     const mesh = bars.getObjectByName('intent');
@@ -1743,14 +1779,17 @@ export function createRenderer(
           // most of what a player reads a unit by, so the impersonation is only
           // as good as this.
           if (decoy.nameplate !== undefined) {
-            const plate = new Mesh(
+            // The same overlay treatment as a real unit's plate, because the
+            // impersonation is only as good as the thing it copies: a decoy
+            // whose name clipped where a character's did not would be a tell.
+            const plate = asOverlay(new Mesh(
               new PlaneGeometry(PLATE_W, PLATE_H),
               new MeshBasicMaterial({
                 map: plateTexture(decoy.nameplate, decoy.owner),
                 transparent: true,
                 depthWrite: false,
               }),
-            );
+            ), PLATE_ORDER);
             plate.position.copy(at).setY(UNIT_HEIGHT + 0.34);
             billboards.push(plate);
             decoyLayer.add(plate);
