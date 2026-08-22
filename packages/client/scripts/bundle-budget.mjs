@@ -40,9 +40,35 @@ if (rows.length === 0) {
   process.exit(1);
 }
 
+/**
+ * ASSET-WEIGHT-BUDGET's other half: the **loader stays split**.
+ *
+ * `GLTFLoader` and its friends are only needed by a match that has rigged
+ * characters, and `character-model.ts` is imported dynamically so they land in
+ * their own chunks. That is easy to lose by accident — one static import
+ * anywhere pulls the whole loader into the entry chunk — and the total above
+ * would barely move when it happened, because the bytes are the same bytes.
+ * They are just paid by everybody, on every first load, instead of by the
+ * matches that use them.
+ *
+ * Checked by the chunk's existence rather than by measuring the entry: if the
+ * loader were statically imported, Vite would have no reason to emit a chunk
+ * named after it. The budget total is unchanged and still counts every chunk.
+ */
+const split = readdirSync(DIST).filter((n) => /^GLTFLoader-.*\.js$/.test(n));
+
 const kb = (n) => `${(n / 1024).toFixed(1)} kB`;
 console.log(rows.join('\n'));
 console.log(`total ${kb(total)} gzipped · budget ${kb(BUDGET)}`);
+console.log(`code-split: ${split.length > 0 ? split.join(', ') : 'NONE'}`);
+
+if (split.length === 0) {
+  console.error(
+    '::error::GLTFLoader is no longer a separate chunk — something imports it statically.\n' +
+    'Keep `character-model.ts` behind a dynamic import so a match without rigged art never fetches it.',
+  );
+  process.exit(1);
+}
 
 if (total > BUDGET) {
   console.error(

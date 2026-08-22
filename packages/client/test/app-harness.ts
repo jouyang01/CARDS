@@ -121,6 +121,16 @@ export function stubRenderer(): StubRenderer {
     drawPath: (squares, _color, _dashed, layer) => {
       draw.paths.push({ squares: squares.map((p) => ({ ...p })), layer });
     },
+    // TEAMMATE-PLAN-VISIBLE: several routes into one layer. Recorded as one
+    // entry each, so a test reads them exactly as it reads a single path — and
+    // an empty call still records the clear, which is how "the plan went away"
+    // is asserted.
+    drawPaths: (routes, _color, _dashed, layer) => {
+      if (routes.length === 0) { draw.paths.push({ squares: [], layer }); return; }
+      for (const route of routes) {
+        draw.paths.push({ squares: route.map((p) => ({ ...p })), layer });
+      }
+    },
     // AIM-PREVIEW-TRUE: a list of outlines per call, one per locus.
     drawShape: (outlines) => {
       for (const outline of outlines) draw.shapes.push(outline.map((p) => ({ ...p })));
@@ -263,11 +273,19 @@ export function recordingNet(seatId: string, team: TeamId, unitIds: string[]): {
   openWindow: (remainingMs: number | undefined, charges?: number) => void;
   /** The control map the server last sent — a death can change it. */
   setControl: (unitIds: string[]) => void;
+  /**
+   * TEAMMATE-PLAN-VISIBLE — deliver the orders a teammate on another client has
+   * locked in, the way `net-boot.ts` does when a `decision` frame carries the
+   * team's own submissions. An empty list is how the wire says "nobody is
+   * committed any more", so it is a legal call, not a no-op.
+   */
+  relayTeamOrders: (orders: UnitOrders[]) => void;
 } {
   const submitted: UnitOrders[][] = [];
   let onResolved: (state: never, events: never) => void = () => {};
   let onTimer: (remainingMs: number | undefined, charges: number) => void = () => {};
   let onControl: (unitIds: string[]) => void = () => {};
+  let onTeamOrders: (orders: UnitOrders[]) => void = () => {};
   const net: NetPlay = {
     seatId,
     team,
@@ -278,6 +296,7 @@ export function recordingNet(seatId: string, team: TeamId, unitIds: string[]): {
     onTimer: (handler) => { onTimer = handler; },
     onPresence: () => {},
     onControl: (handler) => { onControl = handler; },
+    onTeamOrders: (handler) => { onTeamOrders = handler; },
     extend: () => {},
   };
   return {
@@ -286,6 +305,7 @@ export function recordingNet(seatId: string, team: TeamId, unitIds: string[]): {
     resolve: (state, events) => { onResolved(state, events); },
     openWindow: (remainingMs, charges = 1) => { onTimer(remainingMs, charges); },
     setControl: (ids) => { onControl(ids); },
+    relayTeamOrders: (orders) => { onTeamOrders(orders); },
   };
 }
 

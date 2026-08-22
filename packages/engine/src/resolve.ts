@@ -639,14 +639,20 @@ function planAbility(
   const aimStep = order.aimStep;
   if (aimStep !== undefined && !isAimStep(aimStep)) return undefined;
 
-  // INTERCEPT-GUARD — an ally-targeted ability resolves its aim from the ally
-  // it names, so everything downstream sees an ordinary aimed square. The
-  // square the ORDER carried is ignored when an ally was named: the ally is the
-  // aim, and a stale square from a click two seconds ago is not.
+  // INTERCEPT-GUARD / INTERCEPT-LANDING-CHOICE — an ally-targeted ability names
+  // an ally AND aims at a square beside them. The aim is the player's own square
+  // either way, so everything downstream sees an ordinary aimed square; the ally
+  // id is what binds the guard.
   const ally = allyTargetOf(draft, unit, def, order);
-  const aim = ally === undefined ? order.target ?? [] : [{ x: ally.pos.x, y: ally.pos.y }];
-  if (def.allyTarget === true && !allyAimIsLegal(draft, unit, def, ally, order)) return undefined;
-  if (!aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
+  const aim = order.target ?? [];
+  if (def.allyTarget === true && !allyAimIsLegal(board, draft, unit, def, ally, order, aim)) {
+    return undefined;
+  }
+  // The ordinary range check measures caster → aim, and a bodyguard's aim is
+  // bounded by his ALLY's range instead (the square beside them may sit one
+  // further out). `allyAimIsLegal` has already checked that geometry, so
+  // re-checking it here would refuse legal landings at the edge of the reach.
+  if (ally === undefined && !aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
   return {
     def, aim, isUlt,
     area: expandShape(board, def, unit.pos, aim, aimStep),
@@ -673,18 +679,24 @@ function allyTargetOf(
  * INTERCEPT-GUARD — the two halves of an ally-targeted aim, and why the second
  * exists.
  *
- * With a living ally named, the aim is legal (`allyTargetOf` already checked
- * team, life and range). Without one, the **1v1 fallback** lets the cast aim at
- * a bare square — but only when there is genuinely nobody to guard. *The
- * fallback is a fallback, not a choice*: an Aegis with a partner alive cannot
- * quietly take the escape-tool version by clicking empty floor, because then the
- * ability would have two modes and only one of them would be the design.
+ * With a living ally named, the aim must be one of the squares beside them
+ * (INTERCEPT-LANDING-CHOICE) — `allyTargetOf` has already checked team, life
+ * and range, so all that is left is the landing itself. Without one, the **1v1
+ * fallback** lets the cast aim at a bare square — but only when there is
+ * genuinely nobody to guard. *The fallback is a fallback, not a choice*: an
+ * Aegis with a partner alive cannot quietly take the escape-tool version by
+ * clicking empty floor, because then the ability would have two modes and only
+ * one of them would be the design.
  */
 function allyAimIsLegal(
-  draft: GameState | undefined, unit: UnitState, def: AbilityDef,
-  ally: UnitState | undefined, order: AbilityOrder,
+  board: Board, draft: GameState | undefined, unit: UnitState, def: AbilityDef,
+  ally: UnitState | undefined, order: AbilityOrder, aim: readonly Vec2[],
 ): boolean {
-  if (ally !== undefined) return true;
+  if (ally !== undefined) {
+    const square = aim[0];
+    if (square === undefined || draft === undefined) return false;
+    return guardLandingIsLegal(board, draft, unit, ally, square, def.range);
+  }
   // A named ally that did not resolve (dead, an enemy, out of range, itself) is
   // a refusal rather than a silent downgrade to the square fallback.
   if (order.targetUnitId !== undefined) return false;
@@ -832,39 +844,70 @@ function landDamage(
 }
 
 /**
- * INTERCEPT-GUARD — where the bodyguard puts himself.
+ * INTERCEPT-LANDING-CHOICE — every square a bodyguard may legally interpose on.
  *
- * The **nearest open orthogonally-adjacent square** to the guarded ally, ties
- * broken by the engine's fixed `ORTHOGONAL_STEPS` order. Manhattan-1 rather than
- * all eight, matching the perception-adjacency convention the rest of the game
- * uses; "nearest" is measured from where the guardian is standing, so he takes
- * the side he is already on rather than walking round the target.
+ * *"The player should be able to only choose a square that is adjacent to an
+ * ally. Right now you can only choose the ally square and can't choose which
+ * adjacent square to go to."* Which side of the ally he stands on is a real
+ * decision — which lane he blocks, which enemy he faces, whether he ends in
+ * cover — so the engine offers the set and the **player** picks from it, rather
+ * than a fixed-order tiebreak picking for them. (That auto-landing was
+ * INTERCEPT-GUARD's; this ruling supersedes it, and with it the tiebreak.)
  *
- * Deterministic and choice-free by construction: no tie can depend on unit
- * iteration order, and no UI has to ask.
+ * The set is **empty squares orthogonally adjacent to a living ally within
+ * `range`**. Manhattan-1, matching the perception-adjacency convention the rest
+ * of the game uses.
  *
- * `undefined` when all four are blocked — the caller fizzles.
- *
- * **Exported because the preview needs the same answer.** The standing directive
- * is that the client consumes the engine's derived queries rather than
- * recomputing them: a landing marker drawn from a second implementation is a
- * marker that can disagree with where he actually ends up, which is precisely
- * the class of lie AIM-PREVIEW-TRUE exists to remove.
+ * **Exported because the client's aimable set has to be this exact list.** An
+ * aimable set derived a second time is one that can offer a square the engine
+ * then refuses — the preview lying about a legal order, which is the class
+ * AIM-RANGE closed for every other slot.
  */
-export function guardLanding(
-  board: Board, draft: GameState, guardian: UnitState, ally: UnitState,
-): Vec2 | undefined {
+export function guardLandings(
+  board: Board, draft: GameState, guardian: UnitState, range: number,
+): { square: Vec2; allyId: string }[] {
   const occupied = occupiedByOthers(draft, guardian);
-  let best: { pos: Vec2; away: number } | undefined;
-  for (const step of ORTHOGONAL_STEPS) {
-    const pos = { x: ally.pos.x + step.x, y: ally.pos.y + step.y };
-    if (!inBounds(board, pos) || !isPassable(board, occupied, pos)) continue;
-    const away = distance(guardian.pos, pos);
-    // Strictly-greater keeps the first square in ORTHOGONAL_STEPS order on a
-    // tie, which is the fixed tiebreak the ruling names.
-    if (best === undefined || away < best.away) best = { pos, away };
+  const out: { square: Vec2; allyId: string }[] = [];
+  const seen = new Set<string>();
+  // Units in list order, steps in `ORTHOGONAL_STEPS` order: the list is the same
+  // on every machine, which matters because the client renders it.
+  for (const ally of draft.units) {
+    if (!ally.alive || ally.owner !== guardian.owner || ally.unitId === guardian.unitId) continue;
+    if (!aimInRange(guardian.pos, ally.pos, range)) continue;
+    for (const step of ORTHOGONAL_STEPS) {
+      const square = { x: ally.pos.x + step.x, y: ally.pos.y + step.y };
+      const key = vecKey(square);
+      // A square adjacent to TWO allies appears once. Which ally it binds is
+      // then the order's business, not the geometry's — the aim carries the id
+      // precisely so that case is unambiguous (ruled).
+      if (seen.has(key)) continue;
+      if (!inBounds(board, square) || !isPassable(board, occupied, square)) continue;
+      seen.add(key);
+      out.push({ square, allyId: ally.unitId });
+    }
   }
-  return best?.pos;
+  return out;
+}
+
+/**
+ * Is `square` a legal place for `guardian` to interpose for `ally` right now?
+ *
+ * Asked twice, and deliberately: once at plan time so an impossible order is
+ * refused outright, and again at the start of Dash, because the board moves
+ * between the two. A square that was free when the player clicked it and is
+ * occupied when the ability fires is a **fizzle** — the whole ability, cooldown
+ * spent (ruled). With the square being the player's own pick, a blocked landing
+ * is a misread of the board rather than the engine's choice, which is what makes
+ * whole-ability fizzle the fair outcome instead of a punishment.
+ */
+export function guardLandingIsLegal(
+  board: Board, draft: GameState, guardian: UnitState, ally: UnitState, square: Vec2, range: number,
+): boolean {
+  if (!ally.alive || ally.owner !== guardian.owner || ally.unitId === guardian.unitId) return false;
+  if (!aimInRange(guardian.pos, ally.pos, range)) return false;
+  if (distance(square, ally.pos) !== 1) return false; // orthogonally adjacent
+  if (!inBounds(board, square)) return false;
+  return isPassable(board, occupiedByOthers(draft, guardian), square);
 }
 
 // ── Death ───────────────────────────────────────────────────────────────────
@@ -1582,23 +1625,31 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       plan.movePath = [];
     }
   }
-  // INTERCEPT-GUARD — where each bodyguard puts himself, resolved **once, here,
+  // INTERCEPT-GUARD — where each bodyguard puts himself, checked **once, here,
   // at the start of the phase**, before anything in it has moved.
   //
   // That is the ruling ("the ally's position at the start of the Dash phase")
-  // and it is also the only reading that is order-independent: computing it
+  // and it is also the only reading that is order-independent: checking it
   // inside the loop below would make Aegis's landing depend on whether the ally
   // dashed earlier in `orderedPlans`, which is a rule nobody could reason about
   // from the board. The guard binds to the UNIT, so an ally who dashes away is
   // still guarded — Aegis just guards them from where they were.
-  const landings = new Map<string, Vec2 | undefined>();
+  //
+  // INTERCEPT-LANDING-CHOICE: the square is the PLAYER's, carried in the aim, so
+  // all that is left here is a legality check against the board as it stands at
+  // the start of the phase. Failing it is a FIZZLE below, never a substitute
+  // square — silently landing him somewhere he did not choose is precisely the
+  // auto-landing this ruling removed.
+  const guardFizzles = new Set<string>();
   for (const plan of orderedPlans(draft, plans)) {
     const a = plan.ability;
     if (a?.guardTargetId === undefined || a.def.phase !== 'dash' || !plan.unit.alive) continue;
     const ally = draft.units.find((u) => u.unitId === a.guardTargetId);
-    landings.set(plan.unit.unitId, ally === undefined || !ally.alive
-      ? undefined
-      : guardLanding(board, draft, plan.unit, ally));
+    const square = a.aim[0];
+    if (ally === undefined || square === undefined
+      || !guardLandingIsLegal(board, draft, plan.unit, ally, square, a.def.range)) {
+      guardFizzles.add(plan.unit.unitId);
+    }
   }
 
   const repositioned: UnitState[] = []; // units that actually moved under their own power (D1-dash)
@@ -1627,31 +1678,33 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     let crossed: UnitState[] = [];
     let shovedAside: UnitState | undefined;
 
-    // INTERCEPT-GUARD: a bodyguard's aim is the square beside his ally, not the
-    // ally's own square — swapped in here so the teleport below is the ordinary
-    // one. `undefined` means all four adjacents were blocked: the cast FIZZLES,
-    // which is the teleport precedent (no move, cooldown spent) taken to the
-    // whole ability. He never arrived, so there is nothing to interpose and no
-    // shield for a bodyguard who is still across the room.
-    let fizzled = false;
-    if (a.guardTargetId !== undefined) {
-      const landing = landings.get(plan.unit.unitId);
-      if (landing === undefined) {
-        fizzled = true;
-        a.aim = [];
-      } else {
-        // The area moves with the aim. It was expanded at plan time around the
-        // ALLY's square (that is what was aimed at); the ability actually
-        // happens at the landing square, and `applySelfEffects` gates the
-        // shield on the caster standing inside the area. Leaving the plan-time
-        // area behind is how the bodyguard arrives with no shield.
-        a.aim = [landing];
-        a.area = [{ ...landing }];
-      }
+    // INTERCEPT-GUARD: a bodyguard's aim is the square beside his ally, never
+    // the ally's own square, so the teleport below is the ordinary one and the
+    // plan-time area — expanded around that same square — already describes
+    // where the ability happens. `applySelfEffects` gates the shield on the
+    // caster standing inside that area, so a bodyguard who never arrives gets
+    // no shield without anything here saying so.
+    //
+    // A chosen square that is no longer legal FIZZLES the cast: the teleport
+    // precedent (no move, cooldown spent) taken to the whole ability. Silent
+    // beyond the `abilityFired` already logged, exactly as a blocked blink is.
+    //
+    // Two checks, because they answer at different moments. The ALLY half is
+    // fixed at the start of the phase (`guardFizzles`, above) so the binding
+    // cannot depend on dash order. The SQUARE half is asked here, against the
+    // board as it stands when he actually goes — and it is `blinkSquareFree`
+    // rather than a teleport, deliberately: **BLINK-ADJ's nudge must not apply
+    // to an Intercept.** Landing "near enough" would put the bodyguard
+    // diagonally off his teammate — outside the ability's own area, so the
+    // shield gate refuses him — while the guard still bound. The ruling gives
+    // the square to the player, so it is that square or nothing.
+    if (a.guardTargetId !== undefined
+      && (guardFizzles.has(plan.unit.unitId)
+        || a.aim[0] === undefined
+        || !blinkSquareFree(draft, board, plan.unit, a.aim[0], contested))) {
+      a.aim = [];
+      continue;
     }
-    // Silent beyond the `abilityFired` already logged, exactly as a blocked
-    // blink is: the cooldown is spent and nothing else happened.
-    if (fizzled) continue;
     if (a.def.shape === 'path') crossed = walkCharge(draft, board, plan.unit, a.aim, events, trapHits);
     else {
       // DASH-OCCUPIED: a dash carrying its own knockback clears the landing
@@ -2321,6 +2374,23 @@ interface Mover {
 
 function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: ReadonlySet<string>, events: TurnEvent[], trapHits: TrapHits): void {
   events.push({ type: 'phaseStart', phase: 'move' });
+
+  // CHASE-AUDIT — *"sometimes the character chases directly to the tile the last
+  // character was on even if we know where the chase target went."*
+  //
+  // The chase's fog fallback (`lastKnownFor`) was only ever written at the turn
+  // boundary, so a chase resolving here read a board that was a whole turn old.
+  // An enemy nobody could see at the last boundary, brought into view during
+  // this turn's Prep, Dash or Blast and then slipping into cover in Move, was
+  // therefore chased to a square from turns ago — sometimes in the opposite
+  // direction from the one the team had just watched it stand in.
+  //
+  // So the memory is refreshed here, against the post-Blast board — the board
+  // the client has just finished playing back, which is exactly what makes it
+  // fair to remember. Golden rule #5 is untouched: `recordLastKnown` still only
+  // ever writes a square the team can actually see, and a target nobody has
+  // eyes on leaves the record alone.
+  recordLastKnown(draft, board);
 
   const movers: Mover[] = [];
   for (const plan of orderedPlans(draft, plans)) {
@@ -3040,10 +3110,17 @@ function tickOverTime(draft: GameState, events: TurnEvent[]): void {
  * CHASE1 — record, per team, where each enemy is *right now* if that team can
  * see it; leave the previous record alone if it cannot.
  *
- * Run at the turn boundary so "last known" means "as of the most recent turn we
- * could see you", which is the granularity a chase order is written at. A dead
- * enemy is skipped rather than erased: the record is where you last saw them,
- * and a chase against a corpse is dropped on its own account anyway.
+ * Run twice a turn, and the second one is CHASE-AUDIT's fix: once at the top of
+ * **Move**, against the post-Blast board the client has just played back, and
+ * once at the **turn boundary**. Recording only at the boundary made "last
+ * known" mean "as of the end of the previous turn" for a chase resolving inside
+ * this one — so an enemy the team watched all turn and then lost was chased to
+ * a square from turns ago. Both points record the same thing (what a team can
+ * see, right now), so this is a finer granularity rather than a new rule, and
+ * the fog guarantee is unchanged: a square nobody has eyes on is never written.
+ *
+ * A dead enemy is skipped rather than erased: the record is where you last saw
+ * them, and a chase against a corpse is dropped on its own account anyway.
  *
  * Iterates teams then `draft.units`, so entries are appended in a fixed order
  * and the serialised state is a function of the match, not of iteration.

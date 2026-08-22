@@ -12,7 +12,9 @@ import type { AbilityDef, CharacterDef, GameState, MapDef, TurnEvent, Vec2 } fro
  * WARDING-WALL — *"Change Aegis's Grounding Strike to be a prep phase, 4 cool
  * down skill named Warding Wall which puts down a 4 tile long wall that lasts
  * until the end of this turn that does 25 damage to those who walk through it
- * and weakens them for the next turn."* Plus, the same day: *"Warding Wall
+ * and weakens them for the next turn."* — the rider later changed to a **Slow**
+ * (WALL-SLOW: *"AEgis Warding wall should do slow instead of weaken."*), which
+ * is the only part of that sentence this file no longer asserts verbatim. Plus, the same day: *"Warding Wall
  * should be a freely placed, 4 tile line during prep phase. It will hit dashes,
  * moves, and displacements, but not blinks."*
  *
@@ -202,7 +204,7 @@ const hpLost = (before: GameState, after: GameState, unitId: string): number =>
 const placedAt = (events: readonly TurnEvent[]): string[] => events
   .flatMap((e) => (e.type === 'trapPlaced' ? [key(e.pos)] : [])).sort();
 
-describe('WARDING-WALL: walking through it costs 25 and a Weaken', () => {
+describe('WARDING-WALL: walking through it costs 25 and a Slow', () => {
   it('the wall really does stand where the test thinks it does', () => {
     // The fixture, asserted before anything is concluded from it — and read off
     // the **events**, not off `state.traps`, because `lifetime: 1` means the
@@ -223,8 +225,9 @@ describe('WARDING-WALL: walking through it costs 25 and a Weaken', () => {
       'each individually consumable').toBe(4);
   });
 
-  it('an enemy WALKING through takes 25 and is Weakened for the next turn', () => {
-    // The sentence the owner wrote, end to end.
+  it('an enemy WALKING through takes 25 and is Slowed for the next turn', () => {
+    // The sentence the owner wrote, end to end — with WALL-SLOW's rider: the
+    // wall costs you your footing next turn rather than your damage.
     const { state, me, foe } = field(VEX, { x: 14, y: 10 });
     const out = turn(state, me.unitId, {
       unitId: foe.unitId, movePath: [{ x: 13, y: 10 }, { x: 12, y: 10 }],
@@ -233,7 +236,7 @@ describe('WARDING-WALL: walking through it costs 25 and a Weaken', () => {
     // `duration: 2` and not 1, so it survives this turn's end-of-turn tick and
     // is still on them while they act next turn — "weakens them for the NEXT
     // turn" is a promise about a turn that has not happened yet.
-    expect(hasStatus(unit(out.state, foe.unitId), 'weaken'), 'still Weakened').toBe(true);
+    expect(hasStatus(unit(out.state, foe.unitId), 'slow'), 'still Slowed').toBe(true);
   });
 
   it('a DASH through it is caught too', () => {
@@ -244,7 +247,7 @@ describe('WARDING-WALL: walking through it costs 25 and a Weaken', () => {
       ability: { abilityId: 'bullrush', target: [{ x: 13, y: 10 }, { x: 12, y: 10 }] },
     });
     expect(hpLost(state, out.state, foe.unitId)).toBeGreaterThanOrEqual(25);
-    expect(hasStatus(unit(out.state, foe.unitId), 'weaken')).toBe(true);
+    expect(hasStatus(unit(out.state, foe.unitId), 'slow')).toBe(true);
   });
 
   it('but a BLINK is not — it goes around, not through', () => {
@@ -257,7 +260,7 @@ describe('WARDING-WALL: walking through it costs 25 and a Weaken', () => {
     });
     expect(unit(out.state, foe.unitId).pos, 'past the wall').toEqual({ x: 11, y: 10 });
     expect(hpLost(state, out.state, foe.unitId), 'and untouched by it').toBe(0);
-    expect(hasStatus(unit(out.state, foe.unitId), 'weaken')).toBe(false);
+    expect(hasStatus(unit(out.state, foe.unitId), 'slow')).toBe(false);
   });
 
   it('nor is a blink that lands ON a wall tile', () => {
@@ -331,7 +334,7 @@ describe('WARDING-WALL: a shove through it counts', () => {
     // rewrite this test's claim.
     expect(hpLost(before, out.state, foes[0]!.unitId), 'the charge AND the wall')
       .toBeGreaterThan(14);
-    expect(hasStatus(victim, 'weaken'), 'and Weakened by the wall').toBe(true);
+    expect(hasStatus(victim, 'slow'), 'and Slowed by the wall').toBe(true);
   });
 
   it('an ordinary mine now fires on a shove too — TRAP-TRIGGER', () => {
@@ -521,14 +524,18 @@ describe('WARDING-WALL: the ability the owner asked for', () => {
       .toBe(false);
   });
 
-  it('deals 25 and weakens for 2 — the numbers, read off the data', () => {
+  it('deals 25 and slows for 2 — the numbers, read off the data', () => {
     const trap = WALL.effects.find((e) => e.kind === 'trap')!;
     expect(trap.amount).toBe(25);
     expect(trap.lifetime, 'this turn only').toBe(1);
     expect(trap.perTile, 'one per tile, not one at the aim').toBe(true);
     expect(trap.triggers, 'the owner\'s sentence, as data')
       .toEqual(['move', 'dash', 'displacement']);
-    expect(WALL.effects.find((e) => e.kind === 'weaken')?.duration).toBe(2);
+    // WALL-SLOW: the rider is a Slow, and the duration is unchanged at 2 — it
+    // has to survive this turn's end-of-turn tick to be on them while they act.
+    expect(WALL.effects.find((e) => e.kind === 'slow')?.duration).toBe(2);
+    expect(WALL.effects.some((e) => e.kind === 'weaken'), 'and no Weaken is left behind')
+      .toBe(false);
   });
 
   it('the description tells the player which arrivals it catches', () => {

@@ -5802,3 +5802,142 @@ expressed" and must never be a crash on boot.
 **Not done.** Phase 5 — props, set pieces, and the first thing that actually moves. The freeze
 hook now makes that safe to attempt: start with one element and confirm the browser suite stays
 green before adding a second.
+
+---
+
+## 2026-08-22 — Builder session 14 (the first playtest's six, plus ASSET-WEIGHT-BUDGET)
+
+DEATH-HANG-2 → INTERCEPT-LANDING-CHOICE → CHASE-AUDIT → TEAMMATE-PLAN-VISIBLE → WALL-SLOW →
+NAMEPLATE-DEPTH, then ASSET-WEIGHT-BUDGET. All seven shipped; nothing was skipped.
+
+**DEATH-HANG-2 — the turn nobody can take resolves itself.** DOWN-SEAT-SKIP removes a seat with
+no living character from `#answering()`. When *every* seat is down that set is empty and
+`#allIn()`'s `answering.length > 0` guard makes the room wait — so the first Hold Position press
+puts that seat alone in the answering set and resolves the whole turn by itself, and the second
+player's press lands on the window that has already replaced it. Sudden death is the only place
+this is reachable, because a double KO is the one death that does not end the match. The fix
+resolves the turn *before* a window nobody can use is ever opened, gated on `#sinks.size > 0` so
+QUOTA-RUNAWAY still stops an abandoned room, and bounded by `MAX_AUTO_RESOLVES` so it can never
+run away.
+
+**Judgment call — BLINK-ADJ's nudge does not apply to an Intercept.** INTERCEPT-LANDING-CHOICE
+gives the landing square to the player; BLINK-ADJ lands a blocked blink on the *nearest legal*
+square instead of failing. Composed naively they produce a bodyguard standing diagonally off his
+teammate — outside the ability's own area, so `applySelfEffects` refuses him the shield — with the
+guard bound anyway: a half-cast that reads on the board as a working Intercept. The ruling gave
+the square to the player, so for a guard cast it is that square or a whole-ability fizzle. The
+ordinary 1v1 fallback teleport keeps the nudge, unchanged.
+
+**Judgment call — an ally-targeted aim skips the caster-to-aim range check.** A landing beside an
+ally at exactly range 5 can sit six squares from Aegis, so the ordinary `aimIsLegal` envelope
+would refuse legal picks at the edge of the reach. The range constraint belongs to the *ally*
+(`allyTargetOf`), and the square is checked by `guardLandingIsLegal`; both run, so nothing is
+unchecked. Client-side `aimLegal` widens to `range + 1` — the tightest bound that never rejects
+what the engine accepts — and the exact set stays `guardLandings`, which `commitAim` and the range
+envelope both read.
+
+**CHASE-AUDIT — the cause was `lastKnown`, not the chase.** *"Sometimes the character chases
+directly to the tile the last character was on even if we know where the chase target went."*
+`recordLastKnown` ran only at the turn boundary, so the fog fallback a chase reached for during
+Move described the board as it stood at the end of the *previous* turn. An enemy nobody could see
+at that boundary, brought into view during this turn's Prep/Dash/Blast and then slipping into
+cover in Move, was chased to a square from turns ago — in the repro, eight squares in the opposite
+direction. Fixed by recording again at the top of `runMove`, against the post-Blast board the
+client has just played back. Golden rule #5 is untouched: `recordLastKnown` still only ever writes
+a square the team can see, and an enemy nobody has eyes on leaves the record alone.
+
+**Judgment call — the chase snapshot stays frozen (suspect (a), examined and declined).** The
+backlog named a second suspect: the chase snapshot is the post-*normal*-move board, so a target
+that is itself chasing is pursued to its pre-chase tile. That is CHASE1's convergence design, not
+a defect — every chaser reads one frozen board precisely so that A-chases-B and B-chases-A cannot
+depend on which of them `orderedPlans` visits first. Making the snapshot live would trade a
+cosmetic lag against a mutual chase whose outcome depends on iteration order, which is the worse
+fault. Left alone, and the reasoning is pinned in `chase-audit.test.ts` so the next audit does not
+re-open it from scratch.
+
+**Judgment call — TEAMMATE-PLAN-VISIBLE keeps relayed plans out of `drafts`.** The obvious
+implementation merges a teammate's relayed order into the same `drafts` map the render loop
+already reads, and one line of code would have done it. It is wrong in a way that would not show
+up for a while: `drafts` is what this seat is *editing* and what `collectOrders`/`toUnitOrders`
+send at Lock In, so a relayed entry in it is a plan this client could submit on somebody else's
+behalf. Kept in `teamPlans`, replaced wholesale on every relay (an empty list is how the wire
+says "the turn resolved"), and read-only at every use.
+
+**Judgment call — `drawPaths` beside `drawPath` rather than more path layers.** A path layer is
+cleared and rewritten on every draw, so a per-teammate `drawPath` call leaves only the last route
+on the board. At 4v4 a seat has three teammates, each with a route and possibly a guard link. The
+shape already existed one method along: `drawShape` takes a *list* of outlines into one layer for
+exactly this reason, and `drawPaths` mirrors it.
+
+**Judgment call — the asset budget is two caps, not one.** ASSET-WEIGHT-BUDGET's AC asks for "the
+total `public/models/` byte weight … with a cap", and a total-only cap does not work as a guard
+here: the roster is *expected* to grow from one rigged character to nine, so any total generous
+enough to admit that growth cannot tell "one more character" from "one character got twice as
+heavy". So the per-character ceiling (1.5 MB, ~25% over Aegis's 1.16 MB) is the live guard, and
+the total (12 MB) is the ceiling the finished roster must fit inside — set above nine at today's
+weight (~10.5 MB) and below nine at the per-character cap (13.5 MB). **Both numbers are Builder
+estimates and want an owner's eye**, because the honest total depends on `ART_PIPELINE.md` §18's
+still-open clip-duplication decision: Option A would drop it by ~1.2 MB across the roster and make
+a much tighter cap the right one.
+
+**Judgment call — `bundle-budget.mjs` checks that GLTFLoader is still split, without changing its
+total.** The AC asks that the loader "stays code-split and out of the main JS number". Making the
+budget cap only the *entry* chunk would have done that and would also have quietly loosened the
+300 kB cap by ~17 kB, which is a deliberate call the backlog explicitly puts out of scope. So the
+total still counts every chunk, and the split is checked by the existence of a `GLTFLoader-*.js`
+chunk instead — if it were statically imported, Vite would have no reason to emit one.
+
+## Open Questions for the Analyzer — 2026-08-22
+
+1. **`validate.ts` still does not refuse `guard` alongside `impact`** — RULED in
+   `docs/design/edge-cases.md` (closing my session-13 OQ #2), with no backlog item to carry it. I
+   did not implement it this session: it is a ruling rather than a scheduled item, and the brief
+   says not to invent scope. It is small (one check in `validateAbility` plus a content test) and
+   nothing in `data/` violates it today, so it is a guard against a future kit rather than a fix.
+   Worth an item, or worth closing as "covered by review"?
+
+2. **The asset budget's two numbers want an owner's ratification** (see the judgment call above).
+   1.5 MB per character and 12 MB total are mine, derived from Aegis and from §18's arithmetic. If
+   §18 lands on Option A, both should come down — and the tighter they are, the more the budget is
+   actually doing. Related: the 300 kB JS budget is now 1.29× the real 233 kB, which the backlog
+   already flags as a stale-headroom call.
+
+3. **A relayed teammate plan is drawn from the plan, not from a preview the teammate saw.** The
+   two agree today because both go through `abilityPreview`, but the relayed order carries no
+   `aimStep` for shapes that do not send one and no waypoint marks at all — so a teammate's
+   composed route is drawn as the router's path rather than as the corners they clicked. That is
+   correct (the corners are gesture state, and golden rule #5 aside, nobody else needs them), but
+   it means a teammate's line can differ in shape from the one they are looking at. Worth a look
+   in the next playtest before anybody calls it a bug.
+
+4. **CHASE-AUDIT's declined suspect is a design fork, not a closed question.** A chaser pursuing a
+   *chasing* target still goes to that target's pre-chase square, because every chaser reads one
+   frozen board (CHASE1's convergence design). I left it alone and wrote the reasoning into
+   `chase-audit.test.ts`. If the owner's report turns out to have been about that case rather than
+   the stale-memory one I fixed, the fix is a second chase clock — chasers who are themselves
+   chased resolve first — and that is a design item, not a bug fix.
+
+5. **DEATH-HANG-2's `MAX_AUTO_RESOLVES = 4` is a backstop with no test that reaches it.** Four
+   consecutive all-down turns inside one message is not a state I could construct — respawns land
+   before it — so the constant is there to bound a runaway rather than to implement a rule. If the
+   Analyzer can build a case that hits it, the right cap might be different; if not, it is dead
+   weight that is still cheaper than the alternative.
+
+6. **The Playwright render suite is RED on `main`, and has been before this branch.** Nine of
+   thirty-two failed on my branch; I checked eight of them against a worktree at `origin/main`
+   (4da3c19) and all eight reproduce there unchanged — the four `UI-VIEWPORT` sizes, the fogged
+   opening frame, UI1-fix, the resolved-turn readout, and STEALTH-CONFIRM. The ninth
+   (MOVE-SPRINT-FIRST) passes in isolation on my branch and only fell over inside the full run,
+   so it is a cascade from the ones before it rather than a failure of its own.
+
+   The `UI-VIEWPORT` four have a diagnosable shape worth writing down: `controls.count()` is read
+   once and then `controls.nth(i).boundingBox()` blocks for the full 60 s when the HUD is rebuilt
+   mid-loop and index `i` no longer exists. That is a **test** bug — a stale index, not a HUD that
+   runs off the screen — and its 60 s timeout is most of why the suite now takes 26 minutes. The
+   remaining four are timeouts inside `resolveTurn`'s wait loop and want their own look.
+
+   None of this blocks the merge (RENDER-VERIFY is a pre-merge signal, not a release gate — ruled
+   in `docs/reviews/2026-08-25.md`), but a suite that is red before you start cannot tell anybody
+   whether they broke it, which is the state RENDER-CHECKS-GREEN existed to end. **Worth an item.**
+   I did not fix it this session: it is not in the backlog and repairing e2e assertions is exactly
+   the "never guess or invent scope" line.

@@ -22,6 +22,12 @@ jobs:
         run: npm run build
       - name: Bundle budget (BUNDLE1)
         run: npm run size -w @cards/client
+      # ASSET-WEIGHT-BUDGET: its own number, on purpose. The JS budget counts
+      # `dist/assets/*.js` and nothing in `public/`, where the models live — and
+      # one rigged character already outweighs the whole gzipped bundle. Needs no
+      # build: `public/models/` is checked in.
+      - name: Asset weight budget (ASSET-WEIGHT-BUDGET)
+        run: npm run size:assets -w @cards/client
       - name: Determinism guard (no randomness/clock/IO in engine)
         run: |
           # Widened guard (CLAUDE.md rule 1): no clock, no RNG, no floats-from-random,
