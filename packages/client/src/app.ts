@@ -35,7 +35,7 @@ import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
 import { browserAmbient, browserModels } from './render-flags.js';
 import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
-import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
+import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { openingFacings, selectFacing, type Facing } from './facing.js';
 import { selectClip } from './character-clips.js';
 import { type Cue } from './choreograph.js';
@@ -2334,15 +2334,19 @@ export function startHotSeat(
     phaseLabel.textContent = phase.toUpperCase();
     phaseLabel.style.display = 'block';
     const posOf = (unitId: string): Vec2 | undefined => units.find((u) => u.unitId === unitId)?.pos;
+    // Move runs on the clip's ground speed, not on the rhythm. See
+    // MS_PER_MOVE_STEP: a square takes exactly as long as a stride carries a
+    // foot across it, or the feet skate.
+    const msPerBeat = phase === 'move' ? MS_PER_MOVE_STEP : MS_PER_BEAT;
     const t0 = now();
 
     await new Promise<void>((resolve) => {
       const tick = (): void => {
         if (cancelled()) return resolve();
-        const t = start + (now() - t0) / MS_PER_BEAT;
+        const t = start + (now() - t0) / msPerBeat;
         const now_t = Math.min(t, end);
         applyFrame(sampleFrame(cues, now_t), units, posOf);
-        applyClips(cues, now_t, units);
+        applyClips(cues, now_t, units, msPerBeat / 1000);
         applyFacing(cues, now_t, units);
         if (t >= end) return resolve();
         globalThis.requestAnimationFrame(tick);
@@ -2401,11 +2405,11 @@ export function startHotSeat(
     }
   }
 
-  function applyClips(cues: readonly Cue[], t: number, units: RenderUnit[]): void {
+  function applyClips(cues: readonly Cue[], t: number, units: RenderUnit[], beatSeconds: number): void {
     for (const u of units) {
       const clips = renderer.clipsFor(u.characterId);
       if (clips === undefined) continue;
-      renderer.setUnitClip(u.unitId, selectClip(cues, t, u.unitId, clips), MS_PER_BEAT / 1000);
+      renderer.setUnitClip(u.unitId, selectClip(cues, t, u.unitId, clips), beatSeconds);
     }
   }
 
