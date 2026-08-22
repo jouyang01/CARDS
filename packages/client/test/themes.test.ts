@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   FALLBACK_THEME, FOG_OPACITY, MAX_TERRAIN_CHROMA, MIN_FOG_DROP, MIN_TERRAIN_SEPARATION, THEMES,
   chroma, foggedColour, hexOf, inUiFamily, isGreenDominant, luma,
-  overlayBoost, themeContractErrors, themeFor,
+  SKY_TERRAIN_MARGIN, overlayBoost, themeContractErrors, themeFor,
 } from '../src/themes.js';
 import type { MapDef } from '@cards/engine';
 import duelArena from '../../../data/maps/duel-arena.json';
@@ -88,6 +88,32 @@ describe('the built-in fallback is legacy, and known not to meet the contract', 
     const gap = (t: typeof FALLBACK_THEME): number =>
       Math.abs(luma(t.terrain.wall) - luma(t.terrain.cover));
     for (const theme of ALL) expect(gap(theme), theme.id).toBeGreaterThan(gap(FALLBACK_THEME));
+  });
+});
+
+describe('SKY-vs-TERRAIN: the void cannot wear the board\'s colours', () => {
+  it.each(ALL)('$name keeps its sky clear of its own terrain', (theme) => {
+    expect(themeContractErrors(theme).filter((e) => e.includes('sky ramp passes through'))).toEqual([]);
+  });
+
+  it('catches the sky that started this — Proving Floor\'s first, warm grey one', () => {
+    // Its fogged floor composites at (86,84,80) and that ramp passed through
+    // (81,82,83), so `isSceneBackground` answered "yes, that is the void" for a
+    // fogged board tile. A clipped board then looks exactly like an unclipped
+    // one, which is the single thing that check exists to tell apart.
+    const warmGrey = {
+      ...THEMES['proving-floor']!, id: 'warm-grey-sky', sky: { top: 0x1a2033, bottom: 0x6b6a63 },
+    };
+    expect(themeContractErrors(warmGrey).join(' ')).toMatch(/sky ramp passes through/);
+  });
+
+  it('does not cry wolf at a separation the predicate could never confuse', () => {
+    // The margin is deliberately close to the tolerance `onAnyRamp` matches at.
+    // A first draft used 9 and failed both dark themes, whose fogged floors are
+    // clear at 5 and at 7 — and a validator that fails a theme for a collision
+    // that cannot happen is a validator authors learn to ignore.
+    expect(SKY_TERRAIN_MARGIN).toBeGreaterThan(5);
+    expect(SKY_TERRAIN_MARGIN).toBeLessThan(9);
   });
 });
 
