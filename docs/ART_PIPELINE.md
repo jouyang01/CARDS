@@ -548,21 +548,28 @@ that is what lets one animation set serve the whole roster.
 
 A missing In Place checkbox means the clip has no root motion and needs nothing done.
 
-### The run has to keep up with the board
+### Locomotion plays at its authored rate
 
-A locomotion clip plays at the cadence it was authored at; the engine moves a unit **one tile
-per beat**. Those two have no reason to agree, and when they disagree the character sprints on
-the spot. Aegis's `sword_and_shield_run` is **0.733 s** for a **2-stride** cycle against a
-0.76 s beat — 2.07 steps per tile, which reads as a frantic shuffle.
+The run clip is **not** time-scaled to the board. It was, briefly: Aegis's 0.733 s cycle
+against a 0.76 s beat comes out at 2.07 steps per tile, and scaling the clip so one cycle
+covered exactly two tiles gave a tidy one step per tile.
 
-`selectClip` tags a movement choice with `stride` (strides per cycle) and the renderer
-time-scales the action so one cycle covers exactly that many tiles: **one step per tile**.
+Owner's ruling (2026-08-22): **don't couple them.** The character walks to the square using
+the animation, at the rate the animation was authored at.
 
-> **Count the strides, do not assume them.** A Mixamo locomotion cycle is left-foot,
-> right-foot — 2 — but a clip from elsewhere may be a single-stride loop, and the wrong number
-> is a gait that is confidently, uniformly wrong. Read it out of the `.glb`: the hips dip once
-> per foot contact, so count the local minima of `mixamorig:Hips` translation Y over one cycle.
-> `stridesPerCycle` in the art data overrides the default of 2.
+The reason the tidy version looked worse is worth keeping: a Mixamo clip is exported **In
+Place**, so it carries no ground speed at all. Slowing it to hit a steps-per-tile target does
+not slow the character down — the engine still moves it one tile per beat — it just moves the
+feet more slowly *underneath* a body travelling at the same speed. Trading a busy cadence for
+outright foot-sliding.
+
+Some mismatch between stride and ground speed is inherent to In Place clips and is what the
+lever below is for, not something to solve in the renderer.
+
+> **If the gait reads wrong, the lever is `MS_PER_BEAT`** (`animate.ts`, currently 760 ms),
+> not the clip's playback rate. That changes how long a unit takes to cross a square, which is
+> the thing actually mismatched — and it moves the whole turn's pacing with it, which is a
+> design decision rather than a rendering one.
 
 ### One locomotion clip, not two
 

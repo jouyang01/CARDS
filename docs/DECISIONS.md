@@ -5805,6 +5805,32 @@ green before adding a second.
 
 ---
 
+## 2026-08-22 — Builder session 14 (the door's clearance, and stride-matching reversed)
+
+**(PROP-SURFACE) A prop sits on the surface of its bone, not on its axis.** Centring the door
+on `mixamorigRightForeArm` put the arm through the middle of the panel — the pauldron came out
+the front. The offset that fixes it is along the prop's own **face normal**, which after the
+attach rotation is the bone's −Z, by roughly the limb's radius plus half the prop's thickness
+(0.10 tiles here). Worth stating as a rule because the natural reading of "attach to the
+forearm" is the bone's origin, and the bone's origin is inside the arm.
+
+**(STRIDE-MATCH reversed) Locomotion plays at its authored rate.** Aegis's run cycle is 0.733 s
+for two strides against a 0.76 s beat — 2.07 steps per tile — and `strideTimeScale` scaled the
+clip so one cycle covered exactly two tiles, giving one step per tile. The owner ruled against
+coupling them at all (2026-08-22): the character walks to the square using the animation.
+
+The ruling is right and the reason is worth keeping. A Mixamo clip is exported **In Place**, so
+it carries no ground speed. Slowing it to hit a steps-per-tile target does not slow the
+character — the engine still moves it one tile per beat — it slows the *feet* under a body
+travelling at the same speed, so a busy cadence becomes outright foot-sliding. The tidy number
+was buying a worse picture.
+
+`strideTimeScale` is deleted rather than left exported-and-unused: it was written in Phase 8,
+tested, never called, then wired in and reversed within the hour, and a tested helper sitting
+there is an invitation to wire it again. The lever for gait, if it reads wrong, is
+`MS_PER_BEAT` — how long a unit takes to cross a square — which moves the whole turn's pacing
+and is a design call, not a rendering one.
+
 ## 2026-08-22 — Builder session 14 (the first playtest's six, plus ASSET-WEIGHT-BUDGET)
 
 DEATH-HANG-2 → INTERCEPT-LANDING-CHOICE → CHASE-AUDIT → TEAMMATE-PLAN-VISIBLE → WALL-SLOW →

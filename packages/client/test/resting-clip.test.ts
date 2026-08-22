@@ -137,16 +137,9 @@ describe('RESTING-CLIP: a resolving turn takes the pose back', () => {
       expect(played, 'the move never reached the renderer').toContain(CLIPS.run);
     }, { timeout: 15000 });
 
-    const run = b.renderer.draw.clips.find((c) => c.clip === CLIPS.run)!;
-    // It loops: a multi-square move is several consecutive cues, and a one-shot
-    // run would restart — a visible hitch at every tile.
-    expect(run.loop).toBe(true);
-    // And it carries a stride count, which is what tells the renderer to
-    // time-scale it to the board. Without this the clip plays at whatever rate
-    // it was authored at: Aegis's 0.733s cycle against a 0.76s beat came out at
-    // 2.07 steps per tile. `strideTimeScale` was written and tested in the same
-    // commit that failed to call it.
-    expect(run.stride, 'the run reached the renderer with no ground speed').toBe(2);
+    // And it loops: a multi-square move is several consecutive cues, and a
+    // one-shot run would restart — a visible hitch at every tile.
+    expect(b.renderer.draw.clips.find((c) => c.clip === CLIPS.run)!.loop).toBe(true);
   }, 25000);
 });
 
