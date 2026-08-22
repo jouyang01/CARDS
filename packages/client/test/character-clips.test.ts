@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 import { BEAT, type Cue } from '../src/choreograph.js';
-import { selectClip, strideTimeScale, type ClipSet } from '../src/character-clips.js';
+import { selectClip, type ClipSet } from '../src/character-clips.js';
 
 /**
  * Clip selection is pure, so it is tested the same way `sampleFrame` is: by
@@ -114,51 +114,6 @@ describe('selectClip', () => {
   });
 });
 
-describe('STRIDE-MATCH: locomotion is time-scaled, everything else is not', () => {
-  const clips: ClipSet = {
-    idle: 'idle', run: 'run', hit: 'hit', death: 'death', knockback: 'kb', abilities: { a: 'cast' },
-  };
-  const move = (t: number) => [{
-    kind: 'move' as const, t: 1, dur: 1, unitId: 'u', from: { x: 0, y: 0 }, to: { x: 1, y: 0 },
-  }];
-
-  it('asks for a stride while moving', () => {
-    // The field is what tells the renderer this clip has feet on the ground.
-    // Without it Aegis crossed a tile in 2.07 steps — a frantic little shuffle.
-    expect(selectClip(move(1), 1.5, 'u', clips).stride).toBe(2);
-  });
-
-  it('does not ask for one when standing still', () => {
-    expect(selectClip([], 0, 'u', clips).stride).toBeUndefined();
-  });
-
-  it('takes the count from the art data when a clip is not a Mixamo cycle', () => {
-    const single: ClipSet = { ...clips, stridesPerCycle: 1 };
-    expect(selectClip(move(1), 1.5, 'u', single).stride).toBe(1);
-  });
-});
-
-describe('strideTimeScale', () => {
-  it('leaves a clip alone when its cycle already matches the ground', () => {
-    // 2 strides per cycle, 0.76s per stride on the ground, clip is 1.52s.
-    expect(strideTimeScale(1.52, 2, 0.76)).toBeCloseTo(1);
-  });
-
-  it('speeds up a clip whose cycle is slower than the ground', () => {
-    expect(strideTimeScale(3.04, 2, 0.76)).toBeCloseTo(2);
-  });
-
-  it('slows down a clip whose cycle is faster than the ground', () => {
-    expect(strideTimeScale(0.76, 2, 0.76)).toBeCloseTo(0.5);
-  });
-
-  it('refuses to divide by zero or invert on nonsense input', () => {
-    expect(strideTimeScale(0, 2, 0.76)).toBe(1);
-    expect(strideTimeScale(1.5, 0, 0.76)).toBe(1);
-    expect(strideTimeScale(1.5, 2, 0)).toBe(1);
-    expect(strideTimeScale(-1, 2, 0.76)).toBe(1);
-  });
-});
 
 /**
  * Drift guard between `data/art/*.json` and `data/characters/*.json`.

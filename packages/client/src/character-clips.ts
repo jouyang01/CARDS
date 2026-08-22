@@ -24,24 +24,7 @@ export interface ClipChoice {
   loop: boolean;
   /** Beats since the clip's trigger, so the renderer can seek rather than restart. */
   since: number;
-  /**
-   * Strides in one cycle of this clip, for locomotion only.
-   *
-   * Present means "this clip's feet are on the ground and must keep up with the
-   * board": the renderer time-scales it so a cycle covers exactly this many
-   * tiles. Absent means play at the authored rate — a cast or a death has no
-   * ground speed to match.
-   */
-  stride?: number;
 }
-
-/**
- * Strides in a Mixamo locomotion cycle: left foot, right foot.
- *
- * The default rather than a constant, because a clip from somewhere else may be
- * a single-stride cycle — `stridesPerCycle` in the art data overrides it.
- */
-export const STRIDES_PER_CYCLE = 2;
 
 /**
  * The clip names a character's `.glb` actually contains, from
@@ -58,8 +41,6 @@ export interface ClipSet {
   knockback: string;
   /** abilityId → clip. Missing ids fall back to `idle`. */
   abilities: Readonly<Record<string, string>>;
-  /** Strides in one cycle of `run`. Defaults to `STRIDES_PER_CYCLE`. */
-  stridesPerCycle?: number;
 }
 
 /** Does this cue concern this unit, and is `t` inside it? */
@@ -126,38 +107,8 @@ export function selectClip(
     if (cue.kind === 'move' && active(cue, t, unitId)) {
       // Loops: a multi-square move is several consecutive `move` cues, and
       // restarting the run on each step would produce a visible hitch per tile.
-      // `stride` is what stops him sprinting on the spot. The engine gives one
-      // tile per beat; the clip runs at whatever rate it was authored at, and
-      // those two have no reason to agree — Aegis's 0.733s cycle against a
-      // 0.76s beat came out at 2.07 steps per tile, a frantic little shuffle.
-      return {
-        clip: clips.run,
-        loop: true,
-        since: t - cue.t,
-        stride: clips.stridesPerCycle ?? STRIDES_PER_CYCLE,
-      };
+      return { clip: clips.run, loop: true, since: t - cue.t };
     }
   }
   return { clip: clips.idle, loop: true, since: 0 };
-}
-
-/**
- * Playback rate that makes a locomotion clip's stride match the ground.
- *
- * The engine moves a unit one square per beat, always. A clip authored at some
- * other speed will foot-slide unless it is time-scaled to match — subtly wrong
- * forever, and hard to attribute after the fact.
- *
- * `clipSeconds` is the clip's own duration; `stridesPerCycle` how many squares
- * one loop of it would cover on the ground it was authored for (a run cycle is
- * two steps, so 2). `beatSeconds` is how long the engine gives one square.
- */
-export function strideTimeScale(
-  clipSeconds: number,
-  stridesPerCycle: number,
-  beatSeconds: number,
-): number {
-  if (clipSeconds <= 0 || stridesPerCycle <= 0 || beatSeconds <= 0) return 1;
-  // One cycle must take exactly `stridesPerCycle` beats of ground time.
-  return clipSeconds / (stridesPerCycle * beatSeconds);
 }
