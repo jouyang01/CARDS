@@ -231,3 +231,51 @@ describe('A2: the timeline is well-formed and pure', () => {
     }
   });
 });
+
+/**
+ * MOVE-NO-BANNER-BEAT — Move starts the moment its banner does.
+ *
+ * Every other phase leads with a beat of stillness: the banner names what is
+ * about to happen, and the pause is what makes the naming land. Move announces
+ * nothing — everyone goes at once and the board already shows where — so that
+ * beat was a full BEAT of every character standing under a MOVE label before
+ * anyone stepped. On a one-tile move that is half the phase, and it read as
+ * characters hesitating.
+ *
+ * Found by filming the client on a virtual clock (`npm run film`): 23 frames of
+ * idle before the run clip started. Nothing asserted the beat either way, which
+ * is why it survived — so it is asserted now, in both directions.
+ */
+describe('MOVE-NO-BANNER-BEAT: movement starts with its banner', () => {
+  const walker = () => {
+    const s = mkState([mkUnit('a', 0, 1, 6), mkUnit('b', 1, 11, 6)]);
+    return choreograph(run(s, [{ unitId: 'a', movePath: [{ x: 2, y: 6 }] }], []).events);
+  };
+
+  it('puts the first move cue at the banner, not a beat after it', () => {
+    const cues = walker();
+    const banner = of(cues, 'phase').find((c) => c.phase === 'move')!;
+    const first = of(cues, 'move').sort((x, y) => x.t - y.t)[0]!;
+    expect(first.t, 'a beat of standing under a MOVE label').toBe(banner.t);
+  });
+
+  it('so a one-tile move is one beat long, not two', () => {
+    // Stated as a relationship, not a duration: this file asserts ordering and
+    // concurrency only, because pacing is a tunable and a test that pinned
+    // milliseconds would break the moment it moves.
+    const cues = walker();
+    const banner = of(cues, 'phase').find((c) => c.phase === 'move')!;
+    const moves = of(cues, 'move');
+    expect(Math.max(...moves.map(endOf)), 'one step, one beat').toBe(endOf(banner));
+  });
+
+  it('and the announcing phases keep their beat', () => {
+    // The pause is the point in Prep, Dash and Blast — this must not have
+    // quietly become a global change.
+    const s = mkState([mkUnit('a', 0, 1, 6), mkUnit('b', 1, 11, 6)]);
+    const cues = choreograph(run(s, [{ unitId: 'a', ability: { abilityId: 'guard', target: [{ x: 1, y: 6 }] } }], []).events);
+    const banner = of(cues, 'phase').find((c) => c.phase === 'prep')!;
+    const cast = of(cues, 'ability').find((c) => c.abilityId === 'guard')!;
+    expect(cast.t, 'the banner still reads before Prep acts').toBeGreaterThan(banner.t);
+  });
+});

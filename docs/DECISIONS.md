@@ -5913,7 +5913,7 @@ budget cap only the *entry* chunk would have done that and would also have quiet
 total still counts every chunk, and the split is checked by the existence of a `GLTFLoader-*.js`
 chunk instead — if it were statically imported, Vite would have no reason to emit one.
 
-## Open Questions for the Analyzer — 2026-08-22
+## Open Questions for the Analyzer — 2026-08-22 (Builder session 14)
 
 1. **`validate.ts` still does not refuse `guard` alongside `impact`** — RULED in
    `docs/design/edge-cases.md` (closing my session-13 OQ #2), with no backlog item to carry it. I
@@ -6022,6 +6022,29 @@ chase names an enemy, and drawing a line to it could leak a position the fog is 
 visibility test was added: a networked client's `state.units` contains only the enemies its team
 can see, so an unseen target is simply not found and nothing is drawn. The check that would have
 been written is the one the server already performed.
+## 2026-08-22 — Builder session 15 (Move loses its banner beat)
+
+**(MOVE-NO-BANNER-BEAT) Move starts the moment its banner does; the other three phases keep
+their beat.** `choreograph` gave every phase a leading `BEAT` — "the banner reads before the
+phase acts" — which is right for Prep, Dash and Blast: those are announcements, and the pause
+is what makes the naming land. Move announces nothing. Everyone goes at once and the board
+already shows where, so the beat was a full 760 ms of every character standing under a MOVE
+label before anyone stepped. On a one-tile move that is **half the phase**, and it read as
+characters hesitating before they walked. Owner's call.
+
+**How it was found is the more useful part.** Three rounds of static screenshots blamed the
+animation — first its cadence, then its seek — and both readings were wrong, because a
+screenshot cannot show motion and this container renders at ~10 fps, so "a frame every 110 ms"
+really means "a frame whenever the renderer got round to it". `npm run film -w @cards/client`
+replaces `performance.now` and `requestAnimationFrame` in the page before any app code loads,
+so stepping 33 ms advances the animation by exactly 33 ms however slow the render is. The
+first film showed 23 frames of `aegis_idle` at the top of the Move phase — which no amount of
+looking at the renderer would have explained, because the bug was in the timeline.
+
+Nothing asserted the leading beat in either direction, which is why it survived a rewrite of
+this area. It is asserted now, both ways: the first move cue sits at its banner, and a Prep
+cast still sits after one.
+
 
 **RENDER-SUITE-GREEN — two structural causes, one dead assertion, three real failures left.** The
 suite went 9 red → 3. The UI-VIEWPORT four were a **stale-index hang** (`controls.nth(i)` re-runs
@@ -6049,7 +6072,7 @@ top edge") and it is *also* false. A check that can only be made to pass by asse
 claims is worse than no check, and the failure it guarded — a board pushed under the chrome — is
 what step 5 proves directly. **This loses a claim, and losing it is the Analyzer's to ratify.**
 
-## Open Questions for the Analyzer — 2026-08-22
+## Open Questions for the Analyzer — 2026-08-22 (Builder session 15)
 
 1. **RENDER-SUITE-GREEN is not finished: 3 of 32 still fail, and they are real.** The timeouts were
    hiding them, so these are new information rather than known-bad. None is budget or staleness; I
@@ -6066,11 +6089,14 @@ what step 5 proves directly. **This loses a claim, and losing it is the Analyzer
      I fixed it clicking the playback *row* (a div whose centre `.hud-centre` overlays) instead of
      `.hud-skip`, and it now waits on `.hud-skip` never becoming visible. So the playback row is
      not up when the test expects it.
-2. **UI-VIEWPORT lost its "whole board in frame" claim** (see the judgment call above). Steps 1–3
-   (canvas spans the viewport, every control on-screen and ≥44 px) and step 5 (units drew) all still
-   hold and pass. If the lost claim is wanted back it needs board-space knowledge the test does not
-   have — an engine/client query for the board's screen extent — which is a new capability, not a
-   test repair. **Your call whether to spec it.**
+2. **UI-VIEWPORT's "whole board in frame" claim is gone, and it should be — resolved on merge, not
+   by me.** I retired it from measurement (the region contains no sky at either size on either map)
+   and inferred the camera now fills the region it was fitted to. A parallel branch had already
+   retired the same check with the *authoritative* reason, which is better than my inference: the
+   owner's BOARD_ZOOM call, *"scale everything up and let the map run off the edges"* — the board
+   deliberately overflows now, so corners showing board or platform is the design. I took their
+   version. **No question left here**; recorded because two sessions independently deleted the same
+   assertion and the next reader should not think it was lost twice.
 3. **The intent badge now names the ability instead of numbering it** (TEAMMATE-MOVE-VISIBLE, on
    the Dev Note). This goes beyond the item's AC and changes shipped UI-INTENT behaviour for the
    player's own characters as well as teammates'. One line to revert if the owner prefers the digit;

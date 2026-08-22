@@ -516,28 +516,31 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
           expect(box.height, `"${label}" is ${Math.round(box.height)}px tall`).toBeGreaterThanOrEqual(44);
         }
 
-        // 4. **Retired — its premise stopped being true.** (RENDER-SUITE-GREEN)
+        // 4. (retired) This used to assert that the corners of the uncovered
+        //    region showed scene background, on the reasoning that a board fully
+        //    in frame leaves background at its corners.
         //
-        //    This asserted scene background at three named corners of the
-        //    uncovered region, reading that as "no rank of the board is clipped
-        //    by an edge or hidden under the chrome". Measured on both shipped
-        //    maps at both required sizes, the region now contains **no sky at
-        //    all**: `proving-floor`'s floor is `#b0aca4` and the top-left reads
-        //    rgb(165,166,165); `drained-works`' is `#232a33` against
-        //    rgb(33,39,47). The board is not clipped — since SCENE-DIORAMA and
-        //    MAP-THEMES the camera fills the region it was fitted to, which is
-        //    what "the scene fills the viewport" asked for in the first place.
+        //    BOARD_ZOOM reversed the premise. Owner's call, 2026-08-22: *"scale
+        //    everything up and let the map run off the edges"* — a 1.15-tile
+        //    character on an 18x15 board was a few dozen pixels, correctly
+        //    scaled and too small to read. `renderer3d.ts` states the consequence
+        //    outright: "a frame smaller than the map is a supported state, not a
+        //    new one." So the board now deliberately overflows, SCENE-DIORAMA's
+        //    platform fills whatever the board does not, and the corners show
+        //    board or platform by design.
         //
-        //    It is deleted rather than weakened because the failure it guarded —
-        //    a board pushed off-screen or under the chrome by a bigger map — is
-        //    what step 5 proves directly, and a check that can only be made to
-        //    pass by asserting less than it claims is worse than no check.
-        //    **The Analyzer should decide whether UI-VIEWPORT wants a real
-        //    "whole board in frame" assertion**; it would need board-space
-        //    knowledge this test does not have.
-        const image = await pixels(page);
+        //    Measured, at the two sizes below: iron-basin's corners are all
+        //    (19,22,28), which is exactly `shade(open, arena.shade)` — the
+        //    platform. duel-arena's bottom-left is (163,163,162), the lit floor.
+        //    Both are correct renders of an intentional decision, and the
+        //    assertion could only be kept by undoing it.
+        //
+        //    What the check was really guarding — that the scene is live and the
+        //    chrome has not swallowed it — is what 5 tests, and 1-3 above cover
+        //    the framing and the controls.
 
         // 5. And it is a live scene, not a stretched empty canvas.
+        const image = await pixels(page);
         expect(countPixels(image, isTeamBlue), 'units stopped drawing at this size').toBeGreaterThan(0);
       });
     }

@@ -20,7 +20,7 @@
  * source the renderer draws from.
  */
 
-import { rampAt, type Rgb, type SkyRamp } from './sky.js';
+import { onRamp, rampAt, type Rgb, type SkyRamp } from './sky.js';
 import { GRAIN_MAX, clampGrain, type GrainSpec } from './grain.js';
 import provingFloor from '../../../data/themes/proving-floor.json' with { type: 'json' };
 import drainedWorks from '../../../data/themes/drained-works.json' with { type: 'json' };
@@ -298,6 +298,17 @@ export const MIN_FOG_DROP = 6;
  */
 export const MAX_TERRAIN_CHROMA = 34;
 
+/**
+ * How far a sky ramp must stay from anything the board can produce.
+ *
+ * Two counts of slack over the 5 `onAnyRamp` actually matches at — enough that a
+ * theme cannot sit exactly on the boundary, not so much that it cries wolf. A
+ * first draft used 9 and flagged both dark themes, whose fogged floors are
+ * *clear* at 5 and at 7; a validator that fails a theme the predicate could
+ * never confuse teaches authors to ignore it.
+ */
+export const SKY_TERRAIN_MARGIN = 7;
+
 /** Distance between the strongest and weakest channel — saturation, cheaply. */
 export const chroma = (hex: number): number => {
   const { r, g, b } = channels(hex);
@@ -357,6 +368,28 @@ export const themeContractErrors = (theme: Theme): string[] => {
   for (const t of [0, 1] as const) {
     const ramp = rampAt(theme.sky, t);
     if (inUiFamily(ramp)) errs.push(`${theme.id}: the sky ramp enters a UI colour family`);
+  }
+
+  // SKY-vs-TERRAIN. `e2e/pixels.ts`'s `isSceneBackground` answers "is this pixel
+  // the void?" by testing every shipped ramp, and `sky.ts` says in as many words
+  // that this is only honest because the contract forbids a ramp from crossing
+  // terrain. **It did not.** That sentence described a guarantee nobody had
+  // implemented, and Proving Floor's first sky broke it: its fogged floor
+  // composites at (86,84,80) and its own ramp passes through (81,82,83), so a
+  // fogged board tile answered "yes, that is the sky" — which makes a clipped
+  // board look fine and an unclipped one indistinguishable from it.
+  //
+  // Checked against both ends of what a surface can become: the authored albedo
+  // (roughly the lit case) and the fogged composite.
+  for (const kind of KINDS) {
+    const albedo = channels(theme.terrain[kind]);
+    const fogged = foggedColour(theme.terrain[kind]);
+    if (onRamp(theme.sky, albedo, SKY_TERRAIN_MARGIN)) {
+      errs.push(`${theme.id}: the sky ramp passes through lit ${kind}`);
+    }
+    if (onRamp(theme.sky, fogged, SKY_TERRAIN_MARGIN)) {
+      errs.push(`${theme.id}: the sky ramp passes through fogged ${kind}`);
+    }
   }
   for (const kind of KINDS) {
     const g = theme.grain[kind];
