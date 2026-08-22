@@ -6022,3 +6022,26 @@ chase names an enemy, and drawing a line to it could leak a position the fog is 
 visibility test was added: a networked client's `state.units` contains only the enemies its team
 can see, so an unseen target is simply not found and nothing is drawn. The check that would have
 been written is the one the server already performed.
+## 2026-08-22 — Builder session 15 (Move loses its banner beat)
+
+**(MOVE-NO-BANNER-BEAT) Move starts the moment its banner does; the other three phases keep
+their beat.** `choreograph` gave every phase a leading `BEAT` — "the banner reads before the
+phase acts" — which is right for Prep, Dash and Blast: those are announcements, and the pause
+is what makes the naming land. Move announces nothing. Everyone goes at once and the board
+already shows where, so the beat was a full 760 ms of every character standing under a MOVE
+label before anyone stepped. On a one-tile move that is **half the phase**, and it read as
+characters hesitating before they walked. Owner's call.
+
+**How it was found is the more useful part.** Three rounds of static screenshots blamed the
+animation — first its cadence, then its seek — and both readings were wrong, because a
+screenshot cannot show motion and this container renders at ~10 fps, so "a frame every 110 ms"
+really means "a frame whenever the renderer got round to it". `npm run film -w @cards/client`
+replaces `performance.now` and `requestAnimationFrame` in the page before any app code loads,
+so stepping 33 ms advances the animation by exactly 33 ms however slow the render is. The
+first film showed 23 frames of `aegis_idle` at the top of the Move phase — which no amount of
+looking at the renderer would have explained, because the bug was in the timeline.
+
+Nothing asserted the leading beat in either direction, which is why it survived a rewrite of
+this area. It is asserted now, both ways: the first move cue sits at its banner, and a Prep
+cast still sits after one.
+
