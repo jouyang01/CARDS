@@ -5802,3 +5802,52 @@ expressed" and must never be a crash on boot.
 **Not done.** Phase 5 — props, set pieces, and the first thing that actually moves. The freeze
 hook now makes that safe to attempt: start with one element and confirm the browser suite stays
 green before adding a second.
+
+---
+
+## 2026-08-22 — Builder session 14 (DEATH-HANG-2, INTERCEPT-LANDING-CHOICE, CHASE-AUDIT)
+
+**DEATH-HANG-2 — the turn nobody can take resolves itself.** DOWN-SEAT-SKIP removes a seat with
+no living character from `#answering()`. When *every* seat is down that set is empty and
+`#allIn()`'s `answering.length > 0` guard makes the room wait — so the first Hold Position press
+puts that seat alone in the answering set and resolves the whole turn by itself, and the second
+player's press lands on the window that has already replaced it. Sudden death is the only place
+this is reachable, because a double KO is the one death that does not end the match. The fix
+resolves the turn *before* a window nobody can use is ever opened, gated on `#sinks.size > 0` so
+QUOTA-RUNAWAY still stops an abandoned room, and bounded by `MAX_AUTO_RESOLVES` so it can never
+run away.
+
+**Judgment call — BLINK-ADJ's nudge does not apply to an Intercept.** INTERCEPT-LANDING-CHOICE
+gives the landing square to the player; BLINK-ADJ lands a blocked blink on the *nearest legal*
+square instead of failing. Composed naively they produce a bodyguard standing diagonally off his
+teammate — outside the ability's own area, so `applySelfEffects` refuses him the shield — with the
+guard bound anyway: a half-cast that reads on the board as a working Intercept. The ruling gave
+the square to the player, so for a guard cast it is that square or a whole-ability fizzle. The
+ordinary 1v1 fallback teleport keeps the nudge, unchanged.
+
+**Judgment call — an ally-targeted aim skips the caster-to-aim range check.** A landing beside an
+ally at exactly range 5 can sit six squares from Aegis, so the ordinary `aimIsLegal` envelope
+would refuse legal picks at the edge of the reach. The range constraint belongs to the *ally*
+(`allyTargetOf`), and the square is checked by `guardLandingIsLegal`; both run, so nothing is
+unchecked. Client-side `aimLegal` widens to `range + 1` — the tightest bound that never rejects
+what the engine accepts — and the exact set stays `guardLandings`, which `commitAim` and the range
+envelope both read.
+
+**CHASE-AUDIT — the cause was `lastKnown`, not the chase.** *"Sometimes the character chases
+directly to the tile the last character was on even if we know where the chase target went."*
+`recordLastKnown` ran only at the turn boundary, so the fog fallback a chase reached for during
+Move described the board as it stood at the end of the *previous* turn. An enemy nobody could see
+at that boundary, brought into view during this turn's Prep/Dash/Blast and then slipping into
+cover in Move, was chased to a square from turns ago — in the repro, eight squares in the opposite
+direction. Fixed by recording again at the top of `runMove`, against the post-Blast board the
+client has just played back. Golden rule #5 is untouched: `recordLastKnown` still only ever writes
+a square the team can see, and an enemy nobody has eyes on leaves the record alone.
+
+**Judgment call — the chase snapshot stays frozen (suspect (a), examined and declined).** The
+backlog named a second suspect: the chase snapshot is the post-*normal*-move board, so a target
+that is itself chasing is pursued to its pre-chase tile. That is CHASE1's convergence design, not
+a defect — every chaser reads one frozen board precisely so that A-chases-B and B-chases-A cannot
+depend on which of them `orderedPlans` visits first. Making the snapshot live would trade a
+cosmetic lag against a mutual chase whose outcome depends on iteration order, which is the worse
+fault. Left alone, and the reasoning is pinned in `chase-audit.test.ts` so the next audit does not
+re-open it from scratch.

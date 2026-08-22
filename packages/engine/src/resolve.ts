@@ -2375,6 +2375,23 @@ interface Mover {
 function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: ReadonlySet<string>, events: TurnEvent[], trapHits: TrapHits): void {
   events.push({ type: 'phaseStart', phase: 'move' });
 
+  // CHASE-AUDIT — *"sometimes the character chases directly to the tile the last
+  // character was on even if we know where the chase target went."*
+  //
+  // The chase's fog fallback (`lastKnownFor`) was only ever written at the turn
+  // boundary, so a chase resolving here read a board that was a whole turn old.
+  // An enemy nobody could see at the last boundary, brought into view during
+  // this turn's Prep, Dash or Blast and then slipping into cover in Move, was
+  // therefore chased to a square from turns ago — sometimes in the opposite
+  // direction from the one the team had just watched it stand in.
+  //
+  // So the memory is refreshed here, against the post-Blast board — the board
+  // the client has just finished playing back, which is exactly what makes it
+  // fair to remember. Golden rule #5 is untouched: `recordLastKnown` still only
+  // ever writes a square the team can actually see, and a target nobody has
+  // eyes on leaves the record alone.
+  recordLastKnown(draft, board);
+
   const movers: Mover[] = [];
   for (const plan of orderedPlans(draft, plans)) {
     if (plan.movePath.length === 0 || !plan.unit.alive) continue;
@@ -3093,10 +3110,17 @@ function tickOverTime(draft: GameState, events: TurnEvent[]): void {
  * CHASE1 — record, per team, where each enemy is *right now* if that team can
  * see it; leave the previous record alone if it cannot.
  *
- * Run at the turn boundary so "last known" means "as of the most recent turn we
- * could see you", which is the granularity a chase order is written at. A dead
- * enemy is skipped rather than erased: the record is where you last saw them,
- * and a chase against a corpse is dropped on its own account anyway.
+ * Run twice a turn, and the second one is CHASE-AUDIT's fix: once at the top of
+ * **Move**, against the post-Blast board the client has just played back, and
+ * once at the **turn boundary**. Recording only at the boundary made "last
+ * known" mean "as of the end of the previous turn" for a chase resolving inside
+ * this one — so an enemy the team watched all turn and then lost was chased to
+ * a square from turns ago. Both points record the same thing (what a team can
+ * see, right now), so this is a finer granularity rather than a new rule, and
+ * the fog guarantee is unchanged: a square nobody has eyes on is never written.
+ *
+ * A dead enemy is skipped rather than erased: the record is where you last saw
+ * them, and a chase against a corpse is dropped on its own account anyway.
  *
  * Iterates teams then `draft.units`, so entries are appended in a fixed order
  * and the serialised state is a function of the match, not of iteration.
