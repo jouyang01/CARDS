@@ -57,6 +57,21 @@ const match = (killOwn = false) => {
   return ui;
 };
 
+/** A 1v1, so one Lock In per seat resolves the turn. */
+const duel = () => {
+  const ui = mountUI();
+  ui.renderer.withClips({ aegis: CLIPS });
+  const teams: [CharacterDef[], CharacterDef[]] = [[AEGIS], [VEX]];
+  const opening: GameState = createMatch(OPEN_MAP, '1v1', teams);
+  const own = opening.units.find((u) => u.owner === 0)!;
+  const foe = opening.units.find((u) => u.owner === 1)!;
+  own.pos = { x: 8, y: 9 };
+  foe.pos = { x: 9, y: 9 }; // adjacent, so Shield Bash has something to hit
+  startHotSeat(ui.ui, OPEN_MAP, roster, teams, '1v1', [1, 1], POOL,
+    undefined, undefined, opening);
+  return ui;
+};
+
 beforeEach(() => {
   document.body.replaceChildren();
   // happy-dom does not drive `requestAnimationFrame`, and playback's tick loop
@@ -105,20 +120,7 @@ describe('RESTING-CLIP: nobody stands in bind pose', () => {
  * covered in isolation, `applyClips` was not covered at all.
  */
 describe('RESTING-CLIP: a resolving turn takes the pose back', () => {
-  /** A 1v1, so one Lock In per seat resolves the turn. */
-  const duel = () => {
-    const ui = mountUI();
-    ui.renderer.withClips({ aegis: CLIPS });
-    const teams: [CharacterDef[], CharacterDef[]] = [[AEGIS], [VEX]];
-    const opening: GameState = createMatch(OPEN_MAP, '1v1', teams);
-    const own = opening.units.find((u) => u.owner === 0)!;
-    const foe = opening.units.find((u) => u.owner === 1)!;
-    own.pos = { x: 8, y: 9 };
-    foe.pos = { x: 9, y: 9 }; // adjacent, so Shield Bash has something to hit
-    startHotSeat(ui.ui, OPEN_MAP, roster, teams, '1v1', [1, 1], POOL,
-      undefined, undefined, opening);
-    return ui;
-  };
+
 
   it('runs when the unit moves, instead of sliding along in its idle', async () => {
     // A move rather than an ability: every turn with a move produces `move`
@@ -138,5 +140,35 @@ describe('RESTING-CLIP: a resolving turn takes the pose back', () => {
     // And it loops: a multi-square move is several consecutive cues, and a
     // one-shot run would restart — a visible hitch at every tile.
     expect(b.renderer.draw.clips.find((c) => c.clip === CLIPS.run)!.loop).toBe(true);
+  }, 25000);
+});
+
+/**
+ * And the wiring: a pure `selectFacing` that nothing calls is the same shape of
+ * bug as a `preloadCharacters` nobody called.
+ */
+describe('FACING: the controller actually turns units', () => {
+  it('faces the enemy before a turn is played', () => {
+    const b = match();
+    const aegis = b.renderer.draw.board.units.find((u) => u.characterId === 'aegis')!;
+    const f = b.renderer.draw.facing.get(aegis.unitId);
+    expect(f, 'nobody told the renderer which way to look').toBeDefined();
+    expect(Math.abs(f!.dx) + Math.abs(f!.dy), 'and it is a real direction').toBeGreaterThan(0);
+  });
+
+  it('turns to face the way it walks', async () => {
+    const b = duel();
+    const aegis = b.renderer.draw.board.units.find((u) => u.characterId === 'aegis')!;
+    const before = b.renderer.draw.facing.get(aegis.unitId)!;
+    expect(before.dx, 'opens facing the enemy, who is to the east').toBeGreaterThan(0);
+
+    click(moveButton(b.controls, 'Move'));
+    aimAndCommit(b.board, { x: 6, y: 9 }); // west, away from the enemy
+    lockIn(b.controls);
+    lockIn(b.controls);
+
+    await vi.waitFor(() => {
+      expect(b.renderer.draw.facing.get(aegis.unitId)!.dx, 'walked west, looking west').toBeLessThan(0);
+    }, { timeout: 15000 });
   }, 25000);
 });
