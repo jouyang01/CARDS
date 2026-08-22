@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ambientEnabled, modelsEnabled } from '../src/render-flags.js';
+import { ambientEnabled, modelsEnabled, renderOnDemand } from '../src/render-flags.js';
 
 /**
  * AMBIENT-FREEZE — the guard shipped before the hazard.
@@ -82,5 +82,26 @@ describe('MODEL-FREEZE keeps the board suite on the renderer it was written for'
     // Unlike ambient motion, a character mesh is not decoration; suppressing it
     // for an accessibility preference would remove content, not calm it.
     expect(modelsEnabled({ reducedMotion: true })).toBe(true);
+  });
+});
+
+describe('RENDER-ON-DEMAND ships wired and off', () => {
+  it('is off unless asked for', () => {
+    // Measured null result, not caution: on-demand drew 17 idle frames in five
+    // seconds against 14 for always. The renderer is not what keeps the board
+    // busy — the app re-issues render commands into an untouched page — so
+    // turning this on today buys a wrapper and a flag for nothing.
+    expect(renderOnDemand()).toBe(false);
+    expect(renderOnDemand({ search: '?map=iron-basin' })).toBe(false);
+    expect(renderOnDemand({ search: '?render=always' })).toBe(false);
+  });
+
+  it('opts in on ?render=ondemand, for measuring the app-side fix', () => {
+    expect(renderOnDemand({ search: '?render=ondemand' })).toBe(true);
+    expect(renderOnDemand({ search: '?map=duel-arena&render=ondemand' })).toBe(true);
+  });
+
+  it('ignores reduced-motion — skipping redundant frames is not motion', () => {
+    expect(renderOnDemand({ reducedMotion: true })).toBe(false);
   });
 });
