@@ -68,17 +68,17 @@
       "tallies": 47,
       "tallyPlacement": "lower-third",
       "attach": {
-        "_comment": "Where the door rides. The FOREARM, not the hand: a salvaged bulkhead is strapped to the arm, and that arm is never free \u2014 a hand grip would let him put it down. Offsets are in the bone's local space, position in TILES, rotation in XYZ degrees. Found by eye: -75 about Z swings the door off the arm's axis so its FACE \u2014 and the tally marks \u2014 present forward, which is the whole point of the prop.",
-        "bone": "mixamorigLeftForeArm",
+        "_comment": "Where the door rides: centred on the RIGHT FOREARM (owner's call, 2026-08-22). The forearm rather than the hand because a salvaged bulkhead is strapped to the arm, and that arm is never free \u2014 a hand grip would let him put it down. Offsets are in the bone's local space, position in TILES, rotation in XYZ degrees. y=0.11 is the forearm's midpoint (the bone is 0.227 tiles long), so the door is centred on the limb rather than hanging off the end of it. A Mixamo bone's local +Y runs down the bone, so the -90 about Z takes the door off the arm's axis and the 180 about Y turns its FACE \u2014 and the 47 tally marks \u2014 outward instead of into his chest.",
+        "bone": "mixamorigRightForeArm",
         "position": [
           0,
-          0.5,
-          0.15
+          0.11,
+          0
         ],
         "rotation": [
           0,
-          0,
-          -75
+          180,
+          -90
         ]
       }
     },

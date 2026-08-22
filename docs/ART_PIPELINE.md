@@ -711,7 +711,7 @@ Adding a weapon is a **data change**: the `weapon` block in `data/art/<id>.json`
 `attach`.
 
 ```json
-"attach": { "bone": "mixamorigLeftForeArm", "position": [0, 0.5, 0.15], "rotation": [0, 0, -75] }
+"attach": { "bone": "mixamorigRightForeArm", "position": [0, 0.11, 0], "rotation": [0, 180, -90] }
 ```
 
 ### The three things that bite
@@ -732,10 +732,18 @@ Adding a weapon is a **data change**: the `weapon` block in `data/art/<id>.json`
 ### Placing it
 
 Position and rotation are in the **bone's** local space, and there is no substitute for
-looking. A Mixamo bone's local +Y runs down the bone, so `rotation: [0,0,0]` lays the prop
-*along* the limb — which for Aegis put a bulkhead through his head. −75° about Z swings it off
-the arm's axis so the face, and the 47 tally marks, present forward, which is the entire point
-of the prop.
+looking. A Mixamo bone's local **+Y runs down the bone**, which has two consequences worth
+knowing before you start guessing:
+
+- `rotation: [0,0,0]` lays the prop *along* the limb. For Aegis that put a bulkhead through
+  his head. −90° about Z takes it off the arm's axis.
+- `position: [0, 0, 0]` is the **joint**, not the middle of the limb. To centre a prop on a
+  forearm, offset half the bone's length along +Y — read the child joint's translation out of
+  the `.glb` and divide by `bodyHeight / MODEL_HEIGHT_TILES` to get tiles. Aegis's forearm is
+  0.227 tiles, so the door sits at `y: 0.11`.
+
+And the prop can be the right way round and still face the wrong way: 180° about Y turns the
+door's face — and the 47 tally marks — outward instead of into his chest.
 
 The offsets live in the manifest, which is a static file in `public/models/`. Edit it, reload
 the page, look — no rebuild, no Blender. Settle on numbers there, then write them back into
