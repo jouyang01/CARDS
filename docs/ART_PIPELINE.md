@@ -690,15 +690,56 @@ tiles. That is a game design decision, deferred until characters can be seen on 
 
 ---
 
-## 12. Phase 9 — weapon props (planned)
+## 12. Phase 9 — weapon props (shipped)
 
-A weapon is geometry parented to a bone after rigging:
+A prop is geometry parented to a bone **after** rigging, and it never goes to Mixamo:
+the auto-rigger places its markers off the silhouette, so a held object either fails that
+placement or gets skinned to the spine (§14). The body is rigged alone; the prop comes down
+its own path.
 
-```ts
-model.getObjectByName('mixamorigLeftHand').add(doorMesh);
+```bash
+blender --background --python tools/art/build_prop.py -- aegis mainHand
 ```
 
-`<id>_door.fbx` already exists. Adding a weapon stays a data change via the `weapon` block.
+That needs nothing from Mixamo — **no re-rig, not even the downloads folder.** It converts
+`build/art/<id>/<id>_<kind>.fbx`, re-applies the atlas, writes
+`public/models/<id>_<kind>.glb`, and merges a `props` entry into the character manifest.
+`build_glb.py` preserves that entry when it rewrites, so re-rigging later does not silently
+disarm the character.
+
+Adding a weapon is a **data change**: the `weapon` block in `data/art/<id>.json` grows an
+`attach`.
+
+```json
+"attach": { "bone": "mixamorigLeftForeArm", "position": [0, 0.5, 0.15], "rotation": [0, 0, -75] }
+```
+
+### The three things that bite
+
+> **Attach AFTER measuring, never before.** The renderer sizes a character by measuring the
+> model it is handed, and that measurement walks the whole tree — so a door parented before
+> it is measured *as part of the body*, and the man shrinks until man-plus-door is
+> `MODEL_HEIGHT_TILES` tall. Aegis went from 1.733u to 2.449u the moment the door landed.
+> `attachProps` runs after the scale is known.
+
+> **A prop is authored in tiles and lives in the body's units.** It hangs inside the model's
+> scaled space and inherits that scale, so `propLocalScale` divides it back out. That is what
+> makes a door's size a property of the door rather than of whoever is carrying it.
+
+> **Clone per instance.** Two Aegises must not share one door — the second built would take it
+> off the first, because a `Object3D` has one parent.
+
+### Placing it
+
+Position and rotation are in the **bone's** local space, and there is no substitute for
+looking. A Mixamo bone's local +Y runs down the bone, so `rotation: [0,0,0]` lays the prop
+*along* the limb — which for Aegis put a bulkhead through his head. −75° about Z swings it off
+the arm's axis so the face, and the 47 tally marks, present forward, which is the entire point
+of the prop.
+
+The offsets live in the manifest, which is a static file in `public/models/`. Edit it, reload
+the page, look — no rebuild, no Blender. Settle on numbers there, then write them back into
+`data/art/<id>.json` and re-run `build_prop.py` so they survive.
 
 ---
 
@@ -782,6 +823,8 @@ code alone.
 | Fail-soft with no call site | board draws boxes, nothing logs | every piece of the load path worked; nobody called it. A silent fallback cannot tell you it fired. |
 | `public/` is not fingerprinted | model and manifest disagree about clips | Vite hashes `dist/assets/` only. Stamp a version and put it in the URL. |
 | Box-or-model decided at build time | models load, units stay boxes | `buildUnit` runs once per unit and the group is cached; the fetch had not finished when the first paint ran. |
+| Prop attached before measuring | the character shrinks when armed | the bounds walk the whole tree, so the prop counts as body and the pair is scaled to fit. |
+| Scaling to real metres | character reads tiny on a big square | a vertical metre projects by cos(pitch); 1.15 tiles is 0.94 tile-widths of screen height. Size the character to the square. |
 
 ---
 

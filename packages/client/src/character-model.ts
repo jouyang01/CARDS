@@ -22,6 +22,51 @@ export interface CharacterManifest {
   posture?: PostureSpec;
   /** Content hash of the `.glb` beside it. See `modelUrl`. */
   version?: string;
+  /** Weapons and held objects, parented to bones at load. */
+  props?: PropSpec[];
+}
+
+/**
+ * A prop that rides a bone.
+ *
+ * Props are NOT in the rigged upload — Mixamo places its auto-rig markers off
+ * the silhouette, and a held object either fails that placement or gets skinned
+ * to the spine. So the body is rigged alone and the prop is parented afterwards,
+ * which is also why adding one costs no re-rig.
+ */
+export interface PropSpec {
+  slot: string;
+  file: string;
+  version?: string;
+  /** Mixamo bone name, e.g. `mixamorigLeftForeArm`. */
+  bone: string;
+  /** Authored size, in TILES, like the rest of the art spec. */
+  heightTiles?: number;
+  /** Offset in the bone's local space, in tiles. */
+  position?: [number, number, number];
+  /** XYZ degrees. */
+  rotation?: [number, number, number];
+}
+
+/**
+ * How big a prop must be in its bone's local space to end up `heightTiles` tall
+ * on the board.
+ *
+ * A prop hangs inside the character's own scaled space: the renderer scales the
+ * whole model so the BODY stands MODEL_HEIGHT_TILES high, and everything
+ * parented to a bone inherits that. So a door authored at 1.55 tiles would come
+ * out 1.55 x modelScale tiles unless the model's scale is divided back out —
+ * which is what makes a prop's size independent of how tall its owner happens
+ * to be, and keeps the art spec talking in tiles.
+ */
+export function propLocalScale(
+  authoredHeight: number,
+  heightTiles: number | undefined,
+  tile: number,
+  modelScale: number,
+): number {
+  if (heightTiles === undefined || authoredHeight <= 0 || modelScale <= 0) return 1;
+  return (tile * heightTiles) / authoredHeight / modelScale;
 }
 
 /**
@@ -99,6 +144,22 @@ export function postureRotations(posture: PostureSpec | undefined): Map<string, 
   return out;
 }
 
+/** A loaded prop's own height, in the units it was authored in. */
+const measuredHeight = (root: Object3D): number => {
+  let min = Infinity;
+  let max = -Infinity;
+  root.traverse((o) => {
+    const geometry = (o as { geometry?: { boundingBox: { min: { y: number }; max: { y: number } } | null; computeBoundingBox: () => void } }).geometry;
+    if (geometry === undefined) return;
+    if (geometry.boundingBox === null) geometry.computeBoundingBox();
+    const box = geometry.boundingBox;
+    if (box === null) return;
+    min = Math.min(min, box.min.y);
+    max = Math.max(max, box.max.y);
+  });
+  return max > min ? max - min : 0;
+};
+
 /** Mixamo bone names survive glTF as `mixamorigHips` or `mixamorig:Hips`. */
 const findBone = (root: Object3D, name: string): Bone | undefined => {
   const alt = name.replace('mixamorig', 'mixamorig:');
@@ -112,6 +173,16 @@ const findBone = (root: Object3D, name: string): Bone | undefined => {
 
 export interface ModelInstance {
   root: Group;
+  /**
+   * Parent, size and place the props, once the caller knows how much the body
+   * was scaled by.
+   *
+   * Deliberately NOT done in `instance()`. The renderer decides that scale by
+   * measuring the model it has just been handed, and the measurement walks the
+   * whole tree — so a prop attached before it is measured as part of the body,
+   * and the character shrinks to keep man-plus-door at the target height.
+   */
+  attachProps(modelScale: number, tile: number): void;
   /** Play a choice, seeking rather than restarting if it is already running. */
   play(choice: ClipChoice, beatSeconds: number): void;
   /** Advance the mixer, then re-apply posture on top of whatever it wrote. */
@@ -120,7 +191,13 @@ export interface ModelInstance {
 }
 
 export class CharacterModels {
-  private readonly loaded = new Map<string, { scene: Group; clips: AnimationClip[]; manifest: CharacterManifest }>();
+  private readonly loaded = new Map<string, {
+    scene: Group;
+    clips: AnimationClip[];
+    manifest: CharacterManifest;
+    /** slot -> the prop's scene and its authored height, for `propLocalScale`. */
+    props: Map<string, { scene: Group; height: number }>;
+  }>();
   private readonly missing = new Set<string>();
   /**
    * SkeletonUtils.clone, captured when the loaders are imported.
@@ -168,7 +245,23 @@ export class CharacterModels {
           if (audit.missing.length > 0) {
             console.warn(`[cards] ${id}: clip(s) named by the manifest but absent from the .glb — ${audit.missing.join(', ')}`);
           }
-          this.loaded.set(id, { scene: gltf.scene as Group, clips, manifest });
+          // Props are best-effort: a character whose door 404s is still a
+          // character. Failing the whole model over a missing prop would trade
+          // a visible gap for an invisible one.
+          const props = new Map<string, { scene: Group; height: number }>();
+          for (const spec of manifest.props ?? []) {
+            try {
+              const url = spec.version === undefined || spec.version === ''
+                ? `${base}/${spec.file}`
+                : `${base}/${spec.file}?v=${encodeURIComponent(spec.version)}`;
+              const propGltf = await loader.loadAsync(url);
+              const scene = propGltf.scene as Group;
+              props.set(spec.slot, { scene, height: measuredHeight(scene) });
+            } catch (err) {
+              console.warn(`[cards] ${id}: prop "${spec.slot}" did not load: ${String(err)}`);
+            }
+          }
+          this.loaded.set(id, { scene: gltf.scene as Group, clips, manifest, props });
         } catch (err) {
           // Ordinary, not exceptional — but not silent either. A character with
           // no art yet and a character whose files 404 because the path is wrong
@@ -206,11 +299,44 @@ export class CharacterModels {
       if (bone !== undefined) bones.set(name, { bone, extra, base: bone.rotation.x });
     }
 
+    // Props are cloned per instance like the body: two Aegises must not share
+    // one door, or the second to be built steals it off the first.
+    const props: { root: Object3D; spec: PropSpec; height: number; bone: Bone }[] = [];
+    for (const spec of entry.manifest.props ?? []) {
+      const loadedProp = entry.props.get(spec.slot);
+      const bone = findBone(root, spec.bone);
+      if (loadedProp === undefined) continue;
+      if (bone === undefined) {
+        console.warn(`[cards] ${characterId}: no bone "${spec.bone}" for prop "${spec.slot}"`);
+        continue;
+      }
+      // Cloned now, PARENTED LATER. The renderer measures the body to decide
+      // its scale, and that measurement walks the whole tree — a door attached
+      // here counts as part of the man, so he shrinks until man-plus-door is
+      // MODEL_HEIGHT_TILES tall. Attaching in `attachProps`, after the scale is
+      // known, keeps the body the thing being sized.
+      props.push({ root: this.cloneFn(loadedProp.scene), spec, height: loadedProp.height, bone });
+    }
+
     let current: AnimationAction | undefined;
     let currentName = '';
 
     const inst: ModelInstance = {
       root,
+      attachProps(modelScale, tile) {
+        for (const { root: propRoot, spec, height, bone } of props) {
+          propRoot.scale.setScalar(propLocalScale(height, spec.heightTiles, tile, modelScale));
+          // Offsets are authored in tiles too, so they need the same conversion:
+          // one tile of bone-local space is `tile / modelScale` units.
+          const perTile = modelScale > 0 ? tile / modelScale : 1;
+          const [px, py, pz] = spec.position ?? [0, 0, 0];
+          propRoot.position.set(px * perTile, py * perTile, pz * perTile);
+          const [rx, ry, rz] = spec.rotation ?? [0, 0, 0];
+          const rad = (d: number): number => (d * Math.PI) / 180;
+          propRoot.rotation.set(rad(rx), rad(ry), rad(rz));
+          bone.add(propRoot);
+        }
+      },
       play(choice, beatSeconds) {
         const clip = byName.get(choice.clip);
         if (clip === undefined) return;

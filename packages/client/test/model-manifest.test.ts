@@ -64,6 +64,17 @@ describe('MODEL-MANIFEST: every committed model is loadable', () => {
     expect(audit.usable, 'an idle clip, or the unit stands in bind pose').toBe(true);
   });
 
+  it.each(manifests)('%s ships every prop it declares', (file) => {
+    // Props are built by a separate script (build_prop.py) into the same
+    // manifest, so the two can drift apart in a way nothing else notices: a
+    // declared-but-absent prop is a character who walks on stage unarmed.
+    for (const prop of load(file).props ?? []) {
+      expect(prop.bone, `${prop.slot} names a bone`).toMatch(/^mixamorig/);
+      expect(existsSync(join(MODELS, prop.file)), `${prop.file} is beside the manifest`).toBe(true);
+      expect(prop.version ?? '', `${prop.slot} is versioned`).not.toBe('');
+    }
+  });
+
   it.each(manifests)('%s is versioned, so a re-rig cannot serve from cache', (file) => {
     expect(load(file).version ?? '').not.toBe('');
   });

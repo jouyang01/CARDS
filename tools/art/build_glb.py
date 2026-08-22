@@ -332,12 +332,18 @@ def main():
     # clips exist. The client appends this as ?v= (see modelUrl).
     version = hashlib.sha256(out.read_bytes()).hexdigest()[:12]
     manifest = out_dir / f"{cid}.clips.json"
+    # Props are written by build_prop.py into this same file and must survive a
+    # rebuild here: the two scripts run independently, and re-running this one
+    # after a re-rig should not silently disarm the character.
+    existing = json.loads(manifest.read_text()) if manifest.exists() else {}
+    props = existing.get("props")
     manifest.write_text(json.dumps({
         "id": cid,
         "version": version,
         "clips": sorted(exported),
         "map": {k: v for k, v in (art.get("clips") or {}).items() if not k.startswith("_")},
         "posture": {k: v for k, v in (art.get("posture") or {}).items() if not k.startswith("_")},
+        **({"props": props} if props else {}),
     }, indent=2) + "\n")
     print(f"  -> {manifest.name}")
 

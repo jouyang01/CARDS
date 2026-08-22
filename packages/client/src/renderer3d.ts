@@ -1078,6 +1078,11 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
       }
       instance.root.scale.setScalar(scale);
       instance.root.position.y = -minY * scale;
+      // AFTER the measurement above, not before: a door parented earlier counts
+      // as part of the body, and the man shrinks to fit the pair into
+      // MODEL_HEIGHT_TILES. Props are authored in tiles and hang inside this
+      // scaled space, so they divide that scale back out.
+      instance.attachProps(scale, TILE);
       instance.root.name = 'body';
       instances.set(unit.unitId, instance);
       g.add(instance.root, buildBars(TILE * MODEL_HEIGHT_TILES));

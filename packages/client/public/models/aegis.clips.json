@@ -31,5 +31,24 @@
     "dropShoulderDeg": 9,
     "hunchDeg": 13,
     "headForwardDeg": 7
-  }
+  },
+  "props": [
+    {
+      "slot": "mainHand",
+      "file": "aegis_door.glb",
+      "version": "47de597cb5a3",
+      "bone": "mixamorigLeftForeArm",
+      "heightTiles": 1.55,
+      "position": [
+        0,
+        0.5,
+        0.15
+      ],
+      "rotation": [
+        0,
+        0,
+        -75
+      ]
+    }
+  ]
 }
