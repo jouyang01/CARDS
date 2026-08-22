@@ -1,0 +1,25 @@
+{
+  "id": "proving-floor",
+  "name": "Proving Floor",
+  "note": "A raised ceremonial duelling platform, late afternoon. Sun-bleached limestone, brass barricades, dry scrub. Deliberately the bright theme: the board is lit rather than lurking, and the sky is the warm end of the day.",
+  "terrain": {
+    "open": "#b8a781",
+    "wall": "#d6cbb0",
+    "cover": "#8f7526",
+    "brush": "#4a5a30"
+  },
+  "surface": {
+    "open": { "roughness": 0.92, "metalness": 0.02 },
+    "wall": { "roughness": 0.88, "metalness": 0.03 },
+    "cover": { "roughness": 0.38, "metalness": 0.62 },
+    "brush": { "roughness": 1.0, "metalness": 0.0 }
+  },
+  "sky": {
+    "top": "#141a33",
+    "bottom": "#8a5a2e"
+  },
+  "arena": {
+    "shade": 0.42,
+    "rim": "#59461a"
+  }
+}

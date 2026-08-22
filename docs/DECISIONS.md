@@ -5610,3 +5610,73 @@ retuned deliberately alongside — not a line appended to a scenery commit.
 No new assets, so `ASSET-WEIGHT-BUDGET` is still not in play — `MAP_PIPELINE.md` phase 4 is
 what triggers it, and it now has two callers, since `ART_PIPELINE.md` §5 needs the same loader
 and the same budget number for character `.glb` files.
+
+## 2026-08-22 — Builder session 14 (MAP-THEMES / FOG-BY-THEME: a map declares its own place)
+
+Phase 2 of `docs/MAP_PIPELINE.md`. Owner directives for this phase: Duel Arena may be as bold
+as it needs to be ("the current board is bad"), brush stays green-ish, and a theme carries the
+arena and sky as well as the terrain, with fog derived from the theme's floor colour.
+
+**The themed/global boundary is the same line phase 1 drew between lit and unlit.** The world
+is themed — floor, walls, cover, brush, the material each is made of, the sky, the platform.
+The UI vocabulary is not — team colours, aim orange, the range wash, pad teals, status inks.
+Two reasons, both about the player. Team colour is *identity*: a map that re-tints the teams
+changes friend-from-foe reading per map, and `TEAM_CSS` in the HUD plus the e2e's colour
+families both encode it. And the overlay palette is a vocabulary learned once; re-teaching it
+per map is a cost with no upside. Getting one boundary to do both jobs is why `BoardPalette`
+splits into a themed half and two constants rather than becoming one bag of colours.
+
+**Themes live in `data/themes/*.json`, named by `MapDef.theme`.** Considered and rejected:
+inline in the map (duplicated the moment two maps share a look) and a table in client code
+(that is code, not data — it fails golden rule 2 outright). A separate directory matches the
+shape already there for characters and maps, keeps map files about geometry, and lands the
+whole thing in the Designer's lane per the `CLAUDE.md` role table: a new theme touches no
+`packages/` file.
+
+**`theme-inert.test.ts` pins golden rule 1 from outside.** Putting a purely visual string on an
+engine type is a standing invitation to branch on it one day, so the guard does not trust the
+comment on the field: same orders, two maps identical but for `theme`, and the resolved state
+*and event log* must match. The event check matters separately — two runs could agree on the
+final state and still disagree about what they claimed happened, which is what attribution and
+the combat log are built from.
+
+**FOG-BY-THEME — fog now darkens *to* a value rather than *by* one.** The wash was a fixed 62%
+of near-black, a number tuned against one dark floor. Over Proving Floor's limestone the same
+alpha leaves fogged squares plainly readable: VISION1 quietly stops holding, and the failure
+surfaces as a colour-matcher complaint that reads like a renderer bug rather than the rules
+problem it is. The overlay is unlit and composites linearly, so the alpha is solvable —
+`α ≥ (floor − target) / (floor − ink)` per channel, binding channel wins. A dark theme still
+lands on exactly 0.62 and looks unchanged; a pale one gets what it needs.
+
+**Judgment call — the fog cap came down from 0.96 to 0.9, for two reasons at once.** Fog hides
+*units*; terrain under it is public knowledge, and a wash approaching opaque erases the board's
+shape along with the information. Separately, at 0.96 *no* floor could fail the VISION1 contract
+check — the validator had a rule nothing could violate, which is decoration. At 0.9 a near-white
+floor genuinely fails and an author is told at authoring time.
+
+**Themes ship with a validator, because phase 1 earned it.** That session lost real time to an
+arena rim that satisfied `isTeamBlue` and a spawn marker that would have broken the fog test's
+`isTeamRed === 0` assertion — a hidden-information guard. A theme is a far easier way to hit
+the same wall, and Designers can now add themes without touching `packages/`. So the contract
+is a test: terrain kinds separated in luma, brush green-dominant, nothing inside a UI colour
+family, the fogged floor inside the VISION1 bound, and the sky ramp clear of terrain. It also
+ships with tests that the validator *rejects* things, because a rule nothing fails is not a rule.
+
+**The contract is separation, not ordering — and the fallback fails it.** An earlier draft
+pinned the ranking the built-in palette happens to use (floor darkest), but Proving Floor's
+whole idea is a floor brighter than what stands on it, and a rule forbidding that protects an
+accident rather than the player. Measured, the pre-theme palette's **wall and cover sit 11.9
+luma apart against a minimum of 18** — the worst pair on the old board, and a concrete piece of
+evidence for the owner's "the current board is bad". `FALLBACK_THEME` is therefore exempt from
+the contract *and asserted to fail it*, naming the number. Raising the threshold to fit it would
+have thrown the finding away; hiding the exemption would have been worse.
+
+**A coupling bug worth recording.** `e2e/pixels.ts` imports `themes.ts` so the browser test and
+the renderer cannot drift on what the sky is. Playwright transforms that file for **Node**,
+where a JSON import needs `with { type: 'json' }`; Vite and Vitest do not. So the suite died
+with "No tests found" — a module-loading error wearing the costume of an empty suite. Import
+attributes satisfy Node, TypeScript 5.9, Vite and Vitest at once. The general lesson: a module
+shared between the bundled client and a Node-side test lives under both sets of rules.
+
+**Not done.** Props, ambient motion and the freeze hook it needs (phase 3), and the terrain
+prop sets a theme will eventually name. `MAP_PIPELINE.md` is updated.

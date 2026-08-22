@@ -1,5 +1,6 @@
 import { inflateSync } from 'node:zlib';
-import { onSkyRamp } from '../src/sky.js';
+import { onAnyRamp } from '../src/sky.js';
+import { SKY_RAMPS } from '../src/themes.js';
 
 /**
  * A minimal PNG reader for RENDER-VERIFY.
@@ -231,11 +232,14 @@ export const isDecoyPurple = (px: Rgb): boolean =>
 /**
  * The sky — what shows *around* the board when the whole board is in frame.
  *
- * SKY-DOME replaced the flat `#12141a` clear colour with a vertical ramp, so
- * this can no longer be one literal. It delegates to `onSkyRamp`, which is
- * defined beside the palette the renderer draws from: a hand-copied hex here
- * would stop matching the moment anyone retuned the gradient, and the failure
- * would look like a clipped board rather than a stale constant.
+ * SKY-DOME replaced the flat `#12141a` clear colour with a vertical ramp, and
+ * MAP-THEMES made that ramp per theme — so this can be neither one literal nor
+ * one gradient. It delegates to `onAnyRamp` over every shipped theme's sky,
+ * which is only honest because the theme contract forbids a ramp from colliding
+ * with terrain; `themes.ts` proves that separation and this leans on it. A
+ * hand-copied hex here would stop matching the moment anyone retuned a
+ * gradient, and the failure would look like a clipped board, not a stale
+ * constant.
  *
  * It is also a **stronger** check than the literal it replaces. The lit floor
  * composites at rgb(18, 20, 27) under BOARD-LIT and the old background was
@@ -244,7 +248,7 @@ export const isDecoyPurple = (px: Rgb): boolean =>
  * actually fail. Both ends of the ramp now clear the floor by more than the
  * tolerance.
  */
-export const isSceneBackground = (px: Rgb): boolean => onSkyRamp(px);
+export const isSceneBackground = (px: Rgb): boolean => onAnyRamp(SKY_RAMPS, px);
 
 
 /**

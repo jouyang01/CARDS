@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SCENERY, shade, gridInk, spawnEdge } from '../src/renderer3d.js';
-import { SKY, SKY_PX, onSkyRamp, rgbOf, skyAt } from '../src/sky.js';
+import { SKY_PX, onAnyRamp, onRamp, rampAt, rgbOf } from '../src/sky.js';
+import { FALLBACK_THEME, SKY_RAMPS, THEMES, themeFor } from '../src/themes.js';
 import type { MapDef } from '@cards/engine';
 import duelArena from '../../../data/maps/duel-arena.json';
 import ironBasin from '../../../data/maps/iron-basin.json';
@@ -16,6 +17,11 @@ const MAPS = [duelArena, ironBasin] as unknown as MapDef[];
 
 /** The lit floor, measured off a real composite under BOARD-LIT. */
 const LIT_FLOOR = { r: 18, g: 20, b: 27 };
+
+/** The dark overcast ramp Iron Basin ships, and the fallback's — the same one. */
+const SKY = FALLBACK_THEME.sky;
+const skyAt = (t: number): { r: number; g: number; b: number } => rampAt(SKY, t);
+const onSkyRamp = (px: { r: number; g: number; b: number }): boolean => onRamp(SKY, px);
 
 describe('the sky is a ramp, not a flat field', () => {
   it('runs from the top colour to the bottom colour', () => {
@@ -55,6 +61,13 @@ describe('the sky matcher can tell the void from the board', () => {
   // less than it appeared to.
   it('rejects the lit floor at every point on the ramp', () => {
     expect(onSkyRamp(LIT_FLOOR)).toBe(false);
+  });
+
+  it('still rejects it once every shipped theme\'s sky is accepted', () => {
+    // `isSceneBackground` widened from one ramp to all of them when themes
+    // landed. A union of ramps is only an honest "is this the void?" check if
+    // none of them wanders onto the board.
+    expect(onAnyRamp(SKY_RAMPS, LIT_FLOOR)).toBe(false);
   });
 
   it('accepts both ends of its own ramp', () => {
@@ -109,9 +122,10 @@ describe('the platform is an object the board sits on', () => {
     expect(SCENERY.top).toBeLessThan(0);
   });
 
-  it('is darker than the floor it carries — the board stays the lit thing', () => {
-    expect(SCENERY.shade).toBeLessThan(1);
-    expect(shade(0x20242f, SCENERY.shade)).toBeLessThan(0x20242f);
+  it.each(Object.values(THEMES))('$name darkens its slab below its own floor', (theme) => {
+    // The board is the lit thing; the platform carrying it must not compete.
+    expect(theme.arena.shade).toBeLessThan(1);
+    expect(shade(theme.terrain.open, theme.arena.shade)).toBeLessThan(theme.terrain.open);
   });
 
   it('lights the rim rather than relying on the sun to find it', () => {
@@ -136,7 +150,9 @@ describe('the platform is an object the board sits on', () => {
     // fixture would break a hidden-information guard outright.
     const brightest = (hex: number): number =>
       Math.max((hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff);
-    expect(brightest(SCENERY.rim.colour)).toBeLessThan(130);
+    for (const theme of [...Object.values(THEMES), FALLBACK_THEME]) {
+      expect(brightest(theme.arena.rim), `${theme.id} rim`).toBeLessThan(130);
+    }
     for (const team of [0x4f8cff, 0xff6b5e]) {
       expect(brightest(shade(team, SCENERY.spawnShade))).toBeLessThan(130);
     }

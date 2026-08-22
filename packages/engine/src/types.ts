@@ -494,6 +494,20 @@ export interface MapDef {
    * declare an empty array it does not care about.
    */
   powerups?: PowerupPad[];
+  /**
+   * MAP-THEMES — which `data/themes/*.json` dresses this map.
+   *
+   * **Inert to the engine, exactly like `powerups?` is optional to it.** Nothing
+   * in `resolveTurn` may ever read this: a map's look cannot change what a turn
+   * does, and `theme-inert.test.ts` pins that by resolving the same orders on
+   * the same map with and without a theme and demanding an identical state.
+   * It lives on `MapDef` rather than in a client-side lookup table so that
+   * adding a map is still one file (golden rule 2 — content is data).
+   *
+   * Absent, or naming a theme that does not exist, renders with the built-in
+   * palette. A map with no theme is a legal map.
+   */
+  theme?: string;
 }
 
 // ── Live state ──────────────────────────────────────────────────────────────

@@ -382,6 +382,12 @@ export function validateMap(m: MapDef): string[] {
   const errs: string[] = [];
   const path = `map ${m.id ?? '<no id>'}`;
   if (!m.id) errs.push(`${path}: missing id`);
+  // MAP-THEMES: purely presentational, so the engine checks the *shape* and
+  // stops there. Whether the named theme exists is the client's business — an
+  // unknown id falls back to the built-in palette rather than failing a map.
+  if (m.theme !== undefined && typeof m.theme !== 'string') {
+    errs.push(`${path}: theme must be a string when present`);
+  }
   if (!isInt(m.width) || !isInt(m.height) || m.width < 8 || m.height < 8) {
     errs.push(`${path}: width/height must be integers >= 8`);
   }

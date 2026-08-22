@@ -1,0 +1,25 @@
+{
+  "id": "drained-works",
+  "name": "Drained Works",
+  "note": "The floor of an emptied industrial basin under flat overcast. Wet iron plate, riveted bulkheads, poured concrete blocks, algae in the standing water. The material relationship is inverted from Proving Floor: here the floor and walls are the metal and the cover is not.",
+  "terrain": {
+    "open": "#232a33",
+    "wall": "#4e5866",
+    "cover": "#7d7b74",
+    "brush": "#2f4a35"
+  },
+  "surface": {
+    "open": { "roughness": 0.6, "metalness": 0.35 },
+    "wall": { "roughness": 0.7, "metalness": 0.4 },
+    "cover": { "roughness": 0.95, "metalness": 0.02 },
+    "brush": { "roughness": 1.0, "metalness": 0.0 }
+  },
+  "sky": {
+    "top": "#04060e",
+    "bottom": "#0e1c34"
+  },
+  "arena": {
+    "shade": 0.55,
+    "rim": "#1e4552"
+  }
+}

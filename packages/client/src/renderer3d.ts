@@ -54,6 +54,7 @@ import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engin
 import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
 import { intentTexture, plateTexture, skyTexture } from './textures.js';
+import { type SkyRamp } from './sky.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -687,13 +688,30 @@ export function staleUnitGroups(
   return out;
 }
 
-export function createRenderer(container: HTMLElement, map: MapDef, palette: {
-  open: number; wall: number; cover: number; brush: number; team0: number; team1: number; background: number;
-}): Renderer {
+/**
+ * MAP-THEMES — what the renderer needs to draw a board.
+ *
+ * The themed half (terrain colours, the material each is made of, the sky ramp,
+ * the platform) comes from `data/themes/*.json`; the global half (`team0`,
+ * `team1`) does not, and must not. Team colour is identity rather than
+ * decoration: a map that re-tints the teams changes friend-from-foe reading per
+ * map, and `TEAM_CSS` in the HUD plus the e2e's colour families both encode it.
+ */
+export interface BoardPalette {
+  open: number; wall: number; cover: number; brush: number;
+  team0: number; team1: number;
+  /** Clear colour if the sky raster cannot be built (no 2d context). */
+  background: number;
+  surface: Record<'open' | 'wall' | 'cover' | 'brush', { roughness: number; metalness: number }>;
+  sky: SkyRamp;
+  arena: { shade: number; rim: number };
+}
+
+export function createRenderer(container: HTMLElement, map: MapDef, palette: BoardPalette): Renderer {
   const scene = new Scene();
   // SKY-DOME: a ramp rather than a flat clear colour. The fallback keeps a
   // headless context (no 2d canvas) drawing something rather than nothing.
-  scene.background = skyTexture() ?? new Color(palette.background);
+  scene.background = skyTexture(palette.sky) ?? new Color(palette.background);
 
   // An orthographic camera has no perspective divide, so a tile is the same size
   // wherever it sits — which is exactly what a tactics board wants.
@@ -743,7 +761,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
 
   const ground = new Mesh(
     new PlaneGeometry(map.width * TILE, map.height * TILE),
-    new MeshStandardMaterial({ color: palette.open, ...SURFACE.open }),
+    new MeshStandardMaterial({ color: palette.open, ...palette.surface.open }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -762,9 +780,9 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   world.add(grid);
 
   for (const [squares, colour, height, surface] of [
-    [map.brush, palette.brush, TERRAIN_HEIGHT.brush, SURFACE.brush],
-    [map.cover, palette.cover, TERRAIN_HEIGHT.cover, SURFACE.cover],
-    [map.walls, palette.wall, TERRAIN_HEIGHT.wall, SURFACE.wall],
+    [map.brush, palette.brush, TERRAIN_HEIGHT.brush, palette.surface.brush],
+    [map.cover, palette.cover, TERRAIN_HEIGHT.cover, palette.surface.cover],
+    [map.walls, palette.wall, TERRAIN_HEIGHT.wall, palette.surface.wall],
   ] as const) {
     for (const p of squares) {
       const box = new Mesh(
@@ -794,7 +812,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   const slab = new Mesh(
     new BoxGeometry(slabW, SCENERY.depth, slabH),
     new MeshStandardMaterial({
-      color: shade(palette.open, SCENERY.shade), roughness: 0.95, metalness: 0.05,
+      color: shade(palette.open, palette.arena.shade), roughness: 0.95, metalness: 0.05,
     }),
   );
   slab.position.y = SCENERY.top - SCENERY.depth / 2;
@@ -831,7 +849,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     [SCENERY.rim.thickness, slabH, -slabW / 2 + inset, 0],
     [SCENERY.rim.thickness, slabH, slabW / 2 - inset, 0],
   ] as const) {
-    scenery.add(edgeBar(w, d, x, z, SCENERY.rim.colour, SCENERY.rim.emissive));
+    scenery.add(edgeBar(w, d, x, z, palette.arena.rim, SCENERY.rim.emissive));
   }
 
   // Each team's end of the arena, in its own colour. This is orientation, not
