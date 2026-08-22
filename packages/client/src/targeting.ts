@@ -24,6 +24,7 @@ import {
   dominantCardinal,
   expandShape,
   findAbility,
+  guardLandings,
   innerSquares,
   isAimStep,
   stepToVector,
@@ -328,7 +329,14 @@ export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec
       return true;
     case 'square':
     case 'circle':
-      return target !== undefined && aimInRange(unit.pos, target, ability.range);
+      // INTERCEPT-LANDING-CHOICE: a bodyguard's aim is a square beside an ALLY
+      // within range, so it may sit one further out than the ability's own
+      // reach. `range + 1` is the tightest bound that never rejects a landing
+      // the engine accepts; the exact set is `guardLandings`, which is what
+      // `commitAim` and the envelope use. This is the cheap "don't throw away
+      // what was already committed" gate, deliberately the looser of the two.
+      return target !== undefined
+        && aimInRange(unit.pos, target, ability.range + (ability.allyTarget === true ? 1 : 0));
     case 'wall':
       // WALL-ROTATE: both halves, mirroring the engine — a square to anchor it
       // and a step to point it. Neither substitutes for the other.
@@ -561,6 +569,15 @@ export function impactPreview(
  */
 export function rangeEnvelope(map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef): Vec2[] {
   if (ability.shape === 'self') return [{ ...unit.pos }];
+  // INTERCEPT-LANDING-CHOICE: a bodyguard's envelope is the LANDINGS, not a
+  // disc. *"The player should be able to only choose a square that is adjacent
+  // to an ally"* — a disc drawn around the caster says the opposite, and it is
+  // the layer a player reads before they click anything. An empty set falls
+  // through to the ordinary envelope, which is the 1v1 fallback's reach.
+  if (ability.allyTarget === true) {
+    const landings = guardLandings(buildBoard(map), state, unit, ability.range);
+    if (landings.length > 0) return landings.map((l) => ({ ...l.square }));
+  }
   if (ability.shape === 'path') {
     const board = buildBoard(map);
     return reachableSquares(board, state, unit, ability.range).map((s) => ({ ...s.pos }));
@@ -916,8 +933,34 @@ export function commitAim(
   // direction. `isBlockedDashLanding` survives as the *tell* the preview draws
   // (the landing will not be exactly here), not as a gate.
 
+  // INTERCEPT-LANDING-CHOICE: an ally-targeted ability aims at one of a listed
+  // set of squares, not at an envelope, so it is answered here rather than by
+  // `aimLegal`'s geometry. One seam serves all three callers — the hover
+  // preview, AIM-RANGE-TELL's refusal marker and the click — so the board
+  // cannot offer a landing the click then refuses.
+  if (ability.allyTarget === true && guardLandingFor(map, state, unit, ability, target) === undefined) {
+    // Empty set = nobody to guard = the 1v1 fallback, which is an ordinary
+    // square aim and falls through to the check below.
+    if (guardLandings(buildBoard(map), state, unit, ability.range).length > 0) return undefined;
+  }
+
   const resolved = aimFor(map, state, unit, ability, target, rotation);
   return aimLegal(unit, ability, resolved.aim, resolved.aimStep) ? resolved : undefined;
+}
+
+/**
+ * INTERCEPT-LANDING-CHOICE — the landing `target` is, and the ally it binds.
+ *
+ * `undefined` when the square is not one the engine would accept. The list comes
+ * from `guardLandings`, the engine's own, so "what the board offers" and "what
+ * resolution accepts" are one derivation rather than two that can drift.
+ */
+export function guardLandingFor(
+  map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef, target: Vec2,
+): { square: Vec2; allyId: string } | undefined {
+  if (ability.allyTarget !== true) return undefined;
+  return guardLandings(buildBoard(map), state, unit, ability.range)
+    .find((l) => vecEq(l.square, target));
 }
 
 /**
