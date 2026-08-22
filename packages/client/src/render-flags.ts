@@ -131,3 +131,45 @@ export function modelsEnabled(env: RenderFlagEnvironment = {}): boolean {
 export function browserModels(): boolean {
   return modelsEnabled({ search: globalThis.location?.search ?? '' });
 }
+
+// ── RENDER-ON-DEMAND ────────────────────────────────────────────────────────
+
+/**
+ * Whether the renderer may skip a frame that would draw the same picture.
+ *
+ * **Off by default, and that is a measured decision rather than caution.**
+ *
+ * The board runs at 3.3 fps under SwiftShader (302ms median frame) because the
+ * loop drew unconditionally, so the plan was: dirty-flag the loop behind this
+ * switch, prove an idle board stops drawing, then make it the default. The
+ * proof was run and it **failed** — over five seconds of an untouched page:
+ *
+ * | mode | frames drawn |
+ * |---|---|
+ * | on-demand | 17 |
+ * | always | 14 |
+ *
+ * No improvement, because the renderer is not what keeps the board busy. The
+ * *app* re-issues render commands into an idle page: 49 camera updates, 15
+ * `highlight` calls, plus `focusOn`, `drawShape` and `setUnitFacing`, in five
+ * seconds with no input. A renderer that skips redundant frames cannot help
+ * while something upstream keeps telling it the scene changed.
+ *
+ * So the machinery ships wired and unused. It is a prerequisite — once the app
+ * stops re-issuing, the loop still has to stop drawing, and that half is done
+ * and tested. Turning it on today would add a wrapper and a flag for a benefit
+ * measured at zero, which is how a codebase accumulates things nobody can
+ * later justify removing.
+ *
+ * `?render=ondemand` opts in, for measuring the app-side fix when it lands.
+ */
+export function renderOnDemand(env: RenderFlagEnvironment = {}): boolean {
+  const search = env.search ?? '';
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  return (params.get('render') ?? '').trim().toLowerCase() === 'ondemand';
+}
+
+/** `renderOnDemand` read from the live browser. */
+export function browserRenderOnDemand(): boolean {
+  return renderOnDemand({ search: globalThis.location?.search ?? '' });
+}

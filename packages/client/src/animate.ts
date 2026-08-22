@@ -191,7 +191,24 @@ function poseFrom(legs: readonly Leg[], t: number): UnitPose | undefined {
     if (t < leg.t) break;
     last = leg;
     if (t < leg.t + leg.dur) {
-      const u = ease(unit01((t - leg.t) / leg.dur));
+      const p = unit01((t - leg.t) / leg.dur);
+      // A WALK IS LINEAR; only a throw eases.
+      //
+      // `easeInOutQuad` begins and ends at zero velocity, and a walk is a run
+      // of back-to-back one-tile legs — so easing each one made the unit
+      // accelerate from a standstill and brake back to one on *every square*.
+      // Several steps in a tile, a slide to the next, several more: the stutter
+      // was one leg's ease meeting the next leg's.
+      //
+      // Linear also happens to be the only speed profile that does not slide.
+      // The feet cycle at a constant rate (MS_PER_MOVE_STEP is measured from
+      // them), so any easing moves the ground past them at the wrong speed —
+      // an ease-in-out peaks at twice its own average, which would skate the
+      // middle of every run.
+      //
+      // Displacement keeps its ease: a knockback is thrown rather than walked,
+      // it arcs, and it is always a leg on its own.
+      const u = leg.kind === 'displace' ? ease(p) : p;
       return {
         x: leg.from.x + (leg.to.x - leg.from.x) * u,
         y: leg.from.y + (leg.to.y - leg.from.y) * u,

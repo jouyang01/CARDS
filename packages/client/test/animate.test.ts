@@ -359,3 +359,64 @@ describe('UI5: readouts for damage, absorb, heal and shield', () => {
     expect(atDeath[0]!.kind).toBe('damage');
   });
 });
+
+/**
+ * WALK-CONSTANT-SPEED — a walk crosses tiles without stopping in them.
+ *
+ * `poseFrom` eased every leg with `easeInOutQuad`, which begins and ends at
+ * zero velocity. A walk is a run of back-to-back one-tile legs, so that made a
+ * unit accelerate from a standstill and brake back to one on EVERY square:
+ * several steps inside a tile, a slide to the next, several more. One leg's
+ * ease-out meeting the next leg's ease-in.
+ *
+ * Linear is also the only profile that does not slide the feet. The run clip
+ * cycles at a constant rate and `MS_PER_MOVE_STEP` is measured from it, so any
+ * easing moves the ground past the feet at the wrong speed — an ease-in-out
+ * peaks at twice its own average, which would skate the middle of every run.
+ *
+ * Nothing asserted the ease in either direction, which is how it survived.
+ */
+describe('WALK-CONSTANT-SPEED: no stopping inside a tile', () => {
+  const threeTiles = () => {
+    const a = mkUnit('a', 0, 2, 6);
+    const s = mkState([a, mkUnit('z', 1, 11, 6)]);
+    return choreograph(run(s, [{ unitId: 'a', movePath: [{ x: 3, y: 6 }, { x: 4, y: 6 }, { x: 5, y: 6 }] }], []).events);
+  };
+
+  it('covers equal ground in equal time, across leg boundaries', () => {
+    const cues = threeTiles();
+    const legs = of(cues, 'move').filter((c) => c.unitId === 'a');
+    expect(legs.length, 'a three-tile walk').toBe(3);
+    const start = legs[0]!.t;
+    const end = legs[2]!.t + legs[2]!.dur;
+
+    // Twelve samples spanning three legs: four per tile, so a per-leg ease
+    // would show as a slow-fast-slow pattern repeating three times.
+    const xs = Array.from({ length: 13 }, (_, i) =>
+      sampleFrame(cues, start + ((end - start) * i) / 12).poses.get('a')!.x);
+    const steps = xs.slice(1).map((x, i) => x - xs[i]!);
+    const min = Math.min(...steps);
+    const max = Math.max(...steps);
+    expect(max - min, `uneven ground per tick: ${steps.map((s) => s.toFixed(3)).join(', ')}`)
+      .toBeLessThan(1e-6);
+  });
+
+  it('is exactly halfway across a tile at that tile is halfway through', () => {
+    // The direct statement of "linear": an ease would put it short of half.
+    const cues = threeTiles();
+    const leg = of(cues, 'move').filter((c) => c.unitId === 'a')[1]!;
+    const mid = sampleFrame(cues, leg.t + leg.dur / 2).poses.get('a')!;
+    expect(mid.x).toBeCloseTo((leg.from.x + leg.to.x) / 2, 6);
+  });
+
+  it('but a knockback still eases and still arcs', () => {
+    // Displacement is thrown rather than walked, and is always a leg on its
+    // own — it keeps the soft ends and the lift.
+    const cues = threeTiles();
+    const leg = of(cues, 'move').filter((c) => c.unitId === 'a')[0]!;
+    const push = { ...leg, kind: 'displace' as const, displaceKind: 'knockback' as const };
+    const quarter = sampleFrame([push], push.t + push.dur / 4).poses.get('a')!;
+    expect(quarter.x - push.from.x, 'eased in, so short of a quarter').toBeLessThan(0.25);
+    expect(sampleFrame([push], push.t + push.dur / 2).poses.get('a')!.lift).toBeGreaterThan(0);
+  });
+});
