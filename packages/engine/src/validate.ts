@@ -37,6 +37,7 @@ export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
   'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
   'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire', 'selfHarm', 'wallLength',
+  'allyTarget',
   'effects', 'description',
 ] as const;
 
@@ -96,6 +97,17 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   // and an ability carrying both charges twice for one cast.
   if (a.selfHarm === true && a.selfDamagePct !== undefined) {
     errs.push(`${path}: selfHarm and selfDamagePct are alternatives — an ability may carry one, not both`);
+  }
+  // INTERCEPT-GUARD: `true` when present, like every other opt-in flag here.
+  // Only a `square` shape may carry it: the ally's position IS the aim, and the
+  // 1v1 fallback aims at a bare square, so both halves of the contract are the
+  // one-square shape. A `circle` or a `line` claiming to be ally-targeted would
+  // be two different aims wearing one field.
+  if (a.allyTarget !== undefined && a.allyTarget !== true) {
+    errs.push(`${path}: allyTarget must be true when present`);
+  }
+  if (a.allyTarget === true && a.shape !== 'square') {
+    errs.push(`${path}: allyTarget requires shape "square" — the ally's square is the aim`);
   }
   // WARDING-WALL: `wallLength` is to a wall what `radius` is to a circle — the
   // shape has no size without it — and it is meaningless on anything else, for

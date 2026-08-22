@@ -79,3 +79,93 @@ describe('per-format turn limit', () => {
     expect(tie.state.turn).toBe(21);
   });
 });
+
+describe('SUDDEN-DEATH: at the limit, the next kill wins', () => {
+  /**
+   * The owner's ruling, verbatim: *"in Sudden Death, the next kill wins."*
+   *
+   * The behaviour **already ships** — `resolveOutcome` re-runs its
+   * `turn >= turnLimit` comparison every turn, so the first turn that produces a
+   * kill differential ends the match for the leader. What did not exist was a
+   * test: `per-format turn limit` above proves sudden death is *entered* and
+   * then stops, which leaves the half that actually decides matches unpinned.
+   *
+   * Test-only by construction. If any assertion here had needed a production
+   * change to pass, the ruling and the code would have diverged and that would
+   * have been a finding rather than a test edit — none did.
+   */
+
+  /** A 2v2 already past the limit, tied, with Sudden Death live. */
+  const inSuddenDeath = (kills: [number, number]): GameState => makeState(
+    [makeUnit('u', 0, { x: 3, y: 3 }, { hp: 10 }), makeUnit('e', 1, { x: 3, y: 5 }, { hp: 10 })],
+    { format: '2v2', turn: 21, kills, suddenDeath: true },
+  );
+  const nuke = (unitId: string, at: { x: number; y: number }): UnitOrders =>
+    ({ unitId, ability: { abilityId: 'nuke', target: [{ ...at }] } });
+
+  it('(a) a kill differential ends it, and the leader wins', () => {
+    // The ruling itself, and the thing no existing test asked. Note the kills
+    // are 2–2, nowhere near the format's target of 4: past the limit it is the
+    // LEAD that decides, not the target.
+    const out = run(inSuddenDeath([2, 2]), [nuke('u', { x: 3, y: 5 })], []);
+    expect(out.state.kills, 'one team pulled ahead').toEqual([3, 2]);
+    expect(out.state.status).toBe('finished');
+    expect(out.state.winner).toBe(0);
+  });
+
+  it('…and it is the LEADER who wins, whichever side that is', () => {
+    // A guard against a tiebreak that quietly favours team 0 — the same shape
+    // of bug as a tie broken by iteration order.
+    const out = run(inSuddenDeath([2, 2]), [], [nuke('e', { x: 3, y: 3 })]);
+    expect(out.state.kills).toEqual([2, 3]);
+    expect(out.state.winner).toBe(1);
+  });
+
+  it('(b) a turn that stays tied continues — still active, still sudden death', () => {
+    // No kill, no decision. The flag survives and the turn counter moves, which
+    // is what makes "unbounded" real rather than a footnote: play simply goes on
+    // until somebody lands one.
+    const out = run(inSuddenDeath([2, 2]), [], []);
+    expect(out.state.status).toBe('active');
+    expect(out.state.suddenDeath).toBe(true);
+    expect(out.state.kills, 'nobody scored').toEqual([2, 2]);
+    expect(out.state.turn, 'and the match moved on').toBe(22);
+  });
+
+  it('(c) a Double KO that carries BOTH teams to the target is the one draw', () => {
+    // The single genuine tie the game keeps (RULED — Mutual damage): all Blast
+    // damage resolves simultaneously, a unit that dies this phase still deals
+    // its full locked damage, and if that puts both teams on `killsToWin` at
+    // once nobody got "the next kill". 3–3 → 4–4 at a target of 4.
+    const both = makeState(
+      [makeUnit('u', 0, { x: 3, y: 3 }, { hp: 10 }), makeUnit('e', 1, { x: 3, y: 5 }, { hp: 10 })],
+      { format: '2v2', turn: 21, kills: [3, 3], suddenDeath: true },
+    );
+    const out = run(both, [nuke('u', { x: 3, y: 5 })], [nuke('e', { x: 3, y: 3 })]);
+    expect(out.state.kills, 'both scored, in the same phase').toEqual([4, 4]);
+    expect(out.state.status).toBe('draw');
+    expect(out.state.winner, 'nobody won it').toBeUndefined();
+  });
+
+  it('(d) a Double KO BELOW the target stays tied, and play continues', () => {
+    // The other side of (c), and the reason it is worth two tests: a mutual
+    // trade is not a decision unless it reaches the target. 2–2 → 3–3 at a
+    // target of 4 is still Sudden Death.
+    const out = run(inSuddenDeath([2, 2]), [nuke('u', { x: 3, y: 5 })], [nuke('e', { x: 3, y: 3 })]);
+    expect(out.state.kills).toEqual([3, 3]);
+    expect(out.state.status, 'nobody pulled ahead').toBe('active');
+    expect(out.state.suddenDeath).toBe(true);
+  });
+
+  it('and Sudden Death has no cap — it is still going many turns later', () => {
+    // Ruled unbounded: no artificial turn limit, no alternate tiebreak (not
+    // total damage, not first blood). BOTPLAY found ~6% of bot brawls still
+    // tied at 3x the limit; that is a bot artifact — bots do not focus-fire —
+    // and explicitly not a reason to invent a tiebreak nobody asked for.
+    let s = inSuddenDeath([2, 2]);
+    for (let i = 0; i < 30; i++) s = run(s, [], []).state;
+    expect(s.status, 'still playing').toBe('active');
+    expect(s.suddenDeath).toBe(true);
+    expect(s.turn, 'thirty turns past the limit').toBe(51);
+  });
+});

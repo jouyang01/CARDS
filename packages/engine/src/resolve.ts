@@ -29,6 +29,7 @@ import {
   inBounds,
   isAdjacentStep,
   isDiagonalStep,
+  ORTHOGONAL_STEPS,
   terrainAt,
   vecEq,
   vecKey,
@@ -51,7 +52,7 @@ import {
   ULT_COST,
 } from './constants.js';
 import { getFormat } from './formats.js';
-import { movementBudget, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
+import { isPassable, movementBudget, occupiedByOthers, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
 import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
 import { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from './polarity.js';
@@ -151,6 +152,13 @@ interface PlannedAbility {
    */
   inner: Vec2[];
   isUlt: boolean;
+  /**
+   * INTERCEPT-GUARD — the ally this cast is bound to, for an `allyTarget`
+   * ability that named one. Absent on everything else, and absent on the 1v1
+   * square fallback, which is precisely what "no guard, just the teleport"
+   * means downstream.
+   */
+  guardTargetId?: string;
 }
 
 interface UnitPlan {
@@ -371,18 +379,18 @@ function planUnit(
   const shiftTo = teleportDestination(catalyst);
   const after = shiftTo === undefined ? unit : { ...unit, pos: shiftTo };
 
-  const declared = planAbility(board, unit, roster, order.ability);
+  const declared = planAbility(board, unit, roster, order.ability, draft);
   // What the player asked for, before CAT-DASH-FULL below decides whether they
   // are allowed to have it.
   const declaredAbility = declared?.def.phase === 'prep'
     ? declared
-    : planAbility(board, after, roster, order.ability);
+    : planAbility(board, after, roster, order.ability, draft);
 
   // FREE1 — a free action is declared in addition to the normal one. It must
   // name an ability that is actually `free: true`, and it may not simply repeat
   // the normal slot: ordering the same trap twice would fire it twice off one
   // cooldown, which is the one way this slot could be abused.
-  let freeAbility = planAbility(board, unit, roster, order.freeAbility);
+  let freeAbility = planAbility(board, unit, roster, order.freeAbility, draft);
   if (freeAbility?.def.free !== true || freeAbility.def.id === declaredAbility?.def.id) freeAbility = undefined;
 
 
@@ -614,6 +622,8 @@ function planAbility(
   unit: UnitState,
   roster: Roster,
   order: AbilityOrder | undefined,
+  /** INTERCEPT-GUARD: needed only to look an `allyTarget` order's ally up. */
+  draft?: GameState,
 ): PlannedAbility | undefined {
   if (order === undefined) return undefined;
   const found = findAbility(roster, unit.characterId, order.abilityId);
@@ -623,19 +633,64 @@ function planAbility(
   // cooldown check, the legality check, the three geometry expansions — sees an
   // ordinary ability, which is what keeps the knob from spreading.
   const def = abilityProfile(found.def, order.mode);
-  const aim = order.target ?? [];
   if ((unit.cooldowns[def.id] ?? 0) > 0) return undefined;
   if (isUlt && unit.energy < ULT_COST) return undefined;
   // An out-of-range aim step is rejected like any other illegal component (AIM2).
   const aimStep = order.aimStep;
   if (aimStep !== undefined && !isAimStep(aimStep)) return undefined;
+
+  // INTERCEPT-GUARD — an ally-targeted ability resolves its aim from the ally
+  // it names, so everything downstream sees an ordinary aimed square. The
+  // square the ORDER carried is ignored when an ally was named: the ally is the
+  // aim, and a stale square from a click two seconds ago is not.
+  const ally = allyTargetOf(draft, unit, def, order);
+  const aim = ally === undefined ? order.target ?? [] : [{ x: ally.pos.x, y: ally.pos.y }];
+  if (def.allyTarget === true && !allyAimIsLegal(draft, unit, def, ally, order)) return undefined;
   if (!aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
   return {
     def, aim, isUlt,
     area: expandShape(board, def, unit.pos, aim, aimStep),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
     inner: innerSquares(board, def, aim),
+    ...(ally === undefined ? {} : { guardTargetId: ally.unitId }),
   };
+}
+
+/** The living ally an `allyTarget` order named, if it named a usable one. */
+function allyTargetOf(
+  draft: GameState | undefined, unit: UnitState, def: AbilityDef, order: AbilityOrder,
+): UnitState | undefined {
+  if (def.allyTarget !== true || draft === undefined || order.targetUnitId === undefined) {
+    return undefined;
+  }
+  const ally = draft.units.find((u) => u.unitId === order.targetUnitId);
+  if (ally === undefined || !ally.alive) return undefined;
+  if (ally.owner !== unit.owner || ally.unitId === unit.unitId) return undefined;
+  return aimInRange(unit.pos, ally.pos, def.range) ? ally : undefined;
+}
+
+/**
+ * INTERCEPT-GUARD — the two halves of an ally-targeted aim, and why the second
+ * exists.
+ *
+ * With a living ally named, the aim is legal (`allyTargetOf` already checked
+ * team, life and range). Without one, the **1v1 fallback** lets the cast aim at
+ * a bare square — but only when there is genuinely nobody to guard. *The
+ * fallback is a fallback, not a choice*: an Aegis with a partner alive cannot
+ * quietly take the escape-tool version by clicking empty floor, because then the
+ * ability would have two modes and only one of them would be the design.
+ */
+function allyAimIsLegal(
+  draft: GameState | undefined, unit: UnitState, def: AbilityDef,
+  ally: UnitState | undefined, order: AbilityOrder,
+): boolean {
+  if (ally !== undefined) return true;
+  // A named ally that did not resolve (dead, an enemy, out of range, itself) is
+  // a refusal rather than a silent downgrade to the square fallback.
+  if (order.targetUnitId !== undefined) return false;
+  if (draft === undefined) return true;
+  return !draft.units.some((u) =>
+    u.alive && u.owner === unit.owner && u.unitId !== unit.unitId);
 }
 
 /** Is an ability's aim geometrically legal for its shape and range? */
@@ -694,6 +749,122 @@ function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonl
       return true;
     }
   }
+}
+
+// ── INTERCEPT-GUARD — the bodyguard's redirect ──────────────────────────────
+
+/**
+ * The unit currently taking `victim`'s hits for them, if anybody is.
+ *
+ * *"Teleport adjacent to an ally within 5. For the rest of that turn, damage
+ * that ally would take is dealt to Aegis instead."* The owner's argument **is**
+ * the design: Dash resolves before Blast, so he arrives and *then* the damage
+ * lands on him. It turns the game's core mind-game — aim where they will be —
+ * into a kit: the enemy now has to predict not one position but whether the
+ * Bodyguard commits.
+ *
+ * The guardian is read off the status's `sourceUnitId`, the field DOT-HOT added
+ * so a tick that kills could credit a team. No new state: "who is standing in
+ * for this unit" is one status lookup.
+ *
+ * **The guard dies with its guardian** (design §4.5) — a dead Aegis is not
+ * standing in front of anybody, so damage after his death lands on the ally
+ * normally. That is enforced here, at the read, rather than by hunting down the
+ * status when he falls: one place to be right, and it cannot be missed by a new
+ * death path.
+ */
+function guardianOf(draft: GameState, victim: UnitState): UnitState | undefined {
+  const guard = victim.statuses.find((s) => s.kind === 'guard');
+  if (guard?.sourceUnitId === undefined) return undefined;
+  const guardian = draft.units.find((u) => u.unitId === guard.sourceUnitId);
+  return guardian !== undefined && guardian.alive && guardian.unitId !== victim.unitId
+    ? guardian
+    : undefined;
+}
+
+/**
+ * Land `amount` on `victim` — or on their bodyguard, if the hit is one a guard
+ * redirects.
+ *
+ * The single chokepoint every **redirectable** damage source calls: Blast hits,
+ * Dash hits, and enemy traps. Two paths deliberately do **not** call it, and
+ * their absence is the ruling rather than an oversight:
+ *
+ * - **End-of-turn DoT ticks** (`tickOverTime`). The burn was applied to the ally
+ *   before or despite the guard, and a tick is not a hit — nobody can step in
+ *   front of a poison.
+ * - **Recoil** (`selfDamagePct`, and a `selfHarm` blast catching its own
+ *   thrower). Guarding somebody against their own recklessness is neither the
+ *   fantasy nor good for the Ravok-plus-Aegis case.
+ *
+ * `attackerTeam` is what makes it *enemy-dealt only*: a teammate's friendly fire
+ * and a unit's own blast both land where they were aimed. The amount arriving
+ * here is already **what would have reached the ally** — the attacker's
+ * Might/Weaken and the *ally's* cover are composed by the caller, because the
+ * shot was fired at the ally's square. Aegis's own cover is not recomputed; he
+ * is not where it was aimed, and his shield is the mitigation he brought.
+ */
+function landDamage(
+  draft: GameState,
+  board: Board,
+  victim: UnitState,
+  amount: number,
+  attackerTeam: TeamId,
+  source: Source,
+  events: TurnEvent[],
+): void {
+  const guardian = attackerTeam !== victim.owner ? guardianOf(draft, victim) : undefined;
+  const target = guardian ?? victim;
+  if (guardian !== undefined) {
+    events.push({ type: 'damageRedirected', from: victim.unitId, to: guardian.unitId, amount });
+  }
+  const res = applyDamage(target, amount);
+  events.push({
+    type: 'damage', unitId: target.unitId, amount: res.hpLost, absorbed: res.absorbed,
+    sourceUnitId: source.unitId, abilityId: source.abilityId,
+  });
+  // CAMO-REVEAL follows the HP: being shot reveals whoever actually took it.
+  onDamageTaken(board, target, source.abilityId, events);
+  // A redirected hit that kills the guardian credits the attacker's team, which
+  // is the ordinary attribution — no new rule, because the killer is the killer
+  // wherever the damage ended up.
+  if (res.died) killUnit(draft, target, attackerTeam, events);
+}
+
+/**
+ * INTERCEPT-GUARD — where the bodyguard puts himself.
+ *
+ * The **nearest open orthogonally-adjacent square** to the guarded ally, ties
+ * broken by the engine's fixed `ORTHOGONAL_STEPS` order. Manhattan-1 rather than
+ * all eight, matching the perception-adjacency convention the rest of the game
+ * uses; "nearest" is measured from where the guardian is standing, so he takes
+ * the side he is already on rather than walking round the target.
+ *
+ * Deterministic and choice-free by construction: no tie can depend on unit
+ * iteration order, and no UI has to ask.
+ *
+ * `undefined` when all four are blocked — the caller fizzles.
+ *
+ * **Exported because the preview needs the same answer.** The standing directive
+ * is that the client consumes the engine's derived queries rather than
+ * recomputing them: a landing marker drawn from a second implementation is a
+ * marker that can disagree with where he actually ends up, which is precisely
+ * the class of lie AIM-PREVIEW-TRUE exists to remove.
+ */
+export function guardLanding(
+  board: Board, draft: GameState, guardian: UnitState, ally: UnitState,
+): Vec2 | undefined {
+  const occupied = occupiedByOthers(draft, guardian);
+  let best: { pos: Vec2; away: number } | undefined;
+  for (const step of ORTHOGONAL_STEPS) {
+    const pos = { x: ally.pos.x + step.x, y: ally.pos.y + step.y };
+    if (!inBounds(board, pos) || !isPassable(board, occupied, pos)) continue;
+    const away = distance(guardian.pos, pos);
+    // Strictly-greater keeps the first square in ORTHOGONAL_STEPS order on a
+    // tie, which is the fixed tiebreak the ruling names.
+    if (best === undefined || away < best.away) best = { pos, away };
+  }
+  return best?.pos;
 }
 
 // ── Death ───────────────────────────────────────────────────────────────────
@@ -820,9 +991,12 @@ function triggerTrapsOnEntry(
     // early below — still closes the group.
     if (trap.groupId !== undefined) trapHits.add(hitKey(unit.unitId, trap.groupId));
     events.push({ type: 'trapTriggered', trapId: trap.id, unitId: unit.unitId });
-    const res = applyDamage(unit, trap.damage);
-    events.push({ type: 'damage', unitId: unit.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: trap.ownerUnitId, abilityId: trap.abilityId });
-    onDamageTaken(board, unit, trap.abilityId, events); // CAMO-REVEAL: + reveal if concealed
+    // INTERCEPT-GUARD: an enemy trap the guarded ally walks into redirects like
+    // any other enemy damage — only enemy traps ever fire (the filter above), so
+    // "enemy-dealt" holds by construction here. The trap's RIDERS below still
+    // land on the ally: a bodyguard takes the bullet, not the leash.
+    landDamage(draft, board, unit, trap.damage, trap.owner,
+      { unitId: trap.ownerUnitId, abilityId: trap.abilityId }, events);
     for (const e of trap.onTrigger) {
       if (isStatusKind(e.kind)) {
         applyStatus(unit, e.kind, e.duration ?? 1);
@@ -831,10 +1005,10 @@ function triggerTrapsOnEntry(
         events.push({ type: 'statusApplied', unitId: unit.unitId, status: e.kind, duration: e.duration ?? 1, sourceUnitId: trap.ownerUnitId, abilityId: trap.abilityId });
       }
     }
-    if (res.died) {
-      killUnit(draft, unit, trap.owner, events);
-      return true;
-    }
+    // The walker died — their movement is over. A guarded walker whose damage
+    // went to the bodyguard is still standing, and still walking, even if the
+    // redirect just killed the guardian.
+    if (!unit.alive) return true;
     if (trap.halt === true && !hasStatus(unit, 'unstoppable')) halted = true;
   }
   return halted;
@@ -1375,10 +1549,12 @@ function applyDashHits(
 ): void {
   for (const h of hits) {
     if (!h.victim.alive) continue;
-    const res = applyDamage(h.victim, computeDamage(h.raw, h.attacker, h.behindCover));
-    events.push({ type: 'damage', unitId: h.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: h.attacker.unitId, abilityId: h.def.id });
-    onDamageTaken(board, h.victim, h.def.id, events); // CAMO-REVEAL: + reveal if concealed
-    if (res.died) killUnit(draft, h.victim, h.attacker.owner, events);
+    // INTERCEPT-GUARD: the amount is composed against the VICTIM (their cover,
+    // the attacker's Might/Weaken) and only then rerouted — the shot was fired
+    // at them, so it is their cover that mattered.
+    landDamage(draft, board, h.victim, computeDamage(h.raw, h.attacker, h.behindCover),
+      h.attacker.owner, sourceOf(h.attacker, h.def.id), events);
+    if (!h.victim.alive) continue;
     // …unless this dash already shoved them out of its landing square, in which
     // case they have taken their displacement for this ability.
     else if (!h.alreadyShoved) {
@@ -1406,6 +1582,25 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       plan.movePath = [];
     }
   }
+  // INTERCEPT-GUARD — where each bodyguard puts himself, resolved **once, here,
+  // at the start of the phase**, before anything in it has moved.
+  //
+  // That is the ruling ("the ally's position at the start of the Dash phase")
+  // and it is also the only reading that is order-independent: computing it
+  // inside the loop below would make Aegis's landing depend on whether the ally
+  // dashed earlier in `orderedPlans`, which is a rule nobody could reason about
+  // from the board. The guard binds to the UNIT, so an ally who dashes away is
+  // still guarded — Aegis just guards them from where they were.
+  const landings = new Map<string, Vec2 | undefined>();
+  for (const plan of orderedPlans(draft, plans)) {
+    const a = plan.ability;
+    if (a?.guardTargetId === undefined || a.def.phase !== 'dash' || !plan.unit.alive) continue;
+    const ally = draft.units.find((u) => u.unitId === a.guardTargetId);
+    landings.set(plan.unit.unitId, ally === undefined || !ally.alive
+      ? undefined
+      : guardLanding(board, draft, plan.unit, ally));
+  }
+
   const repositioned: UnitState[] = []; // units that actually moved under their own power (D1-dash)
   // PHASE-STATUS-FIRST: every blow the phase lands, gathered while the loop
   // below moves units and applies the phase's statuses, and applied afterwards
@@ -1431,6 +1626,32 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     const origin: Vec2 = { x: plan.unit.pos.x, y: plan.unit.pos.y };
     let crossed: UnitState[] = [];
     let shovedAside: UnitState | undefined;
+
+    // INTERCEPT-GUARD: a bodyguard's aim is the square beside his ally, not the
+    // ally's own square — swapped in here so the teleport below is the ordinary
+    // one. `undefined` means all four adjacents were blocked: the cast FIZZLES,
+    // which is the teleport precedent (no move, cooldown spent) taken to the
+    // whole ability. He never arrived, so there is nothing to interpose and no
+    // shield for a bodyguard who is still across the room.
+    let fizzled = false;
+    if (a.guardTargetId !== undefined) {
+      const landing = landings.get(plan.unit.unitId);
+      if (landing === undefined) {
+        fizzled = true;
+        a.aim = [];
+      } else {
+        // The area moves with the aim. It was expanded at plan time around the
+        // ALLY's square (that is what was aimed at); the ability actually
+        // happens at the landing square, and `applySelfEffects` gates the
+        // shield on the caster standing inside the area. Leaving the plan-time
+        // area behind is how the bodyguard arrives with no shield.
+        a.aim = [landing];
+        a.area = [{ ...landing }];
+      }
+    }
+    // Silent beyond the `abilityFired` already logged, exactly as a blocked
+    // blink is: the cooldown is spent and nothing else happened.
+    if (fizzled) continue;
     if (a.def.shape === 'path') crossed = walkCharge(draft, board, plan.unit, a.aim, events, trapHits);
     else {
       // DASH-OCCUPIED: a dash carrying its own knockback clears the landing
@@ -1543,8 +1764,32 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // so Lumen no longer heals herself off a beam aimed at somebody else.
     // CASTER-SAFE trims the harmful half here as it does in Prep: a dash's own
     // Slow is for whoever it ran through, not for the unit that ran.
+    // INTERCEPT-GUARD — the guard itself, on the ALLY, now that the guardian is
+    // standing next to them. `sourceUnitId` is what makes the redirect findable
+    // later, and `applyStatus`'s refresh-not-stack gives ruling §4.6 for free: a
+    // second Aegis guarding the same ally replaces the first, latest caster
+    // wins, deterministic by resolution order.
+    const guardEffect = a.def.effects.find((e) => e.kind === 'guard');
+    const guarded = a.guardTargetId === undefined
+      ? undefined
+      : draft.units.find((u) => u.unitId === a.guardTargetId && u.alive);
+    if (guardEffect !== undefined && guarded !== undefined) {
+      const duration = guardEffect.duration ?? 1;
+      applyStatus(guarded, 'guard', duration, undefined, sourceOf(plan.unit, a.def.id));
+      events.push({
+        type: 'statusApplied', unitId: guarded.unitId, status: 'guard', duration,
+        sourceUnitId: plan.unit.unitId, abilityId: a.def.id,
+      });
+      events.push({ type: 'guardApplied', casterId: plan.unit.unitId, allyId: guarded.unitId });
+    }
+
     if (a.area.some((p) => vecEq(p, plan.unit.pos))) {
-      applySelfEffects(draft, plan.unit, casterSafe(a.def.effects), sourceOf(plan.unit, a.def.id), events);
+      // …and never on the caster. `guard` is beneficial, so the self-effects
+      // path would otherwise hand Aegis a guard pointing at himself — a unit
+      // standing in for itself, which is both meaningless and a redirect loop
+      // waiting to be written.
+      applySelfEffects(draft, plan.unit, casterSafe(a.def.effects).filter((e) => e.kind !== 'guard'),
+        sourceOf(plan.unit, a.def.id), events);
     }
     grantUseEnergy(plan.unit, a.def, hitEnemy, events);
     // CAMO-REVEAL / REVEAL-FIX: a dash gives a *concealed* dasher away, whether
@@ -1947,11 +2192,13 @@ function runBlast(
         hit.attacker,
         hit.melee === true ? false : isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range),
       );
-    const res = applyDamage(hit.victim, final);
-    events.push({ type: 'damage', unitId: hit.victim.unitId, amount: res.hpLost, absorbed: res.absorbed, sourceUnitId: hit.attacker.unitId, abilityId: hit.abilityId });
-    onDamageTaken(board, hit.victim, hit.abilityId, events); // CAMO-REVEAL: + reveal if concealed
+    // INTERCEPT-GUARD — the thesis case. The enemy locked this at the ally's
+    // square during Decision; Aegis interposed in Dash, which resolves first;
+    // the hit finds him standing there. `final` is already what would have
+    // reached the ally, cover and all.
+    landDamage(draft, board, hit.victim, final, hit.attacker.owner,
+      { unitId: hit.attacker.unitId, abilityId: hit.abilityId }, events);
     if (!hit.delayed) dealtDamage.set(hit.attacker.unitId, hit.abilityId);
-    if (res.died) killUnit(draft, hit.victim, hit.attacker.owner, events);
   }
 
   // The other half of sub-step 2: heals, on allies who survived the damage.

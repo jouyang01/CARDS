@@ -41,6 +41,10 @@ export const PIP_ORDER: readonly EffectKind[] = [
   // that is still taking HP off you while you plan; regen leads the buffs for
   // the same reason from the other side.
   'damageOverTime', 'root', 'slow', 'weaken', 'reveal', 'brushBroken',
+  // INTERCEPT-GUARD: the guard leads the buffs, ahead of even regen — it is the
+  // one mark on the row that tells you somebody ELSE is about to take your hits,
+  // which changes what both players do this turn more than any other pip does.
+  'guard',
   'healOverTime', 'shield', 'might', 'haste', 'energized', 'unstoppable', 'untargetable', 'stealth',
 ];
 
@@ -64,6 +68,9 @@ export const PIP_COLORS: Readonly<Record<string, number>> = {
   // BRUSH-BREAK: a duller, leafier cousin of Reveal's pink — the same family of
   // "they can see you", a weaker version of it.
   brushBroken: 0xbf8f6a,
+  // INTERCEPT-GUARD: a deeper blue than Shield's cyan — the same protective
+  // family, because that is what it is, but unmistakably a different one.
+  guard: 0x4f8ff0,
   shield: 0x62d0e0,
   might: 0xff6b4a,
   haste: 0x7de08a,
@@ -247,6 +254,13 @@ export const STATUS_GLYPHS: Readonly<Record<string, readonly GlyphPart[]>> = {
     { d: 'M13 18 C14 15 16 13 19 12' },
     { d: 'M17 3 l4 6 M21 3 l-4 6' },
   ],
+  // INTERCEPT-GUARD — a shield with a figure standing behind it: somebody is in
+  // front of you. The design asked for exactly this glyph.
+  guard: [
+    { d: 'M12 2.5 L20 5.5 v6 c0 5 -3.5 8.5 -8 10 -4.5 -1.5 -8 -5 -8 -10 v-6 z' },
+    { d: 'M12 8 a1.8 1.8 0 1 1 0 3.6 a1.8 1.8 0 1 1 0 -3.6', fill: true },
+    { d: 'M8.5 17.5 c0 -2.5 1.6 -4 3.5 -4 s3.5 1.5 3.5 4' },
+  ],
   // Domino mask — drawn to the owning team only (`OWNER_ONLY_PIPS`).
   stealth: [
     { d: 'M2.5 8.5 h19 v3 c0 4 -4.5 5 -7.5 2.5 L12 12.5 l-2 1.5 C7 16.5 2.5 15.5 2.5 11.5 z' },
@@ -358,6 +372,7 @@ export const STATUS_LABELS: Readonly<Record<string, string>> = {
   weaken: 'Weakened',
   reveal: 'Revealed',
   brushBroken: 'Cover Blown',
+  guard: 'Guarded',
   shield: 'Shielded',
   might: 'Might',
   haste: 'Hasted',
@@ -387,6 +402,7 @@ export const STATUS_BLURBS: Readonly<Record<string, string>> = {
   weaken: 'Deals less damage.',
   reveal: 'Visible to the enemy team even in cover or brush.',
   brushBroken: 'Brush no longer hides this unit — any brush, until it expires.',
+  guard: 'A bodyguard is standing in: enemy damage aimed at this unit is dealt to them instead.',
   shield: 'Absorbs damage before health does.',
   might: 'Deals more damage.',
   haste: 'Moves further.',
