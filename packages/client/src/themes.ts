@@ -21,6 +21,7 @@
  */
 
 import { rampAt, type Rgb, type SkyRamp } from './sky.js';
+import { GRAIN_MAX, clampGrain, type GrainSpec } from './grain.js';
 import provingFloor from '../../../data/themes/proving-floor.json' with { type: 'json' };
 import drainedWorks from '../../../data/themes/drained-works.json' with { type: 'json' };
 
@@ -36,9 +37,14 @@ export interface Theme {
   name: string;
   terrain: Record<TerrainKind, number>;
   surface: Record<TerrainKind, SurfaceParams>;
+  /** GRAIN (phase 3) — how each surface is textured. Optional; absent is flat. */
+  grain: Record<TerrainKind, GrainSpec>;
   sky: SkyRamp;
   arena: { shade: number; rim: number };
 }
+
+/** What a theme that authors no grain gets: nothing, and the flat look of phase 2. */
+const FLAT: GrainSpec = { style: 'mottle', tint: 0, speckle: 0 };
 
 /** JSON authors colours as `#rrggbb`; the renderer wants the number. */
 export const hexOf = (css: string): number => Number.parseInt(css.replace('#', ''), 16);
@@ -48,6 +54,7 @@ interface ThemeJson {
   name: string;
   terrain: Record<TerrainKind, string>;
   surface: Record<TerrainKind, SurfaceParams>;
+  grain?: Record<TerrainKind, GrainSpec>;
   sky: { top: string; bottom: string };
   arena: { shade: number; rim: string };
 }
@@ -59,6 +66,12 @@ const parse = (json: ThemeJson): Theme => ({
   name: json.name,
   terrain: Object.fromEntries(KINDS.map((k) => [k, hexOf(json.terrain[k])])) as Record<TerrainKind, number>,
   surface: json.surface,
+  // Clamped at the door rather than trusted: a theme is Designer-authored data,
+  // and grain past the ceiling stops being surface and starts competing with
+  // the overlays the player actually reads.
+  grain: Object.fromEntries(
+    KINDS.map((k) => [k, clampGrain(json.grain?.[k] ?? FLAT)]),
+  ) as Record<TerrainKind, GrainSpec>,
   sky: { top: hexOf(json.sky.top), bottom: hexOf(json.sky.bottom) },
   arena: { shade: json.arena.shade, rim: hexOf(json.arena.rim) },
 });
@@ -89,6 +102,7 @@ export const FALLBACK_THEME: Theme = {
     cover: { roughness: 0.52, metalness: 0.42 },
     brush: { roughness: 1.0, metalness: 0.0 },
   },
+  grain: { open: FLAT, wall: FLAT, cover: FLAT, brush: FLAT },
   sky: { top: 0x04060e, bottom: 0x0e1c34 },
   arena: { shade: 0.55, rim: 0x1e4552 },
 };
@@ -343,6 +357,12 @@ export const themeContractErrors = (theme: Theme): string[] => {
   for (const t of [0, 1] as const) {
     const ramp = rampAt(theme.sky, t);
     if (inUiFamily(ramp)) errs.push(`${theme.id}: the sky ramp enters a UI colour family`);
+  }
+  for (const kind of KINDS) {
+    const g = theme.grain[kind];
+    if (g.tint > GRAIN_MAX.tint || g.speckle > GRAIN_MAX.speckle) {
+      errs.push(`${theme.id}: ${kind} grain exceeds the ceiling — it will compete with the overlays`);
+    }
   }
   return errs;
 };

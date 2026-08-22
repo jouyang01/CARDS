@@ -55,9 +55,10 @@ import type { ClipChoice, ClipSet } from './character-clips.js';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
-import { intentTexture, plateTexture, skyTexture } from './textures.js';
+import { intentTexture, plateTexture, grainTexture, skyTexture } from './textures.js';
 import { type SkyRamp } from './sky.js';
 import { overlayBoost } from './themes.js';
+import { seedOf, tileTint, type GrainSpec } from './grain.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -592,6 +593,18 @@ export interface Renderer {
   /** Switch projection at runtime — the whole reason for an orthographic camera. */
   setProjection(name: ProjectionName): void;
   /** Frame the camera on a board-space rectangle (A3's camera targets this). */
+  /**
+   * AMBIENT-FREEZE — whether decorative motion may run. See `ambient.ts`.
+   *
+   * Deliberately shipped **ahead of its consumer**: nothing moves yet, and the
+   * point is that when the first thing does, the guard already exists. Phase 5
+   * gates every ambient element on this, and the browser suite runs with it
+   * false so `render.spec.ts`'s byte-identical frame comparisons keep working.
+   * Retrofitting it later means first debugging a scenery bug wearing the
+   * costume of an aim bug.
+   */
+  readonly ambient: boolean;
+
   lookAt(centre: Vec2, spanSquares: number): void;
   /** Frame the whole board, allowing for the current pitch's foreshortening. */
   fitBoard(): void;
@@ -784,16 +797,21 @@ export function staleUnitGroups(
  * map, and `TEAM_CSS` in the HUD plus the e2e's colour families both encode it.
  */
 export interface BoardPalette {
+  /** Which theme this came from — the grain hash is seeded from it. */
+  themeId: string;
   open: number; wall: number; cover: number; brush: number;
   team0: number; team1: number;
   /** Clear colour if the sky raster cannot be built (no 2d context). */
   background: number;
   surface: Record<'open' | 'wall' | 'cover' | 'brush', { roughness: number; metalness: number }>;
+  grain: Record<'open' | 'wall' | 'cover' | 'brush', GrainSpec>;
   sky: SkyRamp;
   arena: { shade: number; rim: number };
 }
 
-export function createRenderer(container: HTMLElement, map: MapDef, palette: BoardPalette): Renderer {
+export function createRenderer(
+  container: HTMLElement, map: MapDef, palette: BoardPalette, options: { ambient?: boolean } = {},
+): Renderer {
   const scene = new Scene();
   // SKY-DOME: a ramp rather than a flat clear colour. The fallback keeps a
   // headless context (no 2d canvas) drawing something rather than nothing.
@@ -845,9 +863,68 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
   const world = new Group();
   scene.add(world);
 
+  const grainSeed = seedOf(palette.themeId);
+  /** One raster per (theme, style, amplitude) — the tint varies per tile, not per texel. */
+  const grainSeedFor = (spec: GrainSpec): number => grainSeed ^ seedOf(spec.style);
+
+  /**
+   * A grain texture as material options, repeated to land one tile per square.
+   *
+   * `repeat` is always integral because the texture is exactly one tile wide —
+   * see `grainTexture`. An empty object when the theme grains nothing, so a flat
+   * theme allocates no texture and keeps phase 2's look exactly.
+   */
+  const grainMap = (spec: GrainSpec, _tile: number, repeatX: number, repeatY: number): {
+    map?: ReturnType<typeof grainTexture>;
+  } => {
+    const texture = grainTexture(grainSeedFor(spec), spec);
+    if (texture === null) return {};
+    const cloned = texture.clone();
+    cloned.needsUpdate = true;
+    cloned.repeat.set(repeatX, repeatY);
+    return { map: cloned };
+  };
+
+  /**
+   * GRAIN — the floor, one quad per square, tinted per square.
+   *
+   * Segmented and de-indexed so each tile can carry a flat colour of its own:
+   * an indexed grid shares vertices between neighbours, so a per-vertex colour
+   * would blend across the seam and give a smooth wash rather than the
+   * square-by-square variation that actually stops a floor reading as one
+   * painted plane. De-indexing costs ~1600 vertices on the largest shipped map,
+   * which is nothing, and buys variation that can never fall out of register
+   * with the grid the way a multi-tile texture would.
+   *
+   * The tint is hashed from `(theme, x, y)` — never `Math.random()` — so both
+   * teams see the same floor and a screenshot is reproducible.
+   */
+  const groundGeometry = new PlaneGeometry(
+    map.width * TILE, map.height * TILE, map.width, map.height,
+  ).toNonIndexed();
+  const groundColours = new Float32Array(groundGeometry.attributes.position!.count * 3);
+  {
+    const openGrain = palette.grain.open;
+    // Two triangles per tile, three vertices each, laid out row-major from the
+    // plane's top-left — which is board y = 0 once the plane is laid flat.
+    for (let i = 0; i < groundColours.length / 3; i++) {
+      const quad = Math.floor(i / 6);
+      const tint = tileTint(grainSeed, quad % map.width, Math.floor(quad / map.width), openGrain.tint);
+      groundColours[i * 3] = tint;
+      groundColours[i * 3 + 1] = tint;
+      groundColours[i * 3 + 2] = tint;
+    }
+  }
+  groundGeometry.setAttribute('color', new BufferAttribute(groundColours, 3));
+
   const ground = new Mesh(
-    new PlaneGeometry(map.width * TILE, map.height * TILE),
-    new MeshStandardMaterial({ color: palette.open, ...palette.surface.open }),
+    groundGeometry,
+    new MeshStandardMaterial({
+      color: palette.open,
+      ...palette.surface.open,
+      vertexColors: true,
+      ...grainMap(palette.grain.open, 1, map.width, map.height),
+    }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -865,15 +942,23 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
   grid.position.y = GRID_LIFT;
   world.add(grid);
 
-  for (const [squares, colour, height, surface] of [
-    [map.brush, palette.brush, TERRAIN_HEIGHT.brush, palette.surface.brush],
-    [map.cover, palette.cover, TERRAIN_HEIGHT.cover, palette.surface.cover],
-    [map.walls, palette.wall, TERRAIN_HEIGHT.wall, palette.surface.wall],
+  for (const [squares, colour, height, surface, grain] of [
+    [map.brush, palette.brush, TERRAIN_HEIGHT.brush, palette.surface.brush, palette.grain.brush],
+    [map.cover, palette.cover, TERRAIN_HEIGHT.cover, palette.surface.cover, palette.grain.cover],
+    [map.walls, palette.wall, TERRAIN_HEIGHT.wall, palette.surface.wall, palette.grain.wall],
   ] as const) {
     for (const p of squares) {
+      // Each block gets its own hashed tint, so a wall reads as a run of placed
+      // blocks rather than one shape stamped along a line. A material apiece is
+      // affordable here in a way it would not be for the floor: the shipped maps
+      // carry fifty-odd terrain squares between them, not several hundred.
       const box = new Mesh(
         new BoxGeometry(TILE * 0.96, height, TILE * 0.96),
-        new MeshStandardMaterial({ color: colour, ...surface }),
+        new MeshStandardMaterial({
+          color: shade(colour, tileTint(grainSeed, p.x, p.y, grain.tint)),
+          ...surface,
+          ...grainMap(grain, 1, 1, 1),
+        }),
       );
       box.position.copy(toWorld(map, p)).setY(height / 2);
       // Brush is a 0.02-high lid: it has no silhouette to throw and casting from
@@ -1732,6 +1817,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
       yawDeg = 0;
       applyCamera();
     },
+
+    ambient: options.ambient ?? true,
 
     lookAt(next, spanSquares) {
       centre = { x: next.x, y: next.y };
