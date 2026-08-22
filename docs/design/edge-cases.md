@@ -192,6 +192,39 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
 > `impact` removed. Events `guardApplied`/`damageRedirected` so playback shows the shot
 > bending. Whole rebuild ships in ONE engine+data+client commit — nothing rides ahead.
 
+- **PROPOSED — INTERCEPT-LANDING-CHOICE: the player picks WHICH adjacent square Aegis lands on (owner Dev
+  Note 2026-10-01: "the player should be able to only choose a square that is adjacent to an ally. Right
+  now you can only choose the ally square and can't choose which adjacent square to go to"; SUPERSEDES the
+  auto-landing half of INTERCEPT-GUARD).** The shipped model binds the ally and auto-lands on the
+  nearest-open orthogonal adjacent (fixed-order tiebreak, no choice). The owner wants the **player** to
+  choose the landing square — because *which* side of the ally Aegis stands on is a real tactical decision
+  (which lane he blocks, which enemy he faces, whether he ends in cover). **Ruling:** Intercept is aimed at
+  a **square** that is **orthogonally adjacent to a living ally within range 5**; the guard binds to that
+  ally (adjacency at Dash-phase start names the ally; if two allies are adjacent to the chosen square, the
+  aim still carries the ally id, so the order is unambiguous), and Aegis lands on the **chosen** square. The
+  aimable set the client offers is "empty squares orthogonally adjacent to an ally within 5." **Fallout:**
+  the auto-landing/nearest-open logic is replaced by validating the chosen square (empty, adjacent to the
+  named ally, ally within 5); the deterministic fixed-order tiebreak is no longer needed. **1v1 fallback
+  unchanged** — no living ally → any square within 5, teleport + shield, no guard. Backlog
+  INTERCEPT-LANDING-CHOICE.
+- **RULED — Intercept fizzle is the WHOLE ability, cooldown spent (closes Builder session-13 OQ #1).** If
+  the chosen landing square is illegal at resolution (now occupied, blocked, or the named ally is dead),
+  Intercept does **nothing** — no teleport, no guard, **no shield** — and spends its cooldown. The
+  Builder's shipped reading stands: *"fizzles harmlessly"* is the whole-ability reading, and it is the
+  minimal-power one (never grant something on a failure). With INTERCEPT-LANDING-CHOICE the square is the
+  player's pick, so a blocked landing is a misread of the board, not the engine's — which makes
+  whole-ability fizzle the fair outcome, not a punishment for an auto-chosen square.
+- **RULED — `guard` and `impact` may not ride the same ability (closes Builder session-13 OQ #2).** An
+  ability carrying both would hand a `guard` to **every ally in the blast** — plural bodyguarding from one
+  cast, which no ruling has considered and which the redirect's "amount = what would have reached *the*
+  ally" language does not describe. `validate.ts` **refuses `guard` alongside `impact`** (a field pair the
+  engine has no coherent reading for), the same way it refuses `wallLength` off a wall. A deliberate
+  area-guard ability is a future design decision that gets its own ruling; until then, one guard, one ally.
+- **RATIFIED — a guarded ally who is Untargetable takes nothing, and neither does Aegis (Builder session-13
+  OQ #3).** UNTGT1 skips the victim before the damage is composed, so the guard never sees a hit to
+  redirect. Correct: Untargetable means the shot never lands, and a shot that never lands has nothing to
+  bend. It is a composition of two rulings, not a new one; no change.
+
 ## Combat simultaneity
 
 - **RULED — Mutual damage.** All Blast damage resolves simultaneously. A character
