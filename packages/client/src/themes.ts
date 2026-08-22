@@ -120,13 +120,26 @@ export function themeFor(map: { theme?: string }): Theme {
 export const FOG_INK = 0x05060a;
 
 /**
- * What a fogged tile must not be brighter than.
+ * FOG-SHADOW — how far a fogged tile is darkened.
  *
- * Sits inside `e2e/pixels.ts`'s `isFogged` (`r < 18 && g < 20 && b < 26`) with
- * room to spare, because that predicate is the machine-readable statement of the
- * thing VISION1 actually promises: an unseen square tells you nothing.
+ * **Fog is a shadow, not a blackout, and an earlier draft of this got it wrong.**
+ * That draft solved for an alpha driving every theme's floor down to one very
+ * dark absolute value, on the theory that VISION1 demanded it. It does not.
+ * Hidden units are never drawn at all — `fogView` decides who reaches the
+ * renderer — so the wash is a *statement about what you cannot see*, never the
+ * mechanism that hides it. Darkening past legibility buys no secrecy; it only
+ * erases terrain the player already knows, since walls and cover are public and
+ * static. Owner, on seeing it: *"the rest of the map is too fogged up. You
+ * should still be able to see the general textures, the tiles should just be
+ * slightly shadowed."*
+ *
+ * That also removes the need for the derivation. Blending toward near-black is
+ * **already proportional** — `out ≈ floor · (1 − α)` once the ink is near zero —
+ * so one constant is one constant shadow on every theme, pale or dark, with no
+ * per-theme solve at all. The machinery was paying for a target that should not
+ * have existed.
  */
-export const FOG_TARGET: Rgb = { r: 12, g: 14, b: 19 };
+export const FOG_OPACITY = 0.5;
 
 /**
  * How much darker the rig renders a surface than its authored albedo.
@@ -139,19 +152,6 @@ export const FOG_TARGET: Rgb = { r: 12, g: 14, b: 19 };
  */
 const LIT_FACTOR = 0.6;
 
-/**
- * Fog opacity is clamped at both ends.
- *
- * `min` keeps a dark theme looking exactly as it did when this was a constant.
- * `max` is the interesting one: fog hides *units*, and terrain under it is
- * public knowledge, so a wash approaching opaque erases the board's shape along
- * with the information. An earlier draft capped at 0.96, which had a second
- * problem — no floor at all could then fail the VISION1 contract check, making
- * that check decoration. At 0.9 a near-white floor genuinely fails it and an
- * author is told so at authoring time.
- */
-const FOG_ALPHA_LIMITS = { min: 0.62, max: 0.9 } as const;
-
 const channels = (hex: number): Rgb => ({
   r: (hex >> 16) & 0xff,
   g: (hex >> 8) & 0xff,
@@ -159,46 +159,90 @@ const channels = (hex: number): Rgb => ({
 });
 
 /**
- * FOG-BY-THEME — the wash's opacity, derived from the floor it has to hide.
+ * What a fogged tile composites to, as a fraction of the theme's *albedo*.
  *
- * Fog was a fixed 62% of near-black, which is a number tuned against one dark
- * floor. Over Proving Floor's limestone it would have left fogged squares
- * plainly readable: the wash would darken the floor *by* a fixed amount instead
- * of *to* a fixed value, and a pale theme would quietly stop honouring VISION1.
- * The test would have caught it, but as a colour-matcher failure that reads like
- * a renderer bug rather than as the rules problem it actually is.
+ * **Measured, not simulated, and the distinction cost a debugging round.** The
+ * obvious model — take the albedo, scale it by how much darker the rig renders a
+ * surface, then blend the ink over it — needs a lighting factor, and there is no
+ * single one: three converts albedo sRGB→linear, lights it, and converts back,
+ * so a dark floor loses far more of itself than a pale one. A constant fitted on
+ * the dark palette predicted Proving Floor's fogged floor at 55 when it actually
+ * composites at 86.
  *
- * So solve for the alpha instead. The overlay is unlit and composites linearly:
+ * What *is* near-constant is the round trip end to end, because the rig's
+ * brightening and the fog's darkening pull opposite ways and largely cancel.
+ * Fitted against two deliberately unalike themes:
  *
- *     out = ink·α + floor·(1 − α)   ⟹   α ≥ (floor − target) / (floor − ink)
+ * | albedo | measured fogged |
+ * |---|---|
+ * | `#b0aca4` (176,172,164) | (86, 87, 88) |
+ * | `#20242f` (32,36,47)    | (11, 13, 18) |
  *
- * per channel, and the binding channel wins. A theme can now be as bright as it
- * likes and its fog still lands on the same value.
+ * Anything relying on this should keep a tolerance — it is a fit over two
+ * points, not a law.
  */
-export function fogOpacity(floorHex: number): number {
-  const ink = channels(FOG_INK);
+export const FOG_RETAIN = 0.49;
+
+/** What a fogged tile composites to — shared with `e2e/pixels.ts` so it cannot drift. */
+export function foggedColour(floorHex: number): Rgb {
   const floor = channels(floorHex);
-  let alpha: number = FOG_ALPHA_LIMITS.min;
-  for (const c of ['r', 'g', 'b'] as const) {
-    const lit = floor[c] * LIT_FACTOR;
-    const span = lit - ink[c];
-    // A floor channel already at or under the ink cannot be darkened by mixing
-    // toward it, and needs no help — the target is met before any fog is drawn.
-    if (span <= 0 || lit <= FOG_TARGET[c]) continue;
-    alpha = Math.max(alpha, (lit - FOG_TARGET[c]) / span);
-  }
-  return Math.min(FOG_ALPHA_LIMITS.max, alpha);
+  return {
+    r: Math.round(floor.r * FOG_RETAIN),
+    g: Math.round(floor.g * FOG_RETAIN),
+    b: Math.round(floor.b * FOG_RETAIN),
+  };
 }
 
-/** What a fogged tile composites to under `fogOpacity` — for tests to check. */
-export function foggedColour(floorHex: number): Rgb {
-  const alpha = fogOpacity(floorHex);
-  const ink = channels(FOG_INK);
-  const floor = channels(floorHex);
-  const mix = (c: 'r' | 'g' | 'b'): number =>
-    Math.round(ink[c] * alpha + floor[c] * LIT_FACTOR * (1 - alpha));
-  return { r: mix('r'), g: mix('g'), b: mix('b') };
+// ── OVERLAY-BY-THEME ────────────────────────────────────────────────────────
+
+/**
+ * The floor the overlay opacities in `app.ts` were tuned against.
+ *
+ * Every one of them — the range wash at 0.16, reach at 0.22, aim at 0.5 — is a
+ * number somebody picked while looking at *this* floor. That made them constants
+ * only by accident of there being one floor.
+ */
+const REFERENCE_FLOOR = 0x20242f;
+
+/** How far a boosted overlay may go. Past this it stops being a wash. */
+const OVERLAY_BOOST_MAX = 2.2;
+
+/**
+ * OVERLAY-BY-THEME — how much harder an overlay must work on this floor.
+ *
+ * A translucent wash is only as visible as the *distance* it moves the floor,
+ * and that distance is `α · |overlay − floor|`. On the dark floor the range
+ * envelope's cool blue is a long way from the terrain, so 16% is plenty. On
+ * Proving Floor's warm limestone the same blue is much closer in every channel
+ * and 16% barely moves it — the composite comes out at `b − r = −10`, which is
+ * to say the "blue" envelope is not blue. A player could not see their own
+ * range on that map. The e2e caught it; a playtest would have caught it louder.
+ *
+ * So scale the *strength* while leaving the *colour* alone. Colour is the
+ * vocabulary and stays global — a range envelope must be the same blue on every
+ * map or it stops being a word the player knows. Opacity is not vocabulary, and
+ * deriving it is the same move `FOG_OPACITY` declines to make one section up:
+ * there the blend is already proportional, so a constant suffices; here it is not.
+ *
+ * The boost is a single per-theme factor rather than a per-layer solve because
+ * the overlays share one job: sit on the floor and be seen. One number keeps
+ * their *relative* weights — which are a real design decision, aim louder than
+ * range — exactly as authored.
+ */
+export function overlayBoost(floorHex: number): number {
+  const wash = channels(RANGE_WASH);
+  const lit = (hex: number): Rgb => {
+    const c = channels(hex);
+    return { r: c.r * LIT_FACTOR, g: c.g * LIT_FACTOR, b: c.b * LIT_FACTOR };
+  };
+  const reach = (floor: Rgb): number => Math.hypot(wash.r - floor.r, wash.g - floor.g, wash.b - floor.b);
+  const here = reach(lit(floorHex));
+  if (here <= 0) return OVERLAY_BOOST_MAX;
+  return Math.min(OVERLAY_BOOST_MAX, Math.max(1, reach(lit(REFERENCE_FLOOR)) / here));
 }
+
+/** The range envelope's blue (`app.ts`'s `RANGE`), shared so tests can compose it. */
+export const RANGE_WASH = 0x8fb6ff;
 
 // ── The legibility contract ─────────────────────────────────────────────────
 
@@ -218,6 +262,33 @@ export const luma = (hex: number): number => {
  * rule protecting an accident.
  */
 export const MIN_TERRAIN_SEPARATION = 18;
+
+/**
+ * How far fog must pull the floor down before it reads as unseen.
+ *
+ * Deliberately small, and absolute rather than proportional. The blend is
+ * already proportional, so a percentage rule would be checking `FOG_OPACITY`
+ * rather than the theme — a rule nothing can fail. What *can* fail is a floor so
+ * dark there is nothing left to take: at `#060606` the ink is brighter than the
+ * terrain and fog **lightens** the square, which is worse than doing nothing.
+ * Six luma clears both shipped dark themes with room and catches that.
+ */
+export const MIN_FOG_DROP = 6;
+
+/**
+ * Saturation ceiling for terrain — brush excepted, since it has to stay green.
+ *
+ * The UI vocabulary owns the saturated hues; terrain is the ground they are read
+ * against. This is the rule that would have caught the warm-sand Proving Floor
+ * before it shipped.
+ */
+export const MAX_TERRAIN_CHROMA = 34;
+
+/** Distance between the strongest and weakest channel — saturation, cheaply. */
+export const chroma = (hex: number): number => {
+  const { r, g, b } = channels(hex);
+  return Math.max(r, g, b) - Math.min(r, g, b);
+};
 
 /** Brush is concealment, so it stays recognisably vegetation in every theme. */
 export const isGreenDominant = (hex: number): boolean => {
@@ -244,9 +315,30 @@ export const themeContractErrors = (theme: Theme): string[] => {
     const px = channels(theme.terrain[kind]);
     if (inUiFamily(px)) errs.push(`${theme.id}: ${kind} lands in a UI colour family the e2e counts`);
   }
-  const fogged = foggedColour(theme.terrain.open);
-  if (fogged.r >= 18 || fogged.g >= 20 || fogged.b >= 26) {
-    errs.push(`${theme.id}: fogged floor composites to rgb(${fogged.r},${fogged.g},${fogged.b}), which is not dark enough for VISION1`);
+  // FOG-SHADOW: fog must read as shadow — clearly darker than the lit floor, and
+  // still light enough that the terrain under it is legible. Terrain is public
+  // knowledge, so a fogged square that has gone black is information destroyed,
+  // not information withheld.
+  const fog = foggedColour(theme.terrain.open);
+  const litOpen = luma(theme.terrain.open);
+  const fogged = luma((fog.r << 16) | (fog.g << 8) | fog.b);
+  if (litOpen - fogged < MIN_FOG_DROP) {
+    errs.push(`${theme.id}: fog only drops the floor ${(litOpen - fogged).toFixed(1)} luma — it will not read as unseen`);
+  }
+
+  // AOE-CLASH: the overlay vocabulary owns the saturated hues — amber for aim
+  // and AoE, blue for range, yellow for a dash route, green for a catalyst,
+  // teal for free actions. Terrain that is itself saturated competes with
+  // whichever overlay shares its hue. The owner hit this immediately: Proving
+  // Floor's first palette was warm sand, and *"the pale sand color on Duel
+  // Arena is conflicting with the yellow aoe previews"*. Chroma is the rule
+  // rather than a hue-by-hue distance check, because desaturated terrain is
+  // compatible with *every* overlay at once and needs no per-overlay reasoning.
+  for (const kind of ['open', 'wall', 'cover'] as const) {
+    const c = chroma(theme.terrain[kind]);
+    if (c > MAX_TERRAIN_CHROMA) {
+      errs.push(`${theme.id}: ${kind} has chroma ${c} (max ${MAX_TERRAIN_CHROMA}) — it will compete with the overlay it shares a hue with`);
+    }
   }
   for (const t of [0, 1] as const) {
     const ramp = rampAt(theme.sky, t);

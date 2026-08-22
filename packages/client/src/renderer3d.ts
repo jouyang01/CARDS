@@ -57,6 +57,7 @@ import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
 import { intentTexture, plateTexture, skyTexture } from './textures.js';
 import { type SkyRamp } from './sky.js';
+import { overlayBoost } from './themes.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -843,6 +844,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
   // Purely decorative: drawn, never consulted. It lives in `world` so it tracks
   // the board's own transform, and in its own group so a later set piece has an
   // obvious home that nothing rules-facing can reach into.
+  const boost = overlayBoost(palette.open);
+
   const scenery = new Group();
   scenery.name = 'scenery';
   world.add(scenery);
@@ -1554,10 +1557,17 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
     highlight(layer, squares, color, opacity = 0.4) {
       const g = layerGroup(layer);
       disposeChildren(g);
+      // OVERLAY-BY-THEME: a wash is only as visible as the distance it moves the
+      // floor, and a pale floor sits much closer to these colours than the dark
+      // one they were tuned against. Scaling strength here rather than at each
+      // call site keeps their *relative* weights — aim louder than range — as
+      // authored. Fog is exempt: `fogOpacity` already solved for it, and
+      // boosting a derived alpha would be solving the same problem twice.
+      const alpha = layer === 'fog' ? opacity : Math.min(0.98, opacity * boost);
       for (const p of squares) {
         const tile = new Mesh(
           new PlaneGeometry(TILE * LAYER_INSET[layer], TILE * LAYER_INSET[layer]),
-          new MeshBasicMaterial({ color, transparent: true, opacity }),
+          new MeshBasicMaterial({ color, transparent: true, opacity: alpha }),
         );
         tile.rotation.x = -Math.PI / 2;
         tile.position.copy(toWorld(map, p)).setY(LAYER_LIFT[layer]);

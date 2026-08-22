@@ -32,7 +32,7 @@ import {
   type UnitState,
   type Vec2,
 } from '@cards/engine';
-import { FOG_INK, fogOpacity, themeFor } from './themes.js';
+import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
 import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
@@ -274,13 +274,9 @@ const CATALYST = 0x9be36b;
 /** The free-action overlay — its own colour, because it is its own decision. */
 const FREE = 0x6fe3c0;
 /**
- * FOG-BY-THEME — derived per map rather than fixed.
- *
- * A constant 62% darkens the floor *by* a fixed amount, which only reads as "no
- * information" over a floor as dark as the one it was tuned against. Over
- * Proving Floor's limestone the same wash leaves fogged squares plainly
- * readable — VISION1 quietly stops holding. `fogOpacity` solves for the alpha
- * that lands every theme's floor on the same value instead.
+ * FOG-SHADOW — a shadow, not a blackout. See `FOG_OPACITY` in `themes.ts`: the
+ * blend toward near-black is already proportional, so one constant is one
+ * constant shadow on every theme, and terrain under fog stays legible.
  */
 /**
  * The drawn movement lines (AIM1/UI4). All three share one geometry — a
@@ -592,7 +588,6 @@ export function startHotSeat(
   const previewBoard = (): Board => (boardMemo ??= buildBoard(map));
 
   const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, paletteFor(map));
-  const fogAlpha = fogOpacity(themeFor(map).terrain.open);
 
   // ── VISION1-opening ───────────────────────────────────────────────────────
   // Paint the fogged board NOW, before the render loop starts, so the very
@@ -1188,7 +1183,7 @@ export function startHotSeat(
       view.decoys.map((d) => ({ ...d, nameplate: decoyPlate(d) })),
       view.traps, pads(),
     );
-    renderer.highlight('fog', view.fogged, FOG, fogAlpha);
+    renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
     // CAMO-REVEAL: the thicket a unit gave itself away in burns red. Same view
     // as everything else, so it can never out a unit the seat cannot see.
     renderer.highlight('camo', view.camoTiles, CAMO_RED, CAMO_OPACITY);

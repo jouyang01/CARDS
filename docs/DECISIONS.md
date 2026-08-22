@@ -5680,3 +5680,62 @@ shared between the bundled client and a Node-side test lives under both sets of 
 
 **Not done.** Props, ambient motion and the freeze hook it needs (phase 3), and the terrain
 prop sets a theme will eventually name. `MAP_PIPELINE.md` is updated.
+
+## 2026-08-22 — Builder session 14b (owner corrections: FOG-SHADOW, AOE-CLASH, OVERLAY-BY-THEME)
+
+Three corrections from the owner on seeing session 14 running, and one of them says a piece of
+that session's reasoning was simply wrong.
+
+**FOG-SHADOW — fog is a shadow, not a blackout, and FOG-BY-THEME was solving the wrong
+problem.** Owner: *"the rest of the map is too fogged up. You should still be able to see the
+general textures, the tiles should just be slightly shadowed."* Session 14 derived a per-theme
+alpha that drove every floor to one very dark absolute value, justified by VISION1. That
+justification does not hold: hidden units are **never drawn at all** — `fogView` decides who
+reaches the renderer — so the wash is a statement about what you cannot see, never the mechanism
+that hides it. Darkening past legibility buys no secrecy and destroys terrain the player already
+knows, since walls and cover are public and static.
+
+And once fog is a shadow, the derivation has nothing left to do. Blending toward near-black is
+**already proportional** (`out ≈ floor·(1−α)` with the ink near zero), so one constant is one
+constant shadow on every theme. `FOG_OPACITY = 0.5`, and roughly sixty lines of solver deleted.
+The complexity was paying for a target that should not have existed.
+
+**AOE-CLASH — terrain must leave the saturated hues to the UI.** Owner: *"the pale sand color on
+Duel Arena is conflicting with the yellow aoe previews."* Correct, and the contract had a hole:
+it checked terrain against the *counting predicates* in `e2e/pixels.ts`, which are narrow
+machine tests, not against whether a colour **looks like** an overlay. Warm sand `#b8a781`
+passed every one of them and still fought the amber AoE wash on sight.
+
+The rule that closes it is a **chroma cap** rather than per-overlay hue distances, because the
+overlay vocabulary has already claimed most of the wheel — amber for aim and AoE, blue for
+range, yellow for a dash route, green for a catalyst, teal for free actions, red for the camo
+alarm, purple for a decoy. Desaturated terrain is compatible with all of them at once and needs
+no case analysis. Proving Floor was rebuilt as bleached limestone that keeps its *value* and
+gives up its *chroma*: still the bold bright departure the owner asked for, no longer competing.
+Notably `FALLBACK_THEME` now fails this rule too — its cover is a saturated brown at chroma 45 —
+which is the same complaint arriving about the old palette from a different direction.
+
+**OVERLAY-BY-THEME — a wash is only as visible as the distance it moves the floor.** The e2e
+found this before the owner did: the range envelope at 16% over pale stone composited to
+`b − r = −10`, meaning the "blue" envelope was not blue and a player could not see their own
+range. Colour stays global — an envelope must be the same blue on every map or it stops being a
+word the player knows — but *opacity* is not vocabulary, so it scales per theme. One factor for
+all layers rather than a per-layer solve, which preserves their authored relative weights (aim
+louder than range).
+
+**Judgment call — a measured constant beat a physical model, twice.** Predicting composites
+needs a lighting factor, and there is no single one: three converts albedo sRGB→linear, lights
+it, and converts back, so a dark floor loses much more of itself than a pale one. A factor
+fitted on the dark palette predicted Proving Floor's fogged floor at 55 where it actually
+composites at **86**, and the range envelope at (116,125,141) where it actually lands at
+**(161,172,191)**. Two different fixes followed. `foggedColour` is now fitted **end to end from
+albedo to composite** — the rig's brightening and the fog's darkening pull opposite ways and
+largely cancel, so `albedo × 0.49` holds across two deliberately unalike themes. And
+`isRangeWash` stopped predicting a value at all: it asserts the *relationship* the wash creates —
+cool-shifted by an amount no unit reaches — which measured out at `b − r = 30` over **both**
+palettes, the constant-strength goal landing where it can be seen.
+
+**Judgment call — `MIN_FOG_DROP` is small and absolute.** A proportional rule would be checking
+`FOG_OPACITY` rather than the theme, and so could never fail. What can fail is a floor so dark
+there is nothing left to take: at `#060606` the ink is brighter than the terrain and fog
+*lightens* the square. Six luma clears both shipped dark themes with room and catches that.
