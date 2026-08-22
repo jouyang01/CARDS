@@ -277,6 +277,24 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
       }
     }
   }
+  // VALIDATE-GUARD-IMPACT — a `guard` and an `impact` may not ride the same
+  // ability (RULED, edge-cases).
+  //
+  // A guard binds ONE ally: the redirect's amount is "what would have reached
+  // *the* ally", and the shield is the guardian's alone. An `impact` is an
+  // AREA, so the two together would hand a guard to every ally caught in the
+  // blast — plural bodyguarding, which the redirect's own language does not
+  // describe and which no ruling covers. Nothing in `data/` does this today;
+  // this is a guard against a future kit being written before anybody notices
+  // the mechanic has no defined meaning.
+  //
+  // Cheap to state and impossible to discover from the code, which is exactly
+  // the class of thing `validateAbility` exists for — `impact` itself is here
+  // because three blocks sat inert in `data/` for a session with the suite
+  // green.
+  if (Array.isArray(a.effects) && a.effects.some((e) => e?.kind === 'guard') && a.impact !== undefined) {
+    errs.push(`${path}: a "guard" effect and an "impact" block cannot share an ability — a guard binds one ally, an impact is an area`);
+  }
   if (!Array.isArray(a.effects) || a.effects.length === 0) {
     errs.push(`${path}: must declare at least one effect`);
   } else {
