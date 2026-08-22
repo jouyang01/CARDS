@@ -24,6 +24,7 @@ import {
   dominantCardinal,
   expandShape,
   findAbility,
+  guardLandings,
   innerSquares,
   isAimStep,
   stepToVector,
@@ -108,11 +109,11 @@ export interface OrderDraft {
   /**
    * INTERCEPT-GUARD — the **ally** an `allyTarget` ability is aimed at.
    *
-   * Beside `aim` rather than instead of it: the aim is still the ally's square,
-   * because that is what the preview draws and what `commitAim` validates. This
-   * is the half the ORDER needs and the square cannot supply — at 4v4 two
-   * allies can share an adjacency, and "who am I guarding" has to survive the
-   * trip to the server unambiguously.
+   * Beside `aim` rather than instead of it: since INTERCEPT-LANDING-CHOICE the
+   * aim is the **landing square** the player picked, and the square alone
+   * cannot say who is being guarded — at 4v4 two allies can share an adjacency,
+   * and "who am I guarding" has to survive the trip to the server
+   * unambiguously.
    *
    * The lesson is WALL-CAST-FIX's, one field later: an aim the preview gets
    * right and the order-builder drops is an ability that cannot be cast.
@@ -328,7 +329,14 @@ export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec
       return true;
     case 'square':
     case 'circle':
-      return target !== undefined && aimInRange(unit.pos, target, ability.range);
+      // INTERCEPT-LANDING-CHOICE: a bodyguard's aim is a square beside an ALLY
+      // within range, so it may sit one further out than the ability's own
+      // reach. `range + 1` is the tightest bound that never rejects a landing
+      // the engine accepts; the exact set is `guardLandings`, which is what
+      // `commitAim` and the envelope use. This is the cheap "don't throw away
+      // what was already committed" gate, deliberately the looser of the two.
+      return target !== undefined
+        && aimInRange(unit.pos, target, ability.range + (ability.allyTarget === true ? 1 : 0));
     case 'wall':
       // WALL-ROTATE: both halves, mirroring the engine — a square to anchor it
       // and a step to point it. Neither substitutes for the other.
@@ -561,6 +569,15 @@ export function impactPreview(
  */
 export function rangeEnvelope(map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef): Vec2[] {
   if (ability.shape === 'self') return [{ ...unit.pos }];
+  // INTERCEPT-LANDING-CHOICE: a bodyguard's envelope is the LANDINGS, not a
+  // disc. *"The player should be able to only choose a square that is adjacent
+  // to an ally"* — a disc drawn around the caster says the opposite, and it is
+  // the layer a player reads before they click anything. An empty set falls
+  // through to the ordinary envelope, which is the 1v1 fallback's reach.
+  if (ability.allyTarget === true) {
+    const landings = guardLandings(buildBoard(map), state, unit, ability.range);
+    if (landings.length > 0) return landings.map((l) => ({ ...l.square }));
+  }
   if (ability.shape === 'path') {
     const board = buildBoard(map);
     return reachableSquares(board, state, unit, ability.range).map((s) => ({ ...s.pos }));
@@ -916,8 +933,34 @@ export function commitAim(
   // direction. `isBlockedDashLanding` survives as the *tell* the preview draws
   // (the landing will not be exactly here), not as a gate.
 
+  // INTERCEPT-LANDING-CHOICE: an ally-targeted ability aims at one of a listed
+  // set of squares, not at an envelope, so it is answered here rather than by
+  // `aimLegal`'s geometry. One seam serves all three callers — the hover
+  // preview, AIM-RANGE-TELL's refusal marker and the click — so the board
+  // cannot offer a landing the click then refuses.
+  if (ability.allyTarget === true && guardLandingFor(map, state, unit, ability, target) === undefined) {
+    // Empty set = nobody to guard = the 1v1 fallback, which is an ordinary
+    // square aim and falls through to the check below.
+    if (guardLandings(buildBoard(map), state, unit, ability.range).length > 0) return undefined;
+  }
+
   const resolved = aimFor(map, state, unit, ability, target, rotation);
   return aimLegal(unit, ability, resolved.aim, resolved.aimStep) ? resolved : undefined;
+}
+
+/**
+ * INTERCEPT-LANDING-CHOICE — the landing `target` is, and the ally it binds.
+ *
+ * `undefined` when the square is not one the engine would accept. The list comes
+ * from `guardLandings`, the engine's own, so "what the board offers" and "what
+ * resolution accepts" are one derivation rather than two that can drift.
+ */
+export function guardLandingFor(
+  map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef, target: Vec2,
+): { square: Vec2; allyId: string } | undefined {
+  if (ability.allyTarget !== true) return undefined;
+  return guardLandings(buildBoard(map), state, unit, ability.range)
+    .find((l) => vecEq(l.square, target));
 }
 
 /**
@@ -1207,6 +1250,46 @@ export function nextDraft(
 }
 
 /** Convenience: build `UnitOrders` for every character a player controls. */
+/**
+ * TEAMMATE-PLAN-VISIBLE — the inverse of `toUnitOrders`: a committed order, read
+ * back into the draft shape the previews already speak.
+ *
+ * *"You need to see your teammates actions when they lock in."* A teammate on
+ * another client has no entry in this client's `drafts` — their plan arrives as
+ * `UnitOrders` off the wire (the server has relayed a team's own submissions
+ * since M3-HIDDEN). Rather than teach every preview a second input shape, the
+ * order is turned back into a draft here and handed to the same
+ * `abilityPreview` / `aimBoundaries` / `dashRoute` the local plans use, so a
+ * teammate's committed shot is drawn by the code that draws yours.
+ *
+ * **Lossy in exactly one direction, and deliberately.** An order carries what
+ * resolution needs; a draft also carries gesture state (which squares were
+ * clicked, which slot is armed) that nobody else's client has any business
+ * knowing. Everything reconstructed here came off the wire.
+ */
+export function draftFromOrders(orders: UnitOrders): OrderDraft {
+  const draft = emptyDraft(orders.unitId);
+  if (orders.ability !== undefined) {
+    draft.abilityId = orders.ability.abilityId;
+    draft.aim = (orders.ability.target ?? []).map((p) => ({ x: p.x, y: p.y }));
+    if (orders.ability.aimStep !== undefined) draft.aimStep = orders.ability.aimStep;
+    if (orders.ability.mode !== undefined) draft.mode = orders.ability.mode;
+    if (orders.ability.targetUnitId !== undefined) draft.allyTargetId = orders.ability.targetUnitId;
+  }
+  if (orders.freeAbility !== undefined) {
+    draft.freeAbilityId = orders.freeAbility.abilityId;
+    draft.freeAim = (orders.freeAbility.target ?? []).map((p) => ({ x: p.x, y: p.y }));
+  }
+  if (orders.catalyst !== undefined) {
+    draft.catalystId = orders.catalyst.abilityId;
+    draft.catalystAim = (orders.catalyst.target ?? []).map((p) => ({ x: p.x, y: p.y }));
+  }
+  if (orders.movePath !== undefined) draft.movePath = orders.movePath.map((p) => ({ x: p.x, y: p.y }));
+  if (orders.chase !== undefined) draft.chaseTargetId = orders.chase;
+  if (orders.sprint === true) draft.sprint = true;
+  return draft;
+}
+
 export function toUnitOrdersFor(
   characters: ReadonlyMap<string, CharacterDef>,
   drafts: readonly OrderDraft[],
