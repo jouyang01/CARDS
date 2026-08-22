@@ -11,7 +11,8 @@
     "size": "node scripts/bundle-budget.mjs",
     "size:assets": "node scripts/asset-budget.mjs",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "film": "node tools/film.mjs"
   },
   "dependencies": {
     "@cards/engine": "*",
