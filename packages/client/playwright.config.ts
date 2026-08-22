@@ -26,7 +26,12 @@ export default defineConfig({
   reporter: process.env.CI !== undefined ? [['github'], ['list']] : [['list']],
 
   use: {
-    baseURL: 'http://127.0.0.1:4173/',
+    // AMBIENT-FREEZE: every test navigates relative to this, so the whole suite
+    // runs with decorative motion off. `render.spec.ts` compares frames
+    // byte-for-byte to prove a committed aim stops following the pointer, and a
+    // single moving prop would break that permanently — with a failure message
+    // accusing the aim rather than the scenery. See `src/ambient.ts`.
+    baseURL: 'http://127.0.0.1:4173/?ambient=off',
     trace: 'retain-on-failure',
   },
 

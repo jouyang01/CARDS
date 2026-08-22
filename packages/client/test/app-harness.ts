@@ -81,6 +81,8 @@ export function stubRenderer(): StubRenderer {
   let clipSets: Readonly<Record<string, ClipSet>> = {};
   return {
     draw,
+    // AMBIENT-FREEZE: the stub holds still, like the browser suite does.
+    ambient: false,
     withClips: (sets) => { clipSets = sets; },
     show: (units, decoys = [], traps = []) => {
       draw.board = {

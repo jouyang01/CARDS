@@ -1,8 +1,8 @@
 # MAP_PIPELINE.md — from a grid of boxes to an arena with life
 
-**Status:** phases 1 and 2 built (`BOARD-LIT`, `GRID-SEAMS`, `SCENE-DIORAMA`, `SKY-DOME`,
-`MAP-THEMES`, `FOG-BY-THEME` — in `renderer3d.ts`, `sky.ts`, `themes.ts`, `textures.ts` and
-`data/themes/`). Phases 3 and 5 are unbuilt; phase 4 was largely shipped by the character
+**Status:** phases 1, 2 and 3 built (`BOARD-LIT`, `GRID-SEAMS`, `SCENE-DIORAMA`, `SKY-DOME`,
+`MAP-THEMES`, `FOG-SHADOW`, `GRAIN`, `AMBIENT-FREEZE` — in `renderer3d.ts`, `sky.ts`,
+`themes.ts`, `grain.ts`, `ambient.ts`, `textures.ts` and `data/themes/`). Phase 5 is unbuilt; phase 4 was largely shipped by the character
 pipeline and needs reusing rather than rebuilding.
 **Nothing in this pipeline requires an art asset until phase 5**, which is the whole reason
 it is sequenced this way.
@@ -57,12 +57,12 @@ reachable. Do not "improve" it into a scene-wide raycast.
 
 | Element | Today |
 |---|---|
-| Floor | one `PlaneGeometry`, `MeshStandardMaterial`, flat colour, tile seams drawn over it |
-| Wall / cover / brush | one `BoxGeometry` per square, flat colour, roughness per kind |
+| Floor | a de-indexed `PlaneGeometry` grid, one flat vertex colour per square, grain map, tile seams over it |
+| Wall / cover / brush | one `BoxGeometry` per square, hashed per-block tint, grain map, roughness per kind |
 | Arena | a slab with a lit rim and two team-tinted spawn markers (`SCENERY`) |
 | Sky | a vertical gradient (`sky.ts`), screen-space, **per theme** |
 | Lighting | ambient floor + hemisphere + one shadow-casting sun + un-shadowed fill |
-| Ambient motion | **none** |
+| Ambient motion | **none** — but `ambient.ts` gates it already, and the browser suite opts out |
 | Themes | `data/themes/*.json`, named by `MapDef.theme` — Proving Floor and Drained Works |
 | Fog | opacity **derived** from the theme's floor, not a constant |
 
@@ -79,7 +79,7 @@ finished it first, and why terrain inherits it.
 |---|---|---|
 | 1 · Light, ground, arena, sky | no | form, countable squares, a place — **built** |
 | 2 · Themes as data | no | a map declares its own look in JSON — **built** |
-| 3 · Procedural surfaces + ambient motion | no | grain, and the first thing that moves |
+| 3 · Procedural surfaces | no | per-tile variation and within-tile grain — **built** |
 | 4 · Asset loading | no (infrastructure) | **mostly shipped by the character pipeline** — what remains is the asset-weight budget |
 | 5 · Props and set pieces | **yes** | the skyline, the machinery, the crowd |
 
@@ -266,8 +266,10 @@ touches `packages/engine`, so the ask is to the *renderer*, not the simulation.
 
 ## 7. First steps
 
-1. The ambient freeze hook, before any motion exists to need it.
-2. Then phase 3. Phase 4 is no longer a decision point of its own now that the loader exists —
+1. Phase 5's first ambient element — the freeze hook is in place, so this is now safe to attempt.
+   Start with one thing (a drifting sky, a pulsing emissive) and confirm the browser suite stays
+   green with `?ambient=off` before adding a second.
+2. Phase 4 is no longer a decision point of its own now that the loader exists —
    but **ASSET-WEIGHT-BUDGET should land before terrain starts shipping bytes too**, since a
    second pipeline feeding an unwatched directory is how that gap turns into a regression
    nobody sees.

@@ -15,7 +15,7 @@
  * that use them; only the *rasterising* moved.
  */
 
-import { CanvasTexture, SRGBColorSpace } from 'three';
+import { CanvasTexture, RepeatWrapping, SRGBColorSpace } from 'three';
 import { ULT_COST } from '@cards/engine';
 import {
   GLYPH_BOX, GLYPH_STROKE, statusGlyph, type StatusPip,
@@ -24,6 +24,7 @@ import {
   ICON_GAP_PX, ICON_PX, PLATE_PAD_PX, PLATE_PX, nameplateKey, plateLayout, type Nameplate,
 } from './nameplates.js';
 import { SKY_PX, rgbOf, type SkyRamp } from './sky.js';
+import { GRAIN_BASE, clampGrain, hashUnit, type GrainSpec } from './grain.js';
 
 /**
  * SKY-DOME — a theme's background ramp, rasterised once per distinct ramp.
@@ -70,6 +71,101 @@ export function skyTexture(ramp: SkyRamp): CanvasTexture | null {
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   skyCache.set(key, texture);
+  return texture;
+}
+
+/**
+ * GRAIN — one tile's worth of surface, rasterised once per distinct spec.
+ *
+ * **Exactly one tile, and that is the whole trick.** A texture spanning several
+ * tiles would let each square differ, but the board is `width × height` squares
+ * and a multi-tile texture only lands on square boundaries when the board
+ * divides by its size — 18 ÷ 4 does not, so the pattern would slide half a
+ * square out of register and grain would cut across tiles instead of sitting in
+ * them. At one tile, `repeat = (width, height)` is always an integer and always
+ * aligned. The per-tile variation that a bigger texture would have bought is
+ * done properly in `renderer3d.ts` with vertex colours instead, where it cannot
+ * fall out of register at all.
+ *
+ * Drawn in greyscale near white because a `map` multiplies the material colour:
+ * the theme stays the source of the colour and this only perturbs it.
+ */
+const grainTextures = new Map<string, CanvasTexture | null>();
+
+/** Texels per tile. Coarse on purpose — a tile is ~37 screen px at rest. */
+const GRAIN_PX = 64;
+
+export function grainTexture(seed: number, raw: GrainSpec): CanvasTexture | null {
+  const spec = clampGrain(raw);
+  if (spec.tint === 0 && spec.speckle === 0) return null;
+  const key = `${seed}|${spec.style}|${spec.speckle}`;
+  const cached = grainTextures.get(key);
+  if (cached !== undefined) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = GRAIN_PX;
+  canvas.height = GRAIN_PX;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) {
+    grainTextures.set(key, null);
+    return null;
+  }
+
+  ctx.fillStyle = `rgb(${GRAIN_BASE}, ${GRAIN_BASE}, ${GRAIN_BASE})`;
+  ctx.fillRect(0, 0, GRAIN_PX, GRAIN_PX);
+
+  // Every mark below is achromatic and hashed — see `grain.ts` for why both of
+  // those are load-bearing rather than stylistic.
+  const ink = (v: number, alpha: number): string => {
+    const c = Math.max(0, Math.min(255, Math.round(GRAIN_BASE + v)));
+    return `rgba(${c}, ${c}, ${c}, ${alpha})`;
+  };
+
+  if (spec.style === 'mottle') {
+    // Soft blotches at two sizes: weathered stone, and the only style that
+    // survives being seen from directly overhead as well as at the orbit floor.
+    for (const [count, radius, weight] of [[14, 13, 1], [26, 6, 0.7]] as const) {
+      for (let i = 0; i < count; i++) {
+        const x = hashUnit(seed, i, 1) * GRAIN_PX;
+        const y = hashUnit(seed, i, 2) * GRAIN_PX;
+        const v = (hashUnit(seed, i, 3) - 0.5) * 2 * spec.speckle * weight;
+        ctx.fillStyle = ink(v, 0.5);
+        ctx.beginPath();
+        ctx.arc(x, y, radius * (0.6 + hashUnit(seed, i, 4) * 0.8), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  } else if (spec.style === 'brushed') {
+    // Horizontal streaks: rolled or brushed plate. Directional, so it also tells
+    // the eye which way a metal surface was worked.
+    for (let i = 0; i < 34; i++) {
+      const y = hashUnit(seed, i, 5) * GRAIN_PX;
+      const v = (hashUnit(seed, i, 6) - 0.5) * 2 * spec.speckle;
+      ctx.strokeStyle = ink(v, 0.42);
+      ctx.lineWidth = 1 + hashUnit(seed, i, 7) * 2.5;
+      ctx.beginPath();
+      ctx.moveTo(hashUnit(seed, i, 8) * GRAIN_PX * 0.5, y);
+      ctx.lineTo(GRAIN_PX, y + (hashUnit(seed, i, 9) - 0.5) * 3);
+      ctx.stroke();
+    }
+  } else {
+    // 'block' — cut stone. A darkened edge so a face reads as a placed slab
+    // rather than a painted square, and almost nothing in the middle.
+    ctx.strokeStyle = ink(-spec.speckle, 0.55);
+    ctx.lineWidth = 3;
+    ctx.strokeRect(1.5, 1.5, GRAIN_PX - 3, GRAIN_PX - 3);
+    for (let i = 0; i < 10; i++) {
+      const v = (hashUnit(seed, i, 10) - 0.5) * spec.speckle;
+      ctx.fillStyle = ink(v, 0.3);
+      ctx.fillRect(hashUnit(seed, i, 11) * GRAIN_PX, hashUnit(seed, i, 12) * GRAIN_PX, 7, 7);
+    }
+  }
+
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  grainTextures.set(key, texture);
   return texture;
 }
 

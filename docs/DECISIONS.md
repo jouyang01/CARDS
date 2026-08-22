@@ -5739,3 +5739,66 @@ palettes, the constant-strength goal landing where it can be seen.
 `FOG_OPACITY` rather than the theme, and so could never fail. What can fail is a floor so dark
 there is nothing left to take: at `#060606` the ink is brighter than the terrain and fog
 *lightens* the square. Six luma clears both shipped dark themes with room and catches that.
+
+## 2026-08-22 — Builder session 15 (GRAIN and AMBIENT-FREEZE: phase 3, and the guard before the hazard)
+
+**GRAIN — two scales, because one does not work at this zoom.** A tile is about 37 screen
+pixels at the default framing, so fine noise aliases into mush and buys nothing. What reads is
+per-tile variation (each square a shade off its neighbours) and coarse within-tile grain
+(mottle, brushing, a cut edge). Both shipped; the first is the one that actually stops a floor
+looking like a single painted plane.
+
+**The floor is de-indexed and vertex-coloured, and that choice has a reason.** The obvious
+implementation is a texture spanning several tiles, so each square differs. It does not work:
+the board is `width × height` squares and a multi-tile texture only lands on square boundaries
+when the board divides by its size — 18 ÷ 4 does not, so the pattern slides half a square out of
+register and grain cuts *across* tiles instead of sitting in them. So the texture is exactly one
+tile (`repeat` is then always integral and always aligned) and the per-tile variation is done
+with flat per-quad vertex colours instead, which cannot fall out of register at all. Indexed
+geometry shares vertices between neighbours and would blend the colours into a smooth wash, so
+the grid is `toNonIndexed()` — about 1600 vertices on the largest shipped map, which is nothing.
+
+**Grain is achromatic, and that is load-bearing rather than tasteful.** Every colour predicate
+in `e2e/pixels.ts` that survived MAP-THEMES survived by testing a *hue* relationship —
+`isRangeWash` is `b − r`, `isTeamRed` is `r − g`. A grain that tinted would put every one of them
+back in play at once. `tileTint` returns a single scalar applied to all three channels, so hue
+is preserved by construction; the test pins the property rather than the implementation.
+
+**Judgment call — the raster centres on 246, not mid-grey.** A `map` *multiplies* the material
+colour in three, so a mid-grey texture would halve every albedo in every theme and the palette
+would stop meaning what it says. Centring near white keeps the theme as the source of the colour
+with grain as a slight darkening either side. The residual is a uniform ~3% dim, comfortably
+inside the ±14 slack `isFogged` allows.
+
+**Judgment call — grain has ceilings, clamped at the door.** A theme is Designer-authored data,
+and grain rides *under* every overlay the player reads; past a point it stops being surface and
+starts competing with the marks that carry meaning. The ceiling is also what keeps the measured
+constants in `themes.ts` inside their tolerances — `foggedColour` is a two-point fit matched
+within ±14, and a floor swinging wider than that would eat the slack.
+
+**A test of mine was wrong, and the hash was fine.** The first draft asserted that every adjacent
+pair of squares differed by at least 0.02, and it failed. That assertion was the bug: a genuinely
+uniform hash produces occasional near-collisions, and forbidding them demands *structure* rather
+than the absence of it. Replaced with the statistic that actually characterises good mixing —
+mean neighbour `|Δ|`, which lands at 0.30–0.37 against a uniform-random expectation of 1/3 —
+plus a run-length check, since a mean can be propped up by big jumps elsewhere while a region
+sits flat.
+
+**AMBIENT-FREEZE — shipped deliberately ahead of its consumer.** Nothing moves decoratively yet.
+`render.spec.ts` asserts frames are byte-identical to prove a committed aim stops following the
+pointer, and that can only be checked by comparing whole frames — so the first rotating fan
+breaks it permanently, with a failure message accusing the *aim* rather than the scenery.
+Retrofitting the freeze after that happens means debugging a false accusation first. Building
+the guard before the hazard costs one pure module and removes the trap entirely.
+
+Three ways to ask for stillness, all honoured: `?ambient=off` (what the browser suite now uses,
+via `baseURL`), `prefers-reduced-motion: reduce` (ambient motion is decoration by definition, so
+it is exactly what that setting exists to suppress — and it outranks the query, because a viewer
+who asked their OS for stillness should not be overridden by a link someone sent them), and an
+explicit argument. The decision is a pure function of the environment; only `browserAmbient()`
+touches `matchMedia`, guarded, because a missing accessibility API means "no preference
+expressed" and must never be a crash on boot.
+
+**Not done.** Phase 5 — props, set pieces, and the first thing that actually moves. The freeze
+hook now makes that safe to attempt: start with one element and confirm the browser suite stays
+green before adding a second.

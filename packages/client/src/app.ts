@@ -33,6 +33,7 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
+import { browserAmbient } from './ambient.js';
 import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
@@ -229,6 +230,7 @@ export interface NetPlay {
 const paletteFor = (map: MapDef): BoardPalette => {
   const theme = themeFor(map);
   return {
+    themeId: theme.id,
     open: theme.terrain.open,
     wall: theme.terrain.wall,
     cover: theme.terrain.cover,
@@ -237,6 +239,7 @@ const paletteFor = (map: MapDef): BoardPalette => {
     team1: 0xff6b5e,
     background: theme.sky.top,
     surface: theme.surface,
+    grain: theme.grain,
     sky: theme.sky,
     arena: theme.arena,
   };
@@ -614,7 +617,7 @@ export function startHotSeat(
   let boardMemo: Board | undefined;
   const previewBoard = (): Board => (boardMemo ??= buildBoard(map));
 
-  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, paletteFor(map));
+  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, paletteFor(map), { ambient: browserAmbient() });
 
   // ── VISION1-opening ───────────────────────────────────────────────────────
   // Paint the fogged board NOW, before the render loop starts, so the very
