@@ -29,23 +29,23 @@
   "grain": {
     "open": {
       "style": "brushed",
-      "tint": 9,
-      "speckle": 12
+      "tint": 8,
+      "speckle": 11
     },
     "wall": {
       "style": "brushed",
-      "tint": 10,
-      "speckle": 14
+      "tint": 9,
+      "speckle": 12
     },
     "cover": {
       "style": "block",
-      "tint": 7,
-      "speckle": 11
+      "tint": 6,
+      "speckle": 10
     },
     "brush": {
       "style": "mottle",
-      "tint": 14,
-      "speckle": 16
+      "tint": 4,
+      "speckle": 6
     }
   },
   "sky": {
