@@ -59,6 +59,7 @@ import {
   abilityOptions,
   abilityPreview,
   chargeHitList,
+  draftFromOrders,
   guardLandingFor,
   previewBandSets,
   rotationOptions,
@@ -211,6 +212,17 @@ export interface NetPlay {
    * which characters are on loan, and every one of those facts came off the wire.
    */
   onPresence(handler: (presence: Presence) => void): void;
+  /**
+   * TEAMMATE-PLAN-VISIBLE — register the handler for "what my teammates have
+   * locked in". Fired when a teammate on another client submits, and cleared
+   * when the turn resolves.
+   *
+   * Golden rule #5 in the direction it *permits*: hidden information is team vs
+   * team, and the server has relayed a team's own submissions since M3-HIDDEN.
+   * The board never asks for these — it is handed the ones already on the wire,
+   * so there is nothing here a client could be trusted with wrongly.
+   */
+  onTeamOrders(handler: (orders: UnitOrders[]) => void): void;
   /**
    * Spend a Time Bank charge. Asks; does not apply. The server owns the window,
    * and an optimistic +10 s it then refused would be the one lie a clock must
@@ -446,6 +458,17 @@ export function startHotSeat(
   let selectedUnitId: string | undefined;
   let locked = new Set<string>();
   let drafts = new Map<string, OrderDraft>();
+  /**
+   * TEAMMATE-PLAN-VISIBLE — teammates' committed orders, relayed from the
+   * server, as the drafts the previews already speak (`draftFromOrders`).
+   *
+   * Kept apart from `drafts` rather than merged into it, and the reason is the
+   * one that makes the feature safe: `drafts` is what this seat is *editing* and
+   * what `toUnitOrders` sends. A relayed plan is somebody else's finished
+   * statement — read-only, redrawn wholesale whenever the wire says so, and
+   * never a thing this client could accidentally submit.
+   */
+  let teamPlans = new Map<string, OrderDraft>();
   let interaction: Interaction = IDLE;
   /**
    * WAYPOINTS-FIX — the square a Shift-click could not route to, marked until
@@ -1422,22 +1445,50 @@ export function startHotSeat(
     // an unfiltered read would show the previous seat's committed shot to the
     // player it is aimed at. Same rule `intentBadges` is held to, and the same
     // reason: hidden information is team vs team.
+    //
+    // TEAMMATE-PLAN-VISIBLE extends it across the wire. *"You need to see your
+    // teammates actions when they lock in."* A teammate on another client has
+    // no entry in this seat's `drafts`; their committed order arrives relayed
+    // (the server has sent a team its own submissions since M3-HIDDEN) and is
+    // read back into a draft, so the SAME three derivations below draw it. One
+    // preview, whichever side of the wire the plan came from.
     const lockedTiles: Vec2[] = [];
     const lockedShapes: Vec2[][] = [];
+    const teamRoutes: Vec2[][] = [];
     for (const other of state.units) {
-      if (other.unitId === unit.unitId || !locked.has(other.unitId)) continue;
+      if (other.unitId === unit.unitId) continue;
       if (other.owner !== (currentSeat()?.team ?? unit.owner)) continue;
-      const theirs = drafts.get(other.unitId);
+      // A relayed plan is committed by definition — it only exists because that
+      // seat submitted — so it needs no `locked` entry, which is this client's
+      // own bookkeeping and says nothing about anybody else's.
+      const relayed = teamPlans.get(other.unitId);
+      const theirs = relayed ?? (locked.has(other.unitId) ? drafts.get(other.unitId) : undefined);
       if (theirs === undefined) continue;
       const theirDef = draftAbility(characterFor(other), theirs);
-      if (theirDef === undefined) continue;
-      const theirCovered = abilityPreview(map, other, theirDef, theirs.aim, theirs.aimStep);
-      if (theirCovered.length === 0) continue;
-      lockedTiles.push(...theirCovered);
-      lockedShapes.push(...aimBoundaries(other, theirDef, theirs.aim, theirs.aimStep, theirCovered));
+      const theirCovered = theirDef === undefined
+        ? []
+        : abilityPreview(map, other, theirDef, theirs.aim, theirs.aimStep);
+      if (theirDef !== undefined && theirCovered.length > 0) {
+        lockedTiles.push(...theirCovered);
+        lockedShapes.push(...aimBoundaries(other, theirDef, theirs.aim, theirs.aimStep, theirCovered));
+      }
+      // The route and the guard link, for a relayed plan only: a local locked
+      // draft belongs to a character this seat is about to order again, and its
+      // line is drawn by the live preview above when it is selected.
+      if (relayed === undefined) continue;
+      const theirRoute = theirDef?.phase === 'dash'
+        ? dashRoute(other, theirDef, theirs.aim)
+        : theirs.movePath;
+      if (theirRoute.length > 0) teamRoutes.push([other.pos, ...theirRoute]);
+      // The guard link, so a teammate's Intercept reads as "he is stepping in
+      // front of her" rather than as a lone highlighted square.
+      if (theirDef?.allyTarget === true && theirs.aim[0] !== undefined) {
+        teamRoutes.push([other.pos, { ...theirs.aim[0] }]);
+      }
     }
     renderer.highlight('locked', lockedTiles, LOCKED, 0.28);
     renderer.drawShape(lockedShapes, LOCKED, 0.1, 'shapeLocked');
+    renderer.drawPaths(teamRoutes, LOCKED, true, 'teamPath');
 
     // ── FREE-UI: the free ability's own aim, in its own layer ───────────────
     // Same reasoning as the catalyst layer below: a trap being placed and a
@@ -2563,6 +2614,14 @@ export function startHotSeat(
   net?.onPresence((next) => {
     presence = next;
     renderScoreboard();
+  });
+  // TEAMMATE-PLAN-VISIBLE: a teammate locked in, so redraw. Replaced wholesale
+  // rather than merged — the wire carries the team's whole submission set, and
+  // an empty list is how "the turn resolved, nobody is committed any more"
+  // arrives, so keeping old entries would leave last turn's plan on the board.
+  net?.onTeamOrders((orders) => {
+    teamPlans = new Map(orders.map((o) => [o.unitId, draftFromOrders(o)]));
+    render();
   });
   net?.onControl((unitIds) => {
     const seat = seats[0];

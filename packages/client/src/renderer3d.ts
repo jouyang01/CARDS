@@ -182,7 +182,11 @@ export type HighlightLayer =
 // will interpose on. Its own layer rather than sharing the route line, because
 // both can be on the board at once and they mean opposite things — one is where
 // this unit is going, the other is who it is going to stand in front of.
-export type PathLayer = 'path' | 'catalystPath' | 'guardPath';
+// TEAMMATE-PLAN-VISIBLE adds `teamPath`: the routes teammates on other clients
+// have already locked in. Its own layer because it is somebody else's finished
+// statement rather than the thing this player is editing, and because it can
+// carry SEVERAL routes at once — hence `drawPaths` rather than `drawPath`.
+export type PathLayer = 'path' | 'catalystPath' | 'guardPath' | 'teamPath';
 
 /**
  * AIM-PREVIEW-TRUE's boundary layers. Three families, three colours: the
@@ -653,6 +657,16 @@ export interface Renderer {
   focusOn(squares: readonly Vec2[], pan?: number): void;
   /** A stroked path through tile centres plus an endpoint marker (AIM1). */
   drawPath(squares: readonly Vec2[], color: number, dashed: boolean, layer?: PathLayer): void;
+  /**
+   * TEAMMATE-PLAN-VISIBLE: **several** paths into one layer, the way `drawShape`
+   * already takes several outlines. A layer is replaced wholesale on every draw,
+   * so a per-teammate `drawPath` would leave only the last one on the board —
+   * and at 4v4 a seat has up to three teammates, each with a route and possibly
+   * a guard link. Empty clears the layer.
+   */
+  drawPaths(
+    routes: readonly (readonly Vec2[])[], color: number, dashed: boolean, layer?: PathLayer,
+  ): void;
   /**
    * UI2 Layer 1: fill a closed polygon given in **fractional board coordinates**
    * on the ground plane — the continuous cone/beam/disk the covered tiles
@@ -1203,6 +1217,38 @@ export function createRenderer(
    * registered to the same grid and a clipped corner reads as geometry rather
    * than as a bug.
    */
+  /**
+   * One stroked route: a line through the tile centres plus a diamond on the
+   * last square. Shared by `drawPath` and `drawPaths`, so a single route and one
+   * of several are drawn by the same code — clearing the layer is the caller's
+   * job, because that is the only part the two differ on.
+   */
+  const strokeRoute = (g: Group, squares: readonly Vec2[], color: number, dashed: boolean): void => {
+    if (squares.length === 0) return;
+    // A drawn move is a LINE through tile centres, not a field of tiles: it says
+    // which way you go and in what order, which reachability shading cannot
+    // (AIM1). Sprint is the dashed one.
+    const points = squares.map((p) => toWorld(map, p).setY(0.08));
+    const line = new Line(
+      new BufferGeometry().setFromPoints(points),
+      dashed
+        ? new LineDashedMaterial({ color, dashSize: 0.3, gapSize: 0.2 })
+        : new LineBasicMaterial({ color }),
+    );
+    if (dashed) line.computeLineDistances();
+    g.add(line);
+
+    const last = squares[squares.length - 1]!;
+    const marker = new Mesh(
+      new PlaneGeometry(TILE * 0.4, TILE * 0.4),
+      new MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+    );
+    marker.rotation.x = -Math.PI / 2;
+    marker.rotation.z = Math.PI / 4; // a diamond, so the endpoint reads as an endpoint
+    marker.position.copy(toWorld(map, last)).setY(0.09);
+    g.add(marker);
+  };
+
   const drawOneShape = (g: Group, outline: readonly Vec2[], color: number, opacity: number): void => {
     if (outline.length < 3) return;
     const shape = new Shape();
@@ -1943,29 +1989,13 @@ export function createRenderer(
     drawPath(squares, color, dashed, layer = 'path') {
       const g = layerGroup(layer);
       disposeChildren(g);
-      if (squares.length === 0) return;
-      // A drawn move is a LINE through tile centres, not a field of tiles: it
-      // says which way you go and in what order, which reachability shading
-      // cannot (AIM1). Sprint is the dashed one.
-      const points = squares.map((p) => toWorld(map, p).setY(0.08));
-      const line = new Line(
-        new BufferGeometry().setFromPoints(points),
-        dashed
-          ? new LineDashedMaterial({ color, dashSize: 0.3, gapSize: 0.2 })
-          : new LineBasicMaterial({ color }),
-      );
-      if (dashed) line.computeLineDistances();
-      g.add(line);
+      strokeRoute(g, squares, color, dashed);
+    },
 
-      const last = squares[squares.length - 1]!;
-      const marker = new Mesh(
-        new PlaneGeometry(TILE * 0.4, TILE * 0.4),
-        new MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }),
-      );
-      marker.rotation.x = -Math.PI / 2;
-      marker.rotation.z = Math.PI / 4; // a diamond, so the endpoint reads as an endpoint
-      marker.position.copy(toWorld(map, last)).setY(0.09);
-      g.add(marker);
+    drawPaths(routes, color, dashed, layer = 'path') {
+      const g = layerGroup(layer);
+      disposeChildren(g);
+      for (const route of routes) strokeRoute(g, route, color, dashed);
     },
 
     drawShape(outlines, color, opacity = 0.18, layer = 'shape') {

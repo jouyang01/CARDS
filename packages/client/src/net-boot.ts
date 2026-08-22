@@ -23,6 +23,7 @@ import {
   type GameState,
   type MapDef,
   type TurnEvent,
+  type UnitOrders,
 } from '@cards/engine';
 import { startHotSeat, type HotSeatUI } from './app.js';
 import type { RoomClient, NetState } from './net.js';
@@ -121,6 +122,20 @@ export function startNetworkedMatch(
   let played = opening.turn;
   let shown: string | undefined;
   let onPresence: ((presence: Presence) => void) | undefined;
+  /**
+   * TEAMMATE-PLAN-VISIBLE — the orders this seat's TEAMMATES have locked in.
+   *
+   * The server has relayed a team's own submissions since M3-HIDDEN (golden
+   * rule #5: hidden information is team vs team); nothing here widens what
+   * arrives. Forwarded on change like the control map and presence, and for the
+   * same reason — it moves when somebody locks in, not on every frame, and a
+   * repaint per frame would throw away the draft the player is composing.
+   *
+   * This seat's OWN entry is dropped: the board already draws local drafts, and
+   * echoing them back would fight with the live one the player is editing.
+   */
+  let onTeamOrders: ((orders: UnitOrders[]) => void) | undefined;
+  let teamOrders = '';
   // NET-PRESENCE-UI: forwarded on change, like the control map and for the same
   // reason — it moves only when somebody drops or returns, and the topbar is
   // rebuilt wholesale when it does.
@@ -151,6 +166,16 @@ export function startNetworkedMatch(
     if (next !== shown) {
       shown = next;
       onStatus?.(next);
+    }
+    const mine = now.seat?.seatId;
+    const relayed = Object.entries(now.orders)
+      .filter(([seatId]) => seatId !== mine)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .flatMap(([, orders]) => orders);
+    const relayedKey = JSON.stringify(relayed);
+    if (relayedKey !== teamOrders) {
+      teamOrders = relayedKey;
+      onTeamOrders?.(relayed);
     }
     if (now.unitIds.join(',') !== control) {
       control = now.unitIds.join(',');
@@ -186,6 +211,7 @@ export function startNetworkedMatch(
       onTimer: (handler) => { onTimer = handler; },
       onControl: (handler) => { onControl = handler; },
       onPresence: (handler) => { onPresence = handler; },
+      onTeamOrders: (handler) => { onTeamOrders = handler; },
       extend: () => { client.extend(); },
     },
     opening,

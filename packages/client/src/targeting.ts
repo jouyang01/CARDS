@@ -109,11 +109,11 @@ export interface OrderDraft {
   /**
    * INTERCEPT-GUARD — the **ally** an `allyTarget` ability is aimed at.
    *
-   * Beside `aim` rather than instead of it: the aim is still the ally's square,
-   * because that is what the preview draws and what `commitAim` validates. This
-   * is the half the ORDER needs and the square cannot supply — at 4v4 two
-   * allies can share an adjacency, and "who am I guarding" has to survive the
-   * trip to the server unambiguously.
+   * Beside `aim` rather than instead of it: since INTERCEPT-LANDING-CHOICE the
+   * aim is the **landing square** the player picked, and the square alone
+   * cannot say who is being guarded — at 4v4 two allies can share an adjacency,
+   * and "who am I guarding" has to survive the trip to the server
+   * unambiguously.
    *
    * The lesson is WALL-CAST-FIX's, one field later: an aim the preview gets
    * right and the order-builder drops is an ability that cannot be cast.
@@ -1250,6 +1250,46 @@ export function nextDraft(
 }
 
 /** Convenience: build `UnitOrders` for every character a player controls. */
+/**
+ * TEAMMATE-PLAN-VISIBLE — the inverse of `toUnitOrders`: a committed order, read
+ * back into the draft shape the previews already speak.
+ *
+ * *"You need to see your teammates actions when they lock in."* A teammate on
+ * another client has no entry in this client's `drafts` — their plan arrives as
+ * `UnitOrders` off the wire (the server has relayed a team's own submissions
+ * since M3-HIDDEN). Rather than teach every preview a second input shape, the
+ * order is turned back into a draft here and handed to the same
+ * `abilityPreview` / `aimBoundaries` / `dashRoute` the local plans use, so a
+ * teammate's committed shot is drawn by the code that draws yours.
+ *
+ * **Lossy in exactly one direction, and deliberately.** An order carries what
+ * resolution needs; a draft also carries gesture state (which squares were
+ * clicked, which slot is armed) that nobody else's client has any business
+ * knowing. Everything reconstructed here came off the wire.
+ */
+export function draftFromOrders(orders: UnitOrders): OrderDraft {
+  const draft = emptyDraft(orders.unitId);
+  if (orders.ability !== undefined) {
+    draft.abilityId = orders.ability.abilityId;
+    draft.aim = (orders.ability.target ?? []).map((p) => ({ x: p.x, y: p.y }));
+    if (orders.ability.aimStep !== undefined) draft.aimStep = orders.ability.aimStep;
+    if (orders.ability.mode !== undefined) draft.mode = orders.ability.mode;
+    if (orders.ability.targetUnitId !== undefined) draft.allyTargetId = orders.ability.targetUnitId;
+  }
+  if (orders.freeAbility !== undefined) {
+    draft.freeAbilityId = orders.freeAbility.abilityId;
+    draft.freeAim = (orders.freeAbility.target ?? []).map((p) => ({ x: p.x, y: p.y }));
+  }
+  if (orders.catalyst !== undefined) {
+    draft.catalystId = orders.catalyst.abilityId;
+    draft.catalystAim = (orders.catalyst.target ?? []).map((p) => ({ x: p.x, y: p.y }));
+  }
+  if (orders.movePath !== undefined) draft.movePath = orders.movePath.map((p) => ({ x: p.x, y: p.y }));
+  if (orders.chase !== undefined) draft.chaseTargetId = orders.chase;
+  if (orders.sprint === true) draft.sprint = true;
+  return draft;
+}
+
 export function toUnitOrdersFor(
   characters: ReadonlyMap<string, CharacterDef>,
   drafts: readonly OrderDraft[],
