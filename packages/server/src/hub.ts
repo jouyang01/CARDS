@@ -74,6 +74,16 @@ export interface Sink {
   close(code?: number, reason?: string): void;
 }
 
+/**
+ * DEATH-HANG-2 — how many all-down turns may resolve back-to-back inside one
+ * message before the hub stops and waits for the clock instead.
+ *
+ * Respawn ends the all-down state after a single turn, so one is the number this
+ * ever reaches in practice. The cap exists so a future rule that kept everybody
+ * down could not turn a self-resolving turn into an unbounded recursion.
+ */
+const MAX_AUTO_RESOLVES = 4;
+
 /** WebSocket close code for a policy refusal (RFC 6455 §7.4.1). */
 const CLOSE_POLICY = 1008;
 
@@ -477,6 +487,9 @@ export class RoomHub {
    */
   #sendDecision(): void {
     if (this.#config === undefined || this.#room.state === undefined) return;
+    // DEATH-HANG-2 — the turn nobody can take resolves itself, before a window
+    // for it is ever opened.
+    if (this.#resolveIfNobodyCanAct()) return;
     const state = this.#room.state;
     // M3-TIMER: a decision window opens with the phase it belongs to. Set here
     // rather than at the resolve, so the one place that says "everybody may now
@@ -595,6 +608,63 @@ export class RoomHub {
     const controls = new Set(controlledUnits(this.#room, seatId));
     return state.units.some((u) => u.alive && controls.has(u.unitId));
   }
+
+  /**
+   * DEATH-HANG-2 — **a turn nobody can take must not be offered to anybody.**
+   *
+   * *"The Death bug and then not being able to lock-in and breaking the game is
+   * still happening, playtest made it happen during sudden death."*
+   *
+   * DOWN-SEAT-SKIP takes a seat with no living character out of `#answering()`,
+   * so the room resolves on the seats that can still play. That is right, and it
+   * has one hole: when **every** seat is down, the set it resolves on is empty.
+   * `#allIn()` guards `answering.length > 0`, so the room simply waits — and the
+   * first player to press Hold Position puts themselves alone in the answering
+   * set and resolves the whole turn by themselves. The second player's press,
+   * made for the same turn, lands on the window that has already replaced it.
+   * From the chair: the turn jumps, an order you never gave is played, and the
+   * next Lock In "does nothing".
+   *
+   * Sudden death is where a real playtest found it because that is the only time
+   * a death does **not** end the match: a double KO scores for both sides, the
+   * tie holds, play continues — with nobody left standing to continue it.
+   *
+   * So: if somebody is here and nobody among them has a character to order, the
+   * turn resolves at once. Every unit holds either way, which is the same
+   * resolution the timeout would eventually produce — arrived at without eating
+   * a press first.
+   *
+   * Two guards, both load-bearing:
+   *
+   * - **Somebody must be present.** QUOTA-RUNAWAY: an abandoned match must NOT
+   *   tick turns on its own, and sudden death has no exit without a kill, so an
+   *   empty room resolving itself is an unbounded storage write. With no sinks
+   *   this does nothing and the match freezes, exactly as before.
+   * - **A bounded number in a row.** Respawn is what ends the all-down state, so
+   *   in practice one resolve is enough; the cap is there so that a future rule
+   *   which kept everybody down could never turn this into an infinite loop
+   *   inside one message.
+   */
+  #resolveIfNobodyCanAct(): boolean {
+    const state = this.#room.state;
+    if (state === undefined || state.status !== 'active') return false;
+    if (this.#sinks.size === 0) return false; // QUOTA-RUNAWAY: nobody is here
+    const present = this.#room.seats
+      .filter((s) => s.connected || hasSubmitted(this.#room, s.seatId));
+    if (present.length === 0) return false;
+    if (present.some((s) => this.#canAct(s.seatId))) return false;
+    if (this.#autoResolves >= MAX_AUTO_RESOLVES) return false;
+    this.#autoResolves += 1;
+    try {
+      this.resolveNow();
+    } finally {
+      this.#autoResolves -= 1;
+    }
+    return true;
+  }
+
+  /** Depth of `#resolveIfNobodyCanAct` recursion, so it can never run away. */
+  #autoResolves = 0;
 
   /** Has every seat that can still answer, answered? */
   #allIn(): boolean {
