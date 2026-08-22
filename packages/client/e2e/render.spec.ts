@@ -140,6 +140,25 @@ async function pixels(page: Page): Promise<Image> {
   return decodePng(await frame(page));
 }
 
+/**
+ * Byte-equality between two composited frames.
+ *
+ * **This premise is broken, and RENDER-SUITE-GREEN measured how.** Two
+ * screenshots of an untouched, settled board are not identical: 2,674 of
+ * ~205,000 sampled pixels differ by more than 4 counts, some by more than 16,
+ * spread over the *entire* frame — and the numbers come out **bit-identical**
+ * whether the pointer moved between the shots or nothing happened for 2.5 s.
+ * Deterministic, whole-frame, and independent of both time and input, which is
+ * the signature of a per-frame jitter (temporal AA) rather than of anything on
+ * the board moving.
+ *
+ * So `same()` is left exactly as it was, on purpose. A tolerance was tried and
+ * removed: loose enough to absorb this, it can no longer tell a relocated aim
+ * overlay from noise, which is the one thing the tests using it exist to check.
+ * The fix is a different technique — assert on the overlay's own pixels rather
+ * than on whole-frame equality — and that is a re-spec, not a repair.
+ * See the Open Questions in `docs/DECISIONS.md`.
+ */
 const same = (a: Buffer, b: Buffer): boolean => a.equals(b);
 
 /** Point at a fraction of the board and settle a frame. */

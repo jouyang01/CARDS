@@ -6077,11 +6077,19 @@ what step 5 proves directly. **This loses a claim, and losing it is the Analyzer
 1. **RENDER-SUITE-GREEN is not finished: 3 of 32 still fail, and they are real.** The timeouts were
    hiding them, so these are new information rather than known-bad. None is budget or staleness; I
    did not guess at fixes.
-   - **UI1-fix** (`render.spec.ts:257`) — *"pointer at 0.3,0.25 must not move a committed aim"*.
-     Byte-equality between two frames of a committed aim. Something in the clipped region is not
-     static; ambient and models are both off, so the candidates are the auto-camera still easing,
-     or an idle animation on box units. **Worth knowing either way** — if the board really does
-     move under a committed aim, that is a production bug, not a test one.
+   - **UI1-fix** (`render.spec.ts`) — *"pointer at 0.3,0.25 must not move a committed aim"*.
+     **Measured, and it is NOT a production bug: the aim does not move.** Two screenshots of an
+     untouched, settled board differ by themselves — 2,674 of ~205,000 sampled pixels by more than
+     4 counts, 524 of them by more than 16, spread over the *entire* frame. The bucket counts come
+     out **bit-identical** whether the pointer moved between the shots or nothing happened for
+     2.5 s, so it is deterministic and independent of both time and input: a per-frame jitter
+     (temporal AA), not the board moving. **Byte-equality is therefore not a usable technique in
+     this suite**, which also means AMBIENT-FREEZE's frame-equality guard has not been able to work
+     for as long as this has been true. I tried a tolerance and removed it: loose enough to absorb
+     this, it can no longer tell a relocated aim overlay from noise, which is the only thing the
+     test is for. **The repair is a different assertion** — count/locate the aim overlay's own
+     orange pixels and assert the centroid does not move — and that is a re-spec of the idiom
+     (`same()` has six callers), not a test fix I should make unilaterally.
    - **a resolved turn … floats a readout** (`render.spec.ts:284`) — the readout is not caught
      during resolution. Likely a sampling race against playback, but it could equally be UI5's
      floating readout not appearing; needs one look before it is called a test bug.
