@@ -9,7 +9,7 @@
  * suite runs without any, so an unavailable model must be ordinary, not an error.
  */
 
-import { AnimationMixer, Group, LoopOnce, LoopRepeat, Object3D, type AnimationAction, type AnimationClip, type Bone } from 'three';
+import { AnimationMixer, Group, LoopOnce, LoopRepeat, Mesh, Object3D, type AnimationAction, type AnimationClip, type Bone, type Material } from 'three';
 
 import type { ClipChoice, ClipSet } from './character-clips.js';
 
@@ -143,6 +143,26 @@ export function postureRotations(posture: PostureSpec | undefined): Map<string, 
   }
   return out;
 }
+
+/**
+ * Give a cloned subtree its own materials.
+ *
+ * `SkeletonUtils.clone` copies the nodes and **shares the materials** — which is
+ * fine until something writes to one per unit. Two of those already exist: the
+ * deferred-death fade writes `opacity`, and the victim flash writes `emissive`.
+ * Shared, either of them applies to every unit of that character at once: one
+ * Aegis dies and both fade, one is hit and both light up.
+ *
+ * The cost is one material per mesh per unit — a handful of objects for a board
+ * of eight, against an effect that is simply wrong without it.
+ */
+export const detachMaterials = (root: Object3D): void => {
+  root.traverse((o) => {
+    if (!(o instanceof Mesh)) return;
+    const m = o.material as Material | Material[];
+    o.material = Array.isArray(m) ? m.map((one) => one.clone()) : m.clone();
+  });
+};
 
 /** A loaded prop's own height, in the units it was authored in. */
 const measuredHeight = (root: Object3D): number => {
@@ -290,6 +310,7 @@ export class CharacterModels {
     // skeleton, so every unit of the same character would animate in lockstep.
     // clone() preserves the concrete type it is handed; the signature cannot say so.
     const root = this.cloneFn(entry.scene) as Group;
+    detachMaterials(root);
     const mixer = new AnimationMixer(root);
     const byName = new Map(entry.clips.map((c) => [c.name, c]));
     const posture = postureRotations(entry.manifest.posture);
@@ -315,7 +336,9 @@ export class CharacterModels {
       // here counts as part of the man, so he shrinks until man-plus-door is
       // MODEL_HEIGHT_TILES tall. Attaching in `attachProps`, after the scale is
       // known, keeps the body the thing being sized.
-      props.push({ root: this.cloneFn(loadedProp.scene), spec, height: loadedProp.height, bone });
+      const propRoot = this.cloneFn(loadedProp.scene);
+      detachMaterials(propRoot);
+      props.push({ root: propRoot, spec, height: loadedProp.height, bone });
     }
 
     let current: AnimationAction | undefined;
