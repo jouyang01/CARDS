@@ -75,6 +75,18 @@ const UNIT_HEIGHT = 0.6;
  * once characters can actually be seen on the board.
  */
 const MODEL_HEIGHT_TILES = 1.15;
+
+/**
+ * How much tighter than "the whole board" the default framing sits.
+ *
+ * 1 frames the entire map, which is what shipped — and at 18x15 that put a
+ * 1.15-tile character at a few dozen pixels: correctly scaled against the
+ * board, and too small to read as a character. Owner's call (2026-08-22):
+ * scale everything up and let the map run off the edges. The auto-camera
+ * already follows the action and `clampToBoard` already keeps the frame on the
+ * board, so a frame smaller than the map is a supported state, not a new one.
+ */
+const BOARD_ZOOM = 1.75;
 const WALL_HEIGHT = 0.9;
 const COVER_HEIGHT = 0.45;
 
@@ -582,6 +594,14 @@ export interface Renderer {
   preloadCharacters(characterIds: readonly string[]): Promise<void>;
   /** Play an animation on a unit. A no-op for units still drawn as boxes. */
   setUnitClip(unitId: string, choice: ClipChoice, beatSeconds: number): void;
+  /**
+   * Turn a unit to look along a **board-space** direction.
+   *
+   * The board→world→mesh conversion lives here because the rest facing is a
+   * property of the asset: Blender's front is -Y, `export_yup` makes that +Z,
+   * and board +y is world +z — so a model at rest looks along board +y.
+   */
+  setUnitFacing(unitId: string, dx: number, dy: number): void;
   /** This character's clip names, or undefined if it has no model loaded. */
   clipsFor(characterId: string | undefined): ClipSet | undefined;
   /**
@@ -592,8 +612,15 @@ export interface Renderer {
   /** Free-orbit on/off. When off, the auto-camera drives framing. */
   setOrbitEnabled(on: boolean): void;
   orbitEnabled(): boolean;
-  /** Keep a run of squares in frame (auto-camera). Empty = whole board. */
-  focusOn(squares: readonly Vec2[]): void;
+  /**
+   * Keep a run of squares in frame (auto-camera). Empty = whole board.
+   *
+   * `pan` overrides how far the camera leans toward them: the A3 default of
+   * 0.35 keeps a four-shooter Blast readable by refusing to chase each actor,
+   * but planning wants the seat's own characters actually **in** the frame, and
+   * at BOARD_ZOOM a third of a lean does not get there.
+   */
+  focusOn(squares: readonly Vec2[], pan?: number): void;
   /** A stroked path through tile centres plus an endpoint marker (AIM1). */
   drawPath(squares: readonly Vec2[], color: number, dashed: boolean, layer?: PathLayer): void;
   /**
@@ -992,6 +1019,17 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
   const unitCharacter = new Map<string, string | undefined>();
   /** Characters whose scaling has been reported. One line each, not one per unit. */
   const measured = new Set<string>();
+  /**
+   * The direction each unit was last told to look.
+   *
+   * Renderer state, like `baseAlpha` and `fadeOf`, and for the same reason: a
+   * unit's group is rebuilt whenever its model arrives, and anything not
+   * re-applied on rebuild is silently lost. Facing was applied straight to the
+   * object and nothing held it, so every character snapped back to its rest
+   * direction the moment its model loaded — which is the one rebuild that
+   * always happens.
+   */
+  const facingOf = new Map<string, { dx: number; dy: number }>();
 
   const buildUnit = (unit: RenderUnit): Group => {
     const g = new Group();
@@ -1104,6 +1142,19 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
     world.remove(g);
     unitObjects.delete(unitId);
     unitCharacter.delete(unitId);
+  };
+
+  /**
+   * Turn a unit's body to its stored direction.
+   *
+   * `atan2(x, z)` rather than the usual `atan2(y, x)`: the angle is measured
+   * from +z, which is where the model already looks — Blender's front is -Y,
+   * `export_yup` makes that +Z, and board +y is world +z.
+   */
+  const applyFacing = (unitId: string): void => {
+    const f = facingOf.get(unitId);
+    const body = unitObjects.get(unitId)?.getObjectByName('body');
+    if (f !== undefined && body !== undefined) body.rotation.y = Math.atan2(f.dx, f.dy);
   };
 
   const disposeChildren = (g: Group): void => {
@@ -1229,6 +1280,12 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
     // of that fraction. With no insets both terms collapse to
     // `max(projectedDepth, arenaW / aspect)` exactly.
     return Math.max(
+      Math.max(
+        projectedDepth * (height / visibleH()),
+        map.width * (height / visibleW()),
+      ) * 1.08 / BOARD_ZOOM,
+      SPAN_LIMITS.min,
+    );
       projectedDepth * (height / visibleH()),
       arenaW * (height / visibleW()),
     ) * 1.08;
@@ -1394,6 +1451,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
         if (g === undefined) {
           g = buildUnit(unit);
           unitObjects.set(unit.unitId, g);
+          applyFacing(unit.unitId); // a fresh body starts at its rest direction
         }
         g.position.copy(toWorld(map, unit.pos));
         g.visible = true;
@@ -1716,6 +1774,12 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
       instances.get(unitId)?.play(choice, beatSeconds);
     },
 
+    setUnitFacing(unitId, dx, dy) {
+      if (dx === 0 && dy === 0) return;
+      facingOf.set(unitId, { dx, dy });
+      applyFacing(unitId);
+    },
+
     clipsFor(characterId) {
       return characterId === undefined ? undefined : models?.manifest(characterId)?.map;
     },
@@ -1731,7 +1795,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
 
     orbitEnabled: () => orbitOn,
 
-    focusOn(squares) {
+    focusOn(squares, pan = AUTO_PAN) {
       if (orbitOn) return; // free-orbit mode: the auto-camera stands down
       if (squares.length === 0) {
         wantCentre = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
@@ -1748,8 +1812,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
       // four of them act in a row — you spend the turn re-finding the board.
       const board = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
       wantCentre = {
-        x: board.x + ((minX + maxX) / 2 - board.x) * AUTO_PAN,
-        y: board.y + ((minY + maxY) / 2 - board.y) * AUTO_PAN,
+        x: board.x + ((minX + maxX) / 2 - board.x) * pan,
+        y: board.y + ((minY + maxY) / 2 - board.y) * pan,
       };
       // Same foreshortening correction as fitBoard, plus padding so the action
       // never sits against the edge — and never tighter than the board itself.

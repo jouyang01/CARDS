@@ -36,6 +36,7 @@ import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
 import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
+import { openingFacings, selectFacing, type Facing } from './facing.js';
 import { selectClip } from './character-clips.js';
 import { type Cue } from './choreograph.js';
 import {
@@ -399,6 +400,32 @@ export function startHotSeat(
   let state = opening ?? (scenario === undefined
     ? createMatch(map, format, teams)
     : applyScenario(scenario, buildBoard(map), createMatch(map, format, teams)));
+
+  /**
+   * Where each unit is looking. Client memory, like `sightings`: the engine has
+   * no facing and must not grow one — nothing in the ruleset turns on it — so
+   * the last direction has to be held on this side.
+   *
+   * Declared HERE, immediately under `state` and far above its only reader,
+   * because VISION1-opening paints during construction and that paint holds the
+   * pose. Left where it read naturally — down beside `applyFacing` — every
+   * screen in the app died with "Cannot access 'facingOf' before
+   * initialization". Same trap `pads` is a `function` to avoid.
+   */
+  const facingOf = new Map<string, Facing>(openingFacings(state.units));
+
+  /**
+   * The units the seat on the clock is ordering — what the camera frames.
+   *
+   * Reads `seats`/`seatIdx` rather than calling `currentSeat`, and is a hoisted
+   * `function`, because `sizeToViewport` calls it during construction — above
+   * where `currentSeat` is declared. Written the tidy way it took every screen
+   * in the app down with "Cannot access 'currentSeat' before initialization".
+   */
+  function ownUnits(): UnitState[] {
+    const team = seats[seatIdx]?.team ?? 0;
+    return state.units.filter((u) => u.owner === team && u.alive);
+  }
   /** SCORE1's running ledger, folded from each turn's event log as it plays. */
   let totals: MatchTotals = initTotals(state);
   // One seat and no handover when networked (see `NetPlay`): this client is one
@@ -615,7 +642,20 @@ export function startHotSeat(
   // nobody picked.
   void renderer.preloadCharacters([...new Set(state.units.map((u) => u.characterId))]);
 
-  const fitCamera = (): void => renderer.fitBoard();
+  /**
+   * Re-frame after a resize.
+   *
+   * `fitBoard()` used to be enough, because the frame WAS the board. Since
+   * BOARD_ZOOM it is not: fitting "the board" centres on the middle of the map
+   * and, with the log column shifting the world window right, drops the left
+   * column — which is exactly where team 0 spawns. It also ran *after* the
+   * planning framing, because the resize arrives once the page has settled, so
+   * it silently undid it.
+   *
+   * Framing the seat's own characters is the right answer at any zoom, and
+   * during playback the auto-camera overwrites it on the very next frame.
+   */
+  const fitCamera = (): void => { renderer.focusOn(ownUnits().map((u) => u.pos), 1); };
   // Size from the VIEWPORT, never from the container: the canvas is the
   // container's only child, so measuring the container would feed the canvas its
   // own width back and pin it at Three's 300px default.
@@ -1216,7 +1256,12 @@ export function startHotSeat(
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
     clearReadouts();
-    renderer.focusOn([]); // ease back out to the whole board after a resolution
+    // Frame the seat's own characters rather than the whole board. At
+    // BOARD_ZOOM the board no longer fits the viewport, so "reset to the board"
+    // means "centre on the middle of the map" — which on most spawns leaves the
+    // player looking at terrain with their own team off-screen. Full pan, not
+    // the auto-camera's lean: this is where the player is *working*.
+    renderer.focusOn(ownUnits().map((u) => u.pos), 1);
     renderer.highlight('select', [unit.pos], SELECT, 0.5);
 
     const chosen = draftAbility(character, draft);
@@ -2255,6 +2300,7 @@ export function startHotSeat(
         const now_t = Math.min(t, end);
         applyFrame(sampleFrame(cues, now_t), units, posOf);
         applyClips(cues, now_t, units);
+        applyFacing(cues, now_t, units);
         if (t >= end) return resolve();
         globalThis.requestAnimationFrame(tick);
       };
@@ -2282,7 +2328,23 @@ export function startHotSeat(
    * Idempotent by design: `play()` no-ops when the requested clip is already
    * running, so calling this on every paint costs nothing and cannot hitch.
    */
+  /**
+   * Point every unit the way the timeline says, holding the last direction for
+   * anyone the timeline is silent about.
+   */
+  function applyFacing(cues: readonly Cue[], t: number, units: readonly RenderUnit[]): void {
+    const posOf = (unitId: string): Vec2 | undefined => unitById(unitId)?.pos;
+    for (const u of units) {
+      const next = selectFacing(cues, t, u.unitId, posOf) ?? facingOf.get(u.unitId);
+      if (next === undefined) continue;
+      facingOf.set(u.unitId, next);
+      renderer.setUnitFacing(u.unitId, next.x, next.y);
+    }
+  }
+
   function applyResting(units: readonly RenderUnit[]): void {
+    // No cues: every unit keeps the direction it ended the last turn facing.
+    applyFacing([], 0, units);
     for (const u of units) {
       const clips = renderer.clipsFor(u.characterId);
       if (clips === undefined) continue;

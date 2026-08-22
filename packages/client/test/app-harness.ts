@@ -36,6 +36,8 @@ export interface DrawLog {
   clips: { unitId: string; clip: string; loop: boolean }[];
   /** Each `preloadCharacters` call, as the ids it was given. */
   preloads: string[][];
+  /** The direction each unit was last told to look, by unit id. */
+  facing: Map<string, { dx: number; dy: number }>;
   /**
    * WALL-CAST-FIX — the **board itself**, as of the last `show()`: the units,
    * decoys and traps the viewing seat can currently see.
@@ -72,7 +74,7 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
-    highlights: new Map(), paths: [], shapes: [], clips: [], preloads: [],
+    highlights: new Map(), paths: [], shapes: [], clips: [], preloads: [], facing: new Map(),
     board: { units: [], decoys: [], traps: [] },
   };
   let orbit = false;
@@ -104,6 +106,9 @@ export function stubRenderer(): StubRenderer {
     setUnitClip: (unitId, choice) => {
       draw.clips.push({ unitId, clip: choice.clip, loop: choice.loop });
     },
+    // Last-write-wins rather than a log: facing is a state, not an event, and
+    // what a spec wants to ask is "which way is he looking now".
+    setUnitFacing: (unitId, dx, dy) => { draw.facing.set(unitId, { dx, dy }); },
     // Undefined unless a spec installs a set: that is the box path, and it is
     // the one every character without art still takes.
     clipsFor: (characterId) => (characterId === undefined ? undefined : clipSets[characterId]),
