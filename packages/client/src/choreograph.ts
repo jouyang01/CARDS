@@ -111,7 +111,15 @@ export function choreograph(events: readonly TurnEvent[]): Cue[] {
   for (const segment of segmentByPhase(events)) {
     const { phase } = segment;
     cues.push({ kind: 'phase', phase, t, dur: BEAT });
-    t += BEAT; // the banner reads before the phase acts
+    // The banner reads before the phase acts — EXCEPT in Move.
+    //
+    // Prep, Dash and Blast are announcements: the banner names what is about to
+    // happen and then it happens, and the beat of stillness is what makes the
+    // naming land. Move announces nothing. Everyone goes at once, the board
+    // already shows where, and a beat of everybody standing under a MOVE label
+    // is dead air — on a one-tile move it was half the phase, which read as
+    // characters hesitating before they walked. Owner's call (2026-08-22).
+    if (phase !== 'move') t += BEAT;
 
     const phaseCues: Cue[] = SEQUENTIAL.has(phase)
       ? sequentialPhase(phase, segment.events, t)
