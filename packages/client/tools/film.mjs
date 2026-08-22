@@ -34,6 +34,8 @@ const CHARS = arg('chars', 'aegis,vex,wisp,ravok');
 const FPS = Number(arg('fps', '30'));
 const FRAMES = Number(arg('frames', '24'));
 const PHASE = arg('phase', 'MOVE');
+/** Name of an ability to arm before locking in, e.g. "Shield Bash". Optional. */
+const ABILITY = arg('ability', '');
 const OUT = arg('out', 'film');
 const STEP_MS = 1000 / FPS;
 
@@ -90,11 +92,20 @@ const main = async () => {
   // resolves. Clicks are real events; only the clock is fake.
   const board = page.locator('#board canvas');
   const box = await board.boundingBox();
+  if (ABILITY !== '') {
+    // An ability instead of a move, so a Blast phase has something in it.
+    await page.locator(`button:has-text("${ABILITY}")`).first().click();
+    await page.mouse.move(box.x + box.width * 0.52, box.y + box.height * 0.5);
+    await page.waitForTimeout(150);
+    await page.mouse.click(box.x + box.width * 0.52, box.y + box.height * 0.5);
+    await page.waitForTimeout(150);
+  } else {
   await page.locator('button:has-text("Move")').first().click();
   await page.mouse.move(box.x + box.width * 0.58, box.y + box.height * 0.58);
   await page.waitForTimeout(150);
   await page.mouse.click(box.x + box.width * 0.58, box.y + box.height * 0.58);
   await page.waitForTimeout(150);
+  }
   for (let i = 0; i < 4; i++) {
     const lock = page.locator('.hud-lockrow .hud-lock');
     if (await lock.count()) {

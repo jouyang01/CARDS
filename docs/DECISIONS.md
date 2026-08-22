@@ -6040,3 +6040,45 @@ that it never worked.
 **The next step is app-side, and it is now specific:** find what re-issues render commands into
 an idle page. The counts point at the camera first — 49 marks in five seconds, against a board
 nobody touched.
+
+## 2026-08-22 — Builder session 17 (impact: hitstop, victim flash, screen shake)
+
+The first of the five VFX steps. A hit currently reads as a number changing; these three make it
+read as a hit. All three decisions live in `packages/client/src/vfx.ts` as pure functions, so the
+tuning is testable without a browser and the renderer only ever executes what it is told.
+
+**Judgment call — hitstop freezes the presentation clock, never the schedule.** `playPhase` keeps
+one wall clock and one animation clock, and hitstop widens the gap between them (`heldMs`) instead
+of shortening the phase. Cues therefore all still fire, in order, with their authored spacing; the
+phase simply takes 35–85 ms longer per landed hit in real time. The alternative — skipping ahead
+after the freeze to "catch up" — would drop frames of the very animation the freeze exists to sell.
+
+**Judgment call — every effect scales with damage, and saturates.** `REFERENCE_HIT = 30` is the
+point at which hitstop reaches `HITSTOP_MAX_MS` and shake reaches `SHAKE_MAX_TILES`. Without a
+ceiling a big ultimate would freeze the game long enough to feel like a hitch, and the shake would
+throw the board off screen. With one, a chip hit and a heavy hit are *distinguishable* — which is
+the whole point — but neither is disruptive.
+
+**Judgment call — the shake is deterministic per impact, seeded by `${unitId}@${t}`.** No
+`Math.random()` anywhere near presentation: the same replay shakes identically on every machine,
+which is what makes the film harness able to test it at all. `shakeOffset` decays to *exactly*
+`{0, 0}` at the end of its window rather than asymptotically, so the camera provably returns to
+where it was and successive shakes cannot accumulate drift.
+
+**Judgment call — the shake is added to `target`, not to `centre`.** `centre` feeds the camera's
+own easing; a shake written there would be eased *toward*, and the easing would then chase its own
+output. Offsetting at the last moment inside `applyCamera` keeps the shake a pure display effect
+with no path back into the state that produced it.
+
+**Bug found by reading the flash path, not by a failing test.** `SkeletonUtils.clone` shares
+materials between clones. The deferred-death fade already wrote `opacity` per unit and the new
+flash writes `emissive` per unit, so with two Aegises on a board, one dying faded both and one
+being hit lit both. Fixed by `detachMaterials` on the body clone and on each prop clone, at a cost
+of one material per mesh per unit. Regression test: `test/detach-materials.test.ts`, which fails on
+six of eight cases if the clone is removed.
+
+**Known gap, stated plainly:** the flash is verified as far as the renderer call — `vfx-wiring`
+proves `flashUnit` is reached with the victim's id — but *not* at the pixel. The film harness
+cannot yet order an attack that lands, so filming a Blast produces no impact to photograph. The
+next tooling step is teaching `film.mjs` to aim an ability at a unit; until then, no one should
+claim the flash has been seen.

@@ -37,6 +37,7 @@ import { createRenderer, type BoardPalette, type HighlightLayer, type Projection
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { openingFacings, selectFacing, type Facing } from './facing.js';
+import { FLASH_SECONDS, SHAKE_SECONDS, hitstopMs, newImpacts, seedOf, shakeAmplitude } from './vfx.js';
 import { selectClip } from './character-clips.js';
 import { type Cue } from './choreograph.js';
 import {
@@ -2346,12 +2347,33 @@ export function startHotSeat(
     // foot across it, or the feet skate.
     const msPerBeat = phase === 'move' ? MS_PER_MOVE_STEP : MS_PER_BEAT;
     const t0 = now();
+    // HITSTOP. The cue clock is wall time minus however long we have spent
+    // frozen, so a freeze delays the timeline rather than skipping part of it —
+    // the phase still plays every beat, it just takes longer in real seconds.
+    // Presentation only: `sampleFrame` is read at the paused `t`, so nothing
+    // about where the board ends up can change. skip == watch holds.
+    const fired = new Set<string>();
+    let heldMs = 0;
+    let frozenUntil = 0;
+    let lastWall = t0;
 
     await new Promise<void>((resolve) => {
       const tick = (): void => {
         if (cancelled()) return resolve();
-        const t = start + (now() - t0) / msPerBeat;
+        const wall = now();
+        if (wall < frozenUntil) heldMs += wall - lastWall;
+        lastWall = wall;
+        const t = start + (wall - t0 - heldMs) / msPerBeat;
         const now_t = Math.min(t, end);
+
+        // React to hits that have just become due. Keyed per cue, so each one
+        // fires exactly once however many frames it stays on screen.
+        for (const hit of newImpacts(cues, now_t, fired)) {
+          fired.add(hit.key);
+          frozenUntil = wall + hitstopMs(hit.amount);
+          renderer.flashUnit(hit.unitId, FLASH_SECONDS);
+          renderer.shakeCamera(shakeAmplitude(hit.amount), SHAKE_SECONDS, seedOf(hit.key));
+        }
         applyFrame(sampleFrame(cues, now_t), units, posOf);
         applyClips(cues, now_t, units, msPerBeat / 1000);
         applyFacing(cues, now_t, units);

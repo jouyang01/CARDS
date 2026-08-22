@@ -51,6 +51,7 @@ import {
   type Material,
 } from 'three';
 import type { CharacterModels, ModelInstance } from './character-model.js';
+import { FLASH_SECONDS, shakeOffset } from './vfx.js';
 import type { ClipChoice, ClipSet } from './character-clips.js';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
@@ -83,6 +84,9 @@ const TILE = 1;
  * the animations were authored for.
  */
 export const MODEL_HEIGHT_TILES = 1.9;
+
+/** How bright a victim flash goes. Emissive is additive, so 1 is already a lot. */
+const FLASH_STRENGTH = 0.55;
 
 /**
  * How tall a unit with no model yet stands.
@@ -724,6 +728,13 @@ export interface Renderer {
   setUnitFacing(unitId: string, dx: number, dy: number): void;
   /** This character's clip names, or undefined if it has no model loaded. */
   clipsFor(characterId: string | undefined): ClipSet | undefined;
+  /** Light a unit up for a moment — the victim flash on a hit (VFX step 1). */
+  flashUnit(unitId: string, seconds: number): void;
+  /**
+   * Rattle the camera. `amplitude` is in tiles, `seed` makes it repeatable —
+   * a replayed turn must shake identically or watching twice disagrees.
+   */
+  shakeCamera(amplitude: number, seconds: number, seed: number): void;
   /**
    * Spotlight: dim everything except these units. Used on Prep/Dash/Blast only —
    * Move is simultaneous and dimming it would hide the whole point (owner).
@@ -1199,6 +1210,10 @@ export function createRenderer(
   const unitCharacter = new Map<string, string | undefined>();
   /** Characters whose scaling has been reported. One line each, not one per unit. */
   const measured = new Set<string>();
+  /** unitId -> seconds of victim flash left. */
+  const flashing = new Map<string, number>();
+  /** The camera rattle in flight, if any. */
+  let shake: { seed: number; elapsed: number; duration: number; amplitude: number } | undefined;
   /**
    * The direction each unit was last told to look.
    *
@@ -1393,6 +1408,28 @@ export function createRenderer(
   const fadeOf = new Map<string, number>();
   let spotlight: Set<string> | null = null;
 
+  /**
+   * Paint a unit's flash. `left` is the seconds remaining, so the lit amount
+   * decays to nothing on its own.
+   *
+   * Emissive rather than colour: the material's colour is the character's
+   * identity (team tint on a box, the atlas on a model), and writing to it
+   * means remembering what to put back. Emissive is additive light with a
+   * natural rest value of black, so releasing it is setting it to zero.
+   */
+  const refreshFlash = (unitId: string, left: number): void => {
+    const body = unitObjects.get(unitId)?.getObjectByName('body');
+    if (body === undefined) return;
+    const lit = Math.max(0, Math.min(1, left / FLASH_SECONDS));
+    // A box is one mesh; a rigged model is a tree of them.
+    body.traverse((o) => {
+      if (!(o instanceof Mesh)) return;
+      const mat = o.material as MeshStandardMaterial;
+      if (mat.emissive === undefined) return;
+      mat.emissive.setScalar(lit * FLASH_STRENGTH);
+    });
+  };
+
   const refreshOpacity = (unitId: string): void => {
     const g = unitObjects.get(unitId);
     if (g === undefined) return;
@@ -1481,6 +1518,15 @@ export function createRenderer(
     const pitch = rad(pitchDeg);
     const yaw = rad(yawDeg);
     const target = toWorld(map, centre);
+    // The rattle is added HERE rather than to `centre`, so it never feeds back
+    // into the auto-camera's easing: `centre` stays exactly where framing put
+    // it and the shake decays to nothing on top, which is what makes the camera
+    // land back where it started instead of drifting a little with every hit.
+    if (shake !== undefined) {
+      const o = shakeOffset(shake.seed, shake.elapsed, shake.duration, shake.amplitude);
+      target.x += o.x;
+      target.z += o.z;
+    }
     const dist = 60;
     const horizontal = Math.cos(pitch) * dist;
     camera.position.set(
@@ -1654,6 +1700,21 @@ export function createRenderer(
         // `show()` hides departed units rather than removing them, so without
         // this every unit that ever existed keeps animating off-screen forever.
         if (unitObjects.get(id)?.visible !== false) instance.update(delta);
+      }
+    }
+
+    // VFX decay on WALL time like the mixers: a flash is 80ms of real time
+    // whatever the frame rate, and hitstop freezes the cue clock, not this one.
+    if (delta > 0) {
+      for (const [id, left] of flashing) {
+        const next = left - delta;
+        if (next <= 0) { flashing.delete(id); refreshFlash(id, 0); }
+        else { flashing.set(id, next); refreshFlash(id, next); }
+      }
+      if (shake !== undefined) {
+        shake.elapsed += delta;
+        if (shake.elapsed >= shake.duration) shake = undefined;
+        applyCamera();
       }
     }
 
@@ -2019,6 +2080,20 @@ export function createRenderer(
 
     setUnitClip(unitId, choice, beatSeconds) {
       instances.get(unitId)?.play(choice, beatSeconds);
+    },
+
+    flashUnit(unitId, seconds) {
+      flashing.set(unitId, seconds);
+      refreshFlash(unitId, seconds);
+    },
+
+    shakeCamera(amplitude, seconds, seed) {
+      if (amplitude <= 0 || seconds <= 0) return;
+      // A bigger hit during a smaller rattle takes over; a smaller one does not
+      // cut the bigger one short. Four shooters in one Blast should build, not
+      // reset each other.
+      if (shake !== undefined && shake.amplitude > amplitude) return;
+      shake = { seed, elapsed: 0, duration: seconds, amplitude };
     },
 
     setUnitFacing(unitId, dx, dy) {
