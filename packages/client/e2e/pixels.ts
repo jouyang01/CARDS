@@ -1,4 +1,10 @@
 import { inflateSync } from 'node:zlib';
+import { onAnyRamp } from '../src/sky.js';
+import { FALLBACK_THEME, SKY_RAMPS, THEMES, foggedColour } from '../src/themes.js';
+
+/** What a fogged floor lands on, per shipped theme. */
+const FOGGED_FLOORS = [...Object.values(THEMES), FALLBACK_THEME]
+  .map((t) => foggedColour(t.terrain.open));
 
 /**
  * A minimal PNG reader for RENDER-VERIFY.
@@ -147,11 +153,20 @@ export const isTeamBlue = (px: Rgb): boolean =>
 export const isTeamRed = (px: Rgb): boolean =>
   px.r > 130 && px.r - px.g > 80 && Math.abs(px.g - px.b) < 40;
 /**
- * Fogged board (VISION1). The fog quad is near-black at 62% over terrain whose
- * lit floor is already dark, so this is "darker than any lit tile" rather than
- * a hue — the whole point of the colour is that it carries no information.
+ * Fogged board (VISION1), composited over whichever floor it lies on.
+ *
+ * This was "darker than any lit tile" — true when there was one dark palette and
+ * fog drove it nearly to black. FOG-SHADOW made fog a *proportional* shadow so
+ * terrain under it stays legible, and MAP-THEMES made the floor itself a
+ * variable, so a fogged tile on Proving Floor is a mid grey rather than a near
+ * black. Composed from the same source the renderer draws from, like
+ * `isSceneBackground` and `isRangeWash`: every predicate that encodes a
+ * composite is a function of the theme now.
  */
-export const isFogged = (px: Rgb): boolean => px.r < 18 && px.g < 20 && px.b < 26;
+export const isFogged = (px: Rgb): boolean =>
+  // Tolerance is wide because `foggedColour` is a two-point fit, not a law.
+  FOGGED_FLOORS.some((c) =>
+    Math.abs(px.r - c.r) <= 14 && Math.abs(px.g - c.g) <= 14 && Math.abs(px.b - c.b) <= 14);
 /** The aim overlay's orange: warm, bright, and clearly not the brown of cover. */
 export const isAimOrange = (px: Rgb): boolean =>
   px.r > 150 && px.g > 90 && px.g < px.r - 30 && px.b < px.g - 20;
@@ -209,14 +224,32 @@ export const isMoveLine = (px: Rgb): boolean =>
   px.r > 120 && px.g > 160 && px.b > 200 && px.b > px.g && px.g > px.r;
 
 /**
- * The range envelope: `#8fb6ff` at 0.16 over the open floor, which composites to
- * about `44,52,71`. Bounded on both sides deliberately — the bare floor is
- * `32,36,47` and only 15 apart in blue, so a loose "blue-shifted" test matches
- * most of the board and an envelope covering 200 tiles reads as a rounding
- * error. The upper bound keeps the team-blue unit and the move line out.
+ * The range envelope, composited over whichever floor it is lying on.
+ *
+ * This was one literal — `#8fb6ff` at 0.16 over the open floor, "about
+ * `44,52,71`" — with a hand-picked window around it. That window encodes a
+ * *cool* floor: it demands `b − r >= 20` of the result, which a warm floor can
+ * never produce at any opacity worth using, and caps `b <= 110`, which any
+ * bright floor exceeds. So it was not a description of the envelope, it was a
+ * description of the envelope **on the one palette that existed**.
+ *
+ * MAP-THEMES makes the composite a function of the theme. Rather than predict
+ * it — which needs a lighting model this codebase does not have, and a first
+ * attempt at one was off by 45 counts — this asserts the *relationship* the wash
+ * creates: cool-shifted against whatever it lies on, by an amount that a unit
+ * never reaches. That holds on every theme without knowing any of them.
  */
 export const isRangeWash = (px: Rgb): boolean =>
-  px.b - px.r >= 20 && px.b - px.g >= 12 && px.b >= 55 && px.b <= 110;
+  // Cool-shifted relative to the floor it lies on…
+  px.b - px.r >= 20 && px.b - px.g >= 12
+  // …but nowhere near as cool as a team-blue unit, which runs b − r ≈ 176.
+  && px.b - px.r <= 60
+  // Brightness is a wide band rather than a window, because it is the one part
+  // that genuinely varies: measured, the envelope lands on (50,59,80) over the
+  // dark palette and (161,172,191) over Proving Floor's stone. The *shift* is
+  // the invariant — b − r came out at 30 on both, which is OVERLAY-BY-THEME
+  // doing its job — so the shift is what this tests.
+  && px.b >= 55 && px.b <= 220;
 
 /**
  * A decoy seen by its OWNER (`#a06bd6` at 0.55 over the dark floor). Purple is
@@ -228,12 +261,25 @@ export const isDecoyPurple = (px: Rgb): boolean =>
   px.b > 60 && px.r > 40 && px.r - px.g > 20 && px.b - px.g > 30 && Math.abs(px.r - px.b) < 70;
 
 /**
- * The scene background (`#12141a`) — what shows *around* the board when the whole
- * board is in frame. Matched tightly: it is a flat unlit clear colour, not a
- * Lambert-shaded surface, so it arrives at very close to its literal value.
+ * The sky — what shows *around* the board when the whole board is in frame.
+ *
+ * SKY-DOME replaced the flat `#12141a` clear colour with a vertical ramp, and
+ * MAP-THEMES made that ramp per theme — so this can be neither one literal nor
+ * one gradient. It delegates to `onAnyRamp` over every shipped theme's sky,
+ * which is only honest because the theme contract forbids a ramp from colliding
+ * with terrain; `themes.ts` proves that separation and this leans on it. A
+ * hand-copied hex here would stop matching the moment anyone retuned a
+ * gradient, and the failure would look like a clipped board, not a stale
+ * constant.
+ *
+ * It is also a **stronger** check than the literal it replaces. The lit floor
+ * composites at rgb(18, 20, 27) under BOARD-LIT and the old background was
+ * `#12141a` — within one count on every channel, so the previous matcher
+ * accepted the floor as readily as the void and "no rank is clipped" could not
+ * actually fail. Both ends of the ramp now clear the floor by more than the
+ * tolerance.
  */
-export const isSceneBackground = (px: Rgb): boolean =>
-  Math.abs(px.r - 0x12) <= 4 && Math.abs(px.g - 0x14) <= 4 && Math.abs(px.b - 0x1a) <= 4;
+export const isSceneBackground = (px: Rgb): boolean => onAnyRamp(SKY_RAMPS, px);
 
 
 /**

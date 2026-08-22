@@ -105,6 +105,19 @@ export interface OrderDraft {
    * does, so "chase and shoot" works like "move and shoot".
    */
   chaseTargetId?: string;
+  /**
+   * INTERCEPT-GUARD — the **ally** an `allyTarget` ability is aimed at.
+   *
+   * Beside `aim` rather than instead of it: the aim is still the ally's square,
+   * because that is what the preview draws and what `commitAim` validates. This
+   * is the half the ORDER needs and the square cannot supply — at 4v4 two
+   * allies can share an adjacency, and "who am I guarding" has to survive the
+   * trip to the server unambiguously.
+   *
+   * The lesson is WALL-CAST-FIX's, one field later: an aim the preview gets
+   * right and the order-builder drops is an ability that cannot be cast.
+   */
+  allyTargetId?: string;
 }
 
 /** A blank draft for a unit (holds position until the player chooses). */
@@ -1031,6 +1044,14 @@ export function toUnitOrders(character: CharacterDef, draft: OrderDraft): UnitOr
     if ((isRotatable(ability) || isPlacedRotatable(ability)) && isAimStep(draft.aimStep)) {
       order.ability.aimStep = draft.aimStep;
     }
+    // INTERCEPT-GUARD: the ally id, for the one kind of ability that binds one.
+    // Shape-gated for the same reason the rotation above is — a stale ally from
+    // a previous arming must not ride out on an ordinary square aim — and its
+    // absence is meaningful rather than lossy: no id is exactly how the 1v1
+    // square fallback is expressed on the wire.
+    if (ability.allyTarget === true && draft.allyTargetId !== undefined) {
+      order.ability.targetUnitId = draft.allyTargetId;
+    }
     if (ability.phase !== 'dash') {
       // A dash owns the movement, so neither the walk nor the chase goes out
       // with it — the engine would drop both anyway, and sending them would put
@@ -1100,6 +1121,9 @@ export function nextDraft(
       const freed = releaseDashCatalyst(draft, currentCatalystIsDash);
       return {
         ...freed, abilityId: action.abilityId, sprint: false, aim: [],
+        // INTERCEPT-GUARD: a new arming starts with nobody named, like the aim
+        // it sits beside.
+        allyTargetId: undefined,
         // BASIC-MODES: a new ability starts on its own default profile. Carrying
         // the last one's mode over would arm mode 1 of an ability the player has
         // never seen a toggle for.

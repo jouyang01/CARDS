@@ -82,9 +82,20 @@ const duel = (theirs: CharacterDef = TANK): NetRoom => {
   return room;
 };
 
-/** Everyone locks in, the server resolves, and both clients finish animating. */
+/**
+ * Everyone locks in, the server resolves, and every client finishes animating.
+ *
+ * **Once per CHARACTER, not once per seat.** Lock In advances one character at a
+ * time, so a seat running two of them owes two presses — the asymmetric 3-player
+ * 2v2 below is exactly the shape that gets this wrong, and a half-locked seat
+ * looks identical to a server that failed to resolve.
+ */
+const lockSeat = (seat: NetSeat): void => {
+  for (let i = 0; i < Math.max(1, seat.client.net.unitIds.length); i++) lockIn(seat.controls);
+};
+
 const playTurn = async (room: NetRoom): Promise<void> => {
-  for (const seat of room.seats) lockIn(seat.controls);
+  for (const seat of room.seats) lockSeat(seat);
   for (const seat of room.seats) skipPlayback(seat.controls);
   await vi.waitFor(() => {
     for (const seat of room.seats) {
@@ -397,5 +408,94 @@ describe('NET-E2E scenario 3 — a rotated Warding Wall crosses the wire', () =>
     expect(disagreements).toEqual([]);
     expect(boardOf(room.seats[1]!).get(victim.unitId)?.hp, 'the victim sees its own HP')
       .toBe(victim.hp);
+  });
+});
+
+describe('NET-E2E-EXPAND — two seats on one team (the asymmetric 3-player 2v2)', () => {
+  /**
+   * The least-exercised path in the whole game, and the one PLAYTEST
+   * prioritises: **three players in a 2v2** — two of them sharing a team, one
+   * running both enemy characters alone.
+   *
+   * It is the arrangement where the server does something it does nowhere else:
+   * **merge two seats' orders into one team's set** before calling
+   * `resolveTurn`, while the engine stays player-count-blind. Nothing in CI has
+   * ever driven it, and every part of it is correct in isolation — which is the
+   * standing description of the bugs this file exists to catch.
+   */
+  const THREE: MapDef = {
+    id: 'three', name: 'three', width: 21, height: 21, walls: [], cover: [], brush: [],
+    spawns: [
+      [{ x: 8, y: 9 }, { x: 8, y: 11 }, { x: 8, y: 13 }, { x: 8, y: 15 }],
+      [{ x: 12, y: 9 }, { x: 12, y: 11 }, { x: 12, y: 13 }, { x: 12, y: 15 }],
+    ],
+  };
+
+  /**
+   * Three players: seats join alternating sides, so seat 0 and seat 2 share
+   * team 0 with one character each, and seat 1 runs both of team 1's alone.
+   */
+  const asymmetric = (): NetRoom => {
+    const room = netRoom({
+      format: '2v2',
+      map: THREE,
+      catalog: [TANK, GLASS],
+      picks: [['tank'], ['tank', 'glass'], ['glass']],
+    });
+    room.start();
+    return room;
+  };
+
+  it('three boards come up, and the solo seat is ordering TWO characters', () => {
+    const room = asymmetric();
+    for (const seat of room.seats) {
+      expect(seat.controls.querySelectorAll('.hud-ability').length, `${seat.name} has a hotbar`)
+        .toBeGreaterThan(0);
+    }
+    const sizes = room.seats.map((s) => s.client.net.unitIds.length);
+    expect(sizes.filter((n) => n === 1), 'two seats run one character each').toHaveLength(2);
+    expect(sizes.filter((n) => n === 2), 'and one runs a pair').toHaveLength(1);
+  });
+
+  it('a turn needs all THREE seats, and merges the shared team\'s orders', () => {
+    // The merge is the thing: two seats own one team's order set, and the turn
+    // must not resolve until both of them have answered. A server that counted
+    // teams instead of seats would resolve on the first half of team 0.
+    const room = asymmetric();
+    const before = serverState(room)!.turn;
+    // The two seats that share team 0, first. Team 1's solo seat has not
+    // answered, so nothing may resolve.
+    const [shareA, solo, shareB] = room.seats;
+    lockSeat(shareA!);
+    lockSeat(shareB!);
+    expect(serverState(room)!.turn, 'still waiting on the seat that has not answered')
+      .toBe(before);
+    lockSeat(solo!);
+    expect(serverState(room)!.turn, 'and now it resolves').toBe(before + 1);
+  });
+
+  it('and all three clients land on the same resolved state', async () => {
+    const room = asymmetric();
+    await playTurn(room);
+    const turns = room.seats.map(turnOf);
+    expect(new Set(turns).size, 'one turn number between them').toBe(1);
+    // Every pair agrees where its two views overlap — including the two seats
+    // that SHARE a team and therefore see the same board.
+    for (const [a, b] of [[0, 1], [0, 2], [1, 2]] as const) {
+      const { shared, disagreements } = agreement(room.seats[a]!, room.seats[b]!);
+      expect(shared.length, `seats ${a} and ${b} see something in common`).toBeGreaterThan(0);
+      expect(disagreements, `seats ${a} and ${b} disagree`).toEqual([]);
+    }
+  });
+
+  it('teammates on separate machines see the SAME board, not a filtered one', () => {
+    // M3-HIDDEN is team-vs-team, never player-vs-player: teammates may see each
+    // other's plans. Two seats on one team must therefore hold identical views —
+    // the one pair in this match for which "the same resolved state" is literal.
+    const room = asymmetric();
+    const mine = boardOf(room.seats[0]!);
+    const theirs = boardOf(room.seats[2]!);
+    expect([...mine.keys()].sort(), 'the same units, unit for unit')
+      .toEqual([...theirs.keys()].sort());
   });
 });

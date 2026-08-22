@@ -1,0 +1,25 @@
+{
+  "id": "proving-floor",
+  "name": "Proving Floor",
+  "note": "A raised ceremonial duelling platform in full daylight. Bleached limestone, weathered stone barricades, dry scrub in the cracks. The bright theme — the board is lit rather than lurking. Deliberately DESATURATED: the first draft was warm sand and it competed with the amber AoE previews, so the stone keeps its value and gives up its chroma. The UI owns the saturated hues; terrain is the ground they are read against.",
+  "terrain": {
+    "open": "#b0aca4",
+    "wall": "#d8d5cd",
+    "cover": "#78736a",
+    "brush": "#54613f"
+  },
+  "surface": {
+    "open": { "roughness": 0.92, "metalness": 0.02 },
+    "wall": { "roughness": 0.88, "metalness": 0.03 },
+    "cover": { "roughness": 0.45, "metalness": 0.5 },
+    "brush": { "roughness": 1.0, "metalness": 0.0 }
+  },
+  "sky": {
+    "top": "#1a2033",
+    "bottom": "#6b6a63"
+  },
+  "arena": {
+    "shade": 0.42,
+    "rim": "#4a4a44"
+  }
+}

@@ -122,6 +122,13 @@ export const EFFECT_KINDS = [
   // lives on `unit.statuses` and ticks like everything else there, because
   // "something that lasts N turns" already has one implementation.
   'brushBroken',
+  // INTERCEPT-GUARD: "damage aimed at you is dealt to my bodyguard instead."
+  // The first new kind since DOT-HOT, and justified the same way — no
+  // composition of the kinds above expresses a redirect. It rides the status
+  // machinery like everything else here: `remaining` is the rest of the turn,
+  // and `sourceUnitId` (the DOT-HOT attribution field) names the guardian, so
+  // "who is standing in for this unit" is one lookup with no new state.
+  'guard',
 ] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
@@ -252,6 +259,21 @@ export interface AbilityDef {
    * "ignores vision".
    */
   melee?: boolean;
+  /**
+   * INTERCEPT-GUARD — this ability is aimed at an **ally unit**, not at a square.
+   *
+   * The order carries `targetUnitId` (the `chase` pattern, on the ally side)
+   * and the engine derives the square from where that ally is standing. A
+   * square-aim that merely lands *near* somebody is not the contract: at 4v4 two
+   * allies can share an adjacency, and "who am I guarding" has to be unambiguous.
+   *
+   * **The square aim survives as a fallback, not as a choice.** With no living
+   * ally to name — 1v1, or a wiped team — the ability degrades to targeting a
+   * square within its range, so a kit built around this does not become dead
+   * weight the moment its partner does. With an ally alive, a square aim is
+   * refused: `aimIsLegal` enforces both halves.
+   */
+  allyTarget?: boolean;
   /** Turns before reusable. 0 = every turn. */
   cooldown: number;
   /** Energy granted on use (self-target) or on hitting ≥1 enemy. */
@@ -472,6 +494,20 @@ export interface MapDef {
    * declare an empty array it does not care about.
    */
   powerups?: PowerupPad[];
+  /**
+   * MAP-THEMES — which `data/themes/*.json` dresses this map.
+   *
+   * **Inert to the engine, exactly like `powerups?` is optional to it.** Nothing
+   * in `resolveTurn` may ever read this: a map's look cannot change what a turn
+   * does, and `theme-inert.test.ts` pins that by resolving the same orders on
+   * the same map with and without a theme and demanding an identical state.
+   * It lives on `MapDef` rather than in a client-side lookup table so that
+   * adding a map is still one file (golden rule 2 — content is data).
+   *
+   * Absent, or naming a theme that does not exist, renders with the built-in
+   * palette. A map with no theme is a legal map.
+   */
+  theme?: string;
 }
 
 // ── Live state ──────────────────────────────────────────────────────────────
@@ -669,6 +705,17 @@ export interface AbilityOrder {
    * land on the default rather than on a refusal or an exception.
    */
   mode?: number;
+  /**
+   * INTERCEPT-GUARD — the **ally** this ability is aimed at, for an
+   * `allyTarget` ability. The unit id rather than its square, for the same
+   * reason `chase` names a unit: the square is a consequence, and by the time
+   * the ability resolves the unit may not be standing on the one that was
+   * clicked.
+   *
+   * Ignored by every other ability, so an old client or a hand-written order
+   * that carries one lands on the ordinary path rather than on a refusal.
+   */
+  targetUnitId?: string;
 }
 
 export interface UnitOrders {
@@ -759,6 +806,17 @@ export type TurnEvent =
   // engine took without re-deriving vision, and without ever being told where an
   // unseen target really is. Absent entirely when the chase was dropped.
   | { type: 'chaseResolved'; unitId: string; targetUnitId: string; to: Vec2; seen: boolean }
+  // INTERCEPT-GUARD — a bodyguard has interposed: for the rest of this turn,
+  // enemy damage aimed at `allyId` is dealt to `casterId` instead. Emitted in
+  // Dash, once, when the guard lands.
+  | { type: 'guardApplied'; casterId: string; allyId: string }
+  // …and one hit actually bending. `amount` is the number that WOULD have
+  // reached the ally — attacker's modifiers and the ally's cover already in it —
+  // which is then applied to the guardian's shields and HP. The ordinary
+  // `damage` event that follows names the guardian, because his is the HP that
+  // moved; this one is what lets playback draw the shot bending rather than
+  // showing a hit that reads as a miss bug.
+  | { type: 'damageRedirected'; from: string; to: string; amount: number }
   // A power-up pad was picked up (PADS1). The effects it grants arrive as the
   // ordinary `heal`/`statusApplied` events immediately before this one, so the
   // only thing the client learns here is that the pad went dark.

@@ -11,9 +11,11 @@
 
 import {
   ULT_COST,
+  aimInRange,
   buildBoard,
   type Board,
   createMatch,
+  guardLanding,
   movementBudget,
   resolveTurn,
   type AbilityDef,
@@ -30,7 +32,8 @@ import {
   type UnitState,
   type Vec2,
 } from '@cards/engine';
-import { createRenderer, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
+import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
+import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { openingFacings, selectFacing, type Facing } from './facing.js';
@@ -215,9 +218,28 @@ export interface NetPlay {
   extend(): void;
 }
 
-const PALETTE = {
-  open: 0x20242f, wall: 0x4a5065, cover: 0x6b5b3e, brush: 0x2e4632,
-  team0: 0x4f8cff, team1: 0xff6b5e, background: 0x12141a,
+/**
+ * MAP-THEMES — the board palette is now half data and half constant.
+ *
+ * The themed half comes from `data/themes/*.json` via `themeFor(map)`; the two
+ * team colours do not, and must not. They are identity rather than decoration:
+ * a map that re-tints the teams changes friend-from-foe reading per map, and
+ * `TEAM_CSS` below plus the e2e's colour families both encode them.
+ */
+const paletteFor = (map: MapDef): BoardPalette => {
+  const theme = themeFor(map);
+  return {
+    open: theme.terrain.open,
+    wall: theme.terrain.wall,
+    cover: theme.terrain.cover,
+    brush: theme.terrain.brush,
+    team0: 0x4f8cff,
+    team1: 0xff6b5e,
+    background: theme.sky.top,
+    surface: theme.surface,
+    sky: theme.sky,
+    arena: theme.arena,
+  };
 };
 /** The same two team colours the board uses, for the DOM side of the HUD. */
 const TEAM_CSS = ['#4f8cff', '#ff6b5e'] as const;
@@ -240,7 +262,7 @@ const IMPACT = 0xffd166;
  * *absence of information*, and any hue would suggest the terrain underneath
  * meant something.
  */
-const FOG = 0x05060a;
+const FOG = FOG_INK;
 /**
  * CAMO-REVEAL's burning thicket. Deliberately hotter and purer than team 1's
  * `#ff6b5e` — this is an alarm, not an allegiance, and mistaking it for a red
@@ -252,8 +274,11 @@ const CAMO_OPACITY = 0.55;
 const CATALYST = 0x9be36b;
 /** The free-action overlay — its own colour, because it is its own decision. */
 const FREE = 0x6fe3c0;
-/** Dark enough to read as "no information", light enough to keep terrain legible. */
-const FOG_OPACITY = 0.62;
+/**
+ * FOG-SHADOW — a shadow, not a blackout. See `FOG_OPACITY` in `themes.ts`: the
+ * blend toward near-black is already proportional, so one constant is one
+ * constant shadow on every theme, and terrain under fog stays legible.
+ */
 /**
  * The drawn movement lines (AIM1/UI4). All three share one geometry — a
  * polyline through tile centres plus an endpoint marker — and differ only in
@@ -589,7 +614,7 @@ export function startHotSeat(
   let boardMemo: Board | undefined;
   const previewBoard = (): Board => (boardMemo ??= buildBoard(map));
 
-  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, PALETTE);
+  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, paletteFor(map));
 
   // ── VISION1-opening ───────────────────────────────────────────────────────
   // Paint the fogged board NOW, before the render loop starts, so the very
@@ -1336,8 +1361,26 @@ export function startHotSeat(
     const chargeLanding = chosen?.shape === 'path' && impact.landing !== undefined
       ? [impact.landing]
       : [];
+    // INTERCEPT-GUARD — the guard link: the square the bodyguard will actually
+    // stand on, and a line from where he is to it. Without the landing marker
+    // the preview shows a highlighted ally and nothing else, which reads as
+    // "this ability does something to my teammate" — the opposite of the truth.
+    //
+    // The square is the ENGINE's own answer (`guardLanding`), not a second
+    // implementation: a marker drawn from parallel logic is a marker that can
+    // disagree with where he ends up.
+    const guardAlly = chosen?.allyTarget === true && preview.aim.length > 0
+      ? state.units.find((u) => u.alive && u.owner === unit.owner
+        && u.unitId !== unit.unitId
+        && u.pos.x === preview.aim[0]!.x && u.pos.y === preview.aim[0]!.y)
+      : undefined;
+    const guardTo = guardAlly === undefined
+      ? undefined
+      : guardLanding(previewBoard(), state, unit, guardAlly);
+    renderer.drawPath(guardTo === undefined ? [] : [unit.pos, guardTo], IMPACT, true, 'guardPath');
     const layer = impactLayer(
-      [...impact.origin, ...impact.destination, ...chargeLanding],
+      [...impact.origin, ...impact.destination, ...chargeLanding,
+        ...(guardTo === undefined ? [] : [guardTo])],
       refusedAim(map, state, unit, chosen, interaction, draft.aimStep),
       refusedSquare,
     );
@@ -1859,6 +1902,19 @@ export function startHotSeat(
     return state.units.filter((u) => u.alive && u.owner !== me.owner && shown.has(u.unitId));
   }
 
+  /**
+   * INTERCEPT-GUARD — the allies an ally-targeted ability may name: living
+   * teammates, never the caster, inside the ability's range.
+   *
+   * The same three conditions `allyTargetOf` checks engine-side, which is the
+   * point — an aimable set that disagreed with what the engine accepts is a
+   * preview offering an order that will be dropped.
+   */
+  function guardableAllies(me: UnitState, ability: AbilityDef): UnitState[] {
+    return state.units.filter((u) => u.alive && u.owner === me.owner
+      && u.unitId !== me.unitId && aimInRange(me.pos, u.pos, ability.range));
+  }
+
   /** A chaseable enemy's display name, for the HUD's "Chase <name>" label. */
   const roster0 = (unitId: string): CharacterDef | undefined => {
     const u = unitById(unitId);
@@ -1944,6 +2000,20 @@ export function startHotSeat(
     if (interaction.mode === 'aim') {
       const ability = draftAbility(characterFor(unit), draft);
       if (ability === undefined) return;
+      // INTERCEPT-GUARD: an ally-targeted ability names a UNIT, so the click
+      // resolves to whoever is standing on the square — the `chase` pattern,
+      // on the ally side. Clicking bare ground leaves the slot armed rather
+      // than recording an order the engine will refuse, which is the same
+      // AIM-RANGE promise every other slot already makes.
+      //
+      // The 1v1 fallback is deliberately NOT offered here: with a living ally
+      // to name, the engine refuses a square aim, so letting the player commit
+      // one would be a preview that lies about a legal order.
+      if (ability.allyTarget === true) {
+        const ally = guardableAllies(unit, ability).find((u) => u.pos.x === sq.x && u.pos.y === sq.y);
+        if (ally === undefined && guardableAllies(unit, ability).length > 0) return;
+        draft.allyTargetId = ally?.unitId;
+      }
       // Exactly the aim the hover was already painting — one resolver, so what
       // you saw is what you committed.
       // WALL-ROTATE: the draft's rotation goes in so the committed wall is the
