@@ -421,13 +421,26 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
         expect(Math.round(canvas.y)).toBe(0);
 
         // 2. No control falls outside the visible area, at any map size.
-        const controls = page.locator(CONTROLS);
-        const count = await controls.count();
-        expect(count, 'no controls found — the selector or the HUD moved').toBeGreaterThan(4);
-        for (let i = 0; i < count; i++) {
-          const el = controls.nth(i);
+        //
+        // RENDER-SUITE-GREEN: **element handles, not indices.** This read
+        // `controls.count()` once and then walked `controls.nth(i)`, which
+        // re-runs the selector on every call — so when the HUD was rebuilt
+        // mid-loop (it is rebuilt wholesale on every repaint, and the timer
+        // repaints) index `i` no longer existed and `boundingBox()` waited out
+        // the full 60-second test timeout. Four tests × 60 s was most of the
+        // suite's 26-minute runtime, and the failure accused the HUD of running
+        // off the screen when nothing had moved.
+        //
+        // A handle is bound to the node, not to its position in a list: if the
+        // node is replaced the handle is detached and `boundingBox()` returns
+        // null immediately, which the skip below treats exactly like an
+        // invisible control.
+        const controls = await page.locator(CONTROLS).elementHandles();
+        expect(controls.length, 'no controls found — the selector or the HUD moved').toBeGreaterThan(4);
+        for (const [i, el] of controls.entries()) {
           if (!(await el.isVisible())) continue;
-          const box = (await el.boundingBox())!;
+          const box = await el.boundingBox();
+          if (box === null) continue; // replaced by a repaint mid-loop; not a layout fault
           const label = (await el.textContent())?.trim().slice(0, 24) ?? `#${i}`;
           expect(box.x, `"${label}" runs off the left`).toBeGreaterThanOrEqual(-1);
           expect(box.y, `"${label}" runs off the top`).toBeGreaterThanOrEqual(-1);

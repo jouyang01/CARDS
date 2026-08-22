@@ -5967,3 +5967,58 @@ chunk instead — if it were statically imported, Vite would have no reason to e
    whether they broke it, which is the state RENDER-CHECKS-GREEN existed to end. **Worth an item.**
    I did not fix it this session: it is not in the backlog and repairing e2e assertions is exactly
    the "never guess or invent scope" line.
+
+---
+
+## 2026-08-22 — Builder session 15 (DEATH-HANG-3, TEAMMATE-MOVE-VISIBLE, RENDER-SUITE-GREEN, VALIDATE-GUARD-IMPACT)
+
+**DEATH-HANG-3 was not the bug the spec notes predicted, and the difference matters.** The
+suspect named was ordering: a resolution carrying both a downed seat and a `gameEnd`, with the
+downed-seat hold running before the game-over branch. That could not happen —
+`playResolution` already checks `status !== 'active'` and returns `renderGameOver()` *before*
+`beginTurn()`, so the hold is unreachable while the match is over. The real cause is one line
+earlier in the pipe: `resolveOutcome` **returns before `draft.turn += 1`** on every path that ends
+the match, so the finishing state carries the *same* turn number as the turn before it — and
+`net-boot.ts` gates the handoff on `now.state.turn <= played`. The last resolution of every
+networked match was dropped before the client ever saw it. Fixed in the client (the gate now
+forwards on "turn advanced **or** match ended", latched so a repeating end state fires once); the
+engine is untouched, because not numbering a turn that will never be played is correct.
+
+**Judgment call — the end-of-match latch lives in `net-boot.ts`, not in the engine.** The
+tempting fix is to bump `draft.turn` on the way out so the existing comparison works. That would
+make `state.turn` mean "turns played + 1" for a finished match and "turns played" for a live one,
+which is a worse contract than the one line it saves — and it is an engine change to fix a client
+gate. The client is where "have I already animated this?" is asked, so that is where the answer
+was widened.
+
+**Judgment call — `pressable()` in the DEATH-HANG-3 test checks visibility, not just `disabled`.**
+`hud.clear()` retires the HUD by hiding its rows, so every button survives in the DOM, enabled,
+behind a `display: none`. A test asserting on `disabled` alone would have demanded the end screen
+*dismantle* the HUD rather than put it away — a production change to satisfy a test's idea of
+tidiness. What a player can press is what the assertion should mean.
+
+**TEAMMATE-MOVE-VISIBLE — the intent badge now names the ability instead of numbering it.** This
+goes beyond the item's AC and is driven by the Dev Note (*"it should be VERY CLEAR what action your
+ally is taking"*), so it is flagged rather than buried. `intent.ts`'s own rationale for the number
+was that "a teammate glancing at the board is matching it against their own hotbar" — which is
+exactly backwards when the ally is a **different character**, and in a 2v2 they almost always are.
+"3" over Aegis's head is a lookup; "Intercept" is the sentence. The `slot` field stays on the badge
+(it is what a player presses, and `abilitySlot` has other callers); only the drawn label changed,
+and `intentTexture` shrinks the type to fit rather than growing the tile into the nameplate under
+it. **If the Analyzer or owner wants the number back, it is one line** — but the note asked for
+clarity and a digit is not it.
+
+**Judgment call — a teammate's route draws in the movement colour, not the committed-plan one.**
+`LOCKED` is deliberately "cooler and dimmer" because it is the colour of an ability *area* that has
+already been decided. A route answers a different question — *where is my ally going* — and the
+owner's note is that precisely this does not read. Same layer, same call, one constant swapped to
+`MOVE_LINE`. No new layer (the spec notes forbid one) and no per-route colour, which `drawPaths`
+could not express anyway: one call paints one colour, so a sprint and a walk cannot be told apart
+on this layer. That is a real limitation and it is deliberate — telling them apart would cost a
+second layer for a distinction nobody has asked for yet.
+
+**Judgment call — the teammate chase link is fog-safe by construction rather than by a check.** A
+chase names an enemy, and drawing a line to it could leak a position the fog is hiding. No
+visibility test was added: a networked client's `state.units` contains only the enemies its team
+can see, so an unseen target is simply not found and nothing is drawn. The check that would have
+been written is the one the server already performed.
