@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildCatalystPool, buildRoster, createMatch,
   type CatalystData, type CharacterDef, type GameState, type Roster,
 } from '@cards/engine';
 import { startHotSeat } from '../src/app.js';
-import { OPEN_MAP, mountUI } from './app-harness.js';
+import { OPEN_MAP, aimAndCommit, click, lockIn, mountUI, moveButton } from './app-harness.js';
 import type { ClipSet } from '../src/character-clips.js';
 import catalystData from '../../../data/catalysts.json';
 import vex from '../../../data/characters/vex.json';
@@ -57,7 +57,15 @@ const match = (killOwn = false) => {
   return ui;
 };
 
-beforeEach(() => { document.body.replaceChildren(); });
+beforeEach(() => {
+  document.body.replaceChildren();
+  // happy-dom does not drive `requestAnimationFrame`, and playback's tick loop
+  // is scheduled on it — so without this the timeline never advances and a
+  // resolving turn looks, from a test, exactly like a turn that never resolved.
+  vi.stubGlobal('requestAnimationFrame',
+    (cb: FrameRequestCallback) => setTimeout(() => { cb(performance.now()); }, 16) as unknown as number);
+});
+afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('RESTING-CLIP: nobody stands in bind pose', () => {
   it('idles on the opening frame, before a single turn has played', () => {
@@ -88,4 +96,47 @@ describe('RESTING-CLIP: nobody stands in bind pose', () => {
     expect(forDead.at(-1)!.clip).toBe(CLIPS.death);
     expect(forDead.at(-1)!.loop, 'a death that looped would be a twitching corpse').toBe(false);
   });
+});
+
+/**
+ * And the other half: a resting pose that never yields is the same bug wearing
+ * the opposite mask. Playback drives clips off the cue timeline, and nothing
+ * asserted that the drive actually reaches the renderer — `selectClip` is
+ * covered in isolation, `applyClips` was not covered at all.
+ */
+describe('RESTING-CLIP: a resolving turn takes the pose back', () => {
+  /** A 1v1, so one Lock In per seat resolves the turn. */
+  const duel = () => {
+    const ui = mountUI();
+    ui.renderer.withClips({ aegis: CLIPS });
+    const teams: [CharacterDef[], CharacterDef[]] = [[AEGIS], [VEX]];
+    const opening: GameState = createMatch(OPEN_MAP, '1v1', teams);
+    const own = opening.units.find((u) => u.owner === 0)!;
+    const foe = opening.units.find((u) => u.owner === 1)!;
+    own.pos = { x: 8, y: 9 };
+    foe.pos = { x: 9, y: 9 }; // adjacent, so Shield Bash has something to hit
+    startHotSeat(ui.ui, OPEN_MAP, roster, teams, '1v1', [1, 1], POOL,
+      undefined, undefined, opening);
+    return ui;
+  };
+
+  it('runs when the unit moves, instead of sliding along in its idle', async () => {
+    // A move rather than an ability: every turn with a move produces `move`
+    // cues, so this asserts the timeline reaches the renderer without depending
+    // on an ability's aim being legal from wherever the spawn happens to be.
+    const b = duel();
+    click(moveButton(b.controls, 'Move'));
+    aimAndCommit(b.board, { x: 6, y: 9 });
+    lockIn(b.controls);
+    lockIn(b.controls); // the opposing seat, which orders nothing
+
+    await vi.waitFor(() => {
+      const played = b.renderer.draw.clips.map((c) => c.clip);
+      expect(played, 'the move never reached the renderer').toContain(CLIPS.run);
+    }, { timeout: 15000 });
+
+    // And it loops: a multi-square move is several consecutive cues, and a
+    // one-shot run would restart — a visible hitch at every tile.
+    expect(b.renderer.draw.clips.find((c) => c.clip === CLIPS.run)!.loop).toBe(true);
+  }, 25000);
 });

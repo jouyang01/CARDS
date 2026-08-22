@@ -35,6 +35,8 @@ import {
   LineSegments,
   Mesh,
   MeshBasicMaterial,
+  MeshLambertMaterial,
+  Object3D,
   MeshStandardMaterial,
   OrthographicCamera,
   PCFSoftShadowMap,
@@ -654,6 +656,45 @@ const toWorld = (map: MapDef, p: Vec2): Vector3 => {
 
 const toSquare = (map: MapDef, v: Vector3): Vec2 => worldXZToSquare(map, v.x, v.z);
 
+/**
+ * How tall the model actually draws, and where its feet are.
+ *
+ * NOT `Box3.setFromObject`. That walks the node hierarchy and multiplies each
+ * mesh's bounds by its world matrix — and a Blender-exported Mixamo rig carries
+ * a **+90° X rotation on the `Armature` node** (the Z-up to Y-up conversion),
+ * with the inverse on `mixamorigHips`. The two cancel out through the skeleton,
+ * so the character renders upright; they do not cancel out for a bounding box
+ * taken off the nodes, which reports the model's 0.33-unit DEPTH as its height.
+ * Scaling to that made Aegis 5x too big, and it read as "the model is wrong"
+ * rather than "the measurement is".
+ *
+ * Geometry bounds are the honest answer: authored Y-up, in the same space the
+ * skinned vertices land in, and independent of whether any matrix happens to
+ * have been updated yet — which is the other half of why the old reading was
+ * unpredictable. The cost is that node-level offsets are ignored, which is
+ * correct for a single skinned body and would need revisiting for a model built
+ * from several separately-placed pieces.
+ *
+ * Lives here rather than beside the model code so the main bundle can call it
+ * without a static import of the dynamically-loaded `character-model` module.
+ */
+export function modelBounds(root: Object3D): { minY: number; height: number } {
+  let minY = Infinity;
+  let maxY = -Infinity;
+  root.traverse((o) => {
+    // `Mesh`/`SkinnedMesh` both carry one; anything else in the tree (bones,
+    // groups) does not, and contributes nothing.
+    const geometry = (o as Partial<Mesh>).geometry as BufferGeometry | undefined;
+    if (geometry === undefined) return;
+    if (geometry.boundingBox === null) geometry.computeBoundingBox();
+    const box = geometry.boundingBox;
+    if (box === null) return;
+    minY = Math.min(minY, box.min.y);
+    maxY = Math.max(maxY, box.max.y);
+  });
+  return maxY > minY ? { minY, height: maxY - minY } : { minY: 0, height: 0 };
+}
+
 /** One built unit group, as the rebuild check sees it. */
 export interface BuiltUnit {
   characterId: string | undefined;
@@ -940,8 +981,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
     if (instance !== undefined) {
       // Scale from the model's own bounds rather than a hard-coded factor, so a
       // taller or shorter character still stands MODEL_HEIGHT_TILES high.
-      const box = new Box3().setFromObject(instance.root);
-      const height = box.max.y - box.min.y;
+      // `modelBounds`, not `Box3.setFromObject` — see the note on that function.
+      const { minY, height } = modelBounds(instance.root);
       const scale = height > 0 ? (TILE * MODEL_HEIGHT_TILES) / height : 1;
       // Reported once per character, because "he looks too big" and "the box
       // measured wrong" are indistinguishable by eye and this is the number
@@ -955,7 +996,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         );
       }
       instance.root.scale.setScalar(scale);
-      instance.root.position.y = -box.min.y * scale;
+      instance.root.position.y = -minY * scale;
       instance.root.name = 'body';
       instances.set(unit.unitId, instance);
       g.add(instance.root, buildBars());
@@ -1307,8 +1348,21 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
   applyCamera();
   renderer.setSize(width, height);
 
-  return {
+  /**
+   * The last board `show()` was given, so a late-arriving model can repaint it.
+   *
+   * Nothing else drives a rebuild: `drawFrame` renders the scene graph but never
+   * reconciles it, and `show()` only runs on a state change. Without this, the
+   * groups dropped when a model finishes loading stay dropped — the units simply
+   * vanish until the player next clicks something. Found by driving the built
+   * client in a real browser: Aegis was missing from the board entirely until an
+   * unrelated click repainted it.
+   */
+  let lastShown: Parameters<Renderer['show']> | undefined;
+
+  const api: Renderer = {
     show(units, decoys = [], traps = [], pads = []) {
+      lastShown = [units, decoys, traps, pads];
       // `show()` is the snap-to-truth call: it places every unit on its whole
       // square and drops any in-flight tween state. Cue-driven overrides
       // (`setUnitAt`, `setUnitFade`) are applied *after* it, per frame.
@@ -1626,6 +1680,8 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
         [...unitCharacter].map(([id, characterId]) => [id, { characterId, hasModel: instances.has(id) }] as const),
         (characterId) => loaded.has(characterId),
       )) dropUnitGroup(unitId);
+      // Repaint, or those units are gone until something else happens to.
+      if (lastShown !== undefined) api.show(...lastShown);
     },
 
     setUnitClip(unitId, choice, beatSeconds) {
@@ -1751,4 +1807,6 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: {
       renderer.dispose();
     },
   };
+
+  return api;
 }

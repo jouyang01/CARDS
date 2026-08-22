@@ -846,6 +846,16 @@ export function startHotSeat(
     return [...view.units.values()].map((v) => ({
       unitId: v.unitId, owner: v.owner, pos: { ...v.pos }, hp: v.hp, maxHp: v.maxHp,
       energy: v.energy, alive: v.alive, label: (v.unitId[0] ?? '?').toUpperCase(), shield: v.shield,
+      // Which character this is, read off state rather than the fold.
+      //
+      // `ViewUnit` is what the event log folds to, and a character is not
+      // something a turn's events can change — so it never went in. But the
+      // renderer keys animations off `characterId`, and without it every unit
+      // in a *resolving* turn looked to `applyClips` like a character with no
+      // model: no run, no cast, no hit reaction, for the entire turn. The Decision
+      // paint set it and playback did not, which is exactly why it read as
+      // "idle works, nothing else does".
+      characterId: unitById(v.unitId)?.characterId,
       // UI-NAMEPLATES during playback: the same plate, fed by the fold rather
       // than by state, so an HP bar ticks down as the blow lands instead of
       // jumping when the turn ends.
