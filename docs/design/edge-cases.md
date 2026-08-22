@@ -2050,6 +2050,14 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     a tie (e.g. 3–3 → 4–4 at `killsToWin` 4) is still a draw, consistent with the Mutual-damage ruling — no
     single team got "the next kill." A Double KO *below* the target (e.g. 2–2 → 3–3) is still tied and
     Sudden Death simply continues. **Locked by a test** (backlog SUDDEN-DEATH-TEST).
+  - **PROPOSED — a win and a death on the same turn: the match END wins (owner Dev Note 2026-10-02,
+    "the 'winning' team's lock in froze"; backlog DEATH-HANG-3).** When the resolution that ends the match
+    (a sudden-death kill that breaks the tie, or any kill reaching `killsToWin`) is the **same** resolution
+    that downs a seat, the client must transition to the **end/victory screen**, not to a downed-seat hold
+    or a fresh Decision window. The server already stops the clock once `status !== 'active'` — the client
+    must follow it there. This is the one place DEATH-HANG-2's all-down auto-resolve does **not** reach,
+    because a finished match is out of its `status === 'active'` scope. The winning player seeing a frozen
+    Lock In and a vanished timer instead of "You Win" is the bug this rules out.
 - **OPEN — Simultaneous disconnect/timeout handling** (matters at M3): if a player
   never submits, does their character sprint-hold or full-hold? Current lean: hold
   position, no ability. Decide when building the server.
