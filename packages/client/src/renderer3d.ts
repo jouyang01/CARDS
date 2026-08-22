@@ -61,20 +61,37 @@ import { overlayBoost } from './themes.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
-const UNIT_HEIGHT = 0.6;
 /**
- * How tall a rigged character stands, in tiles.
+ * How tall a character stands, in tiles.
  *
- * Characters are authored at human metres because Mixamo expects it, which puts
- * Aegis at 1.73 tiles — nearly two — where eight of them occlude each other and
- * the ground at low pitch. Scaling here rather than in the asset keeps the source
- * at the size the animations were made for.
+ * NOT the realistic answer, and that is the point. 1.15 came from "a tile is
+ * 1.5m, a person is 1.78m" — arithmetic that is correct and reads wrong: a
+ * vertical metre projects by cos(pitch), so a 1.15-tile character is **0.94
+ * tile-widths tall on screen**, i.e. shorter than its own square is wide, with
+ * a torso a third of a square across. A small figure adrift in a big empty
+ * tile, wearing a nameplate wider than itself.
  *
- * This is the board-scale decision (ART_PIPELINE.md §11) in its cheapest form: a
- * character 1.15 tiles tall implies roughly 1.5 m per tile. Change this number
- * once characters can actually be seen on the board.
+ * Atlas Reactor sizes the square to the character, not the character to a
+ * metre: the body owns its square and the figure clearly stands taller than the
+ * square is wide. 1.9 puts the torso at about half a tile and the silhouette at
+ * ~1.55 tile-widths of screen height, which is what makes it read as a
+ * character standing on a board rather than a token sitting in a cell.
+ *
+ * Scaling here rather than in the asset keeps the source at the size Mixamo and
+ * the animations were authored for.
  */
-const MODEL_HEIGHT_TILES = 1.15;
+const MODEL_HEIGHT_TILES = 1.9;
+
+/**
+ * How tall a unit with no model yet stands.
+ *
+ * The same height as a character, deliberately. Eight of the nine are still
+ * boxes, so almost every board is a mix — and at 0.6 against a 1.9-tile
+ * character the two read as different species standing on the same floor, which
+ * looks like a bug in the game rather than a gap in the art. Matching heights
+ * makes a placeholder read as *this character, not modelled yet*.
+ */
+const UNIT_HEIGHT = TILE * MODEL_HEIGHT_TILES;
 
 /**
  * How much tighter than "the whole board" the default framing sits.
@@ -956,10 +973,15 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
    * Both live in their own group so they billboard and resist zoom: a nameplate
    * is only useful if it is the same legible size at any framing.
    */
-  const buildBars = (): Group => {
+  /**
+   * `topY` is the height of the thing being labelled. Passed rather than fixed
+   * at the box's height: a model stands MODEL_HEIGHT_TILES tall, so a plate
+   * pinned to UNIT_HEIGHT sat across its chest.
+   */
+  const buildBars = (topY: number): Group => {
     const bars = new Group();
     bars.name = 'bars';
-    bars.position.y = UNIT_HEIGHT + 0.34;
+    bars.position.y = topY + 0.34;
     const plate = new Mesh(
       new PlaneGeometry(PLATE_W, PLATE_H),
       new MeshBasicMaterial({ transparent: true, depthWrite: false }),
@@ -1058,7 +1080,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
       instance.root.position.y = -minY * scale;
       instance.root.name = 'body';
       instances.set(unit.unitId, instance);
-      g.add(instance.root, buildBars());
+      g.add(instance.root, buildBars(TILE * MODEL_HEIGHT_TILES));
       world.add(g);
       return g;
     }
@@ -1076,7 +1098,7 @@ export function createRenderer(container: HTMLElement, map: MapDef, palette: Boa
     body.name = 'body';
     body.castShadow = true;
     body.position.y = UNIT_HEIGHT / 2;
-    g.add(body, buildBars());
+    g.add(body, buildBars(UNIT_HEIGHT));
     world.add(g);
     return g;
   };
