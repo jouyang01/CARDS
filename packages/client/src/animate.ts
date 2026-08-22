@@ -97,6 +97,35 @@ export const READOUT_BEATS = 2.2;
  * skip==watch holds because none of this touches the fold.
  */
 export const MS_PER_BEAT = 760;
+
+/**
+ * How long a unit takes to cross one square, in milliseconds.
+ *
+ * NOT a pacing choice, which is why it sits beside `MS_PER_BEAT` rather than
+ * replacing the "flat, not per-phase" rule above. Every other beat is a
+ * rhythm — how long a thing should read for — and one number is right for all
+ * of them. A move step is a **physical constraint**: the run clip's feet travel
+ * a fixed distance per stride, and if the ground goes past at any other speed
+ * the feet slide. There is one correct value and it is measured, not felt.
+ *
+ * Measured off `sword_and_shield_run` by walking the leg chain (Hips ->
+ * RightUpLeg -> RightLeg -> RightFoot -> RightToeBase) through the clip:
+ *
+ *   foot travel per stride   0.836 tiles
+ *   one stride               0.367 s   (a 0.733 s cycle, two strides)
+ *   => ground speed          2.28 tiles/sec  ->  439 ms per tile
+ *
+ * At `MS_PER_BEAT` a tile took 760 ms, so a unit covered 0.48 tiles per stride
+ * while its feet were built for 0.836 — it took 2.07 steps to cross one square
+ * and skated the difference.
+ *
+ * This ties the whole roster to one ground speed, which the ruleset already
+ * assumes ("the engine gives every move step the same duration"). A new
+ * locomotion clip therefore has to match this stride length rather than the
+ * other way round — `tools/art` measures it, and a clip that disagrees will
+ * slide no matter what this number says.
+ */
+export const MS_PER_MOVE_STEP = 440;
 /** Peak height of a knockback/pull arc, in world units. */
 const ARC = 0.35;
 
