@@ -59,6 +59,7 @@ import { intentTexture, plateTexture, grainTexture, skyTexture } from './texture
 import { type SkyRamp } from './sky.js';
 import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
+import { browserRenderOnDemand } from './render-flags.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -685,6 +686,15 @@ export interface Renderer {
    */
   readonly ambient: boolean;
 
+  /**
+   * Frames actually drawn since `start()`.
+   *
+   * Exposed so RENDER-ON-DEMAND can be *proved* rather than asserted: an idle
+   * board should hold this still. A number that keeps climbing with nothing
+   * happening is the optimisation silently not working.
+   */
+  frameCount(): number;
+
   lookAt(centre: Vec2, spanSquares: number): void;
   /** Frame the whole board, allowing for the current pitch's foreshortening. */
   fitBoard(): void;
@@ -900,7 +910,8 @@ export interface BoardPalette {
 }
 
 export function createRenderer(
-  container: HTMLElement, map: MapDef, palette: BoardPalette, options: { ambient?: boolean } = {},
+  container: HTMLElement, map: MapDef, palette: BoardPalette,
+  options: { ambient?: boolean; renderOnDemand?: boolean } = {},
 ): Renderer {
   const scene = new Scene();
   // SKY-DOME: a ramp rather than a flat clear colour. The fallback keeps a
@@ -1425,7 +1436,30 @@ export function createRenderer(
   let width = 900;
   let height = 560;
 
+  /**
+   * RENDER-ON-DEMAND — whether the next `requestAnimationFrame` has anything to do.
+   *
+   * The loop used to call `drawFrame()` on **every** frame, whether or not
+   * anything had changed. Measured under SwiftShader that is a median 302ms
+   * frame — 3.3 fps — so the main thread never idles. A player pays a core to
+   * look at a board that is not moving, and the browser suite pays worse: every
+   * Playwright operation queues behind a 300–900ms frame, which is why
+   * `boundingBox()` could time out on an element it had already resolved as
+   * *visible*. That one fact explains the whole of the suite's slowness, why
+   * disabling character models changed nothing, and why a second worker made it
+   * worse rather than better.
+   *
+   * Starts true so the opening frame always draws.
+   */
+  let dirty = true;
+  const markDirty = (): void => { dirty = true; };
+
+  /** Frames actually drawn. The proof that an idle board stops costing anything. */
+  let framesDrawn = 0;
+  const onDemand = options.renderOnDemand ?? browserRenderOnDemand();
+
   function applyCamera(): void {
+    markDirty();
     const aspect = width / height;
     const halfH = span / 2;
     const halfW = halfH * aspect;
@@ -2063,9 +2097,26 @@ export function createRenderer(
       if (frameHandle !== undefined) return;
       const loop = (): void => {
         frameHandle = globalThis.requestAnimationFrame(loop);
+        // RENDER-ON-DEMAND. Three things can make a frame worth drawing: the
+        // scene changed, the camera is still easing toward its target, or a
+        // rigged model is mid-clip. `applyCamera` marks the second for us — the
+        // easing calls it every step and stops calling it once settled — so
+        // only the third needs asking about here.
+        if (onDemand && !dirty && instances.size === 0) {
+          // Drop the clock as well. A skipped stretch is not elapsed animation
+          // time, and feeding it back in would make the next mixer step jump.
+          lastFrameMs = undefined;
+          return;
+        }
+        dirty = false;
+        framesDrawn += 1;
         drawFrame();
       };
       frameHandle = globalThis.requestAnimationFrame(loop);
+    },
+
+    frameCount() {
+      return framesDrawn;
     },
 
     stop() {
@@ -2096,6 +2147,40 @@ export function createRenderer(
       renderer.dispose();
     },
   };
+
+  /**
+   * RENDER-ON-DEMAND — every method that changes the picture, marked in one place.
+   *
+   * Wrapped from a list rather than by putting `markDirty()` at the top of each
+   * body, because the failure mode here is a *missed* mark: one mutator that
+   * forgets, and the board silently stops updating in whatever narrow case that
+   * method covers. A list can be read against the interface in one glance and
+   * audited by anyone adding a method; eighteen scattered call sites cannot.
+   *
+   * The camera is deliberately absent — every camera change routes through
+   * `applyCamera`, which marks there, including the auto-camera's easing.
+   *
+   * Pure queries are absent too, and that is load-bearing rather than tidy:
+   * `screenPosition` is called from the `onFrame` callback on every drawn frame
+   * (`placePreviewNumbers`), so marking it dirty would make every frame request
+   * another one and the loop would never idle — the optimisation would look
+   * like it worked and do nothing.
+   */
+  const MUTATORS = [
+    'show', 'highlight', 'drawPath', 'drawPaths', 'drawShape',
+    'setProjection', 'lookAt', 'fitBoard', 'focusOn', 'resize', 'setSafeInsets',
+    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing',
+    'setSpotlight', 'setOrbitEnabled', 'preloadCharacters', 'render',
+  ] as const satisfies readonly (keyof Renderer)[];
+
+  for (const name of MUTATORS) {
+    const original = api[name];
+    if (typeof original !== 'function') continue;
+    (api as unknown as Record<string, unknown>)[name] = (...args: unknown[]): unknown => {
+      markDirty();
+      return (original as (...a: unknown[]) => unknown).apply(api, args);
+    };
+  }
 
   return api;
 }

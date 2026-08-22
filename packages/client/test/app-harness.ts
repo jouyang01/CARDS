@@ -83,6 +83,8 @@ export function stubRenderer(): StubRenderer {
     draw,
     // AMBIENT-FREEZE: the stub holds still, like the browser suite does.
     ambient: false,
+    // RENDER-ON-DEMAND: the stub never draws, so it has drawn nothing.
+    frameCount: () => 0,
     withClips: (sets) => { clipSets = sets; },
     show: (units, decoys = [], traps = []) => {
       draw.board = {

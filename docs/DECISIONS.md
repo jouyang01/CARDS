@@ -5993,3 +5993,50 @@ Nothing asserted the leading beat in either direction, which is why it survived 
 this area. It is asserted now, both ways: the first move cue sits at its banner, and a Prep
 cast still sits after one.
 
+## 2026-08-22 — Builder session 16 (RENDER-ON-DEMAND: the gate that said no)
+
+The board runs at **3.3 fps** under SwiftShader — a 302ms median frame, p90 583ms, max 938ms —
+because `start()` called `drawFrame()` on every `requestAnimationFrame` whether anything had
+changed or not. That single fact explains the whole of the browser suite's condition: the
+uniform ~3× slowdown, why tests that never render a board stayed fast, why disabling character
+models changed nothing, why shadows and grain accounted for only ~25%, why two workers made it
+worse, and why `boundingBox()` could time out on an element it had already resolved as
+*visible* — every Playwright call queues behind a 300–900ms frame.
+
+**The plan was staged deliberately: dirty-flag the loop behind a switch defaulting to current
+behaviour, prove an idle board stops drawing, then flip the default. The proof failed.**
+
+| mode | frames drawn over 5 idle seconds |
+|---|---|
+| on-demand | 17 |
+| always | 14 |
+
+No improvement, and the instrumentation says why. Over five seconds of an untouched page the
+*app* issued 49 camera updates, 15 `highlight` calls, and a scattering of `focusOn`,
+`drawShape` and `setUnitFacing`. The renderer is not what keeps the board busy. A loop that
+skips redundant frames cannot help while something upstream keeps saying the scene changed.
+
+**So the default did not flip, and that is the gate working rather than the work failing.** The
+machinery is correct — measured directly, one `highlight()` call draws exactly one frame — and
+it is a genuine prerequisite, because once the app stops re-issuing, the loop still has to stop
+drawing. It ships wired, tested, and off, behind `?render=ondemand` so the app-side fix can be
+measured when it lands. Turning it on today would add a wrapper and a flag for a benefit
+measured at zero, which is how a codebase accumulates things nobody can later justify removing.
+
+**Judgment call — the mutators are wrapped from a list, not marked one by one.** The failure
+mode of this optimisation is a *missed* mark: one method that forgets, and the board silently
+stops updating in whatever narrow case it covers. A list sits next to the interface and can be
+audited in a glance by the next person adding a method; eighteen scattered `markDirty()` calls
+cannot. Camera changes are deliberately absent from it because every one routes through
+`applyCamera`, which marks there — including the auto-camera's own easing, which is what keeps
+frames coming until it settles.
+
+**Judgment call — pure queries must NOT mark, and this is load-bearing.** `screenPosition` is
+called from the `onFrame` callback on every drawn frame (`placePreviewNumbers`). Marking it
+would make every frame request another one: the optimisation would appear to be installed and
+do nothing, which is worse than not having it, because the next person would have to rediscover
+that it never worked.
+
+**The next step is app-side, and it is now specific:** find what re-issues render commands into
+an idle page. The counts point at the camera first — 49 marks in five seconds, against a board
+nobody touched.
