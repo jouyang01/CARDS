@@ -23,10 +23,10 @@ import {
 import {
   ICON_GAP_PX, ICON_PX, PLATE_PAD_PX, PLATE_PX, nameplateKey, plateLayout, type Nameplate,
 } from './nameplates.js';
-import { SKY, SKY_PX } from './sky.js';
+import { SKY_PX, rgbOf, type SkyRamp } from './sky.js';
 
 /**
- * SKY-DOME — the background ramp, rasterised once for the life of the page.
+ * SKY-DOME — a theme's background ramp, rasterised once per distinct ramp.
  *
  * A **screen-space** gradient rather than a sky sphere, and that is a choice the
  * projection makes rather than a shortcut. Under an orthographic camera every
@@ -41,30 +41,35 @@ import { SKY, SKY_PX } from './sky.js';
  * lighter than `skyAt()` predicts, which would quietly break the e2e matcher
  * that shares this ramp.
  */
-let skyCache: CanvasTexture | null | undefined;
+const skyCache = new Map<string, CanvasTexture | null>();
 
-export function skyTexture(): CanvasTexture | null {
-  if (skyCache !== undefined) return skyCache;
+export function skyTexture(ramp: SkyRamp): CanvasTexture | null {
+  const key = `${ramp.top}|${ramp.bottom}`;
+  const cached = skyCache.get(key);
+  if (cached !== undefined) return cached;
 
   const canvas = document.createElement('canvas');
   canvas.width = 8;
   canvas.height = SKY_PX;
   const ctx = canvas.getContext('2d');
   if (ctx === null) {
-    skyCache = null;
+    skyCache.set(key, null);
     return null;
   }
 
-  const hex = (n: number): string => `#${n.toString(16).padStart(6, '0')}`;
-  const ramp = ctx.createLinearGradient(0, 0, 0, SKY_PX);
-  ramp.addColorStop(0, hex(SKY.top));
-  ramp.addColorStop(1, hex(SKY.bottom));
-  ctx.fillStyle = ramp;
+  const css = (hex: number): string => {
+    const { r, g, b } = rgbOf(hex);
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+  const gradient = ctx.createLinearGradient(0, 0, 0, SKY_PX);
+  gradient.addColorStop(0, css(ramp.top));
+  gradient.addColorStop(1, css(ramp.bottom));
+  ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 8, SKY_PX);
 
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
-  skyCache = texture;
+  skyCache.set(key, texture);
   return texture;
 }
 

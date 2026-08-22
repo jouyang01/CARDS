@@ -1,8 +1,9 @@
 # MAP_PIPELINE.md — from a grid of boxes to an arena with life
 
-**Status:** phase 1 built (`BOARD-LIT`, `GRID-SEAMS`, `SCENE-DIORAMA`, `SKY-DOME` — all in
-`renderer3d.ts`, `sky.ts` and `textures.ts`). Phases 2, 3 and 5 are unbuilt; phase 4 was
-largely shipped by the character pipeline and needs reusing rather than rebuilding.
+**Status:** phases 1 and 2 built (`BOARD-LIT`, `GRID-SEAMS`, `SCENE-DIORAMA`, `SKY-DOME`,
+`MAP-THEMES`, `FOG-BY-THEME` — in `renderer3d.ts`, `sky.ts`, `themes.ts`, `textures.ts` and
+`data/themes/`). Phases 3 and 5 are unbuilt; phase 4 was largely shipped by the character
+pipeline and needs reusing rather than rebuilding.
 **Nothing in this pipeline requires an art asset until phase 5**, which is the whole reason
 it is sequenced this way.
 
@@ -59,13 +60,11 @@ reachable. Do not "improve" it into a scene-wide raycast.
 | Floor | one `PlaneGeometry`, `MeshStandardMaterial`, flat colour, tile seams drawn over it |
 | Wall / cover / brush | one `BoxGeometry` per square, flat colour, roughness per kind |
 | Arena | a slab with a lit rim and two team-tinted spawn markers (`SCENERY`) |
-| Sky | a vertical gradient (`sky.ts`), screen-space |
+| Sky | a vertical gradient (`sky.ts`), screen-space, **per theme** |
 | Lighting | ambient floor + hemisphere + one shadow-casting sun + un-shadowed fill |
 | Ambient motion | **none** |
-| Themes | **none** — one hardcoded `PALETTE` in `app.ts`, shared by both maps |
-
-Both shipped maps are therefore still the same six colours in a different shape. That is the
-single most visible gap and phase 2 closes it.
+| Themes | `data/themes/*.json`, named by `MapDef.theme` — Proving Floor and Drained Works |
+| Fog | opacity **derived** from the theme's floor, not a constant |
 
 ---
 
@@ -79,7 +78,7 @@ finished it first, and why terrain inherits it.
 | Phase | Needs art? | Produces |
 |---|---|---|
 | 1 · Light, ground, arena, sky | no | form, countable squares, a place — **built** |
-| 2 · Themes as data | no | a map declares its own look in JSON |
+| 2 · Themes as data | no | a map declares its own look in JSON — **built** |
 | 3 · Procedural surfaces + ambient motion | no | grain, and the first thing that moves |
 | 4 · Asset loading | no (infrastructure) | **mostly shipped by the character pipeline** — what remains is the asset-weight budget |
 | 5 · Props and set pieces | **yes** | the skyline, the machinery, the crowd |
@@ -267,10 +266,8 @@ touches `packages/engine`, so the ask is to the *renderer*, not the simulation.
 
 ## 7. First steps
 
-1. Phase 2, themes as data — small, unblocks everything, and immediately stops Duel Arena and
-   Iron Basin looking identical.
-2. The ambient freeze hook, before any motion exists to need it.
-3. Then phase 3. Phase 4 is no longer a decision point of its own now that the loader exists —
+1. The ambient freeze hook, before any motion exists to need it.
+2. Then phase 3. Phase 4 is no longer a decision point of its own now that the loader exists —
    but **ASSET-WEIGHT-BUDGET should land before terrain starts shipping bytes too**, since a
    second pipeline feeding an unwatched directory is how that gap turns into a regression
    nobody sees.

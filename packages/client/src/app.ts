@@ -32,7 +32,8 @@ import {
   type UnitState,
   type Vec2,
 } from '@cards/engine';
-import { createRenderer, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
+import { FOG_INK, fogOpacity, themeFor } from './themes.js';
+import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { selectClip } from './character-clips.js';
@@ -216,9 +217,28 @@ export interface NetPlay {
   extend(): void;
 }
 
-const PALETTE = {
-  open: 0x20242f, wall: 0x4a5065, cover: 0x6b5b3e, brush: 0x2e4632,
-  team0: 0x4f8cff, team1: 0xff6b5e, background: 0x12141a,
+/**
+ * MAP-THEMES — the board palette is now half data and half constant.
+ *
+ * The themed half comes from `data/themes/*.json` via `themeFor(map)`; the two
+ * team colours do not, and must not. They are identity rather than decoration:
+ * a map that re-tints the teams changes friend-from-foe reading per map, and
+ * `TEAM_CSS` below plus the e2e's colour families both encode them.
+ */
+const paletteFor = (map: MapDef): BoardPalette => {
+  const theme = themeFor(map);
+  return {
+    open: theme.terrain.open,
+    wall: theme.terrain.wall,
+    cover: theme.terrain.cover,
+    brush: theme.terrain.brush,
+    team0: 0x4f8cff,
+    team1: 0xff6b5e,
+    background: theme.sky.top,
+    surface: theme.surface,
+    sky: theme.sky,
+    arena: theme.arena,
+  };
 };
 /** The same two team colours the board uses, for the DOM side of the HUD. */
 const TEAM_CSS = ['#4f8cff', '#ff6b5e'] as const;
@@ -241,7 +261,7 @@ const IMPACT = 0xffd166;
  * *absence of information*, and any hue would suggest the terrain underneath
  * meant something.
  */
-const FOG = 0x05060a;
+const FOG = FOG_INK;
 /**
  * CAMO-REVEAL's burning thicket. Deliberately hotter and purer than team 1's
  * `#ff6b5e` — this is an alarm, not an allegiance, and mistaking it for a red
@@ -253,8 +273,15 @@ const CAMO_OPACITY = 0.55;
 const CATALYST = 0x9be36b;
 /** The free-action overlay — its own colour, because it is its own decision. */
 const FREE = 0x6fe3c0;
-/** Dark enough to read as "no information", light enough to keep terrain legible. */
-const FOG_OPACITY = 0.62;
+/**
+ * FOG-BY-THEME — derived per map rather than fixed.
+ *
+ * A constant 62% darkens the floor *by* a fixed amount, which only reads as "no
+ * information" over a floor as dark as the one it was tuned against. Over
+ * Proving Floor's limestone the same wash leaves fogged squares plainly
+ * readable — VISION1 quietly stops holding. `fogOpacity` solves for the alpha
+ * that lands every theme's floor on the same value instead.
+ */
 /**
  * The drawn movement lines (AIM1/UI4). All three share one geometry — a
  * polyline through tile centres plus an endpoint marker — and differ only in
@@ -564,7 +591,8 @@ export function startHotSeat(
   let boardMemo: Board | undefined;
   const previewBoard = (): Board => (boardMemo ??= buildBoard(map));
 
-  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, PALETTE);
+  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, paletteFor(map));
+  const fogAlpha = fogOpacity(themeFor(map).terrain.open);
 
   // ── VISION1-opening ───────────────────────────────────────────────────────
   // Paint the fogged board NOW, before the render loop starts, so the very
@@ -1160,7 +1188,7 @@ export function startHotSeat(
       view.decoys.map((d) => ({ ...d, nameplate: decoyPlate(d) })),
       view.traps, pads(),
     );
-    renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
+    renderer.highlight('fog', view.fogged, FOG, fogAlpha);
     // CAMO-REVEAL: the thicket a unit gave itself away in burns red. Same view
     // as everything else, so it can never out a unit the seat cannot see.
     renderer.highlight('camo', view.camoTiles, CAMO_RED, CAMO_OPACITY);
