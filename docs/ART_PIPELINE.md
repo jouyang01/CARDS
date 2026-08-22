@@ -548,6 +548,22 @@ that is what lets one animation set serve the whole roster.
 
 A missing In Place checkbox means the clip has no root motion and needs nothing done.
 
+### The run has to keep up with the board
+
+A locomotion clip plays at the cadence it was authored at; the engine moves a unit **one tile
+per beat**. Those two have no reason to agree, and when they disagree the character sprints on
+the spot. Aegis's `sword_and_shield_run` is **0.733 s** for a **2-stride** cycle against a
+0.76 s beat — 2.07 steps per tile, which reads as a frantic shuffle.
+
+`selectClip` tags a movement choice with `stride` (strides per cycle) and the renderer
+time-scales the action so one cycle covers exactly that many tiles: **one step per tile**.
+
+> **Count the strides, do not assume them.** A Mixamo locomotion cycle is left-foot,
+> right-foot — 2 — but a clip from elsewhere may be a single-stride loop, and the wrong number
+> is a gait that is confidently, uniformly wrong. Read it out of the `.glb`: the hips dip once
+> per foot contact, so count the local minima of `mixamorig:Hips` translation Y over one cycle.
+> `stridesPerCycle` in the art data overrides the default of 2.
+
 ### One locomotion clip, not two
 
 **There is exactly one ground speed in this game.** `choreograph.ts:199` gives every move step

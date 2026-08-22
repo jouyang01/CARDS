@@ -33,7 +33,7 @@ export interface DrawLog {
   paths: { squares: Vec2[]; layer: PathLayer | undefined }[];
   shapes: Vec2[][];
   /** Every animation the app asked for, in order — Phase 8's assertable half. */
-  clips: { unitId: string; clip: string; loop: boolean }[];
+  clips: { unitId: string; clip: string; loop: boolean; stride?: number }[];
   /** Each `preloadCharacters` call, as the ids it was given. */
   preloads: string[][];
   /** The direction each unit was last told to look, by unit id. */
@@ -106,7 +106,7 @@ export function stubRenderer(): StubRenderer {
     // characters a match asks for is a decision worth pinning down.
     preloadCharacters: async (ids) => { draw.preloads.push([...ids]); },
     setUnitClip: (unitId, choice) => {
-      draw.clips.push({ unitId, clip: choice.clip, loop: choice.loop });
+      draw.clips.push({ unitId, clip: choice.clip, loop: choice.loop, stride: choice.stride });
     },
     // Last-write-wins rather than a log: facing is a state, not an event, and
     // what a spec wants to ask is "which way is he looking now".

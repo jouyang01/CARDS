@@ -11,7 +11,7 @@
 
 import { AnimationMixer, Group, LoopOnce, LoopRepeat, Object3D, type AnimationAction, type AnimationClip, type Bone } from 'three';
 
-import type { ClipChoice, ClipSet } from './character-clips.js';
+import { strideTimeScale, type ClipChoice, type ClipSet } from './character-clips.js';
 
 /** What `build_glb.py` writes next to each `.glb`. */
 export interface CharacterManifest {
@@ -346,10 +346,18 @@ export class CharacterModels {
         }
         const next = mixer.clipAction(clip);
         next.reset();
+        // Locomotion has to keep up with the board rather than with itself: the
+        // engine moves a unit one tile per beat, and a clip authored at some
+        // other cadence will take the wrong number of steps to cross it.
+        next.timeScale = choice.stride === undefined
+          ? 1
+          : strideTimeScale(clip.duration, choice.stride, beatSeconds);
         next.loop = choice.loop ? LoopRepeat : LoopOnce;
         next.clampWhenFinished = !choice.loop; // a corpse holds its last frame
-        // Seek to where the cue says we are, so joining mid-clip looks right.
-        next.time = Math.min(choice.since * beatSeconds, clip.duration);
+        // Seek to where the cue says we are, so joining mid-clip looks right —
+        // through the time scale, because `since` counts BEATS of ground time
+        // and the clip is no longer advancing one second per second.
+        next.time = Math.min(choice.since * beatSeconds * next.timeScale, clip.duration);
         if (current !== undefined && current !== next) current.crossFadeTo(next, 0.12, false);
         next.play();
         current = next;
