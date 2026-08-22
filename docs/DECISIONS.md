@@ -5922,3 +5922,22 @@ chunk instead — if it were statically imported, Vite would have no reason to e
    before it — so the constant is there to bound a runaway rather than to implement a rule. If the
    Analyzer can build a case that hits it, the right cap might be different; if not, it is dead
    weight that is still cheaper than the alternative.
+
+6. **The Playwright render suite is RED on `main`, and has been before this branch.** Nine of
+   thirty-two failed on my branch; I checked eight of them against a worktree at `origin/main`
+   (4da3c19) and all eight reproduce there unchanged — the four `UI-VIEWPORT` sizes, the fogged
+   opening frame, UI1-fix, the resolved-turn readout, and STEALTH-CONFIRM. The ninth
+   (MOVE-SPRINT-FIRST) passes in isolation on my branch and only fell over inside the full run,
+   so it is a cascade from the ones before it rather than a failure of its own.
+
+   The `UI-VIEWPORT` four have a diagnosable shape worth writing down: `controls.count()` is read
+   once and then `controls.nth(i).boundingBox()` blocks for the full 60 s when the HUD is rebuilt
+   mid-loop and index `i` no longer exists. That is a **test** bug — a stale index, not a HUD that
+   runs off the screen — and its 60 s timeout is most of why the suite now takes 26 minutes. The
+   remaining four are timeouts inside `resolveTurn`'s wait loop and want their own look.
+
+   None of this blocks the merge (RENDER-VERIFY is a pre-merge signal, not a release gate — ruled
+   in `docs/reviews/2026-08-25.md`), but a suite that is red before you start cannot tell anybody
+   whether they broke it, which is the state RENDER-CHECKS-GREEN existed to end. **Worth an item.**
+   I did not fix it this session: it is not in the backlog and repairing e2e assertions is exactly
+   the "never guess or invent scope" line.
