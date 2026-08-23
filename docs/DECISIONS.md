@@ -6344,3 +6344,40 @@ on `always` and on the `off/none/0/false` vocabulary the other two flags already
 the default for anything else. A typo in a debug flag should not silently hand a player a 3.3 fps
 board, and the asymmetry is deliberate: the old spelling failed *closed* (any typo left it off,
 which was then the safe state), and the new one must fail *open* for the same reason.
+
+## 2026-08-23 — Builder session 17 (the last two red tests were races, not bugs)
+
+With the camera ease fixed and `render=ondemand` attached, the browser suite went from 17 failed /
+17 passed in 59.7 minutes to 2 failed / 32 passed in 9.9. Both survivors turned out to be races in
+the tests, and both had been failing on `main` all along — hidden behind timeouts, and only legible
+once the suite was fast enough to lose them differently.
+
+**A readout that was there all along, watched too late.** `a resolved turn animates` polled for
+`.readout` *after* a two-screenshot frame comparison. A screenshot of an animating board waits
+~2.2s for the compositor — legitimately, the board really is redrawing — so the poll began at
+~4.8s. Instrumenting the DOM through a whole resolution shows the number floats from ~1.4s to
+~2.9s, during Blast. The test was failing for the one thing it was not testing: that it arrived
+late. It now starts a `waitForFunction` at the first frame of playback and awaits it after the
+comparison — in-page, concurrent, free, and impossible to outrun.
+
+**Judgment call — the watch tightened to `.readout:not(.preview)` while it was being moved.** The
+old selector also matched plan-time preview numbers, so an assertion about *resolution* could have
+been satisfied by a number the planning phase left on screen. Nothing was relying on that; it is
+strictly a stronger test.
+
+**A check-then-act race against a control that removes itself.** `STEALTH-CONFIRM` did
+`if (await skip.isVisible()) await skip.click()`. Playback can end in the gap, and Playwright then
+spends the entire 60s budget waiting for an element that is never coming back — reported as a click
+timeout, which reads like the Skip button is broken rather than like the turn is already over. One
+`click({ timeout: 5_000 }).catch(() => {})` says the real intent: skip the resolution if it is
+still running, and finding nothing to press is success.
+
+**Correction, recorded because the wrong version was stated out loud first.** While chasing this I
+reported that Move playback hangs forever. It does not. The probe asked
+`document.querySelector('.hud-playback') !== null` — but that element is built once at boot and
+always exists — and read `.phase-label.textContent`, which keeps its last value after the label is
+hidden. Both are true forever regardless of playback. The Playwright suite uses `isVisible()` and
+was right; the probe was wrong. Instrumenting the playback clock settled it: the move phase reaches
+`t >= end` and resolves normally, 26 ticks and ~6s for the whole turn. Worth writing down as the
+shape of the mistake: a presence check against a container that is never removed proves nothing,
+and it fails in the direction that looks alarming.

@@ -325,18 +325,25 @@ test('a resolved turn animates, logs both ends, and floats a readout', async ({ 
 
   // Playback runs: the phase label appears and the board keeps changing.
   await expect(page.locator('.phase-label')).toBeVisible({ timeout: 10_000 });
+
+  // UI5's floating numbers, watched from the first frame of playback rather than
+  // after the frame comparison below.
+  //
+  // A readout lives about two beats and the damage that makes one happens in
+  // Blast, early. The comparison below costs two screenshots, and a screenshot
+  // of an animating board waits ~2.2s for the compositor — so polling after it
+  // starts looking at ~4.8s for a number that stopped existing at ~2.9s. The
+  // test then failed for the one reason it was not testing: that it arrived
+  // late. Watching in-page and in parallel costs nothing and cannot be outrun.
+  const sawReadout = page
+    .waitForFunction(() => document.querySelectorAll('.readout:not(.preview)').length > 0, undefined, { timeout: 30_000 })
+    .then(() => true, () => false);
+
   const during = await frame(page);
   await page.waitForTimeout(400);
   expect(same(await frame(page), during), 'the resolution must be animating').toBe(false);
 
-  // UI5's floating numbers and UI6's log are the two readable outputs of a turn.
-  // Poll rather than sample once: a readout lives about two beats.
-  let sawReadout = false;
-  for (let i = 0; i < 40 && !sawReadout; i++) {
-    sawReadout = (await page.locator('.readout').count()) > 0;
-    await page.waitForTimeout(80);
-  }
-  expect(sawReadout, 'a damage/heal readout must float during resolution').toBe(true);
+  expect(await sawReadout, 'a damage/heal readout must float during resolution').toBe(true);
 
   await expect(page.locator('.log-turn').first()).toBeVisible();
   await expect(page.locator('.log-line').first()).toBeVisible();
@@ -883,8 +890,16 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
   // waited out the full timeout reporting "…intercepts pointer events". The row
   // was never the control; `.hud-skip` is, and it is what `app-harness.ts`'s own
   // `skipPlayback` has always clicked.
+  //
+  // Asked for in one call rather than as `isVisible()` then `click()`. That pair
+  // is a check-then-act race against a control that removes itself: playback can
+  // finish in the gap, and Playwright then spends the whole 60s budget waiting
+  // for an element that is never coming back — reported as a click timeout, which
+  // reads like the button is broken rather than like the turn is already over.
+  // Skipping a resolution that has already ended is a no-op, so a click that
+  // finds nothing to press is success, not failure.
   const skip = page.locator('.hud-playback .hud-skip');
-  if (await skip.isVisible()) await skip.click();
+  await skip.click({ timeout: 5_000 }).catch(() => {});
   await page.waitForTimeout(600);
 
   // The log is the engine\'s own account of the turn: the decoy went down.
