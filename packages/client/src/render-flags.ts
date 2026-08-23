@@ -137,36 +137,47 @@ export function browserModels(): boolean {
 /**
  * Whether the renderer may skip a frame that would draw the same picture.
  *
- * **Off by default, and that is a measured decision rather than caution.**
+ * **On by default, and that default was gated on a measurement that had to be
+ * earned twice.**
  *
- * The board runs at 3.3 fps under SwiftShader (302ms median frame) because the
+ * The board ran at 3.3 fps under SwiftShader (302ms median frame) because the
  * loop drew unconditionally, so the plan was: dirty-flag the loop behind this
  * switch, prove an idle board stops drawing, then make it the default. The
- * proof was run and it **failed** — over five seconds of an untouched page:
+ * first proof **failed** — over five seconds of an untouched page, on-demand
+ * drew 17 frames against always-render's 14.
  *
- * | mode | frames drawn |
- * |---|---|
- * | on-demand | 17 |
- * | always | 14 |
+ * That was read at the time as "the app re-issues render commands into an idle
+ * page", and it was wrong. Instrumenting every `applyCamera` call site put 59
+ * of the ~90 dirty marks on a single line: the auto-camera's own ease, which
+ * closed a fixed fraction of its remaining distance *per frame* and so took 62
+ * frames — 1.0s at 60fps, 5.2s at SwiftShader's 12fps — to settle. Under this
+ * flag every one of those frames was a redraw the ease itself had requested.
+ * See `camera-ease.ts`; the ease is denominated in seconds now.
  *
- * No improvement, because the renderer is not what keeps the board busy. The
- * *app* re-issues render commands into an idle page: 49 camera updates, 15
- * `highlight` calls, plus `focusOn`, `drawShape` and `setUnitFacing`, in five
- * seconds with no input. A renderer that skips redundant frames cannot help
- * while something upstream keeps telling it the scene changed.
+ * With that fixed the same measurement inverts:
  *
- * So the machinery ships wired and unused. It is a prerequisite — once the app
- * stops re-issuing, the loop still has to stop drawing, and that half is done
- * and tested. Turning it on today would add a wrapper and a flag for a benefit
- * measured at zero, which is how a codebase accumulates things nobody can
- * later justify removing.
+ * | | idle frames in 5s | frames to settled |
+ * |---|---|---|
+ * | before | 20 | 54 |
+ * | after | **0** | **11** |
  *
- * `?render=ondemand` opts in, for measuring the app-side fix when it lands.
+ * and nine board-heavy browser tests go 5.6m → 1.6m, with two of their three
+ * failures dissolving because they were timeouts rather than assertions.
+ *
+ * `?render=always` opts back out, which is worth keeping for exactly one
+ * purpose: the failure mode of this optimisation is a *missed* `markDirty`, and
+ * "does it still happen with `?render=always`?" is the one question that
+ * separates a missed mark from a real rendering bug.
  */
 export function renderOnDemand(env: RenderFlagEnvironment = {}): boolean {
   const search = env.search ?? '';
   const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-  return (params.get('render') ?? '').trim().toLowerCase() === 'ondemand';
+  const asked = params.get('render');
+  if (asked === null) return true;
+  const value = asked.trim().toLowerCase();
+  // Anything that is not an explicit opt-out leaves the default alone: a typo
+  // in a debug flag must not silently restore a 3.3 fps board.
+  return value !== 'always' && !OFF.has(value);
 }
 
 /** `renderOnDemand` read from the live browser. */
