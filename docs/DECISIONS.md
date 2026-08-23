@@ -6164,3 +6164,44 @@ that it never worked.
 **The next step is app-side, and it is now specific:** find what re-issues render commands into
 an idle page. The counts point at the camera first — 49 marks in five seconds, against a board
 nobody touched.
+
+## 2026-08-22 — Session 17 (Builder): the camera ease was denominated in frames, not seconds
+
+The previous entry ended by pointing at the camera and guessing the culprit was app-side. It was
+not. Per-call-site instrumentation over five seconds of a genuinely idle board attributed 59 of
+the ~90 dirty marks to a single line: the `applyCamera()` inside `stepCamera`. The other eight
+camera call sites contributed seven marks between them.
+
+**The ease was not broken; its unit was wrong.** It closed a constant fraction of the remaining
+distance *per frame* and stopped at a 0.002-square threshold. From a typical `focusOn` delta that
+is 62 frames of travel — a pleasant 1.0s glide at 60fps, and a **five second** one under
+SwiftShader at 12fps. Under RENDER-ON-DEMAND that is worse than slow, because each of those
+frames is one the ease itself requested: the renderer paid for its own slowness twice, once in
+the frame and again in the extra frames the frame's duration bought. It also explains why the
+on-demand gate measured no benefit at all when it landed — the machinery was correct and the
+camera simply never stopped asking.
+
+**So the ease is time-based.** `EASE` still means "fraction closed per 1/60s", but a frame that
+took four times as long closes four sixtieths' worth. A glide takes the same wall-clock time on
+any machine, which is what a player wants independently of any of this, and is the whole of the
+fix. It lives in `packages/client/src/camera-ease.ts` rather than in the renderer because it
+needs no `three` and therefore can carry a test — and this is precisely the kind of arithmetic
+that should not be re-derived by reading a GL file.
+
+**Judgment call — it snaps, and the settled test is exact equality.** The old threshold returned
+*without assigning*, so the camera parked a hair off its target permanently and every later frame
+had to re-establish that it was close enough. Landing exactly on the target makes "settled" an
+exact-zero comparison that cannot drift, and lets a settled camera return `undefined` — no pose,
+no `applyCamera`, no dirty flag. The snap distance of 0.01 squares is a quarter of a screen pixel
+at the default framing; it buys about ten frames off a tail where the camera is provably not
+moving on screen but is still redrawing to say so.
+
+**Measured, on `?map=iron-basin&render=ondemand`, before and after, same build pipeline:** idle
+frames across five seconds went 20 → **0**, and frames from load to settled went 54 → 11. The
+board is byte-comparable to the always-render build apart from the DOM countdown.
+
+**This is also the right shape for the panning camera.** A player-driven pan already bypasses the
+ease entirely (`orbitOn` returns early) and marks dirty per pointer event, which is exactly what
+on-demand wants: frames while the hand moves, none after it stops. The frame-denominated ease
+would have made a *player's* pan feel slower on a slower machine too; that bug is gone with the
+same change.
