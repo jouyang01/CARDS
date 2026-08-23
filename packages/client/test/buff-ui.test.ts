@@ -48,7 +48,7 @@ const noop = (): void => {};
 const handlers = {
   selectCharacter: noop, selectAbility: noop, selectCatalyst: noop, hoverAbility: noop,
   selectMove: noop, selectChase: noop, hoverMove: noop, hold: noop, lock: noop,
-  toggleProjection: noop, toggleOrbit: noop, extendTime: noop, selectMode: noop, selectRotation: noop,
+  toggleProjection: noop, toggleOrbit: noop, recentre: noop, extendTime: noop, selectMode: noop, selectRotation: noop,
 };
 
 let root: HTMLElement;

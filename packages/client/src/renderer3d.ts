@@ -127,6 +127,15 @@ export const PITCH_LIMITS = { min: 8, max: 90 } as const;
 export const SPAN_LIMITS = { min: 6, max: 60 } as const;
 /** Pointer travel (px) past which a drag is an orbit, not a click. */
 const DRAG_SLOP = 4;
+/**
+ * CAMERA-CONTROLS — squares a player may pan past the board's edge.
+ *
+ * Not zero, and not generous. The HUD's insets shift the world window, so a unit
+ * on the last rank sits under the chrome unless the frame may pass the edge a
+ * little; two squares clears it. Larger and the player can lose the board in a
+ * field of void, which is the failure the clamp exists to prevent.
+ */
+const PAN_MARGIN = 2;
 /** Degrees of yaw/pitch per pixel dragged. */
 const ORBIT_SENSITIVITY = 0.4;
 /** Board-height (in squares) at which billboarded bars are their design size. */
@@ -743,6 +752,22 @@ export interface Renderer {
   setOrbitEnabled(on: boolean): void;
   orbitEnabled(): boolean;
   /**
+   * CAMERA-CONTROLS — pan the camera by a drag in screen pixels, as the middle
+   * button and Shift+drag do. Exposed so the controller can offer a recentre
+   * that means something, and so a test can pan without synthesising pointers.
+   */
+  panBy(dx: number, dy: number): void;
+  /** Has the player taken the camera by panning it? */
+  panned(): boolean;
+  /**
+   * Give the camera back to the auto-framing.
+   *
+   * `instant` snaps rather than glides — AMBIENT-FREEZE's precedent: a viewer who
+   * asked their OS for reduced motion should not be given a one-second push
+   * across the board because they pressed Recentre.
+   */
+  recentre(instant?: boolean): void;
+  /**
    * Keep a run of squares in frame (auto-camera). Empty = whole board.
    *
    * `pan` overrides how far the camera leans toward them: the A3 default of
@@ -807,6 +832,49 @@ export const squareToWorldXZ = (map: { width: number; height: number }, p: Vec2)
   x: p.x - (map.width - 1) / 2,
   z: p.y - (map.height - 1) / 2,
 });
+
+/**
+ * CAMERA-CONTROLS — how far a drag moves the camera's centre, in BOARD squares.
+ *
+ * Owner Dev Note: *"IMPORTANT: Need to add Camera panning."*
+ *
+ * Pure and exported for the same reason `squareToWorldXZ` is: this is the part
+ * that has to be right, and it needs no WebGL context to check. Board→world is a
+ * plain translation (board x → world x, board y → world z), so a world delta is
+ * a board delta and the whole thing is trigonometry.
+ *
+ * **The pan is grab-and-drag, so the content follows the pointer and the camera
+ * moves the other way.** Under an orthographic camera the visible height IS
+ * `span`, so one pixel is exactly `span / height` world units — no perspective
+ * divide, no distance term.
+ *
+ * Two corrections earn their place:
+ * - **Yaw.** Once a free orbit has swung the board, "right" on screen is no
+ *   longer +x on the board. `right` and `fwd` are the camera's own axes
+ *   projected onto the ground, which is what keeps a drag feeling like a drag
+ *   rather than like a compass.
+ * - **Pitch.** Depth is foreshortened: at an isometric pitch a pixel of vertical
+ *   drag crosses more *squares* than a pixel of horizontal drag, by `1/sin`.
+ *   Without it the board slides diagonally under a straight drag. Clamped the
+ *   same way `clampToBoard` clamps it, so a near-edge-on pitch cannot divide by
+ *   nearly zero and fling the camera off the map.
+ */
+export function panDelta(
+  drag: { dx: number; dy: number },
+  view: { span: number; height: number; yawDeg: number; pitchDeg: number },
+): { x: number; y: number } {
+  const perPx = view.span / Math.max(1, view.height);
+  const yaw = (view.yawDeg * Math.PI) / 180;
+  const pitch = (view.pitchDeg * Math.PI) / 180;
+  const depthPerPx = perPx / Math.max(Math.sin(pitch), 0.2);
+  // The camera's right and forward vectors on the ground plane, in board axes.
+  const right = { x: Math.cos(yaw), y: -Math.sin(yaw) };
+  const fwd = { x: -Math.sin(yaw), y: -Math.cos(yaw) };
+  return {
+    x: -right.x * drag.dx * perPx + fwd.x * drag.dy * depthPerPx,
+    y: -right.y * drag.dx * perPx + fwd.y * drag.dy * depthPerPx,
+  };
+}
 
 /** World XZ → board square: the exact inverse, snapped to the nearest tile. */
 export const worldXZToSquare = (map: { width: number; height: number }, x: number, z: number): Vec2 => ({
@@ -1490,6 +1558,17 @@ export function createRenderer(
   let wantCentre = { ...centre };
   let wantSpan = span;
   let orbitOn = false;
+  /**
+   * CAMERA-CONTROLS — has the player taken the camera by panning it?
+   *
+   * The same auto-vs-manual model free orbit already uses, on its own flag
+   * because the two are independent: a player can pan without orbiting, and
+   * orbit's own gating (`focusOn` declines outright) is deliberately *not* what
+   * pan does. A pan freezes the **live** camera and lets `wantCentre` keep
+   * tracking the action, so a recentre glides to where the game is now rather
+   * than to wherever it was when the player grabbed the board.
+   */
+  let panned = false;
   let width = 900;
   let height = 560;
 
@@ -1604,13 +1683,28 @@ export function createRenderer(
    * the auto-camera happily pans off the edge and shows a band of void next to
    * half a board — which is worse than not following the action at all.
    */
-  const clampToBoard = (c: { x: number; y: number }, spanValue: number): { x: number; y: number } => {
+  const clampToBoard = (
+    c: { x: number; y: number },
+    spanValue: number,
+    /**
+     * CAMERA-CONTROLS: squares of overshoot allowed past the board edge.
+     *
+     * Zero for the auto-camera, which should never volunteer to look at void.
+     * A **player** panning needs a little: with the HUD insets shifting the world
+     * window, a unit on the last rank cannot be brought clear of the chrome if
+     * the frame may not pass the board's own edge. It is a margin, not a licence
+     * — the board still cannot leave the frame.
+     */
+    margin = 0,
+  ): { x: number; y: number } => {
     const halfW = (spanValue / 2) * (width / height);
     // Depth is foreshortened on screen, so the visible run of *squares* along y
     // is larger than the visible height by 1/sin(pitch).
     const halfD = spanValue / 2 / Math.max(Math.sin(rad(pitchDeg)), 0.2);
     const axis = (v: number, extent: number, half: number): number =>
-      extent <= half * 2 ? (extent - 1) / 2 : clamp(v, half - 0.5, extent - 0.5 - half);
+      (extent <= half * 2
+        ? clamp(v, (extent - 1) / 2 - margin, (extent - 1) / 2 + margin)
+        : clamp(v, half - 0.5 - margin, extent - 0.5 - half + margin));
     return { x: axis(c.x, map.width, halfW), y: axis(c.y, map.height, halfD) };
   };
 
@@ -1625,7 +1719,9 @@ export function createRenderer(
    * is the path taken every frame.
    */
   const stepCamera = (delta: number): void => {
-    if (orbitOn) return; // the player owns the camera; don't fight them
+    // The player owns the camera; don't fight them. Panning suspends the
+    // auto-camera exactly as free orbit does — until a recentre gives it back.
+    if (orbitOn || panned) return;
     const next = easeCamera(
       { x: centre.x, y: centre.y, span },
       { x: wantCentre.x, y: wantCentre.y, span: wantSpan },
@@ -1661,39 +1757,67 @@ export function createRenderer(
     }
   };
 
-  // ── Free-orbit input ──────────────────────────────────────────────────────
-  // Secondary buttons always orbit; the left button orbits only in free-orbit
-  // mode, so click-to-select never competes with a camera drag.
+  /**
+   * CAMERA-CONTROLS — move the camera's centre by a drag, in screen pixels.
+   *
+   * The clamp is what makes this safe to hand a player: `PAN_MARGIN` squares of
+   * overshoot, and not one more, so the board can never be panned off the frame
+   * entirely. It is applied to the LIVE centre rather than to `wantCentre`,
+   * because a pan is the player moving the camera now — not a new target for the
+   * auto-camera to ease toward.
+   */
+  const panByPixels = (dx: number, dy: number): void => {
+    const d = panDelta({ dx, dy }, { span, height, yawDeg, pitchDeg });
+    panned = true;
+    centre = clampToBoard({ x: centre.x + d.x, y: centre.y + d.y }, span, PAN_MARGIN);
+    applyCamera();
+  };
+
+  // ── Camera input ──────────────────────────────────────────────────────────
+  //
+  // Three gestures on one pointer, split by BUTTON and MODIFIER rather than by
+  // any heuristic — a drag must never have to be guessed at:
+  //
+  // - **Middle-drag, or Shift + any drag → PAN** (CAMERA-CONTROLS). Middle-drag
+  //   is what every 3D tool means by pan, and Shift is there for the trackpads
+  //   that have no middle button. Shift is checked first so the modifier always
+  //   wins, whichever button is held.
+  // - **Right-drag → ORBIT**, unchanged and pinned by a browser test.
+  // - **Left-drag → orbit only in free-orbit mode**, so click-to-select never
+  //   competes with a camera drag.
   const canvas = renderer.domElement;
-  let dragging = false;
+  let dragging: 'orbit' | 'pan' | undefined;
   let dragged = 0;
   let lastX = 0;
   let lastY = 0;
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
-    const secondary = e.button === 1 || e.button === 2;
-    if (!secondary && !(orbitOn && e.button === 0)) return;
-    dragging = true;
+    const mode = e.shiftKey || e.button === 1 ? 'pan' as const
+      : e.button === 2 || (orbitOn && e.button === 0) ? 'orbit' as const
+      : undefined;
+    if (mode === undefined) return;
+    dragging = mode;
     dragged = 0;
     lastX = e.clientX;
     lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
+    if (dragging === undefined) return;
     const dx = e.clientX - lastX;
     const dy = e.clientY - lastY;
     lastX = e.clientX;
     lastY = e.clientY;
     dragged += Math.abs(dx) + Math.abs(dy);
+    if (dragging === 'pan') return panByPixels(dx, dy);
     yawDeg = (yawDeg + dx * ORBIT_SENSITIVITY) % 360;
     pitchDeg = clamp(pitchDeg - dy * ORBIT_SENSITIVITY, PITCH_LIMITS.min, PITCH_LIMITS.max);
     applyCamera();
   });
   const endDrag = (e: PointerEvent): void => {
-    if (!dragging) return;
-    dragging = false;
+    if (dragging === undefined) return;
+    dragging = undefined;
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
   };
   canvas.addEventListener('pointerup', endDrag);
@@ -2147,6 +2271,18 @@ export function createRenderer(
     },
 
     orbitEnabled: () => orbitOn,
+
+    panBy: panByPixels,
+
+    panned: () => panned,
+
+    recentre(instant = false) {
+      panned = false;
+      if (!instant) return markDirty(); // the ease takes it from here
+      centre = { x: wantCentre.x, y: wantCentre.y };
+      span = wantSpan;
+      applyCamera();
+    },
 
     focusOn(squares, pan = AUTO_PAN) {
       if (orbitOn) return; // free-orbit mode: the auto-camera stands down
