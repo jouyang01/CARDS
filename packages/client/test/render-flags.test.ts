@@ -85,23 +85,33 @@ describe('MODEL-FREEZE keeps the board suite on the renderer it was written for'
   });
 });
 
-describe('RENDER-ON-DEMAND ships wired and off', () => {
-  it('is off unless asked for', () => {
-    // Measured null result, not caution: on-demand drew 17 idle frames in five
-    // seconds against 14 for always. The renderer is not what keeps the board
-    // busy — the app re-issues render commands into an untouched page — so
-    // turning this on today buys a wrapper and a flag for nothing.
-    expect(renderOnDemand()).toBe(false);
-    expect(renderOnDemand({ search: '?map=iron-basin' })).toBe(false);
-    expect(renderOnDemand({ search: '?render=always' })).toBe(false);
+describe('RENDER-ON-DEMAND is the default, and can be turned back off', () => {
+  it('is on unless explicitly opted out of', () => {
+    // Earned, not assumed. The first attempt at this default measured 17 idle
+    // frames against always-render's 14 and was correctly left off; the ease in
+    // `camera-ease.ts` was requesting those frames. With that fixed the number
+    // is 0, and nine board-heavy browser tests run 5.6m -> 1.6m.
+    expect(renderOnDemand()).toBe(true);
+    expect(renderOnDemand({ search: '?map=iron-basin' })).toBe(true);
+    expect(renderOnDemand({ search: '?render=ondemand' })).toBe(true);
   });
 
-  it('opts in on ?render=ondemand, for measuring the app-side fix', () => {
-    expect(renderOnDemand({ search: '?render=ondemand' })).toBe(true);
-    expect(renderOnDemand({ search: '?map=duel-arena&render=ondemand' })).toBe(true);
+  it('opts out on ?render=always, which is how a missed markDirty is diagnosed', () => {
+    expect(renderOnDemand({ search: '?render=always' })).toBe(false);
+    expect(renderOnDemand({ search: '?map=duel-arena&render=always' })).toBe(false);
+    // The `ambient=off` vocabulary, for consistency across the three flags.
+    for (const value of ['off', 'none', '0', 'false']) {
+      expect(renderOnDemand({ search: `?render=${value}` })).toBe(false);
+    }
+  });
+
+  it('keeps the default on a value it does not recognise', () => {
+    // A typo in a debug flag must not silently restore a 3.3 fps board.
+    expect(renderOnDemand({ search: '?render=alwyas' })).toBe(true);
+    expect(renderOnDemand({ search: '?render=' })).toBe(true);
   });
 
   it('ignores reduced-motion — skipping redundant frames is not motion', () => {
-    expect(renderOnDemand({ reducedMotion: true })).toBe(false);
+    expect(renderOnDemand({ reducedMotion: true })).toBe(true);
   });
 });

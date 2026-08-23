@@ -6081,3 +6081,28 @@ ease entirely (`orbitOn` returns early) and marks dirty per pointer event, which
 on-demand wants: frames while the hand moves, none after it stops. The frame-denominated ease
 would have made a *player's* pan feel slower on a slower machine too; that bug is gone with the
 same change.
+
+## 2026-08-23 — Session 17b (Builder): on-demand rendering is the default now
+
+The gate set in session 16 was "prove an idle board stops drawing, then flip". With the camera
+ease fixed, the proof holds — 0 idle frames across five seconds, down from 20 — so the flag flips
+and `?render=always` becomes the opt-out.
+
+**The full browser suite, which is the number that mattered:** ~40 minutes with 10 failures →
+**9.3 minutes with 2**. Eight of the ten failures were timeouts, not assertions; they dissolved
+because a 60-second limit stops binding when every Playwright call is no longer queued behind a
+300–900ms frame.
+
+**The two survivors are pre-existing, and this was verified rather than assumed.** Both were re-run
+with `?render=always` and failed identically, which is the whole reason the opt-out was kept: the
+failure mode of this optimisation is a *missed* `markDirty`, and "does it still happen with
+`?render=always`?" is the single question that separates one from a real rendering bug. It answered
+that question on its first use. Both failures are in playback (`.hud-playback` never becoming
+visible), and they are now the honest top of the e2e list rather than being lost among eight
+timeouts.
+
+**Judgment call — an unrecognised `?render=` value keeps the default.** `renderOnDemand` opts out
+on `always` and on the `off/none/0/false` vocabulary the other two flags already use, and returns
+the default for anything else. A typo in a debug flag should not silently hand a player a 3.3 fps
+board, and the asymmetry is deliberate: the old spelling failed *closed* (any typo left it off,
+which was then the safe state), and the new one must fail *open* for the same reason.
