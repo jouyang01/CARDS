@@ -65,6 +65,39 @@ const virtualClock = () => {
   };
 };
 
+/**
+ * Find a screen point where the armed ability would actually hurt somebody.
+ *
+ * The old fixed fraction of the viewport aimed at whatever happened to be
+ * there, which on this map is empty floor: filming a Blast produced a Blast
+ * with nothing in it, and the impact effects it was meant to photograph were
+ * never triggered at all. Nothing was broken — the camera was pointed at the
+ * wrong thing, which is worse, because the film looked like evidence.
+ *
+ * The aim is found the way a player finds it: hover, and see whether the game
+ * offers a damage number. `.readout.preview.damage` is exactly that offer, so
+ * a point that shows one is a point that lands. No debug hook and nothing
+ * special-cased for being filmed — this reads only what the HUD shows a human.
+ *
+ * The sweep is a coarse grid because the board is drawn in perspective and
+ * tile centres are not on any screen-space lattice we could compute here.
+ */
+const findTarget = async (page, box, steps = 11) => {
+  const damage = page.locator('.readout.preview.damage');
+  for (let row = 1; row < steps; row++) {
+    for (let col = 1; col < steps; col++) {
+      const x = box.x + (box.width * col) / steps;
+      const y = box.y + (box.height * row) / steps;
+      await page.mouse.move(x, y);
+      // The preview is painted on the next drawn frame, which is our clock's.
+      await page.evaluate((ms) => window.__film.step(ms), 16);
+      await page.waitForTimeout(20);
+      if (await damage.count()) return { x, y };
+    }
+  }
+  return undefined;
+};
+
 const main = async () => {
   rmSync(OUT, { recursive: true, force: true });
   mkdirSync(OUT, { recursive: true });
@@ -95,9 +128,15 @@ const main = async () => {
   if (ABILITY !== '') {
     // An ability instead of a move, so a Blast phase has something in it.
     await page.locator(`button:has-text("${ABILITY}")`).first().click();
-    await page.mouse.move(box.x + box.width * 0.52, box.y + box.height * 0.5);
-    await page.waitForTimeout(150);
-    await page.mouse.click(box.x + box.width * 0.52, box.y + box.height * 0.5);
+    const aim = await findTarget(page, box);
+    if (aim === undefined) {
+      console.log(`[film] "${ABILITY}" found nothing to hit — captured nothing`);
+      await browser.close();
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`[film] aiming "${ABILITY}" at ${aim.x.toFixed(0)},${aim.y.toFixed(0)}`);
+    await page.mouse.click(aim.x, aim.y);
     await page.waitForTimeout(150);
   } else {
   await page.locator('button:has-text("Move")').first().click();

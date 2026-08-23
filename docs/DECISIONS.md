@@ -6082,3 +6082,35 @@ proves `flashUnit` is reached with the victim's id — but *not* at the pixel. T
 cannot yet order an attack that lands, so filming a Blast produces no impact to photograph. The
 next tooling step is teaching `film.mjs` to aim an ability at a unit; until then, no one should
 claim the flash has been seen.
+
+## 2026-08-23 — Builder session 17 (closing the flash's verification gap)
+
+The impact work shipped with an honest hole: the flash was proven as far as the renderer call and
+no further. Two changes close it, and neither is a new feature.
+
+**The film harness now aims like a player does.** It used to click a fixed fraction of the
+viewport, which on this map is empty floor — so filming a Blast produced a Blast with nothing in
+it, and the effects it existed to photograph were never triggered. Nothing was broken; the camera
+was pointed at the wrong thing, which is worse, because the film still looked like evidence.
+`findTarget` now sweeps a coarse grid, hovering, and stops where the game offers a
+`.readout.preview.damage` node — the same offer a human reads. No debug hook, nothing
+special-cased for being filmed, which is the rule the harness was built under.
+
+**`paintFlash` is extracted and exported**, for the same reason `modelBounds` and
+`staleUnitGroups` were: the renderer needs a WebGL context Node has not got, so anything left
+inside the factory closure can only be checked by photographing a browser. Pulling out the half
+that decides what the pixels become makes it a unit test — full strength at a fresh flash, linear
+decay, *exactly* black on release, no overshoot above or below, and every mesh of a rigged body
+rather than only the torso. The extraction also fixed a latent gap: the old inline version read
+`o.material` as a single material, so a multi-material mesh would have flashed only its first slot.
+
+**What is now true, precisely:** the flash's decision (`vfx.ts`), its delivery (`vfx-wiring`), the
+material it lands on being the unit's own (`detach-materials`), and the paint itself
+(`paint-flash`) are each verified. What remains unverified is only the last inch — that the lit
+material is on screen and unoccluded — which is what `render-verify` exists for.
+
+**Not ours: `render` is red on `main`.** Every Render-verify run since #114 has failed on the base
+branch, including on `d3d1797`, the commit this branch was cut from, and each burns ~60 minutes to
+the job timeout. It is a pre-merge signal rather than a release gate by design (Pages gates on CI,
+which is green), and RENDER-SUITE-GREEN-2 is already specced with the Analyzer. No changes pushed
+for it from here.

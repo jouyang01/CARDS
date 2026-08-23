@@ -86,7 +86,7 @@ const TILE = 1;
 export const MODEL_HEIGHT_TILES = 1.9;
 
 /** How bright a victim flash goes. Emissive is additive, so 1 is already a lot. */
-const FLASH_STRENGTH = 0.55;
+export const FLASH_STRENGTH = 0.55;
 
 /**
  * How tall a unit with no model yet stands.
@@ -886,6 +886,34 @@ export interface BuiltUnit {
  * Dropping the group is the whole fix: the next `show()` rebuilds it, and
  * `show()` runs on every paint.
  */
+/**
+ * Write a unit's flash onto its meshes. `left` is the seconds remaining, so the
+ * lit amount decays to nothing on its own and `left <= 0` is a clean release.
+ *
+ * Exported, and separate from the closure that calls it, for the same reason
+ * `modelBounds` and `staleUnitGroups` are: the renderer needs a WebGL context
+ * that Node has not got, so anything left inside the factory can only be
+ * verified by photographing a browser. This is the half that decides what the
+ * pixels become, and it is checkable in a unit test.
+ *
+ * Emissive rather than colour: the material's colour is the character's
+ * identity (team tint on a box, the atlas on a model), and writing to it means
+ * remembering what to put back. Emissive is additive light with a natural rest
+ * value of black, so releasing it is setting it to zero.
+ */
+export function paintFlash(body: Object3D, left: number): void {
+  const lit = Math.max(0, Math.min(1, left / FLASH_SECONDS));
+  // A box is one mesh; a rigged model is a tree of them.
+  body.traverse((o) => {
+    if (!(o instanceof Mesh)) return;
+    for (const mat of Array.isArray(o.material) ? o.material : [o.material]) {
+      const standard = mat as MeshStandardMaterial;
+      if (standard.emissive === undefined) continue;
+      standard.emissive.setScalar(lit * FLASH_STRENGTH);
+    }
+  });
+}
+
 export function staleUnitGroups(
   built: Iterable<readonly [string, BuiltUnit]>,
   isLoaded: (characterId: string) => boolean,
@@ -1420,14 +1448,7 @@ export function createRenderer(
   const refreshFlash = (unitId: string, left: number): void => {
     const body = unitObjects.get(unitId)?.getObjectByName('body');
     if (body === undefined) return;
-    const lit = Math.max(0, Math.min(1, left / FLASH_SECONDS));
-    // A box is one mesh; a rigged model is a tree of them.
-    body.traverse((o) => {
-      if (!(o instanceof Mesh)) return;
-      const mat = o.material as MeshStandardMaterial;
-      if (mat.emissive === undefined) return;
-      mat.emissive.setScalar(lit * FLASH_STRENGTH);
-    });
+    paintFlash(body, left);
   };
 
   const refreshOpacity = (unitId: string): void => {
