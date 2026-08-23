@@ -771,11 +771,27 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
 
   // The hover range envelope reaching brush at all is the coarse half: under the
   // old lifts every one of these pixels stayed bare green.
-  expect(bestCovered, 'no overlay composited onto brush at all').toBeGreaterThan(brush.length / 4);
+  //
+  // Counted in pixels, not as a fraction of the brush on screen. It was a
+  // fraction — a quarter of every lit brush pixel in the frame — and that made
+  // it a statement about **framing** rather than about z-order: it held only
+  // while the camera happened to put the seat's units among the brush, and
+  // CAMERA-CONTROLS re-aimed the camera at the character being planned for. The
+  // measured numbers when it broke were `bestCovered` 1274 against a threshold
+  // of 1518, with `bestAimed` at 1034 — the overlay was compositing over brush
+  // perfectly and the denominator had simply grown. The bug this guards puts
+  // both at zero, so an absolute floor of several tiles' worth catches it just
+  // as hard and cannot be moved by where the camera is pointed.
+  expect(bestCovered, 'no overlay composited onto brush at all').toBeGreaterThan(200);
   // And the aimed AoE specifically — the "hiding aoe effect" in the report.
   // A floor well above one tile's worth of edge pixels, so an antialiased
   // fringe cannot pass for a painted square.
   expect(bestAimed, 'the aim overlay did not survive the brush tiles').toBeGreaterThan(20);
+  // Sharper than either floor, and framing-independent by construction: of the
+  // brush pixels something drew on, the aim overlay must own most of them.
+  // FOG-ZORDER is exactly the case where brush covers the overlay instead, and
+  // that drives this ratio to zero however the board is framed.
+  expect(bestAimed / bestCovered, 'brush ate most of the overlay').toBeGreaterThan(0.5);
 });
 
 /**
@@ -1077,6 +1093,31 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
    * twice the ground), and a cap with enough room that a detour around the
    * pillar does not exhaust it.
    */
+  /**
+   * The board squares the seat's own characters are standing on.
+   *
+   * `squareFromPoint` is what turns a body's pixels into a fact that survives
+   * the camera moving. One screenshot, so it is affordable to call twice in a
+   * test; per seat inside a drive it is not, which is why `closeTheDistance`
+   * navigates by direction instead.
+   */
+  const bodySquares = async (page: Page): Promise<{ x: number; y: number }[]> => {
+    const img = await pixels(page);
+    const clip = await boardClip(page);
+    const scale = { x: clip.width / img.width, y: clip.height / img.height };
+    const points = blueBodies(img).map((b) => ({
+      x: clip.x + b.x * scale.x,
+      y: clip.y + b.y * scale.y,
+    }));
+    const squares = await page.evaluate(
+      (pts: { x: number; y: number }[]) => pts.map((pt) => (globalThis as unknown as {
+        __cardsRenderer?: { squareFromPoint(x: number, y: number): { x: number; y: number } | undefined };
+      }).__cardsRenderer?.squareFromPoint(pt.x, pt.y) ?? null),
+      points,
+    );
+    return squares.filter((sq): sq is { x: number; y: number } => sq !== null);
+  };
+
   const CLOSE_TURNS = 8;
   const closeTheDistance = async (page: Page): Promise<void> => {
     // Sprint, not Move: no ability is armed in either drive, so the longer
@@ -1086,7 +1127,30 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     const control = (await sprint.isVisible()) && !(await sprint.isDisabled()) ? sprint : move;
     if (!(await control.isVisible()) || (await control.isDisabled())) return;
     await control.click();
-    await clickAt(page, 0.5, 0.5);
+    await page.waitForTimeout(150);
+    // Walk toward the enemy, expressed as a screen *direction* rather than a
+    // board square.
+    //
+    // This used to click the middle of the screen, which meant "the middle of
+    // the board" only because the camera framed the whole board. CAMERA-CONTROLS
+    // centres the planning camera on the character being planned for, so the
+    // middle of the screen became that character's own tile and a Sprint ordered
+    // there moved nobody — measured, over eight turns and four seats, with every
+    // unit still on its spawn.
+    //
+    // Naming the board's middle square instead does not work either: it is
+    // further than a Sprint reaches on this map, and an order beyond the budget
+    // is not taken at all. Neither does deriving the character's tile from its
+    // pixels — exact, but a screenshot per seat per turn, which turns the drive
+    // into a timeout.
+    //
+    // The camera centring on the character is what makes the cheap version
+    // correct: the character is at the middle of the frame, so a click a fifth
+    // of the way toward the enemy's side is a few squares in the right
+    // direction, always inside any budget, at any zoom. Team 0 spawns low on x
+    // and team 1 high, and the status line says which is on the clock.
+    const seat = (await page.locator('#status').textContent()) ?? '';
+    await clickAt(page, /Team 1\b/.test(seat) ? 0.72 : 0.28, 0.5);
   };
 
   /**
@@ -1317,15 +1381,36 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     await page.waitForTimeout(150);
     expect(await budget(), 'arming Sprint did not re-price the turn').toBeGreaterThan(walk);
 
+    const beforeSquares = await bodySquares(page);
     const before = blueBodies(await pixels(page));
-    expect(before.length, 'both of the seat\'s characters should be on screen').toBeGreaterThan(1);
-    await clickAt(page, 0.5, 0.5); // straight at the middle — further than any budget reaches
+    // One body, not two. The planning camera centres on the character being
+    // planned for (CAMERA-CONTROLS), so the seat's *other* character is only in
+    // frame when the two happen to be close — which is a fact about the spawns,
+    // not about whether a Sprint moves anybody.
+    expect(before.length, 'the seat\'s character should be on screen').toBeGreaterThan(0);
+    // Toward the enemy, the same way `closeTheDistance` says it and for the same
+    // reason: since CAMERA-CONTROLS the middle of the screen is the character's
+    // own tile, and a Sprint ordered onto the square you are standing on moves
+    // nobody. What this test needs is a legal order that goes *somewhere* —
+    // whether the destination is further than the budget reaches was never the
+    // point, and an order beyond it is not taken at all.
+    const seat = (await page.locator('#status').textContent()) ?? '';
+    await clickAt(page, /Team 1\b/.test(seat) ? 0.72 : 0.28, 0.5);
     expect(await resolveTurn(page), 'the opening turn did not resolve').toBe(true);
 
-    const after = blueBodies(await pixels(page));
-    const stayed = after.filter((a) => before.some((b) => Math.hypot(a.x - b.x, a.y - b.y) < 12));
-    expect(stayed.length, 'the first Sprint left every unit exactly where it started')
-      .toBeLessThan(before.length);
+    // Compare **board squares**, not screen positions.
+    //
+    // Screen positions cannot answer this any more, and the reason is the
+    // feature: the planning camera follows the character being planned for
+    // (CAMERA-CONTROLS), so a unit that walks four squares is re-centred and
+    // lands on almost exactly the pixels it left. The old comparison would
+    // report "nobody moved" for a Sprint that worked perfectly — the same trap
+    // as counting blue pixels to see whether a drive was making progress.
+    const after = await bodySquares(page);
+    expect(after.length, 'the seat\'s character should still be on screen').toBeGreaterThan(0);
+    const moved = after.filter((a) => !beforeSquares.some((b) => b.x === a.x && b.y === a.y));
+    expect(moved.length, 'the first Sprint left every unit exactly where it started')
+      .toBeGreaterThan(0);
   });
 
 });

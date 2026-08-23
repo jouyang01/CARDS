@@ -43,6 +43,16 @@ export interface DrawLog {
   /** Every camera shake asked for, in order. */
   shakes: { amplitude: number; seconds: number; seed: number }[];
   /**
+   * Every `focusOn` the controller made, in order.
+   *
+   * CAMERA-CONTROLS turns the auto-camera's target into a behaviour worth
+   * asserting — "the frame follows the character you are planning for" is the
+   * owner's ask, and it is only checkable if the request is recorded.
+   */
+  focus: { squares: Vec2[]; pan: number | undefined }[];
+  /** Every `panBy`, so a spec can drive a drag and read what the camera did. */
+  pans: { dx: number; dy: number }[];
+  /**
    * WALL-CAST-FIX — the **board itself**, as of the last `show()`: the units,
    * decoys and traps the viewing seat can currently see.
    *
@@ -79,9 +89,11 @@ export interface StubRenderer extends Renderer {
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
     highlights: new Map(), paths: [], shapes: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
+    focus: [], pans: [],
     board: { units: [], decoys: [], traps: [] },
   };
   let orbit = false;
+  let pan = false;
   let clipSets: Readonly<Record<string, ClipSet>> = {};
   return {
     draw,
@@ -126,9 +138,23 @@ export function stubRenderer(): StubRenderer {
     // the one every character without art still takes.
     clipsFor: (characterId) => (characterId === undefined ? undefined : clipSets[characterId]),
     setSpotlight: () => {},
-    setOrbitEnabled: (on) => { orbit = on; },
+    setOrbitEnabled: (on) => { orbit = on; pan = false; },
     orbitEnabled: () => orbit,
-    focusOn: () => {},
+    // The real renderer stands the auto-camera down while the player holds it;
+    // the stub has to as well, or a spec would see focus requests the live
+    // renderer would have discarded and conclude the camera was following when
+    // it was not.
+    focusOn: (squares, panAmount) => {
+      if (orbit || pan) return;
+      draw.focus.push({ squares: squares.map((p) => ({ ...p })), pan: panAmount });
+    },
+    panBy: (dx, dy) => {
+      if (dx === 0 && dy === 0) return;
+      pan = true;
+      draw.pans.push({ dx, dy });
+    },
+    panned: () => pan,
+    resetPan: () => { pan = false; },
     drawPath: (squares, _color, _dashed, layer) => {
       draw.paths.push({ squares: squares.map((p) => ({ ...p })), layer });
     },
