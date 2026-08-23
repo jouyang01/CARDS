@@ -6344,3 +6344,37 @@ on `always` and on the `off/none/0/false` vocabulary the other two flags already
 the default for anything else. A typo in a debug flag should not silently hand a player a 3.3 fps
 board, and the asymmetry is deliberate: the old spelling failed *closed* (any typo left it off,
 which was then the safe state), and the new one must fail *open* for the same reason.
+
+## 2026-08-23 — Session 17c (Builder): the last two e2e failures were the tests, and the suite is green
+
+With on-demand rendering on, two failures survived. Both were re-run under `?render=always` and
+failed identically, so neither was a missed `markDirty`. Both turned out to be the tests
+mis-observing a correct app, and in both cases the mistake was **treating a point-in-time sample
+as if it held**.
+
+**`a resolved turn animates…` could not have passed on this runner.** Measured with a DOM-only
+poll that takes no screenshots: playback lasts ~7.2s, and UI5's readouts exist only between ~4.4s
+and ~6.7s of it — a 2.3 second window. A screenshot of an *animating* board costs ~3.5s under
+SwiftShader, because the compositor cannot hand one over until it has a frame and the board is
+redrawing every one. The test took two of them and *then* began polling for readouts, so the poll
+started at ~8.1s against a window that shut at 6.7s. Not flake: it could not observe a readout on
+any run, at any speed, because the observation it depended on was scheduled after the thing it
+was looking for had gone.
+
+The fix is to record the readout's **insertion** with a `MutationObserver` installed before the
+window opens, rather than sampling for its presence after. That cannot miss a node that lived
+between two samples, costs nothing while the screenshots block, and removes the ordering
+dependency entirely rather than re-tuning it.
+
+**`STEALTH-CONFIRM` was a check-then-act race.** `if (await skip.isVisible()) await skip.click()`
+samples visibility, and playback ends on its own clock — so between the sample answering yes and
+the click starting, the row can hide, at which point `click()` auto-waits for it to return for
+the full 60s timeout. The button vanishing *is* the outcome the click was for, so it is now a
+bounded `click({ timeout: 3_000 }).catch(() => {})`. Grepped: this was the only instance of the
+pattern in the suite.
+
+**The browser suite is now 34/34 in 7.5 minutes**, from 10 failures in ~40 minutes three commits
+ago. Worth stating plainly why the ordering matters: eight of those ten were timeouts that the
+rendering work dissolved, and only once they were gone was it possible to see that the remaining
+two were never about rendering at all. A slow suite does not just cost time — it hides which of
+its failures are real.
