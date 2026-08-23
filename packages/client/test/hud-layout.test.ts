@@ -55,7 +55,7 @@ beforeAll(() => {
 const handlers = () => ({
   selectCharacter: vi.fn(), selectAbility: vi.fn(), selectCatalyst: vi.fn(), hoverAbility: vi.fn(),
   selectMove: vi.fn(), selectChase: vi.fn(), hoverMove: vi.fn(), hold: vi.fn(), lock: vi.fn(),
-  toggleProjection: vi.fn(), toggleOrbit: vi.fn(), recentre: vi.fn(), extendTime: vi.fn(), selectMode: vi.fn(), selectRotation: vi.fn(),
+  toggleProjection: vi.fn(), toggleOrbit: vi.fn(), extendTime: vi.fn(), selectMode: vi.fn(), selectRotation: vi.fn(),
 });
 
 const character = (): HudCharacter => ({

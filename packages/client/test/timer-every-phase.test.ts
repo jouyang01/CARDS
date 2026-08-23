@@ -181,7 +181,7 @@ describe('TIMER-EVERY-PHASE: the timer comes back after playback hid it', () => 
   const hud = () => createHud(root, {
     selectCharacter: noop, selectAbility: noop, selectCatalyst: noop, hoverAbility: noop,
     selectMove: noop, selectChase: noop, hoverMove: noop, hold: noop, lock: noop,
-    toggleProjection: noop, toggleOrbit: noop, recentre: noop, extendTime: noop, selectMode: noop, selectRotation: noop,
+    toggleProjection: noop, toggleOrbit: noop, extendTime: noop, selectMode: noop, selectRotation: noop,
   });
   const timerRow = (): HTMLElement => root.querySelector<HTMLElement>('.hud-timer')!;
   const timerText = (): string => root.querySelector<HTMLElement>('.hud-timer-text')!.textContent ?? '';

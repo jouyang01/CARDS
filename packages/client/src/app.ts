@@ -32,7 +32,7 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
-import { browserAmbient, browserModels, browserRenderOnDemand, reducedMotion } from './render-flags.js';
+import { browserAmbient, browserModels, browserRenderOnDemand } from './render-flags.js';
 import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
@@ -709,14 +709,6 @@ export function startHotSeat(
    * during playback the auto-camera overwrites it on the very next frame.
    */
   const fitCamera = (): void => {
-    // CAMERA-CONTROLS: the same answer the planning repaint gives — the selected
-    // character if there is one, the seat's characters before one is chosen (the
-    // opening frame and the resize that lands before the first selection).
-    // Resolved inline rather than through `selectedUnit()`: `fitCamera` runs
-    // during boot, before that helper is initialised, and a temporal-dead-zone
-    // throw on the opening frame is a blank board.
-    const selected = state.units.find((u) => u.unitId === selectedUnitId && u.alive);
-    renderer.focusOn(selected === undefined ? ownUnits().map((u) => u.pos) : [selected.pos], 1);
     // The selected character when there is one — the same target the planning
     // render uses, so a resize or a projection toggle re-frames on what the
     // player is looking at rather than yanking the view back to the roster.
@@ -929,27 +921,7 @@ export function startHotSeat(
       // Auto follows the action; free orbit hands the camera to the player and
       // stands the auto-framing down so the two never fight.
       renderer.setOrbitEnabled(!renderer.orbitEnabled());
-      // CAMERA-CONTROLS: coming back to Auto gives the camera back completely.
-      // A pan that survived the toggle would leave the button lying — it says
-      // "Auto camera" while the auto-camera is still stood down.
-      if (!renderer.orbitEnabled()) {
-        renderer.recentre(reducedMotion());
-        fitCamera();
-      }
-      render();
-    },
-    /**
-     * CAMERA-CONTROLS — the recentre affordance.
-     *
-     * A pan with no way back is a way to lose the board, so the gesture ships
-     * with its undo. It clears free orbit too: from the player's side there is
-     * one question — "give me the automatic camera back" — and two switches for
-     * it would be two ways to be half-returned.
-     */
-    recentre: () => {
-      renderer.setOrbitEnabled(false);
-      renderer.recentre(reducedMotion());
-      fitCamera();
+      if (!renderer.orbitEnabled()) fitCamera();
       render();
     },
     extendTime: () => {
@@ -1362,21 +1334,6 @@ export function startHotSeat(
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
     clearReadouts();
-    // CAMERA-CONTROLS — frame the **selected character**, not the team and not
-    // the board. Owner Dev Note: *"the auto camera center should be on the
-    // character, not the board."*
-    //
-    // Two earlier answers, both wrong for the same reason. "The board" centres
-    // on the middle of the map, which since BOARD_ZOOM leaves the player looking
-    // at terrain with their team off-screen. "The seat's own characters" is the
-    // centroid of two units that may be at opposite ends — a point neither of
-    // them is standing on. The character you are ordering is the thing you are
-    // working on, and this runs on every planning repaint, so switching
-    // characters re-frames on the new one for free.
-    //
-    // Full pan, not the auto-camera's lean: during planning the answer is not
-    // "gesture toward it", it is "put it in the middle".
-    renderer.focusOn([unit.pos], 1);
     // CAMERA-CONTROLS: frame the character being planned for, not the seat's
     // whole roster and not the board.
     //

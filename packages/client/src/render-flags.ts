@@ -80,17 +80,12 @@ export function ambientEnabled(env: RenderFlagEnvironment = {}): boolean {
  * accessibility API should mean "no preference expressed", never a crash on
  * boot.
  */
-export function reducedMotion(): boolean {
-  // CAMERA-CONTROLS: guarded for the same reason `browserAmbient` guards it — a
-  // missing accessibility API means "no preference expressed", never a crash.
-  return typeof globalThis.matchMedia === 'function'
-    && globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
 export function browserAmbient(): boolean {
+  const reduced = typeof globalThis.matchMedia === 'function'
+    && globalThis.matchMedia('(prefers-reduced-motion: reduce)').matches;
   return ambientEnabled({
     search: globalThis.location?.search ?? '',
-    reducedMotion: reducedMotion(),
+    reducedMotion: reduced,
   });
 }
 

@@ -830,22 +830,35 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
   // two measurements want different abilities. A line ability (Rail Shot) puts
   // orange on brush with its very first hover while covering a sliver of the
   // band: 1355 covered against a 1742 floor. The AoE behind it (Frag Grenade)
-  // washes 3460 and was never reached. Which of them got there first depended on
-  // where the camera had put the board, so CAMERA-CONTROLS' reframing flipped it
-  // and the coarse half started failing — on a board where nothing about
-  // z-order had changed. Sweeping until *both* are satisfied measures the two
-  // claims independently, which is what two separate maxima were always for.
+  // washes 4423 of 6970 — 63%, comfortably clear — and was never reached.
+  // Which of the two got there first depended on where the camera had put the
+  // board, so the CAMERA-CONTROLS reframing flipped it and the coarse half
+  // began failing on a board where nothing about z-order had changed.
+  //
+  // Sweeping until *both* floors are satisfied measures the two claims
+  // independently, which is what two separate maxima were always for. The
+  // fraction is kept rather than dropped to an absolute floor: the coarse
+  // claim is that a large *share* of the brush in frame takes paint, 63%
+  // against 25% is a wide margin, and the bug this guards puts it at zero.
   const COVER_FLOOR = brush.length / 4;
   const AIM_FLOOR = 20;
   let bestCovered = 0;
   let bestAimed = 0;
+  // Measured inside a single frame, so it stays a real ratio. `bestCovered` and
+  // `bestAimed` are independent maxima that can come from different abilities
+  // and different hovers, so dividing one by the other compares two unrelated
+  // measurements — it only looked like a ratio.
+  let bestShare = 0;
   const enough = (): boolean => bestCovered > COVER_FLOOR && bestAimed > AIM_FLOOR;
   for (let i = 0; i < count && !enough(); i++) {
     await abilities.nth(i).click();
     for (const p of candidates) {
       const img = await hoverAt(p);
-      bestCovered = Math.max(bestCovered, covered(img));
-      bestAimed = Math.max(bestAimed, aimed(img));
+      const drew = covered(img);
+      const orange = aimed(img);
+      bestCovered = Math.max(bestCovered, drew);
+      bestAimed = Math.max(bestAimed, orange);
+      if (drew > 0) bestShare = Math.max(bestShare, orange / drew);
       if (enough()) break;
     }
   }
@@ -857,27 +870,12 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
   // A floor well above one tile's worth of edge pixels, so an antialiased
   // fringe cannot pass for a painted square.
   expect(bestAimed, 'the aim overlay did not survive the brush tiles').toBeGreaterThan(AIM_FLOOR);
-  //
-  // Counted in pixels, not as a fraction of the brush on screen. It was a
-  // fraction — a quarter of every lit brush pixel in the frame — and that made
-  // it a statement about **framing** rather than about z-order: it held only
-  // while the camera happened to put the seat's units among the brush, and
-  // CAMERA-CONTROLS re-aimed the camera at the character being planned for. The
-  // measured numbers when it broke were `bestCovered` 1274 against a threshold
-  // of 1518, with `bestAimed` at 1034 — the overlay was compositing over brush
-  // perfectly and the denominator had simply grown. The bug this guards puts
-  // both at zero, so an absolute floor of several tiles' worth catches it just
-  // as hard and cannot be moved by where the camera is pointed.
-  expect(bestCovered, 'no overlay composited onto brush at all').toBeGreaterThan(200);
-  // And the aimed AoE specifically — the "hiding aoe effect" in the report.
-  // A floor well above one tile's worth of edge pixels, so an antialiased
-  // fringe cannot pass for a painted square.
-  expect(bestAimed, 'the aim overlay did not survive the brush tiles').toBeGreaterThan(20);
-  // Sharper than either floor, and framing-independent by construction: of the
-  // brush pixels something drew on, the aim overlay must own most of them.
-  // FOG-ZORDER is exactly the case where brush covers the overlay instead, and
-  // that drives this ratio to zero however the board is framed.
-  expect(bestAimed / bestCovered, 'brush ate most of the overlay').toBeGreaterThan(0.5);
+  // Sharper than either floor and framing-independent by construction: in the
+  // best single frame, of the brush pixels something drew on, the aim overlay
+  // must own most of them. FOG-ZORDER is exactly the case where brush covers
+  // the overlay instead, and that drives this to zero however the board is
+  // framed.
+  expect(bestShare, 'brush ate most of the overlay').toBeGreaterThan(0.5);
 });
 
 /**

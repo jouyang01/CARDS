@@ -26,7 +26,6 @@ import type {
   HighlightLayer, PathLayer, ProjectionName, RenderDecoy, RenderTrap, RenderUnit, Renderer,
 } from '../src/renderer3d.js';
 import type { ClipSet } from '../src/character-clips.js';
-import { panDelta } from '../src/renderer3d.js';
 
 /** What the stub renderer was told to draw, by layer. */
 export interface DrawLog {
@@ -39,20 +38,6 @@ export interface DrawLog {
   preloads: string[][];
   /** The direction each unit was last told to look, by unit id. */
   facing: Map<string, { dx: number; dy: number }>;
-  /**
-   * CAMERA-CONTROLS — how far the player has panned the view, in board squares.
-   *
-   * A running total rather than a log of drags: what a test wants to know is
-   * where the camera ended up, and the clamp means the answer is not the sum of
-   * the inputs. Reset by `recentre`, which is the whole of its contract.
-   */
-  pan: { x: number; y: number };
-  /** Every `recentre` call, and whether it was asked to snap. */
-  recentres: { instant: boolean }[];
-  /** CAMERA-CONTROLS: the squares the auto-camera was last asked to frame. */
-  focus?: Vec2[];
-  /** The `pan` weight that framing asked for — 1 is "centre it", not "lean". */
-  focusPan?: number;
   /** Every victim flash asked for, in order — VFX step 1's assertable half. */
   flashes: { unitId: string; seconds: number }[];
   /** Every camera shake asked for, in order. */
@@ -103,12 +88,6 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
-    highlights: new Map(), paths: [], shapes: [], clips: [], preloads: [], facing: new Map(),
-    pan: { x: 0, y: 0 }, recentres: [], flashes: [], shakes: [],
-    board: { units: [], decoys: [], traps: [] },
-  };
-  let orbit = false;
-  let panning = false;
     highlights: new Map(), paths: [], shapes: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [],
     board: { units: [], decoys: [], traps: [] },
@@ -161,28 +140,6 @@ export function stubRenderer(): StubRenderer {
     setSpotlight: () => {},
     setOrbitEnabled: (on) => { orbit = on; pan = false; },
     orbitEnabled: () => orbit,
-    // CAMERA-CONTROLS: the stub records the pan the way the real rig applies it
-    // — as a running offset in board squares — so a test can ask "did the view
-    // move, and did it stop at the edge" without a WebGL context. `panDelta` is
-    // the renderer's own pure helper, so the two cannot drift.
-    panBy: (dx, dy) => {
-      const d = panDelta({ dx, dy }, { span: 12, height: 560, yawDeg: 0, pitchDeg: 45 });
-      draw.pan = { x: draw.pan.x + d.x, y: draw.pan.y + d.y };
-      panning = true;
-    },
-    panned: () => panning,
-    recentre: (instant = false) => {
-      panning = false;
-      draw.pan = { x: 0, y: 0 };
-      draw.recentres.push({ instant });
-    },
-    // CAMERA-CONTROLS: the auto-camera's target, recorded. "Where does the
-    // planning view point" is the whole of the owner's second complaint, so it
-    // has to be a thing a test can read rather than a thing only pixels know.
-    focusOn: (squares, pan) => {
-      draw.focus = squares.map((p) => ({ ...p }));
-      draw.focusPan = pan;
-    },
     // The real renderer stands the auto-camera down while the player holds it;
     // the stub has to as well, or a spec would see focus requests the live
     // renderer would have discarded and conclude the camera was following when

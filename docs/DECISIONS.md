@@ -6379,98 +6379,6 @@ rendering work dissolved, and only once they were gone was it possible to see th
 two were never about rendering at all. A slow suite does not just cost time — it hides which of
 its failures are real.
 
----
-
-## 2026-08-23 — Builder session 16 (CAMERA-CONTROLS, RENDER-SUITE-GREEN-2)
-
-**Judgment call — pan is middle-drag or Shift+drag; right-drag stays orbit.** The AC left the
-gesture to me. Right-drag is orbit today and is pinned by a browser test, so taking it would be a
-regression dressed as a feature. Middle-drag is what every 3D tool means by pan, and Shift covers
-the trackpads with no middle button; the modifier is checked *first* so it wins whichever button is
-held, which is what keeps the split a rule rather than a heuristic. Left-drag still orbits only in
-free-orbit mode, so click-to-select never competes with a camera drag.
-
-**Judgment call — a pan freezes the live camera but lets `wantCentre` keep tracking.** Free orbit
-declines framing outright (`focusOn` early-returns), and copying that would have made Recentre
-glide to wherever the game was when the player grabbed the board. Pan instead gates `stepCamera`
-only, so the auto-camera keeps computing where it *would* be and Recentre lands on the current
-action. The two flags are separate because the states are: a player can pan without orbiting.
-
-**Judgment call — `PAN_MARGIN` is 2 squares, not 0.** The AC says "board extent + a margin" and the
-margin is load-bearing rather than decorative: the HUD insets shift the world window, so a unit on
-the last rank sits under the chrome if the frame may not pass the board's edge at all. Two squares
-clears it; more would let a player lose the board in void, which is the failure the clamp exists to
-prevent.
-
-**Judgment call — planning frames the selected character, and `fitCamera` resolves it inline.**
-The two earlier answers were wrong the same way: "the board" is the map's middle, and "the seat's
-own characters" is a centroid that for two units at opposite corners is a point neither is standing
-on. `fitCamera` runs during boot, before `selectedUnit()` is initialised, so it reads
-`selectedUnitId` against `state.units` directly — a temporal-dead-zone throw on the opening frame
-is a blank board, and the guard is cheaper than the ordering rewrite.
-
-**RENDER-SUITE-GREEN-2 — the suite was already green when this session started.** `649d254` fixed
-the readout (a MutationObserver instead of sampling after the window had shut) and STEALTH-CONFIRM
-(check-then-act on a row that hides on its own clock), and `053765c` made rendering on-demand. So
-the AC's "suite is green" was met before I touched it; what remained was the idiom, which is what
-the item said was the substance.
-
-**Judgment call — `same()` is kept and narrowed, not replaced.** My session-15 measurement (~2,674
-of ~205,000 pixels differing on an untouched board, deterministic, input-independent) was taken
-under the always-draw loop. RENDER-ON-DEMAND fixed that at the source: a board with nothing to draw
-does not draw, so a still scene is byte-identical again. But that is a property of the render loop,
-not of the assertion, so the split is now by **what is claimed**: a claim about the whole scene (it
-animated, the orbit moved it, it held still) is byte-equality's, and a claim about one overlay is
-`aimPatch`'s centroid. Comparing frames for an overlay asks 205k pixels a question about a few
-thousand and answers it with whatever else moved — which is how UI1-fix came to accuse the aim of
-following the pointer when it was not.
-
-**AMBIENT-FREEZE's guard is re-enabled as a real test for the first time.** It could not have
-worked before: under the always-draw loop "the scene is still" and "the scene is moving" were both
-"different", so a guard built to catch the first piece of ambient motion would have fired on the
-bare board. It now asserts that a settled board with ambient off draws the same frame twice — and
-the first moving prop (MAP_PIPELINE phase 5) will break it unless it is gated on the flag, which is
-the entire point of it.
-
----
-
-## Open Questions for the Analyzer — 2026-08-23
-
-**1. Should a pan survive the turn boundary, or snap back on resolution?** Today it survives:
-`panned` is cleared only by Recentre or by toggling back to Auto camera, so a player who pans
-during planning is still panned while the turn resolves — and the resolution's own `focusOn` calls
-(the ones that follow each actor) are frozen out. That is defensible for planning and questionable
-for playback, where the camera's job is to show you the thing that just happened. The alternative
-is a one-way release at the start of resolution. I did not pick it because the AC says a pan
-"suspends the auto-camera like orbit" and orbit does not release either, and quietly making pan
-behave differently from the thing it was specced against is the kind of divergence that needs a
-ruling rather than a commit. Worth a playtest question: *does a panned camera during resolution
-feel like control, or like a bug?*
-
-**2. `PAN_MARGIN = 2` is a guess dressed up as a measurement.** The reasoning (HUD insets shift the
-world window, so a zero margin leaves the last rank under the chrome) is sound; the number is not
-derived from the actual inset. It could be — the renderer knows its insets — but that turns a
-constant into a computed value that changes with the HUD layout, and HUD-LAYOUT has moved twice
-already. If the Analyzer wants it derived, that is an item; if 2 is fine, this note is the record
-that it was chosen rather than computed.
-
-**3. Is there a zoom gesture missing?** CAMERA-CONTROLS asked for panning and character framing,
-and both shipped. But wheel-zoom is the third leg of the same complaint — a player who cannot pan
-usually also cannot get closer — and `span` is already the variable that would drive it. I did not
-add it: it is not in the item, and "do not invent features outside the backlog" is the rule. Raising
-it here so the omission is a decision rather than an oversight.
-
-**4. Three `same()` callers remain, and one of them is load-bearing in a way I cannot prove.**
-The ambient guard and the two motion assertions ("the resolution must be animating", "a right-drag
-must orbit the camera") all now depend on RENDER-ON-DEMAND holding a settled board byte-identical.
-That is true today and measured. It is *not* an invariant anybody has written down, and the first
-missed `markDirty()` — or the first ambient prop that forgets the flag — turns those three into
-confusing failures rather than clear ones. The `?render=always` escape hatch is the diagnostic;
-whether the invariant deserves its own named test is the Analyzer's call.
-
-**5. No engine work happened this session, as instructed.** The engine is untouched by both
-commits; every change is in `packages/client`. Flagging it so the absence is legible in the log
-rather than looking like a gap.
 ## 2026-08-23 — Session 18 (Builder): CAMERA-CONTROLS, and the clamp that was quietly defeating it
 
 `BACKLOG.md`'s top item, from the owner's note: *"Need to add Camera panning and the auto camera
@@ -6563,3 +6471,74 @@ in one column and both stay visible, but that is a fact about those spawns rathe
 The note asked for the character rather than the centroid, and that is what is implemented; whether
 a player planning for one character wants the other in frame is a real design call and not one to
 make from a test failure.
+
+---
+
+## 2026-08-23 — Builder session 16 (RENDER-SUITE-GREEN-2)
+
+**CAMERA-CONTROLS was built twice, and this branch is not the copy that shipped.** A parallel
+session implemented it as `eb48811` and it reached `main` through PR #146 while this branch was
+building its own. Merging `main` in produced files that no longer parsed — two independent
+implementations of the same feature interleaved into the same declarations with no conflict
+markers, which is the one merge failure git cannot flag. The resolution was to take `main`'s
+implementation wholesale and drop this branch's: `main` is the source of truth, its version is
+complete (and carries a `hold: 'frame' | 'centre'` mode this one lacked), and it covers the
+"recentre affordance" by making the existing view button double as recentre while panned rather
+than adding a button. Re-litigating a merged feature in an unrelated PR would be the worse error.
+**The process finding is the useful one: two sessions took the same top-priority item off the
+backlog at the same time, and neither could see the other.** That is the Analyzer's to solve, not
+the Builder's — recorded here because the cost was a full session's work.
+
+**RENDER-SUITE-GREEN-2 — `same()` is kept and narrowed, not replaced.** The measurement behind
+the old doc comment (~2,674 of ~205,000 pixels differing on an untouched board, deterministic and
+input-independent) was taken under the always-draw loop. RENDER-ON-DEMAND fixed that at the
+source: a board with nothing to draw does not draw, so a still scene is byte-identical again. But
+that is a property of the render loop, not of the assertion, so the split is by **what is being
+claimed**: a claim about the whole scene (it animated, the orbit moved it, it held still) is
+byte-equality's, and a claim about one overlay is `aimPatch`'s centroid. Comparing frames for an
+overlay asks 205k pixels a question about a few thousand and answers it with whatever else moved —
+which is how UI1-fix came to accuse the aim of following the pointer when it was not. `main`'s own
+comment on `same()` called for exactly this and called it "a re-spec, not a repair"; this is that
+re-spec.
+
+**AMBIENT-FREEZE's guard is a real test for the first time.** It could not have worked before:
+under the always-draw loop "the scene is still" and "the scene is moving" were both "different", so
+a guard built to catch the first piece of ambient motion would have fired on the bare board. It now
+asserts that a settled board with ambient off draws the same frame twice, and the first moving prop
+(MAP_PIPELINE phase 5) will break it unless it is gated on the flag — which is the entire point.
+
+**Judgment call — FOG-ZORDER's coarse floor is restored, and the fix is in the search.** Both
+copies of this test hit the same failure and diagnosed it differently. `main` read it as the
+denominator growing under a reframed camera and dropped the floor from a quarter of visible brush
+(1742 px) to an absolute 200. The measured cause is narrower: the sweep stopped at the first
+candidate that landed *any* aim-orange, which froze `bestCovered` at whatever that one ability had
+washed. Rail Shot is a line — 1355 covered on its first hover — while the Frag Grenade behind it
+washes 4423 of 6970 (63%, comfortably clear) and was never reached. So the fraction was never the
+problem; the search was. Sweeping until *both* floors are met keeps a floor that a real z-order
+regression (which puts the number at zero) still trips, at roughly nine times the strength of an
+absolute 200.
+
+**Judgment call — `main`'s ratio assertion is kept, but measured per frame.** `bestAimed /
+bestCovered` divides two independent maxima that can come from different abilities and different
+hovers, so it only looked like a ratio. Tracking the best *within-frame* share instead makes it the
+framing-independent check it was meant to be, and it is the sharpest of the three: FOG-ZORDER drives
+it to zero however the board is pointed.
+
+## Open Questions for the Analyzer — 2026-08-23
+
+**1. Two sessions built CAMERA-CONTROLS simultaneously.** Nothing in the workflow prevented it and
+nothing surfaced it until a merge produced unparseable files. Worth a mechanism — an in-progress
+marker in `BACKLOG.md`, or assigning items per session — before it happens on an engine item, where
+the merge would be silent rather than syntactic.
+
+**2. `main`'s FOG-ZORDER floor was weakened to 200 and this PR restores it.** If the Analyzer
+prefers the absolute floor, this is the place to say so; the two are not compatible and the stronger
+one is now in the branch. Flagging it because it edits a test another session had already "fixed".
+
+**3. Three `same()` callers remain, and they now rest on an unwritten invariant.** The ambient guard
+and the two motion assertions all depend on RENDER-ON-DEMAND holding a settled board byte-identical.
+That is true today and measured, but it is not an invariant anybody has named, and the first missed
+`markDirty()` turns those three into confusing failures rather than clear ones. `?render=always` is
+the diagnostic; whether the invariant deserves its own test is the Analyzer's call.
+
+**4. No engine work this session, as instructed.** Every change is in `packages/client`.

@@ -148,13 +148,6 @@ export interface HudHandlers {
   lock(): void;
   toggleProjection(): void;
   toggleOrbit(): void;
-  /**
-   * CAMERA-CONTROLS — give the camera back to the auto-framing.
-   *
-   * The undo for a pan, and it ships with the gesture rather than after it: a
-   * camera a player can move and cannot reset is a way to lose the board.
-   */
-  recentre(): void;
 }
 
 export interface Hud {
@@ -334,16 +327,7 @@ export function createHud(root: HTMLElement, handlers: HudHandlers): Hud {
   projBtn.onclick = () => handlers.toggleProjection();
   const orbitBtn = el('button', 'hud-small');
   orbitBtn.onclick = () => handlers.toggleOrbit();
-  // CAMERA-CONTROLS: beside the other two camera controls, because it is one —
-  // and always present rather than appearing once panned, so its existence is
-  // what teaches the player the camera can be moved at all.
-  const recentreBtn = el('button', 'hud-small hud-recentre');
-  recentreBtn.textContent = 'Recentre';
-  // TOOLTIP-SWEEP: `data-tip`, never `title` — the browser's reveal delay makes
-  // a `title` useless for a control you are deciding whether to press.
-  recentreBtn.dataset['tip'] = 'Recentre on the active character · middle-drag or Shift+drag pans';
-  recentreBtn.onclick = () => handlers.recentre();
-  viewRow.append(projBtn, orbitBtn, recentreBtn);
+  viewRow.append(projBtn, orbitBtn);
   // HUD-LAYOUT: the movement row is last, so it sits at the very bottom-right
   // (the column is bottom-aligned) — the corner the owner's annotation puts it
   // in, and diagonally opposite the catalysts it trades against.

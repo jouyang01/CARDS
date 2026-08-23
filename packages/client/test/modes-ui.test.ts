@@ -193,7 +193,7 @@ describe('BASIC-MODES: the HUD row', () => {
   const hud = () => createHud(root, {
     selectCharacter: noop, selectAbility: noop, selectCatalyst: noop, hoverAbility: noop,
     selectMove: noop, selectChase: noop, hoverMove: noop, hold: noop, lock: noop,
-    toggleProjection: noop, toggleOrbit: noop, recentre: noop, extendTime: noop, selectMode,
+    toggleProjection: noop, toggleOrbit: noop, extendTime: noop, selectMode,
     selectRotation: noop,
   });
 
