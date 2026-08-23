@@ -821,25 +821,42 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
   const count = await abilities.count();
   expect(count, 'no usable ability to aim with').toBeGreaterThan(0);
 
+  // Both floors are named once, so the sweep stops on exactly the numbers the
+  // assertions go on to check.
+  //
+  // That is the fix for a bug this test carried from the day it was written. It
+  // used to stop at the first candidate that landed *any* aim-orange, which
+  // froze `bestCovered` at whatever that one ability happened to wash — and the
+  // two measurements want different abilities. A line ability (Rail Shot) puts
+  // orange on brush with its very first hover while covering a sliver of the
+  // band: 1355 covered against a 1742 floor. The AoE behind it (Frag Grenade)
+  // washes 3460 and was never reached. Which of them got there first depended on
+  // where the camera had put the board, so CAMERA-CONTROLS' reframing flipped it
+  // and the coarse half started failing — on a board where nothing about
+  // z-order had changed. Sweeping until *both* are satisfied measures the two
+  // claims independently, which is what two separate maxima were always for.
+  const COVER_FLOOR = brush.length / 4;
+  const AIM_FLOOR = 20;
   let bestCovered = 0;
   let bestAimed = 0;
-  for (let i = 0; i < count && bestAimed === 0; i++) {
+  const enough = (): boolean => bestCovered > COVER_FLOOR && bestAimed > AIM_FLOOR;
+  for (let i = 0; i < count && !enough(); i++) {
     await abilities.nth(i).click();
     for (const p of candidates) {
       const img = await hoverAt(p);
       bestCovered = Math.max(bestCovered, covered(img));
       bestAimed = Math.max(bestAimed, aimed(img));
-      if (bestAimed > 0) break;
+      if (enough()) break;
     }
   }
 
   // The hover range envelope reaching brush at all is the coarse half: under the
   // old lifts every one of these pixels stayed bare green.
-  expect(bestCovered, 'no overlay composited onto brush at all').toBeGreaterThan(brush.length / 4);
+  expect(bestCovered, 'no overlay composited onto brush at all').toBeGreaterThan(COVER_FLOOR);
   // And the aimed AoE specifically — the "hiding aoe effect" in the report.
   // A floor well above one tile's worth of edge pixels, so an antialiased
   // fringe cannot pass for a painted square.
-  expect(bestAimed, 'the aim overlay did not survive the brush tiles').toBeGreaterThan(20);
+  expect(bestAimed, 'the aim overlay did not survive the brush tiles').toBeGreaterThan(AIM_FLOOR);
 });
 
 /**
