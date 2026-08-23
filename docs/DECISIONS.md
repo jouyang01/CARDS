@@ -6414,3 +6414,47 @@ ago. Worth stating plainly why the ordering matters: eight of those ten were tim
 rendering work dissolved, and only once they were gone was it possible to see that the remaining
 two were never about rendering at all. A slow suite does not just cost time — it hides which of
 its failures are real.
+
+## 2026-08-23 — Builder session 18 (the flash, photographed — and the test that did not test it)
+
+The flash shipped with an admitted hole: proven as far as the renderer call and no further. It is
+closed now, and closing it was more interesting than expected.
+
+**The flash is longer: 0.08s → 0.18s.** The owner's read of it in the running game — "too short".
+Five frames at 60fps registers only if you already know to look, and the flash's whole job is to
+catch an eye that is somewhere else on the board. At 0.18s it is ~11 frames, still an event rather
+than a glow and still well inside a beat, so a four-shooter Blast reads as four distinct hits. The
+guard test now pins the *bounds* (0.1s to half a beat) rather than the value, so the next person to
+tune it is told what the range is for.
+
+**The instrument had to be the virtual clock.** A flash is 0.18s; a screenshot of an animating
+board waits ~2.2s for the compositor. The shutter is twelve times slower than the subject, so
+sampling for it is not a flaky test but an impossible one. Freezing the page's clock inverts it:
+between steps nothing moves, the render loop idles, and the same screenshot costs ~0.17s and shows
+exactly the millisecond asked for. `tools/virtual-clock.js` is now shared by path between
+`film.mjs` and `e2e/vfx.spec.ts` rather than copied — two clocks that drifted apart would make a
+film and a test disagree about the same frame, and the one that was wrong would be whichever
+nobody had looked at recently.
+
+**The first version of the test passed with the feature removed.** Stubbing `paintFlash` to never
+light anything left it green. Twice, for two different reasons, both worth writing down:
+
+1. **The readout is DOM.** UI5's floating damage numbers live inside `#board`, are near-white, and
+   appear at exactly the moment of impact — so "the board got brighter when the hit landed" was
+   satisfied by the number, not the flash. The measurement now hides every non-canvas child of
+   `#board`, so the renderer is the only thing that can move the count.
+2. **A peak is not a spike.** Comparing the brightest frame to the median passes on a build with no
+   flash in it, because the phase *ends* with the board brightening as the camera pulls back. What
+   is specific to a flash is that a frame is brighter than the frames on **both** sides of it: it
+   arrives and leaves inside the window, which a camera move and a phase change do not.
+
+**And the signal had to be aimed.** Whole-board counts could not see it: one lit unit is a few
+hundred pixels of 1400x950, smaller than the jitter the screen *shake* puts into the same count.
+Cropping to 320px around where the hit was aimed, at full sample density, makes those pixels the
+majority of what is measured. With that framing the two builds differ at exactly one frame and are
+byte-identical everywhere else — impact frame 4595 against 3215, a rise above both neighbours of
+1458 against 78. The threshold is 800: 1.8x under the real signal, 10x over the noise.
+
+**The general lesson, and it is the second time this session:** a green test proves nothing until
+it has been run against a build with the feature removed. Both of this one's false positives were
+invisible from the code and obvious from the mutant.
