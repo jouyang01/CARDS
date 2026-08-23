@@ -708,7 +708,19 @@ export function startHotSeat(
    * Framing the seat's own characters is the right answer at any zoom, and
    * during playback the auto-camera overwrites it on the very next frame.
    */
-  const fitCamera = (): void => { renderer.focusOn(ownUnits().map((u) => u.pos), 1); };
+  const fitCamera = (): void => {
+    // The selected character when there is one — the same target the planning
+    // render uses, so a resize or a projection toggle re-frames on what the
+    // player is looking at rather than yanking the view back to the roster.
+    //
+    // Read off `state` directly rather than through `selectedUnit()`: this runs
+    // during boot, before that helper's `const` is initialised, and reaching it
+    // from here would be a temporal-dead-zone throw on the opening frame.
+    const sel = selectedUnitId === undefined
+      ? undefined
+      : state.units.find((u) => u.unitId === selectedUnitId && u.alive);
+    renderer.focusOn(sel !== undefined ? [sel.pos] : ownUnits().map((u) => u.pos), 1, 'centre');
+  };
   // Size from the VIEWPORT, never from the container: the canvas is the
   // container's only child, so measuring the container would feed the canvas its
   // own width back and pin it at Three's 300px default.
@@ -893,6 +905,19 @@ export function startHotSeat(
       render();
     },
     toggleOrbit: () => {
+      // CAMERA-CONTROLS' recentre affordance, folded into the control that
+      // already means "who has the camera".
+      //
+      // A pan is manual control without the mode, so after one the first press
+      // has to mean *give me the auto camera back* rather than *toggle free
+      // orbit*. Toggling instead would hand a player who only wanted their
+      // framing returned a second manual mode they never asked for — and the
+      // button they would then reach for is this one again.
+      if (renderer.panned()) {
+        renderer.resetPan();
+        fitCamera();
+        return void render();
+      }
       // Auto follows the action; free orbit hands the camera to the player and
       // stands the auto-framing down so the two never fight.
       renderer.setOrbitEnabled(!renderer.orbitEnabled());
@@ -1309,12 +1334,22 @@ export function startHotSeat(
     renderer.setSpotlight(null); // planning shows the whole board, undimmed
     phaseLabel.style.display = 'none';
     clearReadouts();
-    // Frame the seat's own characters rather than the whole board. At
-    // BOARD_ZOOM the board no longer fits the viewport, so "reset to the board"
-    // means "centre on the middle of the map" — which on most spawns leaves the
-    // player looking at terrain with their own team off-screen. Full pan, not
-    // the auto-camera's lean: this is where the player is *working*.
-    renderer.focusOn(ownUnits().map((u) => u.pos), 1);
+    // CAMERA-CONTROLS: frame the character being planned for, not the seat's
+    // whole roster and not the board.
+    //
+    // Framing the roster was already better than framing the board — at
+    // BOARD_ZOOM "reset to the board" centres on the middle of the map, which
+    // on most spawns leaves the player looking at terrain with their own team
+    // off-screen. But the centroid of two characters at opposite ends of the
+    // map is a patch of floor with neither of them on it, and the seat plans
+    // for exactly one of them at a time. The owner's note is the same
+    // observation: *the auto camera centre should be on the character, not the
+    // board.*
+    //
+    // Full pan, not the auto-camera's lean: this is where the player is
+    // *working*. This runs on every planning render, so switching characters
+    // re-frames without `selectUnit` needing to know about the camera.
+    renderer.focusOn([unit.pos], 1, 'centre');
     renderer.highlight('select', [unit.pos], SELECT, 0.5);
 
     const chosen = draftAbility(character, draft);

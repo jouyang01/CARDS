@@ -6458,3 +6458,95 @@ byte-identical everywhere else — impact frame 4595 against 3215, a rise above 
 **The general lesson, and it is the second time this session:** a green test proves nothing until
 it has been run against a build with the feature removed. Both of this one's false positives were
 invisible from the code and obvious from the mutant.
+## 2026-08-23 — Session 18 (Builder): CAMERA-CONTROLS, and the clamp that was quietly defeating it
+
+`BACKLOG.md`'s top item, from the owner's note: *"Need to add Camera panning and the auto camera
+center should be on the character, not the board."*
+
+**The pan gesture is the middle button, and that is the only binding that moves.** Middle and
+right did the identical thing — both orbited — so orbit loses nothing a player can notice, while
+every alternative took something real. A modifier+drag would have collided with Shift-click's
+move route (WAYPOINTS-FIX); the wheel is zoom; taking the right button would have been an actual
+change to orbit rather than a nominal one, and the backlog puts that out of scope. The projection
+maths lives in `camera-pan.ts` with no `three` import, so the property that matters — *the tile
+you grabbed stays under the pointer, at every yaw and pitch* — is a unit test rather than
+something you can only find by feel.
+
+**The auto-centre change was almost a no-op, and finding that out is the substance of this
+entry.** Pointing `focusOn` at the selected character instead of the roster centroid moved the
+camera by **one square** on Duel Arena 4v4 (9,8 → 8,8) and not at all on 2v2. `clampToBoard`
+required the whole frustum to sit inside the board rectangle, and since BOARD_ZOOM the frame is
+*tighter* than the board — about 15 columns of 21 — so the centre could only ever travel ±3
+columns from the middle. A character on a spawn rank stayed pinned against the frame edge. The
+frame still read as "the board", which is precisely the complaint the note was making. Shipping
+the one-square version would have closed the item without doing the thing.
+
+**So the clamp changed from being about the frame to being about the centre: it may reach any
+square on the board and no further.** That is `BACKLOG.md`'s stated requirement — *the board never
+leaves the frame entirely* — said exactly, since the square under the middle of the screen is
+always a board square. Duel Arena 4v4 now frames at (3,7) with the seat's four characters fully
+visible instead of clipped against the left edge.
+
+**Judgment call — the old clamp's justification had expired.** Its comment said an unclamped
+camera "shows a band of void next to half a board", and that was fair when it was written: the
+space past the last rank was black nothing. Phases 1–3 of `MAP_PIPELINE.md` put a lit platform,
+a rim and a sky gradient out there. What the camera now shows past the edge is the set, not an
+error — and the cost is real and visible: on Duel Arena the left fifth of the frame is arena slab.
+That is the trade the owner's note asks for, and it is one number to dial back (`clampCentre`'s
+`margin`, where `Infinity` restores the old rule exactly and is tested as doing so).
+
+**One test moved, and only after measuring that the behaviour had not.** FOG-ZORDER asserts
+`bestCovered > brush.length / 4` — a quarter of *all brush pixels the camera happens to show*.
+Reframing changed that denominator and it failed at 1274 against 1518. But its sharp assertion,
+`bestAimed > 20`, measured **1034**: the aim overlay is compositing over brush exactly as it
+should, and the z-order property the test exists for is intact. A denominator that depends on
+framing is not a statement about z-order, so it is restated in absolute terms.
+
+**Also worth writing down: a screenshot-equality check is not a valid instrument here, and I
+nearly mis-diagnosed my own clamp with one.** A probe comparing two frames after shoving the
+camera into the edge reported "not clamped"; reading the camera's actual centre square showed it
+saturating at (7,7) and staying there across four more shoves. `BACKLOG.md` already records why —
+temporal AA jitters ~2.7k of 205k pixels frame-to-frame with no input at all. The centre is the
+instrument; the pixels are not.
+
+### Session 18 addendum — what the framing change cost the browser suite, and the two it is still costing
+
+Re-aiming the planning camera broke four browser tests, and every one of them broke the same way:
+**the instrument moved with the camera.** These drives navigate and measure by *screen* coordinates,
+which meant "somewhere on the board" only while the camera framed the board. Two are fixed, two are
+not, and the two that are not are worth naming precisely rather than leaving as "flaky".
+
+**Fixed — `closeTheDistance` (the chase and last-known drives).** It clicked the middle of the
+screen to walk a seat toward the enemy. That is now the character's *own tile*, so a Sprint ordered
+there moved nobody: measured across eight turns and four seats, every unit still on its spawn.
+Naming the board's middle square instead does not work — it is further than a Sprint reaches, and an
+order beyond the budget is not taken at all rather than walked partway. Deriving the character's
+tile from its pixels is exact and costs a screenshot per seat per turn, which turned the drive into
+a timeout. What works is the cheap thing the feature itself makes correct: the character is at the
+middle of the frame, so a click a fifth of the way toward the enemy's side is a few squares in the
+right direction at any zoom. The drive now closes the distance in two turns instead of never.
+
+**Fixed — FOG-ZORDER.** Its coarse assertion was a fraction of *all brush pixels on screen*, which
+is a statement about framing rather than about z-order. Restated in absolute pixels, plus a new and
+sharper ratio check: of the brush pixels something drew on, the aim overlay must own most of them.
+
+**Still red — `a resolved turn animates…` and MOVE-SPRINT-FIRST.** Both drive several turns by
+screen fraction and both need the same treatment; MOVE-SPRINT-FIRST additionally compares blue
+*bodies* before and after a Sprint, which a character-following camera defeats by construction — the
+unit walks four squares and lands on the pixels it left. It hits its own 150s cap.
+
+**A change I made and reverted, because I made it for the wrong reason.** A character switch could
+reasonably *cut* rather than glide — it is a deliberate act with a destination, and the ~0.85s ease
+is both slower to read and, since every frame of a glide is a redraw, measurably more expensive
+(a screenshot of a moving board is ~3.5s against ~0.17s for a still one). But I reached for it to
+fix a timeout rather than because a player had asked, it did not fix the timeout, and it broke a
+third test. Changing how the game feels to make a test pass is the wrong trade, so it is out. It may
+still be a good idea on its own merits, and if so it should arrive as its own change with its own
+argument.
+
+**Open question for the owner, which the backlog does not settle.** Centring on the selected
+character means the seat's *other* character can be off-screen — on Duel Arena's 4v4 spawns they are
+in one column and both stay visible, but that is a fact about those spawns rather than a guarantee.
+The note asked for the character rather than the centroid, and that is what is implemented; whether
+a player planning for one character wants the other in frame is a real design call and not one to
+make from a test failure.
