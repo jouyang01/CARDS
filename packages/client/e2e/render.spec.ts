@@ -1,6 +1,8 @@
 import { type Locator, type Page } from '@playwright/test';
 import { expect, test } from './fixtures.js';
 import {
+  centroid,
+  centroidShift,
   countPixels,
   decodePng,
   distinctColours,
@@ -131,6 +133,29 @@ async function measureBoardClip(page: Page): Promise<Clip> {
   };
 }
 
+/**
+ * RENDER-SUITE-GREEN-2 — the aim overlay, as a count and a centre of mass.
+ *
+ * The idiom that replaces whole-frame comparison for every claim about the aim.
+ * One screenshot, one predicate, two numbers: how much overlay there is and
+ * where it sits. A relocated overlay moves the centroid by tens of pixels; the
+ * renderer's own noise moves it by a fraction of one, because noise is unbiased
+ * and an overlay is not.
+ */
+async function aimPatch(page: Page): Promise<{ count: number; x: number; y: number }> {
+  return centroid(await pixels(page), isAimOrange);
+}
+
+/**
+ * How far the overlay's centroid may drift and still count as "did not move".
+ *
+ * Generous against noise and nowhere near a real move: the pointer targets below
+ * are a quarter of the board apart, which is hundreds of pixels.
+ */
+const OVERLAY_STILL_PX = 8;
+/** …and how far it must move to count as having followed the pointer. */
+const OVERLAY_MOVED_PX = 24;
+
 async function frame(page: Page): Promise<Buffer> {
   return await page.screenshot({ clip: await boardClip(page) });
 }
@@ -143,21 +168,27 @@ async function pixels(page: Page): Promise<Image> {
 /**
  * Byte-equality between two composited frames.
  *
- * **This premise is broken, and RENDER-SUITE-GREEN measured how.** Two
- * screenshots of an untouched, settled board are not identical: 2,674 of
- * ~205,000 sampled pixels differ by more than 4 counts, some by more than 16,
- * spread over the *entire* frame — and the numbers come out **bit-identical**
- * whether the pointer moved between the shots or nothing happened for 2.5 s.
- * Deterministic, whole-frame, and independent of both time and input, which is
- * the signature of a per-frame jitter (temporal AA) rather than of anything on
- * the board moving.
+ * **Kept, and narrowed to the claims it can actually carry** (RENDER-SUITE-GREEN-2).
  *
- * So `same()` is left exactly as it was, on purpose. A tolerance was tried and
- * removed: loose enough to absorb this, it can no longer tell a relocated aim
- * overlay from noise, which is the one thing the tests using it exist to check.
- * The fix is a different technique — assert on the overlay's own pixels rather
- * than on whole-frame equality — and that is a re-spec, not a repair.
- * See the Open Questions in `docs/DECISIONS.md`.
+ * The history matters because it is easy to reach for this in the wrong place.
+ * Under the always-draw loop two screenshots of an *untouched* board differed by
+ * ~2,674 of ~205,000 sampled pixels — deterministic, whole-frame, and identical
+ * whether the pointer had moved or nothing had happened for 2.5 s. That is
+ * temporal AA, not the board, and it made this function unusable for anything.
+ * A pixel tolerance was tried and reverted: loose enough to absorb that drift, it
+ * could no longer tell a relocated overlay from noise.
+ *
+ * RENDER-ON-DEMAND fixed it at the source — a board with nothing to draw does not
+ * draw — so a still scene is byte-identical again. But the fix is a property of
+ * the render loop, not of the assertion, so the rule is now about *what is being
+ * claimed*:
+ *
+ * - **A claim about the whole scene** — it animated, the orbit moved it, it held
+ *   still — is this function's. Nothing smaller would do: "some part of the board
+ *   changed" is exactly what byte-equality means.
+ * - **A claim about one overlay** — the aim followed the pointer, or stopped
+ *   following it — is `aimPatch`'s. Comparing frames there asks ~205k pixels a
+ *   question about a few thousand, and answers it with whatever else moved.
  */
 const same = (a: Buffer, b: Buffer): boolean => a.equals(b);
 
@@ -255,22 +286,46 @@ test('the opening frame is already fogged — no turn-1 grace reveal', async ({ 
 });
 
 test('arming an ability paints an overlay that follows the pointer', async ({ page }) => {
-  const before = await frame(page);
+  // RENDER-SUITE-GREEN-2: asked of the OVERLAY, not of the frame.
+  //
+  // "Did any pixel change" is a question about the renderer; what this test
+  // means is "did the overlay appear, and then move", which is a question about
+  // one family of coloured pixels. `aimPatch` answers it directly, and the
+  // count travelling with the centroid is what stops "it moved" from being
+  // satisfiable by an overlay that stopped drawing.
+  const before = await aimPatch(page);
 
   await page.locator('.hud-ability:not([disabled])').first().click();
   await pointAt(page, 0.72, 0.30);
-  const aimedHigh = await frame(page);
-  expect(same(aimedHigh, before), 'selecting + aiming must change the board').toBe(false);
-
-  // Not just "something changed" — the overlay's own colour must appear, and
-  // more of it than the bare board had.
-  const orangeBefore = countPixels(decodePng(before), isAimOrange);
-  const orangeAimed = countPixels(decodePng(aimedHigh), isAimOrange);
-  expect(orangeAimed, 'the ability overlay did not paint').toBeGreaterThan(orangeBefore);
+  const aimedHigh = await aimPatch(page);
+  expect(aimedHigh.count, 'the ability overlay did not paint').toBeGreaterThan(before.count);
 
   await pointAt(page, 0.72, 0.70);
-  const aimedLow = await frame(page);
-  expect(same(aimedLow, aimedHigh), 'the overlay must track the pointer').toBe(false);
+  const aimedLow = await aimPatch(page);
+  expect(aimedLow.count, 'the overlay is still on the board').toBeGreaterThan(before.count);
+  expect(centroidShift(aimedLow, aimedHigh), 'the overlay must track the pointer')
+    .toBeGreaterThan(OVERLAY_MOVED_PX);
+});
+
+test('AMBIENT-FREEZE: a settled board with ambient off draws the same frame twice', async ({ page }) => {
+  // RENDER-SUITE-GREEN-2 re-enables this guard, and it is worth saying why it
+  // was not here before: it could not have worked. Under the always-draw loop
+  // two screenshots of an untouched board differed by ~2.7k of 205k pixels —
+  // measured, deterministic, and with no input — so "the scene is still" and
+  // "the scene is moving" were both "different", and the guard built to catch
+  // the first piece of ambient motion would have fired on the bare board.
+  //
+  // RENDER-ON-DEMAND changed that at the source: a board with nothing to draw
+  // does not draw, so a still scene really is byte-identical now, and the
+  // question the guard asks has a true answer again. Byte-equality is the right
+  // tool for THIS claim — it is about the whole scene, not about one overlay —
+  // which is why `same()` survives here and not in the aim tests above.
+  //
+  // The first moving prop (MAP_PIPELINE phase 5) will break this test if it is
+  // not gated on the ambient flag. That is the entire point of it.
+  const a = await frame(page);
+  await page.waitForTimeout(600);
+  expect(same(await frame(page), a), 'a still board must not repaint itself differently').toBe(true);
 });
 
 test('a committing click locks the action so it stops following the mouse (UI1-fix)', async ({ page }) => {
@@ -287,17 +342,26 @@ test('a committing click locks the action so it stops following the mouse (UI1-f
   await page.locator('.hud-ability:not([disabled])').first().click();
   await pointAt(page, 0.72, 0.70);
   await clickAt(page, 0.72, 0.70);
-  const committed = await frame(page);
+  const committed = await aimPatch(page);
+  expect(committed.count, 'the committed aim is on the board to begin with').toBeGreaterThan(0);
 
   for (const [fx, fy] of [[0.30, 0.25], [0.55, 0.85], [0.85, 0.45]] as const) {
     await pointAt(page, fx, fy);
-    expect(same(await frame(page), committed), `pointer at ${fx},${fy} must not move a committed aim`).toBe(true);
+    const now = await aimPatch(page);
+    // RENDER-SUITE-GREEN-2: the overlay's own centroid, not the whole frame.
+    // This asserted byte-equality and could not hold: a frame carries the
+    // renderer's noise as well as the board, so "nothing moved" was being asked
+    // of ~205k pixels when it is a claim about a few thousand orange ones.
+    expect(centroidShift(now, committed), `pointer at ${fx},${fy} must not move a committed aim`)
+      .toBeLessThan(OVERLAY_STILL_PX);
+    expect(now.count, `pointer at ${fx},${fy} must not erase the aim`).toBeGreaterThan(0);
   }
 
   // Re-selecting re-arms, so the player is never stuck with one aim.
   await page.locator('.hud-ability:not([disabled])').first().click();
   await pointAt(page, 0.30, 0.25);
-  expect(same(await frame(page), committed), 're-selecting must re-arm aiming').toBe(false);
+  expect(centroidShift(await aimPatch(page), committed), 're-selecting must re-arm aiming')
+    .toBeGreaterThan(OVERLAY_MOVED_PX);
 });
 
 test('a resolved turn animates, logs both ends, and floats a readout', async ({ page }) => {
