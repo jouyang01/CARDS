@@ -26,6 +26,27 @@ const FLAGS: Readonly<Record<string, string>> = {
   ambient: 'off',
   // Rigged models are covered by `models.spec.ts` on its own budget.
   models: 'off',
+  // RENDER-ON-DEMAND, and the single biggest thing keeping this suite honest.
+  //
+  // `page.screenshot` cannot return until the compositor hands it a frame, and
+  // a board that redraws unconditionally at the ~3.3fps SwiftShader manages
+  // makes that wait ~2.2s. Nearly every test here is a sequence of screenshots,
+  // so the whole suite ran at that price and 17 of its 34 tests timed out.
+  //
+  // Measured on this scene, once the camera has settled:
+  //
+  // | loop        | screenshot |
+  // |-------------|------------|
+  // | always draw | ~2200 ms   |
+  // | on demand   | ~166 ms    |
+  //
+  // The earlier reading that put this at "no benefit" counted frames on a page
+  // that had been idle two seconds — which was still inside the camera's ease,
+  // so the scene genuinely was changing and the loop was right to draw. The
+  // ease is now bounded in seconds rather than frames (`stepCamera`), so an
+  // untouched board reaches a true resting state and this flag can collect on
+  // it.
+  render: 'ondemand',
 };
 
 export const test = base.extend({

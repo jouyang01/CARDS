@@ -6114,3 +6114,62 @@ branch, including on `d3d1797`, the commit this branch was cut from, and each bu
 the job timeout. It is a pre-merge signal rather than a release gate by design (Pages gates on CI,
 which is green), and RENDER-SUITE-GREEN-2 is already specced with the Analyzer. No changes pushed
 for it from here.
+
+## 2026-08-23 — Builder session 17 (why RENDER-VERIFY has been red since #114)
+
+Seventeen of the suite's thirty-four tests were failing, every run took the full hour, and the
+cause was neither the tests nor the renderer's output. It was the camera.
+
+**The auto-camera's ease was frame-rate dependent.** `stepCamera` closed `CAMERA_EASE` of the
+remaining distance *per frame*, so the time it takes to settle is set by the frame rate: ~0.7s at
+60fps, and ~**30 seconds** at the ~3.3fps this scene manages under SwiftShader. Nothing looks wrong
+in a screenshot — the camera arrives — but for that whole half-minute the scene is genuinely still
+changing.
+
+**And a scene that keeps changing starves `page.screenshot`.** A screenshot cannot return until the
+compositor hands it a frame. Measured on this scene:
+
+| page | screenshot |
+|---|---|
+| blank page, no canvas | 40 ms |
+| board, render loop drawing | **2200 ms** |
+| board, rAF loop cancelled outright | 165 ms |
+
+Nearly every test in `render.spec.ts` is a sequence of screenshots, so the whole suite ran at that
+price and the long tests crossed their 60s budget. That is the entire failure: 17 timeouts, no
+failed assertions among them, and an hour of runner time per push.
+
+**The ease is now per second rather than per frame** —
+`1 - (1 - CAMERA_EASE)^(dt * 60)`, which *is* `CAMERA_EASE` exactly when a frame is 1/60s, so the
+camera on a real GPU is unchanged to the bit. Inside the deadband it now snaps to the target
+exactly instead of halting near it; an asymptote that stops wherever it happens to be leaves the
+camera a hair off its mark, and the next thing to compare two frames sees a difference it cannot
+account for.
+
+**Correcting an earlier decision: RENDER-ON-DEMAND is not worthless, it was measured too early.**
+Session 16 recorded on-demand at "no improvement — 17 frames drawn versus 14" and shipped it
+disabled. That reading was taken on a page idle for *two seconds*, which was still inside the
+camera's thirty-second ease — so the scene really was changing and the loop was right to draw. The
+conclusion drawn from it ("the app re-issues render commands into an idle page") was wrong in its
+specifics: instrumenting every marked mutator over five idle seconds finds exactly one caller,
+`applyCamera`, at ~3/s — the frame rate — i.e. the easing marking itself dirty, and nothing else.
+With the ease bounded, an untouched board reaches a true resting state and the flag is worth 13×:
+
+| loop | settle | screenshot |
+|---|---|---|
+| always draw | 2.5s | ~2200 ms |
+| on demand | 1.0s | ~170 ms |
+| on demand | 2.5s | ~165 ms |
+
+**Judgment call — the flag goes on for the browser suite, not for the shipping game.** Fixing the
+ease is a straight bug fix and applies everywhere. Flipping the product default is a separate
+question that wants its own measurement on real hardware, where drawing is cheap and the tradeoff
+is different; the suite is where the 2.2s frame is actually costing something today. Left for the
+owner rather than taken here.
+
+**Judgment call — `cameraEaseFor` is exported and unit-tested rather than left inline.** The bug
+was invisible at 60fps and only appeared at 3fps, which is precisely the shape of thing a browser
+test cannot be trusted to catch (it is the browser test that was suffering). As a pure function it
+is checkable at any frame rate in microseconds: `camera-ease.test.ts` pins that 60fps is unchanged,
+that equal elapsed time closes equal distance at 1, 3, 60 and 240fps, that a 3.3fps camera settles
+in under two seconds, and that a long stall cannot overshoot.

@@ -130,8 +130,16 @@ const DRAG_SLOP = 4;
 const ORBIT_SENSITIVITY = 0.4;
 /** Board-height (in squares) at which billboarded bars are their design size. */
 const BAR_REF_SPAN = 14;
-/** How much of the remaining camera distance the auto-camera closes per frame. */
+/**
+ * How much of the remaining camera distance the auto-camera closes per frame
+ * **at 60fps**. Applied per second-of-elapsed-time rather than per frame — see
+ * `stepCamera`, which is where the frame rate stops mattering.
+ */
 const CAMERA_EASE = 0.14;
+/** The frame rate `CAMERA_EASE` is expressed against. */
+const CAMERA_EASE_HZ = 60;
+/** Below this, the camera is close enough that easing further is invisible. */
+const CAMERA_SETTLED = 0.002;
 /** Fraction of the way to the action the auto-camera pans (1 = centre on it). */
 const AUTO_PAN = 0.35;
 /** The auto-camera never zooms tighter than this fraction of the whole board. */
@@ -901,6 +909,22 @@ export interface BuiltUnit {
  * remembering what to put back. Emissive is additive light with a natural rest
  * value of black, so releasing it is setting it to zero.
  */
+/**
+ * The fraction of the remaining camera distance to close in `dt` seconds.
+ *
+ * `CAMERA_EASE` is authored per frame at 60fps; this converts it to that same
+ * proportion per unit of *time*, so a scene running at 3fps takes the same
+ * number of seconds to settle as one running at 120fps rather than the same
+ * number of frames. At exactly 1/60s it returns `CAMERA_EASE` unchanged.
+ *
+ * Clamped to 1 so a long stall (a backgrounded tab, a breakpoint) lands on the
+ * target instead of overshooting past it and easing back.
+ */
+export function cameraEaseFor(dt: number): number {
+  if (!(dt > 0)) return 0;
+  return Math.min(1, 1 - Math.pow(1 - CAMERA_EASE, dt * CAMERA_EASE_HZ));
+}
+
 export function paintFlash(body: Object3D, left: number): void {
   const lit = Math.max(0, Math.min(1, left / FLASH_SECONDS));
   // A box is one mesh; a rigged model is a tree of them.
@@ -1615,15 +1639,45 @@ export function createRenderer(
     return { x: axis(c.x, map.width, halfW), y: axis(c.y, map.height, halfD) };
   };
 
-  /** Ease the live camera one frame toward the auto-camera's target. */
-  const stepCamera = (): void => {
+  /**
+   * Ease the live camera one frame toward the auto-camera's target.
+   *
+   * **The step is per elapsed second, not per frame**, and that is load-bearing
+   * rather than pedantry. Closing a fixed *fraction per frame* means the camera
+   * settles in a number of frames, so how long it takes in seconds is decided
+   * by the frame rate: about 0.7s at 60fps, and about **30 seconds** at the
+   * 3.3fps this scene manages under SwiftShader. That is what made the browser
+   * suite so expensive — a camera still creeping is a scene still changing, so
+   * the board redraws continuously and every `page.screenshot` waits ~2.2s for a
+   * frame instead of ~0.17s. Measured: 17 of 34 tests timed out.
+   *
+   * Raising `CAMERA_EASE` to `1 - (1 - CAMERA_EASE)^(dt * 60)` closes the same
+   * fraction per *second* at any frame rate, and is exactly the old constant
+   * when a frame is 1/60s — so the camera a player sees on a real GPU is
+   * unchanged, to the bit.
+   *
+   * Inside the deadband it snaps to the target **exactly** rather than stopping
+   * near it. An asymptote that halts wherever it happens to be leaves the camera
+   * a hair off its mark, and the next thing to compare two frames sees a
+   * difference it cannot explain.
+   */
+  const stepCamera = (dt: number): void => {
     if (orbitOn) return; // the player owns the camera; don't fight them
     const dx = wantCentre.x - centre.x;
     const dy = wantCentre.y - centre.y;
     const ds = wantSpan - span;
-    if (Math.abs(dx) < 0.002 && Math.abs(dy) < 0.002 && Math.abs(ds) < 0.002) return;
-    centre = { x: centre.x + dx * CAMERA_EASE, y: centre.y + dy * CAMERA_EASE };
-    span += ds * CAMERA_EASE;
+    if (Math.abs(dx) < CAMERA_SETTLED && Math.abs(dy) < CAMERA_SETTLED && Math.abs(ds) < CAMERA_SETTLED) {
+      // Already there for all practical purposes: land on it and stop marking.
+      if (dx !== 0 || dy !== 0 || ds !== 0) {
+        centre = { x: wantCentre.x, y: wantCentre.y };
+        span = wantSpan;
+        applyCamera();
+      }
+      return;
+    }
+    const k = cameraEaseFor(dt);
+    centre = { x: centre.x + dx * k, y: centre.y + dy * k };
+    span += ds * k;
     applyCamera();
   };
 
@@ -1739,7 +1793,7 @@ export function createRenderer(
       }
     }
 
-    stepCamera();
+    stepCamera(delta);
     billboard();
     renderer.render(scene, camera);
     // After the camera has moved, so anything DOM-anchored to a world position
