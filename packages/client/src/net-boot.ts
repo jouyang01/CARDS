@@ -120,6 +120,27 @@ export function startNetworkedMatch(
   // Only *this* turn's resolution counts: the reducer keeps the last one, so a
   // repaint for some other reason must not replay a turn already animated.
   let played = opening.turn;
+  /**
+   * DEATH-HANG-3 — has the match-ending resolution been handed over yet?
+   *
+   * The turn counter cannot answer that on its own, and this is the whole bug.
+   * `resolveOutcome` **returns before `draft.turn += 1`** on every path that
+   * ends the match, which is right — there is no next turn to number — but it
+   * means the finishing state arrives carrying the *same* turn as the one
+   * before it. The gate below is `turn <= played`, so the last resolution of
+   * every networked match was silently dropped: never animated, never folded,
+   * and `playResolution`'s `status !== 'active'` game-over branch never reached.
+   *
+   * What the owner saw is exactly that. *"Ravok died to a Lumen attack. Timer
+   * Vanished"* — the server correctly clears the clock for a finished match —
+   * *"The 'winning' team's lock in froze"* — the winner is left on the previous
+   * turn's board, pressing a Lock In for a turn the server has already buried.
+   *
+   * So "already played" becomes two facts rather than one: the turn advanced,
+   * or the match ended. A latch rather than a comparison, because the end state
+   * repeats on every subsequent frame and must be forwarded exactly once.
+   */
+  let endPlayed = false;
   let shown: string | undefined;
   let onPresence: ((presence: Presence) => void) | undefined;
   /**
@@ -185,8 +206,14 @@ export function startNetworkedMatch(
       windowSeq = now.windowSeq;
       onTimer?.(now.remainingMs, now.bank);
     }
-    if (now.state === undefined || now.state.turn <= played) return;
+    if (now.state === undefined) return;
+    // DEATH-HANG-3: a finished match reuses its last turn number, so the turn
+    // comparison alone would drop the resolution that ends the game. Either
+    // signal forwards it; the latch keeps it to once.
+    const ended = now.state.status !== 'active';
+    if (now.state.turn <= played && !(ended && !endPlayed)) return;
     played = now.state.turn;
+    if (ended) endPlayed = true;
     onResolved?.(now.state, now.events);
   });
 

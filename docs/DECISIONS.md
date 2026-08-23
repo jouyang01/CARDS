@@ -5913,7 +5913,7 @@ budget cap only the *entry* chunk would have done that and would also have quiet
 total still counts every chunk, and the split is checked by the existence of a `GLTFLoader-*.js`
 chunk instead — if it were statically imported, Vite would have no reason to emit one.
 
-## Open Questions for the Analyzer — 2026-08-22
+## Open Questions for the Analyzer — 2026-08-22 (Builder session 14)
 
 1. **`validate.ts` still does not refuse `guard` alongside `impact`** — RULED in
    `docs/design/edge-cases.md` (closing my session-13 OQ #2), with no backlog item to carry it. I
@@ -5970,6 +5970,58 @@ chunk instead — if it were statically imported, Vite would have no reason to e
 
 ---
 
+## 2026-08-22 — Builder session 15 (DEATH-HANG-3, TEAMMATE-MOVE-VISIBLE, RENDER-SUITE-GREEN, VALIDATE-GUARD-IMPACT)
+
+**DEATH-HANG-3 was not the bug the spec notes predicted, and the difference matters.** The
+suspect named was ordering: a resolution carrying both a downed seat and a `gameEnd`, with the
+downed-seat hold running before the game-over branch. That could not happen —
+`playResolution` already checks `status !== 'active'` and returns `renderGameOver()` *before*
+`beginTurn()`, so the hold is unreachable while the match is over. The real cause is one line
+earlier in the pipe: `resolveOutcome` **returns before `draft.turn += 1`** on every path that ends
+the match, so the finishing state carries the *same* turn number as the turn before it — and
+`net-boot.ts` gates the handoff on `now.state.turn <= played`. The last resolution of every
+networked match was dropped before the client ever saw it. Fixed in the client (the gate now
+forwards on "turn advanced **or** match ended", latched so a repeating end state fires once); the
+engine is untouched, because not numbering a turn that will never be played is correct.
+
+**Judgment call — the end-of-match latch lives in `net-boot.ts`, not in the engine.** The
+tempting fix is to bump `draft.turn` on the way out so the existing comparison works. That would
+make `state.turn` mean "turns played + 1" for a finished match and "turns played" for a live one,
+which is a worse contract than the one line it saves — and it is an engine change to fix a client
+gate. The client is where "have I already animated this?" is asked, so that is where the answer
+was widened.
+
+**Judgment call — `pressable()` in the DEATH-HANG-3 test checks visibility, not just `disabled`.**
+`hud.clear()` retires the HUD by hiding its rows, so every button survives in the DOM, enabled,
+behind a `display: none`. A test asserting on `disabled` alone would have demanded the end screen
+*dismantle* the HUD rather than put it away — a production change to satisfy a test's idea of
+tidiness. What a player can press is what the assertion should mean.
+
+**TEAMMATE-MOVE-VISIBLE — the intent badge now names the ability instead of numbering it.** This
+goes beyond the item's AC and is driven by the Dev Note (*"it should be VERY CLEAR what action your
+ally is taking"*), so it is flagged rather than buried. `intent.ts`'s own rationale for the number
+was that "a teammate glancing at the board is matching it against their own hotbar" — which is
+exactly backwards when the ally is a **different character**, and in a 2v2 they almost always are.
+"3" over Aegis's head is a lookup; "Intercept" is the sentence. The `slot` field stays on the badge
+(it is what a player presses, and `abilitySlot` has other callers); only the drawn label changed,
+and `intentTexture` shrinks the type to fit rather than growing the tile into the nameplate under
+it. **If the Analyzer or owner wants the number back, it is one line** — but the note asked for
+clarity and a digit is not it.
+
+**Judgment call — a teammate's route draws in the movement colour, not the committed-plan one.**
+`LOCKED` is deliberately "cooler and dimmer" because it is the colour of an ability *area* that has
+already been decided. A route answers a different question — *where is my ally going* — and the
+owner's note is that precisely this does not read. Same layer, same call, one constant swapped to
+`MOVE_LINE`. No new layer (the spec notes forbid one) and no per-route colour, which `drawPaths`
+could not express anyway: one call paints one colour, so a sprint and a walk cannot be told apart
+on this layer. That is a real limitation and it is deliberate — telling them apart would cost a
+second layer for a distinction nobody has asked for yet.
+
+**Judgment call — the teammate chase link is fog-safe by construction rather than by a check.** A
+chase names an enemy, and drawing a line to it could leak a position the fog is hiding. No
+visibility test was added: a networked client's `state.units` contains only the enemies its team
+can see, so an unseen target is simply not found and nothing is drawn. The check that would have
+been written is the one the server already performed.
 ## 2026-08-22 — Builder session 15 (Move loses its banner beat)
 
 **(MOVE-NO-BANNER-BEAT) Move starts the moment its banner does; the other three phases keep
@@ -5993,6 +6045,78 @@ Nothing asserted the leading beat in either direction, which is why it survived 
 this area. It is asserted now, both ways: the first move cue sits at its banner, and a Prep
 cast still sits after one.
 
+
+**RENDER-SUITE-GREEN — two structural causes, one dead assertion, three real failures left.** The
+suite went 9 red → 3. The UI-VIEWPORT four were a **stale-index hang** (`controls.nth(i)` re-runs
+the selector, so a HUD rebuilt mid-loop left the index gone and `boundingBox()` waited out the full
+60 s) — replaced by one `page.evaluate` measuring every control at once, which is both atomic and
+~60 protocol round trips cheaper. That cost is why only the 1920×1080 sizes timed out while the
+1280×720 ones got further, which is the tell I should have read last session instead of reporting
+all four as one thing.
+
+**Judgment call — `test.slow()` per test, not the global raise.** A composited screenshot of a
+1400×950 canvas under SwiftShader costs 8–12 s, measured; three tests take several and were failing
+on a 60 s budget having done nothing wrong. f71044a tried a global 120 s and rejected it (4
+timeouts became passes, the suite went 33 → 40 minutes, 10 still red). The difference is that a
+global raise also doubles what a genuinely *hung* test burns — and the hangs are now gone, so a
+per-test budget reaches only tests that will finish.
+
+**Judgment call — the UI-VIEWPORT framing check is deleted, not weakened.** It asserted scene
+background at three corners of the uncovered region and read that as "no rank of the board is
+clipped". Measured on both shipped maps at both required sizes, that region now contains **no sky
+at all**: `proving-floor`'s `terrain.open` is `#b0aca4` against rgb(165,166,165) at the top-left,
+`drained-works`' is `#232a33` against rgb(33,39,47). The board is not clipped — since SCENE-DIORAMA
+and MAP-THEMES the camera fills the region it was fitted to, which is what "the scene fills the
+viewport" asked for in the first place. I tried a narrower version first ("sky somewhere along the
+top edge") and it is *also* false. A check that can only be made to pass by asserting less than it
+claims is worse than no check, and the failure it guarded — a board pushed under the chrome — is
+what step 5 proves directly. **This loses a claim, and losing it is the Analyzer's to ratify.**
+
+## Open Questions for the Analyzer — 2026-08-22 (Builder session 15)
+
+1. **RENDER-SUITE-GREEN is not finished: 3 of 32 still fail, and they are real.** The timeouts were
+   hiding them, so these are new information rather than known-bad. None is budget or staleness; I
+   did not guess at fixes.
+   - **UI1-fix** (`render.spec.ts`) — *"pointer at 0.3,0.25 must not move a committed aim"*.
+     **Measured, and it is NOT a production bug: the aim does not move.** Two screenshots of an
+     untouched, settled board differ by themselves — 2,674 of ~205,000 sampled pixels by more than
+     4 counts, 524 of them by more than 16, spread over the *entire* frame. The bucket counts come
+     out **bit-identical** whether the pointer moved between the shots or nothing happened for
+     2.5 s, so it is deterministic and independent of both time and input: a per-frame jitter
+     (temporal AA), not the board moving. **Byte-equality is therefore not a usable technique in
+     this suite**, which also means AMBIENT-FREEZE's frame-equality guard has not been able to work
+     for as long as this has been true. I tried a tolerance and removed it: loose enough to absorb
+     this, it can no longer tell a relocated aim overlay from noise, which is the only thing the
+     test is for. **The repair is a different assertion** — count/locate the aim overlay's own
+     orange pixels and assert the centroid does not move — and that is a re-spec of the idiom
+     (`same()` has six callers), not a test fix I should make unilaterally.
+   - **a resolved turn … floats a readout** (`render.spec.ts:284`) — the readout is not caught
+     during resolution. Likely a sampling race against playback, but it could equally be UI5's
+     floating readout not appearing; needs one look before it is called a test bug.
+   - **STEALTH-CONFIRM** (`render.spec.ts:811`) — still a click timeout, but on a different thing:
+     I fixed it clicking the playback *row* (a div whose centre `.hud-centre` overlays) instead of
+     `.hud-skip`, and it now waits on `.hud-skip` never becoming visible. So the playback row is
+     not up when the test expects it.
+2. **UI-VIEWPORT's "whole board in frame" claim is gone, and it should be — resolved on merge, not
+   by me.** I retired it from measurement (the region contains no sky at either size on either map)
+   and inferred the camera now fills the region it was fitted to. A parallel branch had already
+   retired the same check with the *authoritative* reason, which is better than my inference: the
+   owner's BOARD_ZOOM call, *"scale everything up and let the map run off the edges"* — the board
+   deliberately overflows now, so corners showing board or platform is the design. I took their
+   version. **No question left here**; recorded because two sessions independently deleted the same
+   assertion and the next reader should not think it was lost twice.
+3. **The intent badge now names the ability instead of numbering it** (TEAMMATE-MOVE-VISIBLE, on
+   the Dev Note). This goes beyond the item's AC and changes shipped UI-INTENT behaviour for the
+   player's own characters as well as teammates'. One line to revert if the owner prefers the digit;
+   `slot` is still on the badge either way.
+4. **DEATH-HANG-3's cause was not the one specced, and the specced one was unreachable.** The
+   suspect was a downed-seat hold pre-empting the game-over branch; `playResolution` already returns
+   `renderGameOver()` before `beginTurn()`, so it could not. The real cause was `resolveOutcome`
+   returning before `draft.turn += 1`, so the finishing state reuses its turn number and
+   `net-boot.ts`'s `turn <= played` gate dropped the last resolution of **every** networked match.
+   Worth noting for the next item that reasons about turn numbering: `state.turn` on a finished
+   match is the turn that ended it, not one past.
+5. **`MAX_AUTO_RESOLVES = 4` still has no test that reaches it** (carried from session 14 OQ #5).
 ## 2026-08-22 — Builder session 16 (RENDER-ON-DEMAND: the gate that said no)
 
 The board runs at **3.3 fps** under SwiftShader — a 302ms median frame, p90 583ms, max 938ms —
@@ -6114,20 +6238,16 @@ branch, including on `d3d1797`, the commit this branch was cut from, and each bu
 the job timeout. It is a pre-merge signal rather than a release gate by design (Pages gates on CI,
 which is green), and RENDER-SUITE-GREEN-2 is already specced with the Analyzer. No changes pushed
 for it from here.
+## 2026-08-23 — Builder session 17 (the render suite's hour, and where it actually went)
 
-## 2026-08-23 — Builder session 17 (why RENDER-VERIFY has been red since #114)
+Written after merging the entry below, which fixes the same root cause from the other side. That
+entry has the ease right and this one does not repeat it. What follows is only the part it does
+not cover: *why the browser suite in particular was paying for it*, and the one change still needed
+to stop.
 
-Seventeen of the suite's thirty-four tests were failing, every run took the full hour, and the
-cause was neither the tests nor the renderer's output. It was the camera.
-
-**The auto-camera's ease was frame-rate dependent.** `stepCamera` closed `CAMERA_EASE` of the
-remaining distance *per frame*, so the time it takes to settle is set by the frame rate: ~0.7s at
-60fps, and ~**30 seconds** at the ~3.3fps this scene manages under SwiftShader. Nothing looks wrong
-in a screenshot — the camera arrives — but for that whole half-minute the scene is genuinely still
-changing.
-
-**And a scene that keeps changing starves `page.screenshot`.** A screenshot cannot return until the
-compositor hands it a frame. Measured on this scene:
+**The suite's cost was never the render — it was `page.screenshot` waiting for one.** A screenshot
+cannot return until the compositor hands it a frame, and a board that redraws unconditionally makes
+that wait enormous. Measured on this scene:
 
 | page | screenshot |
 |---|---|
@@ -6136,40 +6256,66 @@ compositor hands it a frame. Measured on this scene:
 | board, rAF loop cancelled outright | 165 ms |
 
 Nearly every test in `render.spec.ts` is a sequence of screenshots, so the whole suite ran at that
-price and the long tests crossed their 60s budget. That is the entire failure: 17 timeouts, no
-failed assertions among them, and an hour of runner time per push.
+price and the long ones crossed their 60s budget. All seventeen failures were timeouts; not one was
+a failed assertion. That is the whole of RENDER-VERIFY's red since #114, and the hour per push.
 
-**The ease is now per second rather than per frame** —
-`1 - (1 - CAMERA_EASE)^(dt * 60)`, which *is* `CAMERA_EASE` exactly when a frame is 1/60s, so the
-camera on a real GPU is unchanged to the bit. Inside the deadband it now snaps to the target
-exactly instead of halting near it; an asymptote that stops wherever it happens to be leaves the
-camera a hair off its mark, and the next thing to compare two frames sees a difference it cannot
-account for.
+**The ease fix alone does not collect on it, and this is the trap.** `renderOnDemand` is still off
+by default and the e2e fixture did not ask for it, so the loop draws every frame whatever the dirty
+flag says. Measured after the ease fix: `always-draw` still ~2200 ms a screenshot; `ondemand`
+~165 ms. A settled camera saves nothing if nobody is checking whether the scene settled. So
+`e2e/fixtures.ts` now attaches `render=ondemand` alongside `ambient=off` and `models=off` — the
+suite's third "hold still" flag, and the one that makes the other two affordable.
 
-**Correcting an earlier decision: RENDER-ON-DEMAND is not worthless, it was measured too early.**
-Session 16 recorded on-demand at "no improvement — 17 frames drawn versus 14" and shipped it
-disabled. That reading was taken on a page idle for *two seconds*, which was still inside the
-camera's thirty-second ease — so the scene really was changing and the loop was right to draw. The
-conclusion drawn from it ("the app re-issues render commands into an idle page") was wrong in its
-specifics: instrumenting every marked mutator over five idle seconds finds exactly one caller,
-`applyCamera`, at ~3/s — the frame rate — i.e. the easing marking itself dirty, and nothing else.
-With the ease bounded, an untouched board reaches a true resting state and the flag is worth 13×:
+**Judgment call — the flag goes on for the browser suite, not for the shipping game.** The ease fix
+is a straight bug fix and applies everywhere. Flipping the product default is a separate question
+that wants its own measurement on real hardware, where a frame is cheap and the tradeoff is
+different. The suite is where a 2.2s frame is costing something today; that is where it is turned
+on, and the product default is left for the owner.
 
-| loop | settle | screenshot |
-|---|---|---|
-| always draw | 2.5s | ~2200 ms |
-| on demand | 1.0s | ~170 ms |
-| on demand | 2.5s | ~165 ms |
+**Judgment call — a duplicated `stepCamera` call was repaired in this merge, not reported and left.**
+Merging the two independent camera fixes produced `stepCamera(); stepCamera(delta);` on adjacent
+lines — textually clean to git, invalid to `tsc`, and the same class of break as the `boardSpan`
+merge that took main down at #119/#120. Worth naming again: two sessions editing one function is
+exactly when a clean merge means least.
 
-**Judgment call — the flag goes on for the browser suite, not for the shipping game.** Fixing the
-ease is a straight bug fix and applies everywhere. Flipping the product default is a separate
-question that wants its own measurement on real hardware, where drawing is cheap and the tradeoff
-is different; the suite is where the 2.2s frame is actually costing something today. Left for the
-owner rather than taken here.
 
-**Judgment call — `cameraEaseFor` is exported and unit-tested rather than left inline.** The bug
-was invisible at 60fps and only appeared at 3fps, which is precisely the shape of thing a browser
-test cannot be trusted to catch (it is the browser test that was suffering). As a pure function it
-is checkable at any frame rate in microseconds: `camera-ease.test.ts` pins that 60fps is unchanged,
-that equal elapsed time closes equal distance at 1, 3, 60 and 240fps, that a 3.3fps camera settles
-in under two seconds, and that a long stall cannot overshoot.
+## 2026-08-22 — Session 17 (Builder): the camera ease was denominated in frames, not seconds
+
+The previous entry ended by pointing at the camera and guessing the culprit was app-side. It was
+not. Per-call-site instrumentation over five seconds of a genuinely idle board attributed 59 of
+the ~90 dirty marks to a single line: the `applyCamera()` inside `stepCamera`. The other eight
+camera call sites contributed seven marks between them.
+
+**The ease was not broken; its unit was wrong.** It closed a constant fraction of the remaining
+distance *per frame* and stopped at a 0.002-square threshold. From a typical `focusOn` delta that
+is 62 frames of travel — a pleasant 1.0s glide at 60fps, and a **five second** one under
+SwiftShader at 12fps. Under RENDER-ON-DEMAND that is worse than slow, because each of those
+frames is one the ease itself requested: the renderer paid for its own slowness twice, once in
+the frame and again in the extra frames the frame's duration bought. It also explains why the
+on-demand gate measured no benefit at all when it landed — the machinery was correct and the
+camera simply never stopped asking.
+
+**So the ease is time-based.** `EASE` still means "fraction closed per 1/60s", but a frame that
+took four times as long closes four sixtieths' worth. A glide takes the same wall-clock time on
+any machine, which is what a player wants independently of any of this, and is the whole of the
+fix. It lives in `packages/client/src/camera-ease.ts` rather than in the renderer because it
+needs no `three` and therefore can carry a test — and this is precisely the kind of arithmetic
+that should not be re-derived by reading a GL file.
+
+**Judgment call — it snaps, and the settled test is exact equality.** The old threshold returned
+*without assigning*, so the camera parked a hair off its target permanently and every later frame
+had to re-establish that it was close enough. Landing exactly on the target makes "settled" an
+exact-zero comparison that cannot drift, and lets a settled camera return `undefined` — no pose,
+no `applyCamera`, no dirty flag. The snap distance of 0.01 squares is a quarter of a screen pixel
+at the default framing; it buys about ten frames off a tail where the camera is provably not
+moving on screen but is still redrawing to say so.
+
+**Measured, on `?map=iron-basin&render=ondemand`, before and after, same build pipeline:** idle
+frames across five seconds went 20 → **0**, and frames from load to settled went 54 → 11. The
+board is byte-comparable to the always-render build apart from the DOM countdown.
+
+**This is also the right shape for the panning camera.** A player-driven pan already bypasses the
+ease entirely (`orbitOn` returns early) and marks dirty per pointer event, which is exactly what
+on-demand wants: frames while the hand moves, none after it stops. The frame-denominated ease
+would have made a *player's* pan feel slower on a slower machine too; that bug is gone with the
+same change.

@@ -379,6 +379,37 @@ describe('validators catch bad content', () => {
     (line as { chargeHits?: string }).chargeHits = 'all';
     expect(validateCharacter(c).some((e) => e.includes('only valid on a "path"'))).toBe(true);
   });
+
+  it('VALIDATE-GUARD-IMPACT: rejects a guard and an impact on one ability', () => {
+    // RULED in edge-cases. A guard binds ONE ally — the redirect's amount is
+    // "what would have reached *the* ally" and the shield is the guardian's
+    // alone — while an impact is an AREA, so the two together would hand a
+    // guard to everybody in the blast. Plural bodyguarding has no defined
+    // meaning, so the combination is refused rather than resolved.
+    //
+    // Built on Aegis's Intercept, the one ability in the game that carries a
+    // guard: it is a `dash`, which is the only phase `impact` is legal on, so
+    // nothing but this rule stands between the two.
+    const c = structuredClone(aegis) as unknown as CharacterDef;
+    const intercept = c.abilities.find((a) => a.effects.some((e) => e.kind === 'guard'))!;
+    expect(intercept.phase, 'the fixture is a dash, so impact is otherwise legal here').toBe('dash');
+    (intercept as { impact?: { destination: number } }).impact = { destination: 1 };
+    const errs = validateCharacter(c);
+    expect(errs.some((e) => e.includes('guard') && e.includes('impact')),
+      `the message names both fields — got ${JSON.stringify(errs)}`).toBe(true);
+  });
+
+  it('…and every shipped ability passes it', () => {
+    // The other half, and the reason this item is LOW: nothing in `data/`
+    // violates the rule today. Asserted here rather than trusted, because a
+    // guard that fired on the shipped roster would be a broken build, not a
+    // caught mistake.
+    for (const c of characters) {
+      const errs = validateCharacter(c);
+      expect(errs.filter((e) => e.includes('cannot share an ability')),
+        `${c.id} trips the guard+impact rule`).toEqual([]);
+    }
+  });
 });
 
 describe('non-ultimate range is capped at 8 (M2)', () => {

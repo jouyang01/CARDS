@@ -49,8 +49,14 @@ describe('UI-INTENT: the slot number is the thing a teammate reads', () => {
     expect(abilitySlot(VEX, WISP.abilities[0]!.id)).toBeUndefined();
   });
 
-  it('a queued ability shows its number', () => {
-    expect(badge({ abilityId: VEX.abilities[1]!.id })).toMatchObject({ slot: 2, label: '2' });
+  it('a queued ability shows its NAME, and still records the slot', () => {
+    // TEAMMATE-MOVE-VISIBLE: *"it should be VERY CLEAR what action your ally is
+    // taking."* The number this used to draw is only legible to somebody who
+    // knows that character's hotbar — which, when the ally is a different
+    // character, is nobody. The slot is still on the badge (it is what a player
+    // presses); it is no longer what the board says.
+    expect(badge({ abilityId: VEX.abilities[1]!.id }))
+      .toMatchObject({ slot: 2, label: VEX.abilities[1]!.name });
   });
 });
 
@@ -58,13 +64,13 @@ describe('UI-INTENT: the additive slots get their own marks', () => {
   it('a free action rides alongside the ability, as the engine treats it', () => {
     const b = badge({ abilityId: VEX.abilities[0]!.id, freeAbilityId: 'trap' })!;
     expect(b.free).toBe(true);
-    expect(b.label).toBe('1 +');
+    expect(b.label).toBe(`${VEX.abilities[0]!.name} +`);
   });
 
   it('so does a catalyst', () => {
     const b = badge({ abilityId: VEX.abilities[0]!.id, catalystId: 'shift' })!;
     expect(b.catalyst).toBe(true);
-    expect(b.label).toContain('1');
+    expect(b.label).toContain(VEX.abilities[0]!.name);
   });
 
   it('and a free action declared on its own still shows', () => {
@@ -91,10 +97,10 @@ describe('UI-INTENT: the Move-phase plan, when there is no ability', () => {
   });
 
   it('an ability outranks the walk it is paired with', () => {
-    // Move-and-shoot is one plan, and the number is the half a teammate is
-    // coordinating around.
+    // Move-and-shoot is one plan, and the ability is the half a teammate is
+    // coordinating around — the walk has the route on the board to say it.
     const b = badge({ abilityId: VEX.abilities[0]!.id, movePath: [{ x: 3, y: 2 }] })!;
-    expect(b.label).toBe('1');
+    expect(b.label).toBe(VEX.abilities[0]!.name);
     expect(b.move, 'the walk is still recorded, just not the headline').toBe('move');
   });
 });
@@ -102,7 +108,8 @@ describe('UI-INTENT: the Move-phase plan, when there is no ability', () => {
 describe('UI-INTENT: the lock tick', () => {
   it('appears once that seat has locked in', () => {
     expect(badge({ abilityId: VEX.abilities[0]!.id }, true)!.locked).toBe(true);
-    expect(badge({ abilityId: VEX.abilities[0]!.id }, true)!.label).toBe('1 ✓');
+    expect(badge({ abilityId: VEX.abilities[0]!.id }, true)!.label)
+      .toBe(`${VEX.abilities[0]!.name} ✓`);
   });
 
   it('a locked hold still shows — "done, and standing still" is a plan', () => {

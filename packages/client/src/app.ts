@@ -564,9 +564,22 @@ export function startHotSeat(
    * stale plan tile above a teammate is worse than none. Cheap — it is at most
    * four units and a string each.
    */
-  const intentFor = (viewer: TeamId): Map<string, { label: string; locked: boolean }> =>
-    new Map(intentBadges(state.units, roster, drafts, locked, viewer)
+  const intentFor = (viewer: TeamId): Map<string, { label: string; locked: boolean }> => {
+    // TEAMMATE-MOVE-VISIBLE — *"it should be VERY CLEAR what action your ally is
+    // taking"*. `drafts` and `locked` are this client's own bookkeeping, so over
+    // the wire a teammate had **no badge at all**: their plan was drawn on the
+    // tiles but nothing over their head said what it was. A relayed plan is
+    // committed by definition — it exists only because that seat submitted — so
+    // it counts as locked without needing an entry in this client's set.
+    const withTeam = new Map(drafts);
+    const lockedNow = new Set(locked);
+    for (const [unitId, plan] of teamPlans) {
+      withTeam.set(unitId, plan);
+      lockedNow.add(unitId);
+    }
+    return new Map(intentBadges(state.units, roster, withTeam, lockedNow, viewer)
       .map((b) => [b.unitId, { label: b.label, locked: b.locked }]));
+  };
 
   const toRenderUnits = (units: readonly UnitState[], viewer: TeamId): RenderUnit[] => {
   const plans = intentFor(viewer);
@@ -1469,6 +1482,8 @@ export function startHotSeat(
     const lockedTiles: Vec2[] = [];
     const lockedShapes: Vec2[][] = [];
     const teamRoutes: Vec2[][] = [];
+    /** Enemies a teammate has declared a chase on — ringed like your own quarry. */
+    const teamChased: Vec2[] = [];
     for (const other of state.units) {
       if (other.unitId === unit.unitId) continue;
       if (other.owner !== (currentSeat()?.team ?? unit.owner)) continue;
@@ -1486,14 +1501,36 @@ export function startHotSeat(
         lockedTiles.push(...theirCovered);
         lockedShapes.push(...aimBoundaries(other, theirDef, theirs.aim, theirs.aimStep, theirCovered));
       }
-      // The route and the guard link, for a relayed plan only: a local locked
-      // draft belongs to a character this seat is about to order again, and its
-      // line is drawn by the live preview above when it is selected.
-      if (relayed === undefined) continue;
+      // TEAMMATE-MOVE-VISIBLE — *"We need to be able to see ally's movement
+      // commands as well to know where they're moving."*
+      //
+      // This used to be gated on `relayed !== undefined`, on the reasoning that
+      // a local locked draft belongs to a character this seat is about to order
+      // again and the live preview draws its line when it is selected. That is
+      // true and it is not the point: while you are ordering your SECOND
+      // character, the first one's route is exactly what you need on screen and
+      // the live preview is busy drawing the second's. So the gate is gone and
+      // both kinds of committed plan draw their route.
       const theirRoute = theirDef?.phase === 'dash'
         ? dashRoute(other, theirDef, theirs.aim)
         : theirs.movePath;
       if (theirRoute.length > 0) teamRoutes.push([other.pos, ...theirRoute]);
+      // A chase has no plan-time route — the engine picks it at the end of Move
+      // — so the line runs straight to the quarry, and the quarry is ringed. It
+      // says "this ally is going after that one", which is the whole of what is
+      // known at plan time.
+      //
+      // Fog-safe by construction rather than by a check: a networked client's
+      // `state.units` holds only the enemies its team can see, so a target this
+      // team cannot see is simply not found and nothing is drawn (golden
+      // rule #5).
+      const quarry = theirs.chaseTargetId === undefined
+        ? undefined
+        : state.units.find((u) => u.unitId === theirs.chaseTargetId && u.alive);
+      if (quarry !== undefined) {
+        teamRoutes.push([other.pos, { ...quarry.pos }]);
+        teamChased.push({ ...quarry.pos });
+      }
       // The guard link, so a teammate's Intercept reads as "he is stepping in
       // front of her" rather than as a lone highlighted square.
       if (theirDef?.allyTarget === true && theirs.aim[0] !== undefined) {
@@ -1502,7 +1539,13 @@ export function startHotSeat(
     }
     renderer.highlight('locked', lockedTiles, LOCKED, 0.28);
     renderer.drawShape(lockedShapes, LOCKED, 0.1, 'shapeLocked');
-    renderer.drawPaths(teamRoutes, LOCKED, true, 'teamPath');
+    // The route goes out in the MOVEMENT colour rather than the committed-plan
+    // one. `LOCKED` is deliberately "cooler and dimmer" because it is the colour
+    // of an ability *area* that has already been decided; a route is the answer
+    // to "where is my ally going", and the owner's note is that this specifically
+    // does not read. Same layer, same call, one constant — it now speaks the
+    // vocabulary the player's own move line already uses.
+    renderer.drawPaths(teamRoutes, MOVE_LINE, true, 'teamPath');
 
     // ── FREE-UI: the free ability's own aim, in its own layer ───────────────
     // Same reasoning as the catalyst layer below: a trap being placed and a
@@ -1617,7 +1660,16 @@ export function startHotSeat(
     // were the player's and which the router's. Only while that unit's route is
     // still the one on screen — a mark over somebody else's turn is a lie.
     renderer.highlight('waypoint', liveWaypointMarks(waypointMarks, draft.movePath), WAYPOINT, 0.85);
-    renderer.highlight('chase', chaseTarget === undefined ? [] : [chaseTarget.pos], CHASE_LINE, 0.45);
+    // TEAMMATE-MOVE-VISIBLE: a teammate's quarry is ringed on the same layer as
+    // your own. One layer, so two allies chasing the same enemy ring it once,
+    // and so "somebody on my team is going after that" is a single thing the
+    // eye learns rather than two.
+    renderer.highlight(
+      'chase',
+      [...(chaseTarget === undefined ? [] : [chaseTarget.pos]), ...teamChased],
+      CHASE_LINE,
+      0.45,
+    );
 
     // ── DASH-CAT-ROUTE: a Dash catalyst is a reposition, so it draws like one ─
     // "Shift's dash catalyst should show as a yellow movement similar to other
