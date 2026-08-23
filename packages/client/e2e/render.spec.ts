@@ -325,17 +325,42 @@ test('a resolved turn animates, logs both ends, and floats a readout', async ({ 
 
   // Playback runs: the phase label appears and the board keeps changing.
   await expect(page.locator('.phase-label')).toBeVisible({ timeout: 10_000 });
+
+  // READOUT-RACE: watch for UI5's numbers from *inside the page*, before the
+  // expensive part of this test starts.
+  //
+  // Polling for them afterwards could not work, and the arithmetic says why.
+  // Measured on this runner: playback lasts ~7.2s and readouts exist only
+  // between ~4.4s and ~6.7s of it — a 2.3s window. A screenshot of an
+  // *animating* board costs ~3.5s under SwiftShader, because the compositor
+  // cannot hand one over until it has a frame and the board is redrawing every
+  // one. The two `frame()` calls below therefore span 0.4s→8.1s and swallow the
+  // window whole; the poll then began after playback had already ended. This is
+  // structural, not flake — the test could not observe a readout on any run.
+  //
+  // A `MutationObserver` inverts it. It records the insertion itself rather
+  // than sampling for the node's presence, so it cannot miss one that lived
+  // between two samples, it costs nothing while the screenshots block, and it
+  // is watching before the window opens rather than after it shut.
+  await page.evaluate(() => {
+    const seen = { count: 0 };
+    (globalThis as unknown as Record<string, unknown>).__readoutsSeen = seen;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof Element && node.classList.contains('readout')) seen.count += 1;
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+
   const during = await frame(page);
   await page.waitForTimeout(400);
   expect(same(await frame(page), during), 'the resolution must be animating').toBe(false);
 
   // UI5's floating numbers and UI6's log are the two readable outputs of a turn.
-  // Poll rather than sample once: a readout lives about two beats.
-  let sawReadout = false;
-  for (let i = 0; i < 40 && !sawReadout; i++) {
-    sawReadout = (await page.locator('.readout').count()) > 0;
-    await page.waitForTimeout(80);
-  }
+  const sawReadout = await page.evaluate(() =>
+    ((globalThis as unknown as Record<string, { count: number }>).__readoutsSeen?.count ?? 0) > 0);
   expect(sawReadout, 'a damage/heal readout must float during resolution').toBe(true);
 
   await expect(page.locator('.log-turn').first()).toBeVisible();
@@ -883,8 +908,15 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
   // waited out the full timeout reporting "…intercepts pointer events". The row
   // was never the control; `.hud-skip` is, and it is what `app-harness.ts`'s own
   // `skipPlayback` has always clicked.
+  //
+  // And ask for the click rather than testing first. `isVisible()` is a
+  // point-in-time sample: playback ends on its own clock, so between that
+  // sample answering yes and `click()` starting, the row can hide — and then
+  // `click()` auto-waits for it to come back, which it never does, for the full
+  // 60s test timeout. The button vanishing IS the outcome the click was for, so
+  // a bounded attempt that tolerates its absence says exactly what is meant.
   const skip = page.locator('.hud-playback .hud-skip');
-  if (await skip.isVisible()) await skip.click();
+  await skip.click({ timeout: 3_000 }).catch(() => {});
   await page.waitForTimeout(600);
 
   // The log is the engine\'s own account of the turn: the decoy went down.
