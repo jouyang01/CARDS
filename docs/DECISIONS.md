@@ -6165,6 +6165,120 @@ that it never worked.
 an idle page. The counts point at the camera first — 49 marks in five seconds, against a board
 nobody touched.
 
+## 2026-08-22 — Builder session 17 (impact: hitstop, victim flash, screen shake)
+
+The first of the five VFX steps. A hit currently reads as a number changing; these three make it
+read as a hit. All three decisions live in `packages/client/src/vfx.ts` as pure functions, so the
+tuning is testable without a browser and the renderer only ever executes what it is told.
+
+**Judgment call — hitstop freezes the presentation clock, never the schedule.** `playPhase` keeps
+one wall clock and one animation clock, and hitstop widens the gap between them (`heldMs`) instead
+of shortening the phase. Cues therefore all still fire, in order, with their authored spacing; the
+phase simply takes 35–85 ms longer per landed hit in real time. The alternative — skipping ahead
+after the freeze to "catch up" — would drop frames of the very animation the freeze exists to sell.
+
+**Judgment call — every effect scales with damage, and saturates.** `REFERENCE_HIT = 30` is the
+point at which hitstop reaches `HITSTOP_MAX_MS` and shake reaches `SHAKE_MAX_TILES`. Without a
+ceiling a big ultimate would freeze the game long enough to feel like a hitch, and the shake would
+throw the board off screen. With one, a chip hit and a heavy hit are *distinguishable* — which is
+the whole point — but neither is disruptive.
+
+**Judgment call — the shake is deterministic per impact, seeded by `${unitId}@${t}`.** No
+`Math.random()` anywhere near presentation: the same replay shakes identically on every machine,
+which is what makes the film harness able to test it at all. `shakeOffset` decays to *exactly*
+`{0, 0}` at the end of its window rather than asymptotically, so the camera provably returns to
+where it was and successive shakes cannot accumulate drift.
+
+**Judgment call — the shake is added to `target`, not to `centre`.** `centre` feeds the camera's
+own easing; a shake written there would be eased *toward*, and the easing would then chase its own
+output. Offsetting at the last moment inside `applyCamera` keeps the shake a pure display effect
+with no path back into the state that produced it.
+
+**Bug found by reading the flash path, not by a failing test.** `SkeletonUtils.clone` shares
+materials between clones. The deferred-death fade already wrote `opacity` per unit and the new
+flash writes `emissive` per unit, so with two Aegises on a board, one dying faded both and one
+being hit lit both. Fixed by `detachMaterials` on the body clone and on each prop clone, at a cost
+of one material per mesh per unit. Regression test: `test/detach-materials.test.ts`, which fails on
+six of eight cases if the clone is removed.
+
+**Known gap, stated plainly:** the flash is verified as far as the renderer call — `vfx-wiring`
+proves `flashUnit` is reached with the victim's id — but *not* at the pixel. The film harness
+cannot yet order an attack that lands, so filming a Blast produces no impact to photograph. The
+next tooling step is teaching `film.mjs` to aim an ability at a unit; until then, no one should
+claim the flash has been seen.
+
+## 2026-08-23 — Builder session 17 (closing the flash's verification gap)
+
+The impact work shipped with an honest hole: the flash was proven as far as the renderer call and
+no further. Two changes close it, and neither is a new feature.
+
+**The film harness now aims like a player does.** It used to click a fixed fraction of the
+viewport, which on this map is empty floor — so filming a Blast produced a Blast with nothing in
+it, and the effects it existed to photograph were never triggered. Nothing was broken; the camera
+was pointed at the wrong thing, which is worse, because the film still looked like evidence.
+`findTarget` now sweeps a coarse grid, hovering, and stops where the game offers a
+`.readout.preview.damage` node — the same offer a human reads. No debug hook, nothing
+special-cased for being filmed, which is the rule the harness was built under.
+
+**`paintFlash` is extracted and exported**, for the same reason `modelBounds` and
+`staleUnitGroups` were: the renderer needs a WebGL context Node has not got, so anything left
+inside the factory closure can only be checked by photographing a browser. Pulling out the half
+that decides what the pixels become makes it a unit test — full strength at a fresh flash, linear
+decay, *exactly* black on release, no overshoot above or below, and every mesh of a rigged body
+rather than only the torso. The extraction also fixed a latent gap: the old inline version read
+`o.material` as a single material, so a multi-material mesh would have flashed only its first slot.
+
+**What is now true, precisely:** the flash's decision (`vfx.ts`), its delivery (`vfx-wiring`), the
+material it lands on being the unit's own (`detach-materials`), and the paint itself
+(`paint-flash`) are each verified. What remains unverified is only the last inch — that the lit
+material is on screen and unoccluded — which is what `render-verify` exists for.
+
+**Not ours: `render` is red on `main`.** Every Render-verify run since #114 has failed on the base
+branch, including on `d3d1797`, the commit this branch was cut from, and each burns ~60 minutes to
+the job timeout. It is a pre-merge signal rather than a release gate by design (Pages gates on CI,
+which is green), and RENDER-SUITE-GREEN-2 is already specced with the Analyzer. No changes pushed
+for it from here.
+## 2026-08-23 — Builder session 17 (the render suite's hour, and where it actually went)
+
+Written after merging the entry below, which fixes the same root cause from the other side. That
+entry has the ease right and this one does not repeat it. What follows is only the part it does
+not cover: *why the browser suite in particular was paying for it*, and the one change still needed
+to stop.
+
+**The suite's cost was never the render — it was `page.screenshot` waiting for one.** A screenshot
+cannot return until the compositor hands it a frame, and a board that redraws unconditionally makes
+that wait enormous. Measured on this scene:
+
+| page | screenshot |
+|---|---|
+| blank page, no canvas | 40 ms |
+| board, render loop drawing | **2200 ms** |
+| board, rAF loop cancelled outright | 165 ms |
+
+Nearly every test in `render.spec.ts` is a sequence of screenshots, so the whole suite ran at that
+price and the long ones crossed their 60s budget. All seventeen failures were timeouts; not one was
+a failed assertion. That is the whole of RENDER-VERIFY's red since #114, and the hour per push.
+
+**The ease fix alone does not collect on it, and this is the trap.** `renderOnDemand` is still off
+by default and the e2e fixture did not ask for it, so the loop draws every frame whatever the dirty
+flag says. Measured after the ease fix: `always-draw` still ~2200 ms a screenshot; `ondemand`
+~165 ms. A settled camera saves nothing if nobody is checking whether the scene settled. So
+`e2e/fixtures.ts` now attaches `render=ondemand` alongside `ambient=off` and `models=off` — the
+suite's third "hold still" flag, and the one that makes the other two affordable.
+
+**Judgment call — the flag goes on for the browser suite, not for the shipping game.** The ease fix
+is a straight bug fix and applies everywhere. Flipping the product default is a separate question
+that wants its own measurement on real hardware, where a frame is cheap and the tradeoff is
+different. The suite is where a 2.2s frame is costing something today; that is where it is turned
+on, and the product default is left for the owner.
+
+**Judgment call — a duplicated `stepCamera` call was repaired in this merge, not reported and left.**
+Merging the two independent camera fixes produced `stepCamera(); stepCamera(delta);` on adjacent
+lines — textually clean to git, invalid to `tsc`, and the same class of break as the `boardSpan`
+merge that took main down at #119/#120. Worth naming again: two sessions editing one function is
+exactly when a clean merge means least.
+
+
 ## 2026-08-22 — Session 17 (Builder): the camera ease was denominated in frames, not seconds
 
 The previous entry ended by pointing at the camera and guessing the culprit was app-side. It was

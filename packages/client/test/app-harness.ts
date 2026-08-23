@@ -38,6 +38,10 @@ export interface DrawLog {
   preloads: string[][];
   /** The direction each unit was last told to look, by unit id. */
   facing: Map<string, { dx: number; dy: number }>;
+  /** Every victim flash asked for, in order — VFX step 1's assertable half. */
+  flashes: { unitId: string; seconds: number }[];
+  /** Every camera shake asked for, in order. */
+  shakes: { amplitude: number; seconds: number; seed: number }[];
   /**
    * WALL-CAST-FIX — the **board itself**, as of the last `show()`: the units,
    * decoys and traps the viewing seat can currently see.
@@ -74,7 +78,7 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
-    highlights: new Map(), paths: [], shapes: [], clips: [], preloads: [], facing: new Map(),
+    highlights: new Map(), paths: [], shapes: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     board: { units: [], decoys: [], traps: [] },
   };
   let orbit = false;
@@ -113,6 +117,11 @@ export function stubRenderer(): StubRenderer {
     // Last-write-wins rather than a log: facing is a state, not an event, and
     // what a spec wants to ask is "which way is he looking now".
     setUnitFacing: (unitId, dx, dy) => { draw.facing.set(unitId, { dx, dy }); },
+    // Recorded rather than dropped: a hit that never reaches the renderer is
+    // the failure this whole lane keeps producing, and it is invisible unless
+    // something asserts the call.
+    flashUnit: (unitId, seconds) => { draw.flashes.push({ unitId, seconds }); },
+    shakeCamera: (amplitude, seconds, seed) => { draw.shakes.push({ amplitude, seconds, seed }); },
     // Undefined unless a spec installs a set: that is the box path, and it is
     // the one every character without art still takes.
     clipsFor: (characterId) => (characterId === undefined ? undefined : clipSets[characterId]),
