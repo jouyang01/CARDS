@@ -6431,3 +6431,43 @@ worked before: under the always-draw loop "the scene is still" and "the scene is
 bare board. It now asserts that a settled board with ambient off draws the same frame twice — and
 the first moving prop (MAP_PIPELINE phase 5) will break it unless it is gated on the flag, which is
 the entire point of it.
+
+---
+
+## Open Questions for the Analyzer — 2026-08-23
+
+**1. Should a pan survive the turn boundary, or snap back on resolution?** Today it survives:
+`panned` is cleared only by Recentre or by toggling back to Auto camera, so a player who pans
+during planning is still panned while the turn resolves — and the resolution's own `focusOn` calls
+(the ones that follow each actor) are frozen out. That is defensible for planning and questionable
+for playback, where the camera's job is to show you the thing that just happened. The alternative
+is a one-way release at the start of resolution. I did not pick it because the AC says a pan
+"suspends the auto-camera like orbit" and orbit does not release either, and quietly making pan
+behave differently from the thing it was specced against is the kind of divergence that needs a
+ruling rather than a commit. Worth a playtest question: *does a panned camera during resolution
+feel like control, or like a bug?*
+
+**2. `PAN_MARGIN = 2` is a guess dressed up as a measurement.** The reasoning (HUD insets shift the
+world window, so a zero margin leaves the last rank under the chrome) is sound; the number is not
+derived from the actual inset. It could be — the renderer knows its insets — but that turns a
+constant into a computed value that changes with the HUD layout, and HUD-LAYOUT has moved twice
+already. If the Analyzer wants it derived, that is an item; if 2 is fine, this note is the record
+that it was chosen rather than computed.
+
+**3. Is there a zoom gesture missing?** CAMERA-CONTROLS asked for panning and character framing,
+and both shipped. But wheel-zoom is the third leg of the same complaint — a player who cannot pan
+usually also cannot get closer — and `span` is already the variable that would drive it. I did not
+add it: it is not in the item, and "do not invent features outside the backlog" is the rule. Raising
+it here so the omission is a decision rather than an oversight.
+
+**4. Three `same()` callers remain, and one of them is load-bearing in a way I cannot prove.**
+The ambient guard and the two motion assertions ("the resolution must be animating", "a right-drag
+must orbit the camera") all now depend on RENDER-ON-DEMAND holding a settled board byte-identical.
+That is true today and measured. It is *not* an invariant anybody has written down, and the first
+missed `markDirty()` — or the first ambient prop that forgets the flag — turns those three into
+confusing failures rather than clear ones. The `?render=always` escape hatch is the diagnostic;
+whether the invariant deserves its own named test is the Analyzer's call.
+
+**5. No engine work happened this session, as instructed.** The engine is untouched by both
+commits; every change is in `packages/client`. Flagging it so the absence is legible in the log
+rather than looking like a gap.
