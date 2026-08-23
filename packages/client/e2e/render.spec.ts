@@ -326,24 +326,46 @@ test('a resolved turn animates, logs both ends, and floats a readout', async ({ 
   // Playback runs: the phase label appears and the board keeps changing.
   await expect(page.locator('.phase-label')).toBeVisible({ timeout: 10_000 });
 
-  // UI5's floating numbers, watched from the first frame of playback rather than
-  // after the frame comparison below.
+  // READOUT-RACE: watch for UI5's numbers from *inside the page*, before the
+  // expensive part of this test starts.
   //
-  // A readout lives about two beats and the damage that makes one happens in
-  // Blast, early. The comparison below costs two screenshots, and a screenshot
-  // of an animating board waits ~2.2s for the compositor — so polling after it
-  // starts looking at ~4.8s for a number that stopped existing at ~2.9s. The
-  // test then failed for the one reason it was not testing: that it arrived
-  // late. Watching in-page and in parallel costs nothing and cannot be outrun.
-  const sawReadout = page
-    .waitForFunction(() => document.querySelectorAll('.readout:not(.preview)').length > 0, undefined, { timeout: 30_000 })
-    .then(() => true, () => false);
+  // Polling for them afterwards could not work, and the arithmetic says why.
+  // Measured on this runner: playback lasts ~7.2s and readouts exist only
+  // between ~4.4s and ~6.7s of it — a 2.3s window. A screenshot of an
+  // *animating* board costs ~3.5s under SwiftShader, because the compositor
+  // cannot hand one over until it has a frame and the board is redrawing every
+  // one. The two `frame()` calls below therefore span 0.4s→8.1s and swallow the
+  // window whole; the poll then began after playback had already ended. This is
+  // structural, not flake — the test could not observe a readout on any run.
+  //
+  // A `MutationObserver` inverts it. It records the insertion itself rather
+  // than sampling for the node's presence, so it cannot miss one that lived
+  // between two samples, it costs nothing while the screenshots block, and it
+  // is watching before the window opens rather than after it shut.
+  await page.evaluate(() => {
+    const seen = { count: 0 };
+    (globalThis as unknown as Record<string, unknown>).__readoutsSeen = seen;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          // `:not(.preview)`: a plan-time preview number carries the same
+          // `readout` class, and this assertion is about what RESOLUTION drew.
+          // The observer starts after previews are cleared, so counting them
+          // would not fail today — it would just stop meaning what it says.
+          if (node instanceof Element && node.matches('.readout:not(.preview)')) seen.count += 1;
+        }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  });
 
   const during = await frame(page);
   await page.waitForTimeout(400);
   expect(same(await frame(page), during), 'the resolution must be animating').toBe(false);
 
-  expect(await sawReadout, 'a damage/heal readout must float during resolution').toBe(true);
+  // UI5's floating numbers and UI6's log are the two readable outputs of a turn.
+  const sawReadout = await page.evaluate(() =>
+    ((globalThis as unknown as Record<string, { count: number }>).__readoutsSeen?.count ?? 0) > 0);
+  expect(sawReadout, 'a damage/heal readout must float during resolution').toBe(true);
 
   await expect(page.locator('.log-turn').first()).toBeVisible();
   await expect(page.locator('.log-line').first()).toBeVisible();
@@ -891,15 +913,14 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
   // was never the control; `.hud-skip` is, and it is what `app-harness.ts`'s own
   // `skipPlayback` has always clicked.
   //
-  // Asked for in one call rather than as `isVisible()` then `click()`. That pair
-  // is a check-then-act race against a control that removes itself: playback can
-  // finish in the gap, and Playwright then spends the whole 60s budget waiting
-  // for an element that is never coming back — reported as a click timeout, which
-  // reads like the button is broken rather than like the turn is already over.
-  // Skipping a resolution that has already ended is a no-op, so a click that
-  // finds nothing to press is success, not failure.
+  // And ask for the click rather than testing first. `isVisible()` is a
+  // point-in-time sample: playback ends on its own clock, so between that
+  // sample answering yes and `click()` starting, the row can hide — and then
+  // `click()` auto-waits for it to come back, which it never does, for the full
+  // 60s test timeout. The button vanishing IS the outcome the click was for, so
+  // a bounded attempt that tolerates its absence says exactly what is meant.
   const skip = page.locator('.hud-playback .hud-skip');
-  await skip.click({ timeout: 5_000 }).catch(() => {});
+  await skip.click({ timeout: 3_000 }).catch(() => {});
   await page.waitForTimeout(600);
 
   // The log is the engine\'s own account of the turn: the decoy went down.
