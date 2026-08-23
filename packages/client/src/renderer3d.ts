@@ -62,6 +62,7 @@ import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
 import { browserRenderOnDemand } from './render-flags.js';
 import { easeCamera } from './camera-ease.js';
+import { clampCentre, panDelta } from './camera-pan.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -129,6 +130,7 @@ export const SPAN_LIMITS = { min: 6, max: 60 } as const;
 const DRAG_SLOP = 4;
 /** Degrees of yaw/pitch per pixel dragged. */
 const ORBIT_SENSITIVITY = 0.4;
+
 /** Board-height (in squares) at which billboarded bars are their design size. */
 const BAR_REF_SPAN = 14;
 /** Fraction of the way to the action the auto-camera pans (1 = centre on it). */
@@ -743,6 +745,18 @@ export interface Renderer {
   setOrbitEnabled(on: boolean): void;
   orbitEnabled(): boolean;
   /**
+   * Drag the view across the board plane by a screen delta, in CSS pixels.
+   *
+   * Exposed as well as bound to a gesture so the app can offer a pan that is
+   * not a mouse drag — a keyboard nudge, a touch fling — without either caller
+   * re-deriving the projection maths.
+   */
+  panBy(dxPx: number, dyPx: number): void;
+  /** Whether the player has taken the camera by panning it. */
+  panned(): boolean;
+  /** Hand the camera back to the auto-framing. */
+  resetPan(): void;
+  /**
    * Keep a run of squares in frame (auto-camera). Empty = whole board.
    *
    * `pan` overrides how far the camera leans toward them: the A3 default of
@@ -750,7 +764,19 @@ export interface Renderer {
    * but planning wants the seat's own characters actually **in** the frame, and
    * at BOARD_ZOOM a third of a lean does not get there.
    */
-  focusOn(squares: readonly Vec2[], pan?: number): void;
+  /**
+   * Frame these squares.
+   *
+   * `hold` picks which clamp bounds the result, and the two are genuinely
+   * different jobs. `'frame'` keeps the whole frustum over the board — what
+   * the resolution follow wants, since a turn is watched rather than worked on
+   * and a frame that swings off the edge to chase an actor is disorienting.
+   * `'centre'` only keeps the *centre* on the board, which is what lets the
+   * planning camera actually sit on a character standing on a spawn rank; with
+   * `'frame'` it cannot, because since BOARD_ZOOM the frame is tighter than the
+   * board and the clamp pins it near the middle.
+   */
+  focusOn(squares: readonly Vec2[], pan?: number, hold?: 'frame' | 'centre'): void;
   /** A stroked path through tile centres plus an endpoint marker (AIM1). */
   drawPath(squares: readonly Vec2[], color: number, dashed: boolean, layer?: PathLayer): void;
   /**
@@ -1490,6 +1516,16 @@ export function createRenderer(
   let wantCentre = { ...centre };
   let wantSpan = span;
   let orbitOn = false;
+  /**
+   * Whether a pan has taken the camera off the auto-framing.
+   *
+   * Separate from `orbitOn` because they are different kinds of manual: orbit
+   * is a *mode* the player switches into and out of deliberately, while a pan
+   * is a one-off act that happens to imply "stop moving my camera". Folding a
+   * pan into `orbitOn` would flip the HUD's toggle underneath the player, who
+   * asked for neither.
+   */
+  let panOn = false;
   let width = 900;
   let height = 560;
 
@@ -1604,15 +1640,12 @@ export function createRenderer(
    * the auto-camera happily pans off the edge and shows a band of void next to
    * half a board — which is worse than not following the action at all.
    */
-  const clampToBoard = (c: { x: number; y: number }, spanValue: number): { x: number; y: number } => {
-    const halfW = (spanValue / 2) * (width / height);
-    // Depth is foreshortened on screen, so the visible run of *squares* along y
-    // is larger than the visible height by 1/sin(pitch).
-    const halfD = spanValue / 2 / Math.max(Math.sin(rad(pitchDeg)), 0.2);
-    const axis = (v: number, extent: number, half: number): number =>
-      extent <= half * 2 ? (extent - 1) / 2 : clamp(v, half - 0.5, extent - 0.5 - half);
-    return { x: axis(c.x, map.width, halfW), y: axis(c.y, map.height, halfD) };
-  };
+  const clampToBoard = (
+    c: { x: number; y: number },
+    spanValue: number,
+    margin = Infinity,
+  ): { x: number; y: number } =>
+    clampCentre(c, spanValue, width / height, pitchDeg, map, margin);
 
   /**
    * Ease the live camera one frame toward the auto-camera's target.
@@ -1665,35 +1698,48 @@ export function createRenderer(
   // Secondary buttons always orbit; the left button orbits only in free-orbit
   // mode, so click-to-select never competes with a camera drag.
   const canvas = renderer.domElement;
-  let dragging = false;
+  let dragging: 'orbit' | 'pan' | undefined;
   let dragged = 0;
   let lastX = 0;
   let lastY = 0;
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('pointerdown', (e) => {
-    const secondary = e.button === 1 || e.button === 2;
-    if (!secondary && !(orbitOn && e.button === 0)) return;
-    dragging = true;
+    // CAMERA-CONTROLS: the middle button pans; the right button orbits, and so
+    // does the left one in free-orbit mode.
+    //
+    // Middle is the one binding that moves, and it moves off a duplicate:
+    // middle and right did the identical thing, so orbit loses nothing a player
+    // could notice. That mattered — the ask was to *add* a pan, not to redesign
+    // the two camera gestures that already worked, and every alternative took
+    // something. A modifier+drag would have collided with Shift-click's move
+    // route (WAYPOINTS-FIX); the wheel is zoom; and taking the right button
+    // would have been a real change to orbit rather than a nominal one.
+    const button = e.button === 1 ? 'pan'
+      : e.button === 2 || (orbitOn && e.button === 0) ? 'orbit'
+      : undefined;
+    if (button === undefined) return;
+    dragging = button;
     dragged = 0;
     lastX = e.clientX;
     lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
+    if (dragging === undefined) return;
     const dx = e.clientX - lastX;
     const dy = e.clientY - lastY;
     lastX = e.clientX;
     lastY = e.clientY;
     dragged += Math.abs(dx) + Math.abs(dy);
+    if (dragging === 'pan') return void api.panBy(dx, dy);
     yawDeg = (yawDeg + dx * ORBIT_SENSITIVITY) % 360;
     pitchDeg = clamp(pitchDeg - dy * ORBIT_SENSITIVITY, PITCH_LIMITS.min, PITCH_LIMITS.max);
     applyCamera();
   });
   const endDrag = (e: PointerEvent): void => {
-    if (!dragging) return;
-    dragging = false;
+    if (dragging === undefined) return;
+    dragging = undefined;
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
   };
   canvas.addEventListener('pointerup', endDrag);
@@ -2142,14 +2188,48 @@ export function createRenderer(
       refreshAllOpacity();
     },
 
+    panBy(dxPx, dyPx) {
+      const before = { x: centre.x, y: centre.y };
+      const step = panDelta(dxPx, dyPx, { yawDeg, pitchDeg, span, heightPx: height });
+      // A pan reaches any square: the player is asking to look somewhere, and
+      // the frame-inside-board rule would stop them at roughly the third rank.
+      centre = clampToBoard({ x: centre.x + step.x, y: centre.y + step.y }, span, 0);
+      // A pan that the clamp fully absorbed is not a pan: the player pushed
+      // against the edge and the view did not move. Claiming the camera on that
+      // would stand the auto-framing down for a gesture with no visible effect,
+      // and the player would be left wondering why the camera stopped
+      // following — having, as far as they can tell, done nothing.
+      if (centre.x === before.x && centre.y === before.y) return;
+      panOn = true;
+      // The ease is measured against these, so leaving them behind would have
+      // the auto-camera immediately drag the view back to where the pan started
+      // — the frame fighting the hand that just moved it.
+      wantCentre = { x: centre.x, y: centre.y };
+      wantSpan = span;
+      applyCamera();
+    },
+
+    panned: () => panOn,
+
+    resetPan() {
+      panOn = false;
+    },
+
     setOrbitEnabled(on) {
       orbitOn = on;
+      // Leaving a pan latched here would make the orbit toggle a dead control
+      // for anyone who had panned: `focusOn` would still be standing down and
+      // the auto-camera would never come back.
+      panOn = false;
     },
 
     orbitEnabled: () => orbitOn,
 
-    focusOn(squares, pan = AUTO_PAN) {
-      if (orbitOn) return; // free-orbit mode: the auto-camera stands down
+    focusOn(squares, pan = AUTO_PAN, hold = 'frame') {
+      // Free orbit or a pan: the player has the camera, so the auto-framing
+      // stands down until they hand it back.
+      if (orbitOn || panOn) return;
+      const reach = hold === 'centre' ? 0 : Infinity;
       if (squares.length === 0) {
         wantCentre = { x: (map.width - 1) / 2, y: (map.height - 1) / 2 };
         wantSpan = boardSpan();
@@ -2174,7 +2254,7 @@ export function createRenderer(
       const wide = (maxX - minX + 1) / (width / height);
       const full = boardSpan();
       wantSpan = clamp(Math.max(depth, wide) * 1.6 + 4, full * AUTO_ZOOM_FLOOR, full);
-      wantCentre = clampToBoard(wantCentre, wantSpan);
+      wantCentre = clampToBoard(wantCentre, wantSpan, reach);
     },
 
     drawPath(squares, color, dashed, layer = 'path') {
