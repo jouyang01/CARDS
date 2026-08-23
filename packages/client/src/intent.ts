@@ -8,9 +8,18 @@
  * team turn — they are playing two solo turns on one board.
  *
  * In the screenshot AR floats small numbered action tiles above an allied
- * character. That is what this builds: the **slot number** of the queued
+ * character. That is what this built: the **slot number** of the queued
  * ability, a marker when a free action or a catalyst is also declared, and a
  * tick once that seat has locked in.
+ *
+ * **TEAMMATE-MOVE-VISIBLE names the ability instead of numbering it.** Owner
+ * Dev Note: *"it should be VERY CLEAR what action your ally is taking."* The
+ * number was justified above as something "a teammate glancing at the board is
+ * matching against their own hotbar" — which is exactly backwards when the ally
+ * is a **different character**, and in a 2v2 they almost always are. "3" over
+ * Aegis's head tells you nothing you did not already have to look up; "Intercept"
+ * is the sentence. The `slot` field stays on the badge (it is what a player
+ * presses, and `abilitySlot` is used elsewhere); only the drawn label changed.
  *
  * **Enemies get nothing, ever.** Not a redacted tile, not a "planning" dot —
  * nothing, because the existence of a marker is itself information about
@@ -61,6 +70,17 @@ export function abilitySlot(character: CharacterDef, abilityId: string): number 
 }
 
 /**
+ * The display name of an ability on a character, ultimate included.
+ *
+ * `undefined` for an id the character does not have, which is the same "this
+ * draft names something impossible" case `abilitySlot` returns undefined for —
+ * the badge then falls through to whatever else the plan says.
+ */
+export function abilityName(character: CharacterDef, abilityId: string): string | undefined {
+  return [...character.abilities, character.ultimate].find((a) => a.id === abilityId)?.name;
+}
+
+/**
  * The badge for one unit's draft, or undefined when there is nothing to say.
  *
  * A unit with no order at all is a unit holding position, and holding is not a
@@ -74,6 +94,7 @@ export function intentBadge(
   locked: boolean,
 ): IntentBadge | undefined {
   const slot = draft?.abilityId === undefined ? undefined : abilitySlot(character, draft.abilityId);
+  const named = draft?.abilityId === undefined ? undefined : abilityName(character, draft.abilityId);
   const free = draft?.freeAbilityId !== undefined;
   const catalyst = draft?.catalystId !== undefined;
   const move = draft === undefined ? undefined
@@ -82,7 +103,7 @@ export function intentBadge(
     : undefined;
 
   const parts: string[] = [];
-  if (slot !== undefined) parts.push(String(slot));
+  if (named !== undefined) parts.push(named);
   else if (move === 'chase') parts.push('Chase');
   else if (move === 'sprint') parts.push('Sprint');
   else if (move === 'move') parts.push('Move');

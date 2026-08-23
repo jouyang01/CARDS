@@ -61,6 +61,7 @@ import { type SkyRamp } from './sky.js';
 import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
 import { browserRenderOnDemand } from './render-flags.js';
+import { easeCamera } from './camera-ease.js';
 
 /** One board square is one world unit; heights are fractions of it. */
 const TILE = 1;
@@ -130,8 +131,6 @@ const DRAG_SLOP = 4;
 const ORBIT_SENSITIVITY = 0.4;
 /** Board-height (in squares) at which billboarded bars are their design size. */
 const BAR_REF_SPAN = 14;
-/** How much of the remaining camera distance the auto-camera closes per frame. */
-const CAMERA_EASE = 0.14;
 /** Fraction of the way to the action the auto-camera pans (1 = centre on it). */
 const AUTO_PAN = 0.35;
 /** The auto-camera never zooms tighter than this fraction of the whole board. */
@@ -1615,15 +1614,26 @@ export function createRenderer(
     return { x: axis(c.x, map.width, halfW), y: axis(c.y, map.height, halfD) };
   };
 
-  /** Ease the live camera one frame toward the auto-camera's target. */
-  const stepCamera = (): void => {
+  /**
+   * Ease the live camera one frame toward the auto-camera's target.
+   *
+   * `delta` is the frame's own duration in seconds, because the ease is
+   * denominated in wall time and not in frames — see `camera-ease.ts` for why
+   * that distinction is the difference between a 1s glide and a 5s one. A
+   * `undefined` result means the camera is already on target, and that is the
+   * only path here that does **not** mark the scene dirty: on an idle board it
+   * is the path taken every frame.
+   */
+  const stepCamera = (delta: number): void => {
     if (orbitOn) return; // the player owns the camera; don't fight them
-    const dx = wantCentre.x - centre.x;
-    const dy = wantCentre.y - centre.y;
-    const ds = wantSpan - span;
-    if (Math.abs(dx) < 0.002 && Math.abs(dy) < 0.002 && Math.abs(ds) < 0.002) return;
-    centre = { x: centre.x + dx * CAMERA_EASE, y: centre.y + dy * CAMERA_EASE };
-    span += ds * CAMERA_EASE;
+    const next = easeCamera(
+      { x: centre.x, y: centre.y, span },
+      { x: wantCentre.x, y: wantCentre.y, span: wantSpan },
+      delta,
+    );
+    if (next === undefined) return;
+    centre = { x: next.x, y: next.y };
+    span = next.span;
     applyCamera();
   };
 
@@ -1740,6 +1750,7 @@ export function createRenderer(
     }
 
     stepCamera();
+    stepCamera(delta);
     billboard();
     renderer.render(scene, camera);
     // After the camera has moved, so anything DOM-anchored to a world position
