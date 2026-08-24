@@ -43,6 +43,7 @@ import {
   PlaneGeometry,
   Raycaster,
   Scene,
+  Path,
   Shape,
   ShapeGeometry,
   Vector2,
@@ -810,6 +811,17 @@ export interface Renderer {
    * each family in its own group so they can carry their own colour.
    */
   drawShape(outlines: readonly (readonly Vec2[])[], color: number, opacity?: number, layer?: ShapeLayer): void;
+  /**
+   * Per-ability auras: outlines that each carry their OWN colour and fade.
+   *
+   * Separate from `drawShape` because a shape layer is one colour and one
+   * opacity for the whole draw, which is exactly what a footprint wants and
+   * exactly what an aura cannot use — a ring's whole job is to fade, and two
+   * characters acting in one phase are two different palettes on screen at
+   * once. Replaces the layer wholesale, like every other draw here; empty
+   * clears it.
+   */
+  drawAuras(auras: readonly { outline: readonly Vec2[]; hole?: readonly Vec2[]; color: number; opacity: number }[]): void;
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
@@ -1385,7 +1397,7 @@ export function createRenderer(
     g.add(marker);
   };
 
-  const drawOneShape = (g: Group, outline: readonly Vec2[], color: number, opacity: number, lift = SHAPE_LIFT): void => {
+  const drawOneShape = (g: Group, outline: readonly Vec2[], color: number, opacity: number, lift = SHAPE_LIFT, hole?: readonly Vec2[]): void => {
     if (outline.length < 3) return;
     const shape = new Shape();
     outline.forEach((p, i) => {
@@ -1394,6 +1406,20 @@ export function createRenderer(
       else shape.lineTo(w.x, w.z);
     });
     shape.closePath();
+    // A real hole, not a keyhole. Tracing the inner circle back along the same
+    // outline and hoping the triangulator reads it as an annulus does not work
+    // — ear clipping fills it straight in, and the "ring" comes out a disc.
+    // `Shape.holes` is what Three provides for exactly this.
+    if (hole !== undefined && hole.length >= 3) {
+      const path = new Path();
+      hole.forEach((p, i) => {
+        const w = squareToWorldXZ(map, p);
+        if (i === 0) path.moveTo(w.x, w.z);
+        else path.lineTo(w.x, w.z);
+      });
+      path.closePath();
+      shape.holes.push(path);
+    }
     const mesh = new Mesh(
       new ShapeGeometry(shape),
       new MeshBasicMaterial({ color, transparent: true, opacity, side: DoubleSide, depthWrite: false }),
@@ -2278,6 +2304,14 @@ export function createRenderer(
       for (const route of routes) strokeRoute(g, route, color, dashed);
     },
 
+    drawAuras(auras) {
+      const g = layerGroup('aura');
+      disposeChildren(g);
+      // At the tracer's height rather than the floor's: an aura is something a
+      // unit gives off, and on the ground it reads as a decal on the tile.
+      for (const a of auras) drawOneShape(g, a.outline, a.color, a.opacity, TRACER_LIFT, a.hole);
+    },
+
     drawShape(outlines, color, opacity = 0.18, layer = 'shape') {
       const g = layerGroup(layer);
       disposeChildren(g);
@@ -2371,7 +2405,7 @@ export function createRenderer(
   const MUTATORS = [
     'show', 'highlight', 'drawPath', 'drawPaths', 'drawShape',
     'setProjection', 'lookAt', 'fitBoard', 'focusOn', 'resize', 'setSafeInsets',
-    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing',
+    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras',
     'setSpotlight', 'setOrbitEnabled', 'preloadCharacters', 'render',
   ] as const satisfies readonly (keyof Renderer)[];
 

@@ -41,6 +41,13 @@ export interface DrawLog {
    * per layer IS that layer's state.
    */
   shapesByLayer: Map<ShapeLayer, Vec2[][]>;
+  /**
+   * The per-ability auras currently on the board — the last `drawAuras` call.
+   *
+   * The layer is replaced wholesale on each draw, so the last call IS the
+   * state, and an empty list means the board is clear of them.
+   */
+  auras: { outline: Vec2[]; color: number; opacity: number }[];
   /** Every animation the app asked for, in order — Phase 8's assertable half. */
   clips: { unitId: string; clip: string; loop: boolean }[];
   /** Each `preloadCharacters` call, as the ids it was given. */
@@ -97,7 +104,7 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
-    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
+    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [],
     board: { units: [], decoys: [], traps: [] },
   };
@@ -178,6 +185,11 @@ export function stubRenderer(): StubRenderer {
       }
     },
     // AIM-PREVIEW-TRUE: a list of outlines per call, one per locus.
+    drawAuras: (auras) => {
+      draw.auras = auras.map((a) => ({
+        outline: a.outline.map((p) => ({ ...p })), color: a.color, opacity: a.opacity,
+      }));
+    },
     drawShape: (outlines, _color, _opacity, layer = 'shape') => {
       for (const outline of outlines) draw.shapes.push(outline.map((p) => ({ ...p })));
       draw.shapesByLayer.set(layer, outlines.map((o) => o.map((p) => ({ ...p }))));

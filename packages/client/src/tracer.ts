@@ -197,9 +197,18 @@ export function tracerQuads(
   cues: readonly Cue[],
   t: number,
   positionOf: (unitId: string) => Vec2 | undefined,
+  /**
+   * Whether this ability draws a streak at all. Defaults to yes, so the pure
+   * geometry stays testable without the table; the app passes the real answer
+   * from `data/vfx.json`, which is where "a cone has no projectile" belongs —
+   * see MIN_FLIGHT_TILES, the distance heuristic this replaces for any ability
+   * the table actually covers.
+   */
+  hasTracer: (unitId: string, abilityId: string) => boolean = () => true,
 ): Point[][] {
   const out: Point[][] = [];
   for (const tracer of tracersAt(cues, t)) {
+    if (!hasTracer(tracer.fromUnitId, tracer.abilityId)) continue;
     const from = positionOf(tracer.fromUnitId);
     const to = positionOf(tracer.toUnitId);
     if (from === undefined || to === undefined) continue;
