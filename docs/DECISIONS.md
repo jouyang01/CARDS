@@ -6845,3 +6845,48 @@ is right for anything that hurts somebody and useless for the rest of the kit: W
 the ground and Intercept goes on an ally, and neither offers a number to aim by. `--aim fx,fy` names
 a square outright. Finding a legal one still took five tries — a wall needs a square in range with
 room to stand — which is worth knowing before the next ground-targeted ability gets filmed.
+
+## 2026-08-24 — Session 21 (Builder): terrain props are procedural, and the design half is built
+
+The owner asked whether props could come from Blender+Claude prompting rather than CC0 art kits.
+They can, and it is strictly better here: the characters are already made this way, generated
+geometry carries no licensing or attribution (which *deletes* MAP_PIPELINE risk #1 instead of
+triggering it), and blocky procedural props match the blocky characters. Phase 0 art direction,
+from the owner: Proving Floor is a colosseum — stone pillars where the map has walls, wooden stake
+barricades where it has cover.
+
+Blender is not installed in this remote container, so the work split cleanly: everything that is
+not the Blender run got built and verified here; the one `blender --background` command runs on the
+owner's machine.
+
+**Shipped this session (all verifiable here):**
+- `data/props/proving-floor.json` — the art direction as parameters: a plinth/tapered-fluted-
+  shaft/capital pillar, a four-stake barricade with a crossbar and end posts, both authored in
+  tiles at exactly WALL_HEIGHT / COVER_HEIGHT, with neutral-stone and dark-wood colours chosen
+  under §4's brightness rule.
+- `tools/art/generate_prop.py` — a self-contained Blender generator that builds each role and
+  exports GLB straight from bmesh (no Mixamo, no FBX, no atlas), writing a content-hashed manifest.
+  It deliberately does not reuse the character helpers, whose `add_box`/`add_tube` are welded to the
+  texture atlas; the prop primitives are the same shapes minus that coupling.
+- `prop-placement.ts` + test — the phase-5 "selection is deterministic" rule as a pure module,
+  reusing `grain.ts`'s hash so the board has one source of determinism. Per-tile yaw (quantised by
+  `yawSteps`: 4 for a symmetric pillar, 2 for a fence with a facing) and variant, hashed from
+  `(mapId, x, y)`, never `Math.random()`.
+
+**Judgment call — I dry-ran the Blender geometry without Blender.** I can't run `generate_prop.py`
+here, and a generator that is only "probably right" is how a broken mesh reaches the owner's
+machine and wastes a round trip. So I stubbed `bpy`/`bmesh` and executed the builders against the
+real spec, checking the invariants that actually matter: base exactly at the floor, top exactly at
+the gameplay height, footprint inside a tile. It caught a real bug — the barricade's end posts sat
+half a post-width proud of the footprint, 1.01 tiles wide — before it ever left the repo. The check
+lives in the dry-run and the guarantee is restated in the doc.
+
+**Deliberately deferred — the renderer swap.** Instancing the prop `.glb` in place of the terrain
+box touches the render path every pixel test depends on, and it cannot be *seen* until a real
+`.glb` exists. Doing it blind is the same mistake as tuning a colour by hex without looking. The
+owner runs the generator, commits the `.glb` + manifest, and the swap — fail-soft, gated on the
+manifest, box when absent — gets built and visually verified next session with the asset in hand.
+That is the character pipeline's own staging (§14 "fail-soft with no call site"), not a corner cut.
+
+**Left for the owner beyond the Blender run:** Drained Works has no prop spec — it wants its own
+art direction (riveted bulkheads? concrete blocks?), not a Builder guess.

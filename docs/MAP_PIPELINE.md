@@ -140,6 +140,16 @@ bytes it does not see.
 
 ### Phase 5 — props and set pieces
 
+**Props are procedural, not CC0 kits (owner decision, session 21).** The mechanism is the same
+one the characters use: parametric Blender geometry from a data spec, which the owner runs on a
+machine with Blender. That deletes risk #1 (art licensing/attribution) rather than triggering it —
+generated geometry is wholly owned — and matches the blocky character aesthetic. See
+`ART_PIPELINE.md` §12b for the pipeline; `data/props/<theme>.json` is the spec,
+`tools/art/generate_prop.py` the generator, `prop-placement.ts` the deterministic per-tile
+selection. Proving Floor ships as a colosseum (stone pillars for walls, wooden barricades for
+cover). The **renderer swap** — instancing the prop `.glb` in place of the terrain box, fail-soft —
+is the remaining step, gated on a real asset existing to verify against.
+
 Walls and cover become themed meshes; the space beyond the platform gets a skyline. Two rules:
 
 - **Selection is deterministic** — hashed from `(mapId, x, y)`, never `Math.random()`. Same
