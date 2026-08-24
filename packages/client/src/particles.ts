@@ -47,7 +47,43 @@ export interface ParticleSpec {
   shade: Shade;
 }
 
+/**
+ * An ability that explicitly throws nothing.
+ *
+ * Reachable by writing `"particles": { "count": 0 }` in the table. Kept as a
+ * named value because "this one deals damage and deliberately shows no debris"
+ * is a real design position, and it should be sayable.
+ */
 export const NO_PARTICLES: ParticleSpec = { count: 0, beats: 0, speedTiles: 0, size: 0, shade: 'core' };
+
+/**
+ * What every landed hit throws when the table says nothing.
+ *
+ * **Debris exists because something got hit, not because of who hit it.** That
+ * is the same line the tracer default sits on, and for the same reason: an aura
+ * is a character's identity, so absence should be visible and an unstyled
+ * character gets none; debris is legibility, and "something broke here" is a
+ * fact about the blow rather than about the caster's aesthetic. Defaulting it
+ * off meant Vex railgunning somebody produced a flash, a shake, hitstop and a
+ * tracer — and no debris — while Aegis hitting the same target for the same
+ * damage threw fragments. Same event, different feedback, purely by author.
+ *
+ * What stays per-character is the TINT, not the existence: Aegis's fragments
+ * come out in his pale, sickly green, and a character with no palette yet gets
+ * a neutral one. The table's job is to override this, not to enable it.
+ */
+export const DEFAULT_PARTICLES: ParticleSpec = {
+  count: 11, beats: 0.7, speedTiles: 1.7, size: 0.08, shade: 'core',
+};
+
+/**
+ * Debris for a character with no palette of their own.
+ *
+ * Deliberately a dull, unsaturated grit rather than anything that reads as a
+ * choice. It should look like the absence of a decision — because it is one —
+ * without looking like a bug.
+ */
+export const NEUTRAL_DEBRIS = 0xb9bcc2;
 
 /**
  * Where a burst is thrown from, in tiles above the floor.
@@ -118,19 +154,25 @@ export function burstAt(
 }
 
 const spec = (raw: Partial<ParticleSpec> | undefined): ParticleSpec =>
-  raw === undefined ? NO_PARTICLES : {
-    count: raw.count ?? 10,
-    beats: raw.beats ?? 0.7,
-    speedTiles: raw.speedTiles ?? 1.6,
-    size: raw.size ?? 0.09,
-    shade: raw.shade ?? 'core',
+  raw === undefined ? DEFAULT_PARTICLES : {
+    count: raw.count ?? DEFAULT_PARTICLES.count,
+    beats: raw.beats ?? DEFAULT_PARTICLES.beats,
+    speedTiles: raw.speedTiles ?? DEFAULT_PARTICLES.speedTiles,
+    size: raw.size ?? DEFAULT_PARTICLES.size,
+    shade: raw.shade ?? DEFAULT_PARTICLES.shade,
   };
 
-/** This character's particle spec for an ability, or none. */
+/**
+ * This character's particle spec for an ability.
+ *
+ * Falls back to `DEFAULT_PARTICLES` rather than to nothing — see the note there.
+ * An ability that genuinely wants no debris says so with `count: 0`.
+ */
 export function particlesFor(table: VfxTable, characterId: string, abilityId: string): ParticleSpec {
   const entry = table[characterId]?.abilities[abilityId] as
     { particles?: Partial<ParticleSpec> } | undefined;
-  return entry === undefined ? NO_PARTICLES : spec(entry.particles);
+  if (entry?.particles === undefined) return DEFAULT_PARTICLES;
+  return spec(entry.particles);
 }
 
 /**
@@ -150,16 +192,19 @@ export function particlesAt(
   const out: Particle[] = [];
   for (const cue of cues) {
     if (cue.kind !== 'impact') continue;
+    // The CASTER's character decides the tint, but not whether there is any:
+    // a hit from a unit nothing is known about still broke something.
     const characterId = characterOf(cue.sourceUnitId);
-    if (characterId === undefined) continue;
-    const s = particlesFor(table, characterId, cue.abilityId);
+    const s = characterId === undefined
+      ? DEFAULT_PARTICLES
+      : particlesFor(table, characterId, cue.abilityId);
     if (s.count <= 0) continue;
     const at = positionOf(cue.unitId);
     if (at === undefined) continue;
-    const shade = table[characterId]?.palette[s.shade];
-    if (shade === undefined) continue;
+    const shade = characterId === undefined ? undefined : table[characterId]?.palette[s.shade];
+    const color = shade === undefined ? NEUTRAL_DEBRIS : hexColour(shade);
     out.push(...burstAt(
-      s, at, seedOf(`${cue.unitId}@${cue.t}`), t - cue.t, weightOf(cue.amount), hexColour(shade),
+      s, at, seedOf(`${cue.unitId}@${cue.t}`), t - cue.t, weightOf(cue.amount), color,
     ));
   }
   return out;
