@@ -24,6 +24,9 @@ export interface AssetReport {
   errors: string[];
   total: number;
   characters: CharacterWeight[];
+  /** Total bytes of terrain props (files under `props/`), counted apart from
+   *  characters but still folded into `total`. */
+  props: number;
   /** True when the directory held no files at all — a broken path, not a pass. */
   empty: boolean;
 }
@@ -31,5 +34,5 @@ export interface AssetReport {
 /** Which character a file belongs to: the token before the first `.` or `_`. */
 export function characterOf(name: string): string;
 export function walk(dir: string, prefix?: string): AssetFile[];
-export function weigh(dir: string): { files: AssetFile[]; characters: CharacterWeight[]; total: number };
+export function weigh(dir: string): { files: AssetFile[]; characters: CharacterWeight[]; props: number; total: number };
 export function report(dir: string): AssetReport;

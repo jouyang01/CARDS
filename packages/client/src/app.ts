@@ -32,7 +32,7 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
-import { browserAmbient, browserModels, browserRenderOnDemand } from './render-flags.js';
+import { browserAmbient, browserModels, browserProps, browserRenderOnDemand } from './render-flags.js';
 import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
@@ -683,7 +683,7 @@ export function startHotSeat(
   let boardMemo: Board | undefined;
   const previewBoard = (): Board => (boardMemo ??= buildBoard(map));
 
-  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, paletteFor(map), { ambient: browserAmbient() });
+  const renderer: Renderer = (ui.createRenderer ?? createRenderer)(ui.board, map, paletteFor(map), { ambient: browserAmbient(), props: browserProps() });
   // RENDER-ON-DEMAND: exposed only when opted in, so the claim "an idle board
   // stops drawing" can be measured rather than taken on trust. Not exposed by
   // default — a handle to the renderer on `globalThis` is a diagnostic, not an

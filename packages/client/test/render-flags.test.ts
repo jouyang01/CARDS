@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ambientEnabled, modelsEnabled, renderOnDemand } from '../src/render-flags.js';
+import { ambientEnabled, modelsEnabled, propsEnabled, renderOnDemand } from '../src/render-flags.js';
 
 /**
  * AMBIENT-FREEZE — the guard shipped before the hazard.
@@ -82,6 +82,24 @@ describe('MODEL-FREEZE keeps the board suite on the renderer it was written for'
     // Unlike ambient motion, a character mesh is not decoration; suppressing it
     // for an accessibility preference would remove content, not calm it.
     expect(modelsEnabled({ reducedMotion: true })).toBe(true);
+  });
+});
+
+describe('PROP-FREEZE keeps the pixel tests on plain terrain boxes', () => {
+  it('loads props by default — a player sees the arena', () => {
+    expect(propsEnabled()).toBe(true);
+    expect(propsEnabled({ search: '?map=duel-arena' })).toBe(true);
+  });
+
+  it('honours ?props=off, which the browser suite sets', () => {
+    for (const v of ['off', 'none', '0', 'false', 'OFF']) {
+      expect(propsEnabled({ search: `?props=${v}` }), v).toBe(false);
+    }
+  });
+
+  it('is independent of the models switch — one pipeline may run without the other', () => {
+    expect(propsEnabled({ search: '?models=off' })).toBe(true);
+    expect(modelsEnabled({ search: '?props=off' })).toBe(true);
   });
 });
 
