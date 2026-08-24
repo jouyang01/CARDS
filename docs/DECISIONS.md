@@ -6551,6 +6551,54 @@ The note asked for the character rather than the centroid, and that is what is i
 a player planning for one character wants the other in frame is a real design call and not one to
 make from a test failure.
 
+## 2026-08-23 — Session 19 (Builder): the last two red tests, and a quadratic that had been waiting
+
+Both survivors of CAMERA-CONTROLS are fixed, and neither was the camera's fault in the end — the
+camera only moved the conditions under which two pre-existing weaknesses stopped being survivable.
+
+**The readout drive was passing on an accident.** It aimed each seat's first ability at a fixed
+screen fraction, 0.78 across. The teams spawn **thirteen** squares apart with abilities that reach
+about eight, so no turn-1 shot can cross the map — what was actually happening is that 0.78 landed
+on the *enemy pair's own tiles*, and the log the test then asserted on read "Bastion hit Aegis":
+two units on the same team, catching each other in a blast. Re-aiming the camera at the character
+being planned for made that fraction land nowhere at all; measured, two of the four seats aimed at
+a point `squareFromPoint` resolved to **null**, off the board. So the aim now names a body on
+purpose — the furthest blue body from the frame centre, which under a character-centred camera is
+the teammate, and a teammate two squares away is the one target certainly in range on turn 1. Four
+readouts and two logged hits, deterministically, instead of an accident that held for a while.
+
+**MOVE-SPRINT-FIRST was not hanging on the game.** Driven by hand, the whole flow — arm Sprint,
+order, lock four seats, watch playback, HUD returns — takes **13.9 seconds**. The test was hitting
+its 150s cap before it got there, and the timing said where: `pixels()` 187ms, and
+`blueBodies()` **135,954ms**.
+
+`largestCluster` was quadratic, by a decision its own comment recorded: *"small frames, so the
+quadratic scan is cheaper than building an index."* It also rescanned the whole unvisited set,
+spread into a fresh array, for every point of every blob. That bet was sound while the frames were
+small; centring the camera on a character near a spawn rank brought much more of the team-coloured
+spawn edge into view, the blue point count rose, and the cost went with it. Bucketing the points by
+the neighbour gap so a flood fill only looks at the nine cells around a point takes the same call
+to **331ms** — a 410x difference, on an algorithm nobody had reason to look at until the framing
+changed. The frames were never guaranteed small; they had only been small so far.
+
+**Found and not fixed: `blueBodies` counts furniture.** Measured blob extents on the default 2v2
+board: the two characters are 60x192 and 54x186, and alongside them sit three identical 92x110
+blocks — the spawn-edge markers, which are drawn in the team's own colour and therefore satisfy
+`isTeamBlue`. This is the exact hazard `SCENERY`'s rim comment already records ("a bright arena edge
+lands inside one of those families however its hue is chosen, and then 'team 0's units are on
+screen' is satisfied by the furniture"), arriving from the one direction that was not guarded. It
+weakens BODY-CLICK's premise — `before.length > 1` can be met by markers — without failing anything
+today. The fix is the established one, dimming the markers out of the family, and it is a
+production visual change that should not be made blind at the end of a long session.
+
+**The JS budget: 300 kB -> 350 kB, on the owner's call, chosen rather than rounded.** The original
+300 was "roughly 2x" a 145 kB bundle, with the stated fix on breach being to code-split rather than
+to raise. Honest growth to 235 kB had turned that margin into 1.27x. 350 keeps the guard real
+because the failure it exists to catch has a size: a second copy of `three` is ~145 kB gzipped,
+which from 235 lands at ~380 — over 350, under 400. The budget still fails loudly on the one
+mistake it was built for while leaving 115 kB for deliberate growth. It cannot be raised twice by
+this reasoning; at ~280 kB there is no number that both clears the code and catches a duplicated
+three, and the answer then is the renderer split the original note named.
 ## 2026-08-24 — Builder session 19 (tracers: the shot crossing the gap)
 
 VFX step 2. A hit used to teleport — the ability played, and a beat later the victim flashed, with
