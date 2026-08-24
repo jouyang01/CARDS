@@ -38,6 +38,7 @@ import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { openingFacings, selectFacing, type Facing } from './facing.js';
 import { FLASH_SECONDS, SHAKE_SECONDS, hitstopMs, newImpacts, seedOf, shakeAmplitude } from './vfx.js';
+import { tracerQuads } from './tracer.js';
 import { selectClip } from './character-clips.js';
 import { type Cue } from './choreograph.js';
 import {
@@ -274,6 +275,18 @@ const SELECT = 0xf0f0f0;
 const LOCKED = 0x8fa6c4;
 const IMPACT = 0xffd166;
 /**
+ * TRACERS. Pale and cold on purpose, and deliberately NOT `IMPACT`'s warm amber:
+ * the streak is the thing in the air, the flash is the thing arriving, and two
+ * effects a beat apart in the same colour blur into one long event.
+ *
+ * A placeholder in exactly one sense — it is the same for every ability, which
+ * is what the per-ability VFX table exists to fix. Aegis already carries the
+ * palette that will replace it (`data/art/aegis.json`, `magic.core`), unread by
+ * any code yet.
+ */
+const TRACER = 0xcfe4ff;
+const TRACER_OPACITY = 0.85;
+/**
  * Fog (VISION1). Near-black rather than a tint: unseen board should read as
  * *absence of information*, and any hue would suggest the terrain underneath
  * meant something.
@@ -314,7 +327,11 @@ const PLANNING_LAYERS = [
   'fog', 'camo', 'range', 'reach', 'aim', 'band', 'locked', 'impact', 'free', 'catalyst', 'select',
 ] as const satisfies readonly HighlightLayer[];
 const PLANNING_SHAPE_LAYERS = [
-  'shape', 'shapeBand', 'shapeImpact', 'shapeLocked',
+  // 'tracer' is here so it is CLEARED with the rest, not because planning draws
+  // one. A shape layer is replaced wholesale on every draw, so the last streak
+  // of a resolution would otherwise hang over the board for the whole of the
+  // next planning phase — pointing at where somebody used to be.
+  'shape', 'shapeBand', 'shapeImpact', 'shapeLocked', 'tracer',
 ] as const satisfies readonly ShapeLayer[];
 
 const MOVE_LINE = 0x9fc4ff;
@@ -2464,6 +2481,12 @@ export function startHotSeat(
         applyFrame(sampleFrame(cues, now_t), units, posOf);
         applyClips(cues, now_t, units, msPerBeat / 1000);
         applyFacing(cues, now_t, units);
+        // TRACERS. Redrawn every frame rather than started and left running: the
+        // streak's position IS a function of `now_t`, so a frame is the whole of
+        // its state. That also makes it free under hitstop — a frozen clock
+        // redraws the same quad, so the shot hangs in the air with everything
+        // else instead of sliding on while the world holds still.
+        renderer.drawShape(tracerQuads(cues, now_t, posOf), TRACER, TRACER_OPACITY, 'tracer');
         if (t >= end) return resolve();
         globalThis.requestAnimationFrame(tick);
       };

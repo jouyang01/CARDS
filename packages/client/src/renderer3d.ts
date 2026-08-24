@@ -276,7 +276,7 @@ export type PathLayer = 'path' | 'catalystPath' | 'guardPath' | 'teamPath';
  * a dash's impact disc — each a locus of its own engine predicate, so each is
  * drawn rather than left for the eye to infer from a tile wash.
  */
-export type ShapeLayer = 'shape' | 'shapeBand' | 'shapeImpact' | 'shapeLocked';
+export type ShapeLayer = 'shape' | 'shapeBand' | 'shapeImpact' | 'shapeLocked' | 'tracer';
 
 /**
  * Terrain heights. Brush is the only *walkable* terrain with a body, which makes
@@ -546,6 +546,15 @@ const TRAP_LIFT = LAYER_LIFT.select - 0.001;
 export const PAD_LIFT = LAYER_LIFT.camo + 0.001;
 /** UI2's continuous shape sits just above the covered tiles it explains. */
 export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
+/**
+ * Height a tracer flies at, in world units.
+ *
+ * Roughly the chest of a unit sized to `MODEL_HEIGHT_TILES`, so a streak leaves
+ * and arrives at about the height of the things it connects. Not the head:
+ * shots that pass a bystander should read as passing them, and a line level with
+ * everyone's eyes reads as hitting all of them.
+ */
+export const TRACER_LIFT = TILE * MODEL_HEIGHT_TILES * 0.55;
 
 /**
  * A decoy, as one viewer should see it (DECOY-RENDER). `asEnemy` decides the
@@ -1376,7 +1385,7 @@ export function createRenderer(
     g.add(marker);
   };
 
-  const drawOneShape = (g: Group, outline: readonly Vec2[], color: number, opacity: number): void => {
+  const drawOneShape = (g: Group, outline: readonly Vec2[], color: number, opacity: number, lift = SHAPE_LIFT): void => {
     if (outline.length < 3) return;
     const shape = new Shape();
     outline.forEach((p, i) => {
@@ -1390,7 +1399,7 @@ export function createRenderer(
       new MeshBasicMaterial({ color, transparent: true, opacity, side: DoubleSide, depthWrite: false }),
     );
     mesh.rotation.x = Math.PI / 2; // XY plane -> ground plane
-    mesh.position.y = SHAPE_LIFT;
+    mesh.position.y = lift;
     g.add(mesh);
   };
 
@@ -2272,7 +2281,14 @@ export function createRenderer(
     drawShape(outlines, color, opacity = 0.18, layer = 'shape') {
       const g = layerGroup(layer);
       disposeChildren(g);
-      for (const outline of outlines) drawOneShape(g, outline, color, opacity);
+      // TRACER-LIFT: a shot crosses the board at chest height, not along the
+      // floor. Every other shape layer is a footprint — an AoE, a band, a locked
+      // aim — and belongs flat on the ground where the squares it names are. A
+      // tracer is the one that describes something in the air, and left at
+      // `SHAPE_LIFT` it runs under the feet of both the unit that fired it and
+      // the one it hits, which reads as a scorch mark rather than as travel.
+      const lift = layer === 'tracer' ? TRACER_LIFT : SHAPE_LIFT;
+      for (const outline of outlines) drawOneShape(g, outline, color, opacity, lift);
     },
 
     onFrame(cb) {
