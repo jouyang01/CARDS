@@ -34,9 +34,9 @@ const phaseOrder = (events: TurnEvent[]) => events.filter((e) => e.type === 'pha
 describe('loading real characters', () => {
   it('createInitialState places each character at its spawn with full HP', () => {
     const state = createInitialState(ARENA, VEX, BASTION);
-    expect(unit(state, 'vex-0').pos).toEqual({ x: 2, y: 6 });
+    expect(unit(state, 'vex-0').pos).toEqual({ x: 1, y: 4 });
     expect(unit(state, 'vex-0').hp).toBe(VEX.maxHp);
-    expect(unit(state, 'bastion-0').pos).toEqual({ x: 15, y: 6 });
+    expect(unit(state, 'bastion-0').pos).toEqual({ x: 15, y: 4 });
     expect(unit(state, 'bastion-0').hp).toBe(BASTION.maxHp);
   });
 });
@@ -132,7 +132,7 @@ describe('a full scripted Vex-vs-Bastion match on the real arena', () => {
       team: 0,
       units: [
         t === 0
-          ? { unitId: 'vex-0', sprint: true, movePath: [{ x: 2, y: 7 }, { x: 2, y: 6 }, { x: 2, y: 5 }] }
+          ? { unitId: 'vex-0', sprint: true, movePath: [{ x: 1, y: 5 }, { x: 2, y: 5 }, { x: 3, y: 5 }] }
           : t % 3 === 1
             ? { unitId: 'vex-0', ability: { abilityId: 'frag_grenade', target: [{ x: 7, y: 5 }] } }
             : { unitId: 'vex-0', ability: { abilityId: 'overwatch_trap', target: [{ x: 3, y: 5 }] } },
@@ -142,7 +142,7 @@ describe('a full scripted Vex-vs-Bastion match on the real arena', () => {
       team: 1,
       units: [
         t === 0
-          ? { unitId: 'bastion-0', sprint: true, movePath: [{ x: 12, y: 7 }, { x: 12, y: 6 }, { x: 12, y: 5 }] }
+          ? { unitId: 'bastion-0', sprint: true, movePath: [{ x: 15, y: 5 }, { x: 14, y: 5 }, { x: 13, y: 5 }] }
           : { unitId: 'bastion-0', ability: { abilityId: 'bulwark', target: [] } },
       ],
     });

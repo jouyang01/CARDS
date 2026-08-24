@@ -7011,3 +7011,36 @@ every saturated UI family §4 guards without being dim.
 **Still Proving Floor's, not done:** the spectator tiers / skyline beyond the platform (the other
 half of phase 5's "set pieces") are a backdrop, not tile props, and a larger separate piece. And
 Drained Works still has no prop spec — its own art direction first.
+
+## 2026-08-24 — Proving Grounds: duel-arena rebuilt as a dedicated 2v2 map
+
+**duel-arena is now a purpose-built 2v2 map, renamed "Proving Grounds" (id unchanged).**
+The old board was a 4v4-sized stadium (18×15, 68 tiles/unit at 2v2) hosting a four-unit
+duel, with two full-width sniper alleys (rows 5 and 9 ran clear the whole 18 wide) and its
+health/energy pads parked in the dead outer thirds that 2v2 units never enter. It has been
+rebuilt at **17×11 (47 tiles/unit)** with **two spawns a side**, so it now hosts **1v1/2v2
+only**; iron-basin owns 4v4. `formatsSupportedByMap` reflects this, and the client's
+create-screen already filters formats per map, so no host can pick 4v4 on it.
+
+**The map is 180° rotationally symmetric, not left-right mirror.** The owner asked for an
+organic, less mechanical board, and rotational symmetry is what lets top-left differ from
+top-right while staying provably fair — team-vs-team, each team faces the 180° twin of what
+the other faces. This changed the `content.test.ts` fairness invariant from "left-right
+mirror" to "180° rotational" for terrain and spawns (both shipped maps pass; iron-basin is
+4-fold). Pads stay on the **mirror** check: Proving Grounds' three pads sit on the centre
+column (health 8,1 · might 8,5 · energy 8,9), equidistant to both teams, and a centre-column
+pad is trivially mirror-symmetric even though rotation would map health↔energy.
+
+**Shape.** A central wall **pinwheel** around the Might pad with walkable **brush** at its
+core (concealment, not cover — you hold the centre hidden, not armoured); cover fused to the
+spawn approaches plus free-standing step-out posts by each spawn; offset "teeth" that keep
+the longest clear firing lane to 10 (was 18) without a mechanical comb; and the dead outer
+retreat column trimmed to one. Separation stays 14 (the roster turn-1-threat guard is
+derived, and passes), with a true centre tile for the equidistant Might.
+
+**Verification.** Beyond the repo validators (validateMap clean, MAP-CAPS runs under
+5/4/3, SHADOW-ROW clear — the energy pad's edge-cap wall was offset off the pad column to
+clear it), every candidate was run through a scratch reimplementation of the movement/LoS
+rules checking rotational symmetry, dead-pocket reachability, per-row clear runs, and
+spawn-shot safety. Coordinate-coupled tests (board, vision, real-characters, spawns,
+content, and four client lobby tests that assumed duel-arena seated 4v4) were re-pointed.

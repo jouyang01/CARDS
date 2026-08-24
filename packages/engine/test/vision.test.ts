@@ -175,16 +175,16 @@ describe('hasLineOfSight — symmetry', () => {
     expect(tally).toMatchObject({ clear: 1403, blocked: 998 });
   });
 
-  it('is mutual across the shipped Duel Arena', () => {
+  it('is mutual across the shipped Proving Grounds', () => {
     const probes: Vec2[] = [
-      { x: 2, y: 6 }, // team 0 spawn
-      { x: 15, y: 6 }, // team 1 spawn
-      { x: 8, y: 7 }, // inside the central strongpoint
-      { x: 8, y: 1 }, // north brush corridor
-      { x: 0, y: 6 },
-      { x: 17, y: 8 },
-      { x: 4, y: 3 },
-      { x: 10, y: 11 },
+      { x: 1, y: 4 }, // team 0 spawn
+      { x: 15, y: 4 }, // team 1 spawn
+      { x: 8, y: 5 }, // centre Might pad
+      { x: 8, y: 1 }, // north Health pad
+      { x: 0, y: 5 },
+      { x: 16, y: 6 },
+      { x: 3, y: 4 }, // step-out cover
+      { x: 9, y: 9 }, // south brush corridor
     ];
     const tally = sweep(duelArena as unknown as MapDef, probes);
     expect(tally.asymmetric).toBe(0);
@@ -196,11 +196,11 @@ describe('hasLineOfSight — symmetry', () => {
 
   it('the central walls break the spawn-to-spawn sightline', () => {
     const board = buildBoard(duelArena as unknown as MapDef);
-    // M1: spawns face each other down row 6 (and row 8), broken by the
-    // sightline-breaker walls at 5,6 / 12,6. The central strongpoint at
-    // 7..10,6 is *cover*, which by design does not block sight.
-    expect(hasLineOfSight(board, { x: 2, y: 6 }, { x: 15, y: 6 })).toBe(false);
-    expect(hasLineOfSight(board, { x: 2, y: 8 }, { x: 15, y: 8 })).toBe(false);
+    // M1: the 2v2 spawns face each other head-on down rows 4 and 6, broken by
+    // the pinwheel walls at (10,4) and (6,6). The brush and cover around the
+    // Might pad do not block sight — only walls do.
+    expect(hasLineOfSight(board, { x: 1, y: 4 }, { x: 15, y: 4 })).toBe(false);
+    expect(hasLineOfSight(board, { x: 1, y: 6 }, { x: 15, y: 6 })).toBe(false);
   });
 });
 

@@ -73,9 +73,9 @@ describe('MAPTOGGLE: the URL picks the match', () => {
   });
 
   it('rejects a format the chosen map cannot seat', () => {
-    // Both shipped maps happen to carry four spawn squares per team, so this
-    // needs a map that does not — the check is worth having precisely because
-    // the next map added might forget.
+    // A synthetic one-spawn map makes the point without leaning on the shipped
+    // content: duel-arena already refuses 4v4, but the check is worth having
+    // precisely because the next map added might forget.
     const cramped: MapDef = {
       id: 'cramped', name: 'Cramped', width: 9, height: 9, walls: [], cover: [], brush: [],
       spawns: [[{ x: 1, y: 4 }], [{ x: 7, y: 4 }]],
@@ -86,8 +86,11 @@ describe('MAPTOGGLE: the URL picks the match', () => {
     expect('setup' in parseSetup('?map=cramped&format=1v1', [cramped], CATALOG)).toBe(true);
   });
 
-  it('4v4 works on duel-arena too — both shipped maps seat four a side', () => {
-    expect(setupFor('?format=4v4').map.id).toBe('duel-arena');
+  it('duel-arena is a dedicated 2v2 map — 4v4 must name iron-basin', () => {
+    // Proving Grounds (duel-arena) carries two spawns a side now, so the default
+    // map refuses 4v4 and the host has to pick the map that owns it.
+    expect(errorsFor('?format=4v4').join(' ')).toMatch(/needs 4 for 4v4/);
+    expect(setupFor('?map=iron-basin&format=4v4').map.id).toBe('iron-basin');
   });
 
   it('reports every problem at once rather than the first', () => {
