@@ -6471,3 +6471,74 @@ in one column and both stay visible, but that is a fact about those spawns rathe
 The note asked for the character rather than the centroid, and that is what is implemented; whether
 a player planning for one character wants the other in frame is a real design call and not one to
 make from a test failure.
+
+---
+
+## 2026-08-23 — Builder session 16 (RENDER-SUITE-GREEN-2)
+
+**CAMERA-CONTROLS was built twice, and this branch is not the copy that shipped.** A parallel
+session implemented it as `eb48811` and it reached `main` through PR #146 while this branch was
+building its own. Merging `main` in produced files that no longer parsed — two independent
+implementations of the same feature interleaved into the same declarations with no conflict
+markers, which is the one merge failure git cannot flag. The resolution was to take `main`'s
+implementation wholesale and drop this branch's: `main` is the source of truth, its version is
+complete (and carries a `hold: 'frame' | 'centre'` mode this one lacked), and it covers the
+"recentre affordance" by making the existing view button double as recentre while panned rather
+than adding a button. Re-litigating a merged feature in an unrelated PR would be the worse error.
+**The process finding is the useful one: two sessions took the same top-priority item off the
+backlog at the same time, and neither could see the other.** That is the Analyzer's to solve, not
+the Builder's — recorded here because the cost was a full session's work.
+
+**RENDER-SUITE-GREEN-2 — `same()` is kept and narrowed, not replaced.** The measurement behind
+the old doc comment (~2,674 of ~205,000 pixels differing on an untouched board, deterministic and
+input-independent) was taken under the always-draw loop. RENDER-ON-DEMAND fixed that at the
+source: a board with nothing to draw does not draw, so a still scene is byte-identical again. But
+that is a property of the render loop, not of the assertion, so the split is by **what is being
+claimed**: a claim about the whole scene (it animated, the orbit moved it, it held still) is
+byte-equality's, and a claim about one overlay is `aimPatch`'s centroid. Comparing frames for an
+overlay asks 205k pixels a question about a few thousand and answers it with whatever else moved —
+which is how UI1-fix came to accuse the aim of following the pointer when it was not. `main`'s own
+comment on `same()` called for exactly this and called it "a re-spec, not a repair"; this is that
+re-spec.
+
+**AMBIENT-FREEZE's guard is a real test for the first time.** It could not have worked before:
+under the always-draw loop "the scene is still" and "the scene is moving" were both "different", so
+a guard built to catch the first piece of ambient motion would have fired on the bare board. It now
+asserts that a settled board with ambient off draws the same frame twice, and the first moving prop
+(MAP_PIPELINE phase 5) will break it unless it is gated on the flag — which is the entire point.
+
+**Judgment call — FOG-ZORDER's coarse floor is restored, and the fix is in the search.** Both
+copies of this test hit the same failure and diagnosed it differently. `main` read it as the
+denominator growing under a reframed camera and dropped the floor from a quarter of visible brush
+(1742 px) to an absolute 200. The measured cause is narrower: the sweep stopped at the first
+candidate that landed *any* aim-orange, which froze `bestCovered` at whatever that one ability had
+washed. Rail Shot is a line — 1355 covered on its first hover — while the Frag Grenade behind it
+washes 4423 of 6970 (63%, comfortably clear) and was never reached. So the fraction was never the
+problem; the search was. Sweeping until *both* floors are met keeps a floor that a real z-order
+regression (which puts the number at zero) still trips, at roughly nine times the strength of an
+absolute 200.
+
+**Judgment call — `main`'s ratio assertion is kept, but measured per frame.** `bestAimed /
+bestCovered` divides two independent maxima that can come from different abilities and different
+hovers, so it only looked like a ratio. Tracking the best *within-frame* share instead makes it the
+framing-independent check it was meant to be, and it is the sharpest of the three: FOG-ZORDER drives
+it to zero however the board is pointed.
+
+## Open Questions for the Analyzer — 2026-08-23
+
+**1. Two sessions built CAMERA-CONTROLS simultaneously.** Nothing in the workflow prevented it and
+nothing surfaced it until a merge produced unparseable files. Worth a mechanism — an in-progress
+marker in `BACKLOG.md`, or assigning items per session — before it happens on an engine item, where
+the merge would be silent rather than syntactic.
+
+**2. `main`'s FOG-ZORDER floor was weakened to 200 and this PR restores it.** If the Analyzer
+prefers the absolute floor, this is the place to say so; the two are not compatible and the stronger
+one is now in the branch. Flagging it because it edits a test another session had already "fixed".
+
+**3. Three `same()` callers remain, and they now rest on an unwritten invariant.** The ambient guard
+and the two motion assertions all depend on RENDER-ON-DEMAND holding a settled board byte-identical.
+That is true today and measured, but it is not an invariant anybody has named, and the first missed
+`markDirty()` turns those three into confusing failures rather than clear ones. `?render=always` is
+the diagnostic; whether the invariant deserves its own test is the Analyzer's call.
+
+**4. No engine work this session, as instructed.** Every change is in `packages/client`.
