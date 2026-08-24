@@ -45,6 +45,15 @@ const ABILITY = arg('ability', '');
  * a damage number to aim by, so filming them needs a square named outright.
  */
 const AIM = arg('aim', '');
+/**
+ * What the target sweep looks for: `damage` (the default) or `any` preview.
+ *
+ * An ability that hurts somebody offers a damage number, which is a precise
+ * thing to hunt for. An ally-targeted one — Intercept, Barrier Pulse — offers a
+ * shield or a heal instead, and hunting for damage sweeps the whole board and
+ * finds nothing.
+ */
+const TARGET = arg('target', 'damage');
 const OUT = arg('out', 'film');
 const STEP_MS = 1000 / FPS;
 
@@ -66,7 +75,7 @@ const STEP_MS = 1000 / FPS;
  * tile centres are not on any screen-space lattice we could compute here.
  */
 const findTarget = async (page, box, steps = 11) => {
-  const damage = page.locator('.readout.preview.damage');
+  const damage = page.locator(TARGET === 'any' ? '.readout.preview' : '.readout.preview.damage');
   for (let row = 1; row < steps; row++) {
     for (let col = 1; col < steps; col++) {
       const x = box.x + (box.width * col) / steps;

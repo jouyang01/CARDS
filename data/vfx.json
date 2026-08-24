@@ -12,7 +12,8 @@
       "shield_bash": {
         "_comment": "A cone at range 2. Nothing flies; the door does the work. All of the effect is at the far end.",
         "tracer": "none",
-        "impact": { "kind": "ring", "beats": 0.75, "radiusTiles": 1.7, "shade": "core" }
+        "impact": { "kind": "ring", "beats": 0.75, "radiusTiles": 1.7, "shade": "core" },
+        "particles": { "count": 14, "beats": 0.8, "speedTiles": 2.0, "size": 0.085, "shade": "core" }
       },
       "barrier_pulse": {
         "_comment": "He pushes it out of himself and it lands on someone else — so both ends show, and the near end is the effortful one.",
@@ -35,7 +36,8 @@
         "_comment": "The ultimate. Bigger and slower than anything else he does, because it is the one time the effort pays off.",
         "tracer": "none",
         "cast": { "kind": "ring", "beats": 1.4, "radiusTiles": 2.6, "shade": "core" },
-        "impact": { "kind": "ring", "beats": 0.85, "radiusTiles": 1.8, "shade": "edge" }
+        "impact": { "kind": "ring", "beats": 0.85, "radiusTiles": 1.8, "shade": "edge" },
+        "particles": { "count": 22, "beats": 1.0, "speedTiles": 2.6, "size": 0.1, "shade": "edge" }
       }
     }
   }

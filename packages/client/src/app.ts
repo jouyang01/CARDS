@@ -41,6 +41,7 @@ import { FLASH_SECONDS, SHAKE_SECONDS, hitstopMs, newImpacts, seedOf, shakeAmpli
 import { tracerQuads } from './tracer.js';
 import { aurasAt, vfxFor, type VfxTable } from './ability-vfx.js';
 import { panelsFromCues, panelsFromTraps } from './wall.js';
+import { particlesAt } from './particles.js';
 import vfxTable from '../../../data/vfx.json';
 import { selectClip } from './character-clips.js';
 import { type Cue } from './choreograph.js';
@@ -1238,6 +1239,7 @@ export function startHotSeat(
     // Auras live on their own layer, so they need clearing with the rest or the
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
+    renderer.drawParticles([]);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     paintFog(currentSeat()?.team ?? 0);
@@ -2396,6 +2398,7 @@ export function startHotSeat(
     // Auras live on their own layer, so they need clearing with the rest or the
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
+    renderer.drawParticles([]);
     renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
 
     let skipped = false;
@@ -2526,6 +2529,10 @@ export function startHotSeat(
         // traps carry it (see `paintWalls`); during playback they do not, because
         // `trapPlaced` does not name the ability that placed it.
         renderer.drawWalls(panelsFromCues(cues, now_t), WALL, WALL_OPACITY);
+        // IMPACT PARTICLES. Per frame like the rest: a fragment's position is a
+        // function of `now_t`, so hitstop holds the debris in the air with
+        // everything else rather than letting it run on through the freeze.
+        renderer.drawParticles(particlesAt(cues, now_t, VFX, characterOf, posOf));
         if (t >= end) return resolve();
         globalThis.requestAnimationFrame(tick);
       };
@@ -2723,6 +2730,7 @@ export function startHotSeat(
     // Auras live on their own layer, so they need clearing with the rest or the
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
+    renderer.drawParticles([]);
     renderer.setSpotlight(null);
     renderer.fitBoard();
     stopTimer();

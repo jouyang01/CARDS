@@ -6845,3 +6845,41 @@ is right for anything that hurts somebody and useless for the rest of the kit: W
 the ground and Intercept goes on an ally, and neither offers a number to aim by. `--aim fx,fy` names
 a square outright. Finding a legal one still took five tries — a wall needs a square in range with
 room to stand — which is worth knowing before the next ground-targeted ability gets filmed.
+
+## 2026-08-24 — Builder session 22 (impact particles: the last of the four)
+
+VFX step 4, and the impact vocabulary is now complete. Hitstop says a hit had *force*, the flash
+says *who* took it, the shake says the room felt it — and none of them says anything left the body.
+Debris does.
+
+**Seeded by the impact's own key, so all four effects of one hit are siblings.** `${unitId}@${t}` is
+the same seed the flash and the shake already use. No `Math.random` anywhere near presentation: the
+same replay throws the same debris on every machine, which is what lets the film harness photograph
+it and what keeps two clients watching one turn from disagreeing about what they saw.
+
+**A second round of hashing per fragment, and it is load-bearing.** Consecutive particle indices
+differ in one bit, and multiplying the seed by them directly leaves neighbouring fragments launching
+at nearly the same angle — a burst that comes out as a *comb* of near-parallel streaks rather than a
+spray. `BURST-NOT-A-COMB` pins it: no two adjacent directions within a degree.
+
+**Count and reach scale with damage, and never reach zero.** A hit fully absorbed by a shield still
+throws one fragment: that is the shield doing its job, not nothing happening — the same reasoning
+`hitstopMs` already applies to a zero-damage event.
+
+**Impacts only, not benefits.** A heal or a shield landing breaks nothing, and the ring the aura
+throws is the right vocabulary for something beneficial arriving. Debris is specifically the
+language of damage.
+
+**Billboarded, like the health bars.** A flat quad on the ground is a decal; debris in the air has
+to face the viewer or it vanishes edge-on at exactly the moment it is highest. Set per frame rather
+than in `billboard()` because the layer is rebuilt every frame anyway — there is nothing persistent
+to keep turning.
+
+**Filmed and isolated against a stubbed build**: debris appears at f052, peaks at ~1,050 differing
+pixels around f060, and is gone by f066 — a burst that arrives, arcs and lands.
+
+**The blink is still unfilmed, and now I know why it cannot be.** The harness finds targets by
+sweeping for a preview readout; `--target any` was added for the ally-targeted case, and Intercept
+offers **no preview at all** — not damage, not shield, not heal — so there is nothing to sweep for.
+Worth recording that the owner has watched the blink in the running game and called it good, which
+is better evidence than the harness would produce; the gap is in the automation, not the feature.
