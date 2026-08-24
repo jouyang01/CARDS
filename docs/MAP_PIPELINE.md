@@ -266,9 +266,14 @@ touches `packages/engine`, so the ask is to the *renderer*, not the simulation.
 
 ## 7. First steps
 
-1. Phase 5's first ambient element — the freeze hook is in place, so this is now safe to attempt.
-   Start with one thing (a drifting sky, a pulsing emissive) and confirm the browser suite stays
-   green with `?ambient=off` before adding a second.
+1. ~~Phase 5's first ambient element~~ **— done (session 20).** The pulsing emissive: the arena
+   rim breathes on wall time, in `ambient-motion.ts` (pure curve + Vitest) driven from the
+   renderer's loop. It was safe to ship because the pulse's lit extreme is *exactly* the static
+   rim the pixel tests already accept — it only dips darker and returns — and it is gated on
+   `ambientOn`, so `?ambient=off` (every browser test, and reduced-motion viewers) freezes it
+   byte-identical to a static rim. The 36-test browser suite stays green. **Next ambient element:
+   add one more thing, not two** — a drifting sky is the natural second, and it needs the same
+   "never brighter than the tested static value" discipline against `onAnyRamp`'s ±5 tolerance.
 2. Phase 4 is no longer a decision point of its own now that the loader exists —
    but **ASSET-WEIGHT-BUDGET should land before terrain starts shipping bytes too**, since a
    second pipeline feeding an unwatched directory is how that gap turns into a regression
