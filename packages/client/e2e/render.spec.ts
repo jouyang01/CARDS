@@ -412,7 +412,11 @@ test('a resolved turn animates, logs both ends, and floats a readout', async ({ 
     new MutationObserver((records) => {
       for (const record of records) {
         for (const node of record.addedNodes) {
-          if (node instanceof Element && node.classList.contains('readout')) seen.count += 1;
+          // `:not(.preview)`: a plan-time preview number carries the same
+          // `readout` class, and this assertion is about what RESOLUTION drew.
+          // The observer starts after previews are cleared, so counting them
+          // would not fail today — it would just stop meaning what it says.
+          if (node instanceof Element && node.matches('.readout:not(.preview)')) seen.count += 1;
         }
       }
     }).observe(document.body, { childList: true, subtree: true });

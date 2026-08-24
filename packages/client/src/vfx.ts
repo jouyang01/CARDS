@@ -63,8 +63,18 @@ export function hitstopMs(amount: number): number {
   return Math.round(HITSTOP_MIN_MS + (HITSTOP_MAX_MS - HITSTOP_MIN_MS) * weight(amount));
 }
 
-/** Seconds the victim stays lit. Constant: a flash is a flash. */
-export const FLASH_SECONDS = 0.08;
+/**
+ * Seconds the victim stays lit. Constant: a flash is a flash — it says "this
+ * unit is the one that got hit", and that sentence is the same length whoever
+ * threw the punch.
+ *
+ * Raised from 0.08s on the owner's read of it in the running game: five frames
+ * at 60fps is long enough to register only if you already know to look, and the
+ * whole job of the flash is to catch an eye that is somewhere else on the board.
+ * At 0.18s it is ~11 frames — still an event rather than a glow, and still well
+ * inside a beat, so a four-shooter Blast reads as four distinct hits.
+ */
+export const FLASH_SECONDS = 0.18;
 
 export const SHAKE_SECONDS = 0.12;
 /** Peak camera displacement for a reference hit, in world units (tiles). */
