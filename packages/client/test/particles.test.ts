@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BURST_LIFT, NO_PARTICLES, burstAt, particlesAt, particlesFor, weightOf,
-  type ParticleSpec,
+  BURST_LIFT, DEFAULT_PARTICLES, NEUTRAL_DEBRIS, NO_PARTICLES, burstAt, particlesAt, particlesFor,
+  weightOf, type ParticleSpec,
 } from '../src/particles.js';
 import { type VfxTable } from '../src/ability-vfx.js';
 import type { Cue } from '../src/choreograph.js';
@@ -113,12 +113,25 @@ describe('particlesFor', () => {
     expect(particlesFor(VFX, 'aegis', 'shield_bash').count).toBeGreaterThan(0);
   });
 
-  it('PARTICLES-UNSTYLED: a character with no entry throws none', () => {
-    expect(particlesFor(VFX, 'vex', 'rail_shot')).toEqual(NO_PARTICLES);
+  it('PARTICLES-UNSTYLED-STILL-THROWS: debris exists because something got hit', () => {
+    // Not because of WHO hit it. Defaulting this off meant Vex railgunning
+    // somebody produced a flash, a shake, hitstop and a tracer — and no debris —
+    // while Aegis hitting the same target for the same damage threw fragments.
+    expect(particlesFor(VFX, 'vex', 'rail_shot')).toEqual(DEFAULT_PARTICLES);
+    expect(particlesFor(VFX, 'nobody', 'nothing').count).toBeGreaterThan(0);
   });
 
-  it('PARTICLES-OPT-IN: an ability that does not ask for them gets none', () => {
-    expect(particlesFor(VFX, 'aegis', 'intercept').count).toBe(0);
+  it('PARTICLES-OVERRIDE: the table raises the default rather than enabling it', () => {
+    expect(particlesFor(VFX, 'aegis', 'shield_bash').count)
+      .toBeGreaterThan(DEFAULT_PARTICLES.count);
+  });
+
+  it('PARTICLES-EXPLICIT-NONE: an ability CAN say it throws nothing', () => {
+    // "This one deals damage and deliberately shows no debris" is a real design
+    // position and has to stay sayable now that the default is on.
+    const table = { x: { palette: VFX['aegis']!.palette, warmthForbidden: true,
+      abilities: { quiet: { particles: { count: 0 } } } } } as unknown as VfxTable;
+    expect(particlesFor(table, 'x', 'quiet').count).toBe(0);
   });
 });
 
@@ -144,8 +157,28 @@ describe('particlesAt', () => {
     expect(particlesAt([benefit(0, 'v', 'a', 'barrier_pulse')], 0.2, VFX, asAegis, places)).toEqual([]);
   });
 
-  it('AT-UNSTYLED: an ability with no particle spec throws none', () => {
-    expect(particlesAt([impact(0, 'v', 'a', 'intercept')], 0.2, VFX, asAegis, places)).toEqual([]);
+  it('AT-ANY-ATTACKER: a hit from an unstyled character throws debris too', () => {
+    const asVex = (): string => 'vex';
+    expect(particlesAt([impact(0, 'v', 'a', 'rail_shot')], 0.2, VFX, asVex, places).length)
+      .toBeGreaterThan(0);
+  });
+
+  it('AT-NEUTRAL-TINT: and in a neutral grit, since they have no palette yet', () => {
+    const asVex = (): string => 'vex';
+    for (const p of particlesAt([impact(0, 'v', 'a', 'rail_shot')], 0.2, VFX, asVex, places)) {
+      expect(p.color).toBe(NEUTRAL_DEBRIS);
+    }
+  });
+
+  it('AT-UNKNOWN-ATTACKER: a hit from a unit nothing is known about still broke something', () => {
+    expect(particlesAt([impact(0, 'v', 'a', 'whatever')], 0.2, VFX, () => undefined, places).length)
+      .toBeGreaterThan(0);
+  });
+
+  it('AT-EXPLICIT-NONE: an ability that opts out throws nothing', () => {
+    const table = { aegis: { palette: VFX['aegis']!.palette, warmthForbidden: true,
+      abilities: { quiet: { particles: { count: 0 } } } } } as unknown as VfxTable;
+    expect(particlesAt([impact(0, 'v', 'a', 'quiet')], 0.2, table, asAegis, places)).toEqual([]);
   });
 
   it('AT-NEEDS-A-PLACE: a victim that cannot be located contributes nothing', () => {

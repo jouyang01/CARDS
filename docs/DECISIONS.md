@@ -6883,3 +6883,38 @@ sweeping for a preview readout; `--target any` was added for the ally-targeted c
 offers **no preview at all** — not damage, not shield, not heal — so there is nothing to sweep for.
 Worth recording that the owner has watched the blink in the running game and called it good, which
 is better evidence than the harness would produce; the gap is in the automation, not the feature.
+
+## 2026-08-24 — Builder session 23 (debris exists because something got hit)
+
+The owner's rule, and it corrected a default I had got wrong in exactly the way I had already
+argued against once.
+
+**The old default was per-author, not per-event.** Particles hung off the caster's table entry, so
+only Aegis threw debris — and only on two of his five abilities. Vex railgunning somebody produced
+hitstop, a flash, a shake and a tracer and *no debris*, while Aegis hitting the same target for the
+same damage threw fragments. Same event, different feedback, decided by which character had been
+designed yet.
+
+**This is the identity/legibility line again, and debris is on the legibility side.** The same
+distinction settled the tracer default last week: an aura is a character's identity, so absence
+should be visible and an unstyled character gets none; a tracer says a shot crossed the board, which
+is true whoever fired it. "Something broke here" is a fact about the blow, not about the caster's
+aesthetic. I drew that line correctly for tracers and then failed to apply it to debris a session
+later.
+
+**What stays per-character is the tint, not the existence.** Aegis's fragments come out in his pale
+sickly green; a character with no palette gets `NEUTRAL_DEBRIS`, deliberately a dull unsaturated
+grit that reads as the absence of a decision rather than as a bug. The table's job is now to
+*override* the default, not to *enable* it — `shield_bash` raises the count above it.
+
+**`count: 0` stays sayable.** "This one deals damage and deliberately shows no debris" is a real
+design position, and a default that could not be turned off would have removed it.
+
+**The other half of the rule was already true and is now pinned.** Debris hangs off `impact` cues
+only, so a heal, a shield or a teleport throws none — Intercept has no particle entry and would now
+inherit the default, but it deals no damage, emits no impact cue, and therefore still throws
+nothing. Correct by construction rather than by configuration, which is the better way for it to be
+correct.
+
+Verified by filming Vex — a character with no table entry at all — and differencing against a build
+with `drawParticles` stubbed: debris from f052, peaking ~647 differing pixels at f057, gone by f063.
