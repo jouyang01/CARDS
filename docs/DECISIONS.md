@@ -6758,3 +6758,49 @@ and asserts he is only ever at one end or the other.
 Intercept targets an ally, so it produces no such preview to aim at. The unit tests are strong and
 the aura path is filmed, but nobody has watched Aegis actually blink. Teaching the harness to aim
 at an ally is the next tooling step.
+
+## 2026-08-24 — Session 20 (Builder): the first ambient motion — the arena rim breathes
+
+`MAP_PIPELINE.md` phase 5 has two halves. The **props** half (walls and cover become themed
+meshes, a skyline beyond the platform) needs CC0 art kits, which risk #1 routes to the owner as a
+deliberate licensing/attribution call — "decide that deliberately, not at the moment someone needs
+a wall texture." The **ambient motion** half is procedural, needs no art, and the freeze hook I
+shipped earlier makes it safe. `First steps` names exactly this as the place to begin, so this
+session did the ambient element and left the props half for an owner decision.
+
+**What moves: the four neutral arena rim bars, on a five-second breath.** Not the team spawn
+markers — those are orientation ("which way is home"), and a pulsing team-coloured edge is the
+gameplay-adjacent motion §4 forbids. Not a particle near a unit, for the same reason. The rim is
+the arena's structural edge, never on a unit tile, so a slow glow there reads as architecture and
+can never be mistaken for a status effect.
+
+**Why it was safe to ship against a suite that asserts byte-identical frames.** Two independent
+guarantees, and both matter:
+
+1. *It is a no-op under freeze.* The breath is gated on `ambientOn`, which is `false` for
+   `?ambient=off` (every browser test) and for a reduced-motion viewer. Under freeze the renderer
+   never touches the rim material, so the scene is byte-identical to a static one. Verified: the
+   36-test browser suite is green, and an idle `?ambient=off` board draws zero frames and differs
+   only by the ~200-pixel SwiftShader AA jitter on the board's front lip that is present on `main`
+   too.
+2. *Its lit extreme is the already-tested value.* `rimBreath` is a raised cosine phased to start
+   at the top, so it equals the base at `elapsed = 0` and only ever dips below it. The rim's static
+   intensity is tuned under the e2e's 130 brightness gate (SCENERY's rim comment); a pulse that
+   only darkens cannot cross a gate the static rim already clears, and there is no pop when motion
+   begins because the first animated frame equals the frozen one.
+
+The curve lives in `ambient-motion.ts` with no `three` import — the same discipline as `sky.ts`,
+`grain.ts` and `camera-ease.ts` — so the part that must never drift is a Vitest test, not something
+only a GL context can check.
+
+**Judgment call — ambient throttles to 30 fps, and this is the honest reconciliation with
+RENDER-ON-DEMAND.** On-demand exists so a static board stops burning a core. A breathing board is
+not static, so it legitimately keeps drawing — but a five-second breath does not need 60 fps, so
+ambient wakes the idle loop at most every 33 ms. The camera ease and mid-clip models still draw at
+full rate; only the frames ambient *alone* would have requested are throttled. On this SwiftShader
+box the render cost dominates anyway (~5 fps), so the throttle is headroom for real hardware rather
+than something the tests can see. Under `?ambient=off` the throttle term vanishes and the idle-frame
+behaviour the on-demand tests pin is exact.
+
+**Left for the owner:** the props half of phase 5, which is where art sourcing and its licensing
+obligations enter the repo. That is risk #1, and it is a decision, not a Builder default.

@@ -62,6 +62,7 @@ import { type SkyRamp } from './sky.js';
 import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
 import { browserRenderOnDemand } from './render-flags.js';
+import { rimBreath } from './ambient-motion.js';
 import { easeCamera } from './camera-ease.js';
 import { clampCentre, panDelta } from './camera-pan.js';
 
@@ -999,6 +1000,11 @@ export function createRenderer(
   options: { ambient?: boolean; renderOnDemand?: boolean } = {},
 ): Renderer {
   const scene = new Scene();
+  // AMBIENT-FREEZE: resolved once. `?ambient=off` (every browser test) and a
+  // reduced-motion viewer both arrive here as `false`, and everything
+  // decorative that moves is gated on it — so the tests, and anyone who asked
+  // their OS to stop motion, get a board frozen byte-identical to a static one.
+  const ambientOn = options.ambient ?? true;
   // SKY-DOME: a ramp rather than a flat clear colour. The fallback keeps a
   // headless context (no 2d canvas) drawing something rather than nothing.
   scene.background = skyTexture(palette.sky) ?? new Color(palette.background);
@@ -1214,13 +1220,19 @@ export function createRenderer(
   };
 
   const inset = SCENERY.rim.thickness / 2;
+  // AMBIENT-MOTION: the four neutral arena bars breathe. The team spawn markers
+  // below do NOT — they are orientation ("which way is home"), and a pulsing
+  // team-coloured edge is exactly the gameplay-adjacent motion §4 forbids.
+  const rimMaterials: MeshStandardMaterial[] = [];
   for (const [w, d, x, z] of [
     [slabW, SCENERY.rim.thickness, 0, -slabH / 2 + inset],
     [slabW, SCENERY.rim.thickness, 0, slabH / 2 - inset],
     [SCENERY.rim.thickness, slabH, -slabW / 2 + inset, 0],
     [SCENERY.rim.thickness, slabH, slabW / 2 - inset, 0],
   ] as const) {
-    scenery.add(edgeBar(w, d, x, z, palette.arena.rim, SCENERY.rim.emissive));
+    const bar = edgeBar(w, d, x, z, palette.arena.rim, SCENERY.rim.emissive);
+    rimMaterials.push(bar.material as MeshStandardMaterial);
+    scenery.add(bar);
   }
 
   // Each team's end of the arena, in its own colour. This is orientation, not
@@ -1800,6 +1812,16 @@ export function createRenderer(
   let frameHandle: number | undefined;
   let afterFrame: (() => void) | undefined;
   let lastFrameMs: number | undefined;
+  // Wall-clock zero for the ambient breath, so `elapsed` starts at 0 and the
+  // first animated frame lands on the base intensity.
+  const ambientStartMs = performanceNow();
+  // Ambient wakes the loop at most this often. The breath is a 5-second cycle,
+  // so 30 fps of scalar updates is indistinguishable from 60 and honours what
+  // RENDER-ON-DEMAND exists for: not burning a core when nothing needs it. The
+  // camera ease and mid-clip models still draw at full rate — this throttles
+  // only the frames ambient alone would have requested on an otherwise idle board.
+  const AMBIENT_FRAME_MS = 1000 / 30;
+  let lastAmbientMs: number | undefined;
   const drawFrame = (): void => {
     // Mixers advance on WALL time, not on cue time. Clip selection is already
     // driven from the timeline; playback just has to run at the rate the clip
@@ -1828,6 +1850,18 @@ export function createRenderer(
         if (shake.elapsed >= shake.duration) shake = undefined;
         applyCamera();
       }
+    }
+
+    // AMBIENT-MOTION: the arena rim breathes on wall time. Gated on `ambientOn`,
+    // so a frozen board (tests, reduced motion) leaves every rim material at its
+    // constructed `SCENERY.rim.emissive` and stays byte-identical to a still
+    // rim. `rimBreath` is 1 at elapsed 0 and never rises above the base, so the
+    // first animated frame equals the frozen one and no frame is brighter than
+    // the value the pixel tests already accept.
+    if (ambientOn && rimMaterials.length > 0) {
+      const elapsed = (nowMs - ambientStartMs) / 1000;
+      const intensity = rimBreath(SCENERY.rim.emissive, elapsed);
+      for (const mat of rimMaterials) mat.emissiveIntensity = intensity;
     }
 
     stepCamera(delta);
@@ -2127,7 +2161,7 @@ export function createRenderer(
       applyCamera();
     },
 
-    ambient: options.ambient ?? true,
+    ambient: ambientOn,
 
     lookAt(next, spanSquares) {
       centre = { x: next.x, y: next.y };
@@ -2333,17 +2367,27 @@ export function createRenderer(
       if (frameHandle !== undefined) return;
       const loop = (): void => {
         frameHandle = globalThis.requestAnimationFrame(loop);
-        // RENDER-ON-DEMAND. Three things can make a frame worth drawing: the
-        // scene changed, the camera is still easing toward its target, or a
-        // rigged model is mid-clip. `applyCamera` marks the second for us — the
-        // easing calls it every step and stops calling it once settled — so
-        // only the third needs asking about here.
-        if (onDemand && !dirty && instances.size === 0) {
+        // RENDER-ON-DEMAND. Four things can make a frame worth drawing: the
+        // scene changed, the camera is still easing toward its target, a rigged
+        // model is mid-clip, or ambient motion is running. `applyCamera` marks
+        // the second for us — the easing calls it every step and stops once
+        // settled — so only the third and fourth need asking about here.
+        //
+        // Ambient is throttled: it wakes an otherwise-idle board at ~30 fps
+        // rather than 60, which the 5-second breath cannot tell apart and which
+        // keeps a living map from costing what a static one used to. With
+        // `?ambient=off` (every browser test) `ambientOn` is false, so this term
+        // vanishes and the idle-frame behaviour the on-demand tests pin is exact.
+        const now = performanceNow();
+        const ambientDue = ambientOn && rimMaterials.length > 0
+          && (lastAmbientMs === undefined || now - lastAmbientMs >= AMBIENT_FRAME_MS);
+        if (onDemand && !dirty && instances.size === 0 && !ambientDue) {
           // Drop the clock as well. A skipped stretch is not elapsed animation
           // time, and feeding it back in would make the next mixer step jump.
           lastFrameMs = undefined;
           return;
         }
+        if (ambientDue) lastAmbientMs = now;
         dirty = false;
         framesDrawn += 1;
         drawFrame();
