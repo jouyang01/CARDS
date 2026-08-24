@@ -197,6 +197,38 @@ export function findPixels(image: Image, matches: (px: Rgb) => boolean, step = 3
 }
 
 /** The colour at one pixel — for re-sampling a spot found in an earlier frame. */
+/**
+ * RENDER-SUITE-GREEN-2 — where an overlay IS, as one point.
+ *
+ * The replacement for comparing whole frames. Byte-equality answers "did any
+ * pixel change", which is a question about the renderer; what the aim tests
+ * actually ask is "did the OVERLAY move", which is a question about one family
+ * of coloured pixels and has an answer that survives noise. A relocated overlay
+ * shifts its centroid by tens of pixels; dither, temporal AA and a re-drawn
+ * shadow shift it by a fraction of one, because they are unbiased across the
+ * whole frame.
+ *
+ * `count` comes back with it because "the overlay is not there" and "the overlay
+ * has not moved" must not be the same answer — an assertion on a centroid alone
+ * would pass happily against a board that had stopped drawing the overlay
+ * entirely.
+ */
+export function centroid(
+  image: Image, matches: (px: Rgb) => boolean, step = 3,
+): { count: number; x: number; y: number } {
+  const found = findPixels(image, matches, step);
+  if (found.length === 0) return { count: 0, x: 0, y: 0 };
+  let sx = 0;
+  let sy = 0;
+  for (const p of found) { sx += p.x; sy += p.y; }
+  return { count: found.length, x: sx / found.length, y: sy / found.length };
+}
+
+/** How far two centroids sit apart, in pixels. */
+export const centroidShift = (
+  a: { x: number; y: number }, b: { x: number; y: number },
+): number => Math.hypot(a.x - b.x, a.y - b.y);
+
 export function pixelAt(image: Image, x: number, y: number): Rgb {
   const at = y * image.width * image.channels + x * image.channels;
   return { r: image.data[at]!, g: image.data[at + 1]!, b: image.data[at + 2]! };

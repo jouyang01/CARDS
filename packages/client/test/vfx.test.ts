@@ -4,6 +4,7 @@ import {
   hitstopMs, newImpacts, seedOf, shakeAmplitude, shakeOffset,
 } from '../src/vfx.js';
 import type { Cue } from '../src/choreograph.js';
+import { MS_PER_BEAT } from '../src/animate.js';
 
 /**
  * VFX step 1, the pure half. All of this is presentation — nothing here can
@@ -120,7 +121,11 @@ describe('shakeAmplitude: a nudge, not an earthquake', () => {
 
 describe('the flash is a flash', () => {
   it('is over in well under a beat, so it reads as an event', () => {
-    expect(FLASH_SECONDS).toBeGreaterThan(0.03);
-    expect(FLASH_SECONDS).toBeLessThan(0.2);
+    // The bounds, not the value: long enough to be seen by someone looking
+    // elsewhere, short enough that it never becomes a state the unit is *in*.
+    // A beat is 760ms; anything approaching that stops reading as an impact and
+    // starts reading as a status effect.
+    expect(FLASH_SECONDS).toBeGreaterThan(0.1);
+    expect(FLASH_SECONDS).toBeLessThan(MS_PER_BEAT / 1000 / 2);
   });
 });

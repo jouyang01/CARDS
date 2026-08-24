@@ -39,32 +39,6 @@ const ABILITY = arg('ability', '');
 const OUT = arg('out', 'film');
 const STEP_MS = 1000 / FPS;
 
-/** Replace the page's clock. Installed before any app script runs. */
-const virtualClock = () => {
-  let t = 0;
-  let nextId = 1;
-  const queue = new Map();
-  window.requestAnimationFrame = (cb) => {
-    const id = nextId++;
-    queue.set(id, cb);
-    return id;
-  };
-  window.cancelAnimationFrame = (id) => { queue.delete(id); };
-  Object.defineProperty(window.performance, 'now', { configurable: true, value: () => t });
-  window.__film = {
-    now: () => t,
-    pending: () => queue.size,
-    /** Advance the clock and run one round of frame callbacks. */
-    step(ms) {
-      t += ms;
-      const due = [...queue.values()];
-      queue.clear();
-      for (const cb of due) cb(t);
-      return t;
-    },
-  };
-};
-
 /**
  * Find a screen point where the armed ability would actually hurt somebody.
  *
@@ -106,7 +80,7 @@ const main = async () => {
     args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'],
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  await page.addInitScript(virtualClock);
+  await page.addInitScript({ path: new URL('./virtual-clock.js', import.meta.url).pathname });
   page.on('console', (m) => {
     const t = m.text();
     if (t.startsWith('[cards]') || t.startsWith('[dbg]') || t.startsWith('[film]')) console.log(t);

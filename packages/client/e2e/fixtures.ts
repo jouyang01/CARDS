@@ -43,9 +43,12 @@ const FLAGS: Readonly<Record<string, string>> = {
   // The earlier reading that put this at "no benefit" counted frames on a page
   // that had been idle two seconds — which was still inside the camera's ease,
   // so the scene genuinely was changing and the loop was right to draw. The
-  // ease is now bounded in seconds rather than frames (`stepCamera`), so an
-  // untouched board reaches a true resting state and this flag can collect on
-  // it.
+  // ease is now bounded in seconds rather than frames (`camera-ease.ts`), so an
+  // untouched board reaches a true resting state and this flag collects on it.
+  //
+  // Now the product default too, so this line is a **pin** rather than a switch:
+  // it states what the suite requires, so a future change to that default moves
+  // the game without silently putting the suite back on a 2.2s screenshot.
   render: 'ondemand',
 };
 

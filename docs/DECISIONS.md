@@ -6345,6 +6345,42 @@ the default for anything else. A typo in a debug flag should not silently hand a
 board, and the asymmetry is deliberate: the old spelling failed *closed* (any typo left it off,
 which was then the safe state), and the new one must fail *open* for the same reason.
 
+## 2026-08-23 — Builder session 17 (the last two red tests were races, not bugs)
+
+With the camera ease fixed and `render=ondemand` attached, the browser suite went from 17 failed /
+17 passed in 59.7 minutes to 2 failed / 32 passed in 9.9. Both survivors turned out to be races in
+the tests, and both had been failing on `main` all along — hidden behind timeouts, and only legible
+once the suite was fast enough to lose them differently.
+
+**A readout that was there all along, watched too late.** `a resolved turn animates` polled for
+`.readout` *after* a two-screenshot frame comparison. A screenshot of an animating board waits
+~2.2s for the compositor — legitimately, the board really is redrawing — so the poll began at
+~4.8s. Instrumenting the DOM through a whole resolution shows the number floats from ~1.4s to
+~2.9s, during Blast. The test was failing for the one thing it was not testing: that it arrived
+late. It now starts a `waitForFunction` at the first frame of playback and awaits it after the
+comparison — in-page, concurrent, free, and impossible to outrun.
+
+**Judgment call — the watch tightened to `.readout:not(.preview)` while it was being moved.** The
+old selector also matched plan-time preview numbers, so an assertion about *resolution* could have
+been satisfied by a number the planning phase left on screen. Nothing was relying on that; it is
+strictly a stronger test.
+
+**A check-then-act race against a control that removes itself.** `STEALTH-CONFIRM` did
+`if (await skip.isVisible()) await skip.click()`. Playback can end in the gap, and Playwright then
+spends the entire 60s budget waiting for an element that is never coming back — reported as a click
+timeout, which reads like the Skip button is broken rather than like the turn is already over. One
+`click({ timeout: 5_000 }).catch(() => {})` says the real intent: skip the resolution if it is
+still running, and finding nothing to press is success.
+
+**Correction, recorded because the wrong version was stated out loud first.** While chasing this I
+reported that Move playback hangs forever. It does not. The probe asked
+`document.querySelector('.hud-playback') !== null` — but that element is built once at boot and
+always exists — and read `.phase-label.textContent`, which keeps its last value after the label is
+hidden. Both are true forever regardless of playback. The Playwright suite uses `isVisible()` and
+was right; the probe was wrong. Instrumenting the playback clock settled it: the move phase reaches
+`t >= end` and resolves normally, 26 ticks and ~6s for the whole turn. Worth writing down as the
+shape of the mistake: a presence check against a container that is never removed proves nothing,
+and it fails in the direction that looks alarming.
 ## 2026-08-23 — Session 17c (Builder): the last two e2e failures were the tests, and the suite is green
 
 With on-demand rendering on, two failures survived. Both were re-run under `?render=always` and
@@ -6379,6 +6415,49 @@ rendering work dissolved, and only once they were gone was it possible to see th
 two were never about rendering at all. A slow suite does not just cost time — it hides which of
 its failures are real.
 
+## 2026-08-23 — Builder session 18 (the flash, photographed — and the test that did not test it)
+
+The flash shipped with an admitted hole: proven as far as the renderer call and no further. It is
+closed now, and closing it was more interesting than expected.
+
+**The flash is longer: 0.08s → 0.18s.** The owner's read of it in the running game — "too short".
+Five frames at 60fps registers only if you already know to look, and the flash's whole job is to
+catch an eye that is somewhere else on the board. At 0.18s it is ~11 frames, still an event rather
+than a glow and still well inside a beat, so a four-shooter Blast reads as four distinct hits. The
+guard test now pins the *bounds* (0.1s to half a beat) rather than the value, so the next person to
+tune it is told what the range is for.
+
+**The instrument had to be the virtual clock.** A flash is 0.18s; a screenshot of an animating
+board waits ~2.2s for the compositor. The shutter is twelve times slower than the subject, so
+sampling for it is not a flaky test but an impossible one. Freezing the page's clock inverts it:
+between steps nothing moves, the render loop idles, and the same screenshot costs ~0.17s and shows
+exactly the millisecond asked for. `tools/virtual-clock.js` is now shared by path between
+`film.mjs` and `e2e/vfx.spec.ts` rather than copied — two clocks that drifted apart would make a
+film and a test disagree about the same frame, and the one that was wrong would be whichever
+nobody had looked at recently.
+
+**The first version of the test passed with the feature removed.** Stubbing `paintFlash` to never
+light anything left it green. Twice, for two different reasons, both worth writing down:
+
+1. **The readout is DOM.** UI5's floating damage numbers live inside `#board`, are near-white, and
+   appear at exactly the moment of impact — so "the board got brighter when the hit landed" was
+   satisfied by the number, not the flash. The measurement now hides every non-canvas child of
+   `#board`, so the renderer is the only thing that can move the count.
+2. **A peak is not a spike.** Comparing the brightest frame to the median passes on a build with no
+   flash in it, because the phase *ends* with the board brightening as the camera pulls back. What
+   is specific to a flash is that a frame is brighter than the frames on **both** sides of it: it
+   arrives and leaves inside the window, which a camera move and a phase change do not.
+
+**And the signal had to be aimed.** Whole-board counts could not see it: one lit unit is a few
+hundred pixels of 1400x950, smaller than the jitter the screen *shake* puts into the same count.
+Cropping to 320px around where the hit was aimed, at full sample density, makes those pixels the
+majority of what is measured. With that framing the two builds differ at exactly one frame and are
+byte-identical everywhere else — impact frame 4595 against 3215, a rise above both neighbours of
+1458 against 78. The threshold is 800: 1.8x under the real signal, 10x over the noise.
+
+**The general lesson, and it is the second time this session:** a green test proves nothing until
+it has been run against a build with the feature removed. Both of this one's false positives were
+invisible from the code and obvious from the mutant.
 ## 2026-08-23 — Session 18 (Builder): CAMERA-CONTROLS, and the clamp that was quietly defeating it
 
 `BACKLOG.md`'s top item, from the owner's note: *"Need to add Camera panning and the auto camera
@@ -6520,3 +6599,73 @@ which from 235 lands at ~380 — over 350, under 400. The budget still fails lou
 mistake it was built for while leaving 115 kB for deliberate growth. It cannot be raised twice by
 this reasoning; at ~280 kB there is no number that both clears the code and catches a duplicated
 three, and the answer then is the renderer split the original note named.
+---
+
+## 2026-08-23 — Builder session 16 (RENDER-SUITE-GREEN-2)
+
+**CAMERA-CONTROLS was built twice, and this branch is not the copy that shipped.** A parallel
+session implemented it as `eb48811` and it reached `main` through PR #146 while this branch was
+building its own. Merging `main` in produced files that no longer parsed — two independent
+implementations of the same feature interleaved into the same declarations with no conflict
+markers, which is the one merge failure git cannot flag. The resolution was to take `main`'s
+implementation wholesale and drop this branch's: `main` is the source of truth, its version is
+complete (and carries a `hold: 'frame' | 'centre'` mode this one lacked), and it covers the
+"recentre affordance" by making the existing view button double as recentre while panned rather
+than adding a button. Re-litigating a merged feature in an unrelated PR would be the worse error.
+**The process finding is the useful one: two sessions took the same top-priority item off the
+backlog at the same time, and neither could see the other.** That is the Analyzer's to solve, not
+the Builder's — recorded here because the cost was a full session's work.
+
+**RENDER-SUITE-GREEN-2 — `same()` is kept and narrowed, not replaced.** The measurement behind
+the old doc comment (~2,674 of ~205,000 pixels differing on an untouched board, deterministic and
+input-independent) was taken under the always-draw loop. RENDER-ON-DEMAND fixed that at the
+source: a board with nothing to draw does not draw, so a still scene is byte-identical again. But
+that is a property of the render loop, not of the assertion, so the split is by **what is being
+claimed**: a claim about the whole scene (it animated, the orbit moved it, it held still) is
+byte-equality's, and a claim about one overlay is `aimPatch`'s centroid. Comparing frames for an
+overlay asks 205k pixels a question about a few thousand and answers it with whatever else moved —
+which is how UI1-fix came to accuse the aim of following the pointer when it was not. `main`'s own
+comment on `same()` called for exactly this and called it "a re-spec, not a repair"; this is that
+re-spec.
+
+**AMBIENT-FREEZE's guard is a real test for the first time.** It could not have worked before:
+under the always-draw loop "the scene is still" and "the scene is moving" were both "different", so
+a guard built to catch the first piece of ambient motion would have fired on the bare board. It now
+asserts that a settled board with ambient off draws the same frame twice, and the first moving prop
+(MAP_PIPELINE phase 5) will break it unless it is gated on the flag — which is the entire point.
+
+**Judgment call — FOG-ZORDER's coarse floor is restored, and the fix is in the search.** Both
+copies of this test hit the same failure and diagnosed it differently. `main` read it as the
+denominator growing under a reframed camera and dropped the floor from a quarter of visible brush
+(1742 px) to an absolute 200. The measured cause is narrower: the sweep stopped at the first
+candidate that landed *any* aim-orange, which froze `bestCovered` at whatever that one ability had
+washed. Rail Shot is a line — 1355 covered on its first hover — while the Frag Grenade behind it
+washes 4423 of 6970 (63%, comfortably clear) and was never reached. So the fraction was never the
+problem; the search was. Sweeping until *both* floors are met keeps a floor that a real z-order
+regression (which puts the number at zero) still trips, at roughly nine times the strength of an
+absolute 200.
+
+**Judgment call — `main`'s ratio assertion is kept, but measured per frame.** `bestAimed /
+bestCovered` divides two independent maxima that can come from different abilities and different
+hovers, so it only looked like a ratio. Tracking the best *within-frame* share instead makes it the
+framing-independent check it was meant to be, and it is the sharpest of the three: FOG-ZORDER drives
+it to zero however the board is pointed.
+
+## Open Questions for the Analyzer — 2026-08-23
+
+**1. Two sessions built CAMERA-CONTROLS simultaneously.** Nothing in the workflow prevented it and
+nothing surfaced it until a merge produced unparseable files. Worth a mechanism — an in-progress
+marker in `BACKLOG.md`, or assigning items per session — before it happens on an engine item, where
+the merge would be silent rather than syntactic.
+
+**2. `main`'s FOG-ZORDER floor was weakened to 200 and this PR restores it.** If the Analyzer
+prefers the absolute floor, this is the place to say so; the two are not compatible and the stronger
+one is now in the branch. Flagging it because it edits a test another session had already "fixed".
+
+**3. Three `same()` callers remain, and they now rest on an unwritten invariant.** The ambient guard
+and the two motion assertions all depend on RENDER-ON-DEMAND holding a settled board byte-identical.
+That is true today and measured, but it is not an invariant anybody has named, and the first missed
+`markDirty()` turns those three into confusing failures rather than clear ones. `?render=always` is
+the diagnostic; whether the invariant deserves its own test is the Analyzer's call.
+
+**4. No engine work this session, as instructed.** Every change is in `packages/client`.
