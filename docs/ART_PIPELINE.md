@@ -774,6 +774,71 @@ the page, look — no rebuild, no Blender. Settle on numbers there, then write t
 
 ---
 
+## 12b. Phase 9b — terrain props (`MAP_PIPELINE` phase 5)
+
+Themed set dressing for the board: a stone pillar where a map has a **wall**, a wooden
+barricade where it has **cover**. Same idea as a weapon prop — static geometry, **no Mixamo,
+no rig** — but a terrain prop is its own tiny pipeline, deliberately *not* built on the
+character helpers.
+
+```bash
+# per theme, from the repo root — on a machine with Blender
+blender --background --python tools/art/generate_prop.py -- proving-floor
+# or one role at a time
+blender --background --python tools/art/generate_prop.py -- proving-floor wall
+```
+
+That reads `data/props/<theme>.json`, builds each role's mesh, and writes
+`packages/client/public/models/props/<theme>_<role>.glb` plus a `manifest.json` beside it
+(content-hashed for cache-busting, same reason as the character manifest). **Commit the
+`.glb` and the manifest** — like `aegis.glb`, they are runtime assets under `public/models/`
+and the asset budget counts them there.
+
+| Script | Blender? | Reads | Produces |
+|---|---|---|---|
+| `generate_prop.py` | yes | `data/props/<theme>.json` | `public/models/props/<theme>_<role>.glb` + `manifest.json` |
+| `prop-placement.ts` | — (client) | — | the per-tile variant + yaw, hashed from `(mapId, x, y)` |
+
+### Why it does not reuse the character generator
+
+`generate_character.py`'s `add_box`/`add_tube` assign **atlas UVs** — every face samples the
+shared texture atlas. A terrain prop carries flat per-part colours straight from the theme
+instead, so `generate_prop.py` has its own atlas-free `box`/`column` primitives (the same
+bmesh shapes, minus the UV coupling) and paints materials by hex. Sharing the character
+helpers would drag the whole atlas contract into terrain for no benefit.
+
+### The four rules a terrain prop must keep
+
+> **Authored in tiles, placed 1:1.** A prop is *not* measure-and-scaled the way a character
+> is (§11 "the board scale"). It is built at exactly the gameplay height — a pillar is
+> `WALL_HEIGHT` (0.9) tall, a barricade `COVER_HEIGHT` (0.45) — and dropped on the tile as-is.
+> That is what lets a prop replace a terrain box without changing what the square *reads* as
+> (`MAP_PIPELINE` §5). The generator's dry-run check pins base-at-floor, top-at-height, and
+> footprint-inside-a-tile.
+
+> **Neutral or dark only.** A permanent fixture that lands in a saturated UI colour family
+> breaks the e2e (`MAP_PIPELINE` §4) — including the `isTeamRed === 0` hidden-info guard.
+> Stone greys (r≈g≈b) and dark wood (every channel well under 130) are clear of all of them.
+> The colours live in `data/props/<theme>.json`; keep them under that rule.
+
+> **Variety is yaw and variant, never footprint.** Per-tile difference comes from
+> `prop-placement.ts` turning and (later) swapping meshes — hashed, never `Math.random()`, for
+> the same reason the grain is. `yawSteps` quantises the turn: `4` for a radially-symmetric
+> pillar, `2` for a fence that has a facing and must never stand edge-on.
+
+> **Fail soft.** A theme with no prop `.glb` renders the plain terrain box, exactly as today.
+> The renderer swap is gated on the manifest existing; a missing or 404ing prop is the box,
+> not a broken board — the identical posture as a missing character model.
+
+### Art direction is per theme, and it is the owner's
+
+Phase 0 (§3) still applies: *what* a theme's props look like is a human call. **Proving Floor**
+is shipped as a colosseum — pillars and stake barricades (`data/props/proving-floor.json`).
+**Drained Works** has no prop spec yet; it wants its own art direction (riveted bulkheads?
+concrete blocks?) before a spec is written, not a guess.
+
+---
+
 ## 13. Phase 10 — VFX (planned)
 
 Mixamo supplies the *gesture*. It supplies nothing that leaves the body. VFX is entirely
