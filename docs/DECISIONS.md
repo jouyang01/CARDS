@@ -6804,3 +6804,44 @@ behaviour the on-demand tests pin is exact.
 
 **Left for the owner:** the props half of phase 5, which is where art sourcing and its licensing
 obligations enter the repo. That is risk #1, and it is a decision, not a Builder default.
+## 2026-08-24 — Builder session 21 (auras that read, and a wall that stands)
+
+Both from the owner's eye on the running game: the auras were technically on screen and practically
+invisible, and only Warding Halo registered.
+
+**The fade envelope was backwards.** Opacity ran `peak * (1 - p)` from the moment the ring was
+born, and the radius ran `0 → full` over the same window — so the ring was at its *brightest* when
+it was at its *smallest*. A bright dot and a broad ghost, never both bright and broad. It now holds
+full strength through the first 55% (`AURA_HOLD`) and is born at 40% of its radius
+(`AURA_BIRTH_RADIUS`), so it arrives already readable and the fade reads as dissipation rather than
+as never having been there. Peak opacity 0.5 → 0.85, band thickness 0.34 → 0.45, and the per-ability
+radii roughly doubled. Measured against a build with `drawAuras` stubbed: the peak aura frame went
+from **1,187 differing pixels to 19,292**, about 16x.
+
+**Warding Halo was the one that worked, and that was the clue.** It is the ability with the big
+radius; nothing about it was better tuned. Scaling the rest toward it was the whole fix.
+
+**The wall is the first vertical thing on this board that is not a unit.** Drawn flat, a wall is
+four hazard markers — "these tiles hurt" rather than "there is a thing here". It is deliberately
+see-through (the board behind it is information, and a solid slab hides a unit) and it stops
+nobody, which is what the ability is: anyone who charges through takes 25 and is Slowed. The panel
+runs from the OUTER edge of the first square to the outer edge of the last, not centre to centre —
+a face that stops at the middle of the end tiles leaves half a tile of gap at each end that a player
+would reasonably read as a way past.
+
+**Two sources, because neither covers the whole life.** While it is cast, the squares come from the
+`ability` cue's own `area`. Once it stands, from the traps — `TrapState` carries the `abilityId`
+that laid it, which is how a wall's tiles are told from an Overwatch Trap's. The view was simply
+dropping that field. **`trapPlaced` does not carry it**, so a trap folded from the event log has no
+ability and raises nothing; adding it to the event is an engine change and the Builder's call. That
+is why the cue-driven source exists rather than being redundant.
+
+**Contiguous runs, not one panel per board.** Two walls can stand at once — the same Aegis on
+consecutive turns, or two of him at 4v4 — and treating every wall tile as one set draws a single
+face stretching between them, straight through whatever is in the way.
+
+**The film harness can only aim at things that bleed.** Its sweep hunts for a damage preview, which
+is right for anything that hurts somebody and useless for the rest of the kit: Warding Wall goes on
+the ground and Intercept goes on an ally, and neither offers a number to aim by. `--aim fx,fy` names
+a square outright. Finding a legal one still took five tries — a wall needs a square in range with
+room to stand — which is worth knowing before the next ground-targeted ability gets filmed.

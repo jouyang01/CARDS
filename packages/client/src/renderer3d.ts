@@ -557,6 +557,14 @@ export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
  * everyone's eyes reads as hitting all of them.
  */
 export const TRACER_LIFT = TILE * MODEL_HEIGHT_TILES * 0.55;
+/**
+ * How tall a Warding Wall stands, in world units.
+ *
+ * Chest-to-shoulder on a unit rather than over their heads: it has to read as
+ * something you push through, and a panel taller than the characters reads as
+ * cover — a thing that stops line of sight, which this explicitly does not do.
+ */
+export const WALL_PANEL_HEIGHT = TILE * MODEL_HEIGHT_TILES * 0.72;
 
 /**
  * A decoy, as one viewer should see it (DECOY-RENDER). `asEnemy` decides the
@@ -592,6 +600,12 @@ export interface RenderTrap {
   owner: 0 | 1;
   /** The viewing team's own trap — team-safe, and something to route over. */
   own: boolean;
+  /**
+   * The ability that laid it, carried through from `TrapState` so presentation
+   * can tell one kind of trap from another. A Warding Wall's tiles are drawn as
+   * a standing barrier; an Overwatch Trap's single square is not.
+   */
+  abilityId?: string;
 }
 
 /**
@@ -823,6 +837,16 @@ export interface Renderer {
    * clears it.
    */
   drawAuras(auras: readonly { outline: readonly Vec2[]; hole?: readonly Vec2[]; color: number; opacity: number }[]): void;
+  /**
+   * WARDING WALL: standing translucent panels, raised from a footprint.
+   *
+   * The only thing this renderer draws that is *vertical* and not a unit. A
+   * barrier lying flat on the floor reads as a hazard on those tiles; the
+   * ability raises a wall, and a wall has a face. Deliberately see-through —
+   * the board behind it is information, and anyone can walk through it, which
+   * is the whole point of it. Replaces the layer wholesale; empty clears it.
+   */
+  drawWalls(panels: readonly { from: Vec2; to: Vec2 }[], color: number, opacity?: number): void;
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
@@ -2338,6 +2362,31 @@ export function createRenderer(
       for (const route of routes) strokeRoute(g, route, color, dashed);
     },
 
+    drawWalls(panels, color, opacity = 0.34) {
+      const g = layerGroup('wall');
+      disposeChildren(g);
+      for (const panel of panels) {
+        const a = squareToWorldXZ(map, panel.from);
+        const b = squareToWorldXZ(map, panel.to);
+        const length = Math.hypot(b.x - a.x, b.z - a.z);
+        if (!(length > 0)) continue;
+        const mesh = new Mesh(
+          new PlaneGeometry(length, WALL_PANEL_HEIGHT),
+          new MeshBasicMaterial({
+            color, transparent: true, opacity, side: DoubleSide,
+            // Like every overlay here: it must not occlude what is behind it in
+            // the depth buffer, or units on the far side vanish into it.
+            depthWrite: false,
+          }),
+        );
+        mesh.position.set((a.x + b.x) / 2, WALL_PANEL_HEIGHT / 2, (a.z + b.z) / 2);
+        // A plane is born in XY facing +Z; turn it about Y so its face is
+        // perpendicular to the run it stands along.
+        mesh.rotation.y = Math.atan2(b.x - a.x, b.z - a.z) + Math.PI / 2;
+        g.add(mesh);
+      }
+    },
+
     drawAuras(auras) {
       const g = layerGroup('aura');
       disposeChildren(g);
@@ -2449,7 +2498,7 @@ export function createRenderer(
   const MUTATORS = [
     'show', 'highlight', 'drawPath', 'drawPaths', 'drawShape',
     'setProjection', 'lookAt', 'fitBoard', 'focusOn', 'resize', 'setSafeInsets',
-    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras',
+    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras', 'drawWalls',
     'setSpotlight', 'setOrbitEnabled', 'preloadCharacters', 'render',
   ] as const satisfies readonly (keyof Renderer)[];
 

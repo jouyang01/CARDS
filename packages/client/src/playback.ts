@@ -37,6 +37,19 @@ export interface ViewTrap {
   id: string;
   owner: 0 | 1;
   pos: Vec2;
+  /**
+   * The ability that laid it, where it is known. Presentation only — a Warding
+   * Wall's tiles are drawn as a standing barrier and an Overwatch Trap's single
+   * square is not, and nothing else can tell them apart.
+   *
+   * **Optional because the event does not carry it.** `TrapState` has it (the
+   * engine needs it for damage attribution, A0) so a view built from a state
+   * snapshot knows; `trapPlaced` does not, so a trap that appears mid-playback
+   * does not. Adding it to the event is an engine change. Until then the wall
+   * that is being *cast* is drawn from the ability cue's own `area`, which is
+   * the same squares by construction — see `wall.ts`.
+   */
+  abilityId?: string;
 }
 
 /** A Wisp decoy in the view (rendered to the enemy team as Wisp — R2). */
@@ -76,7 +89,7 @@ export function initView(state: GameState): ViewState {
   const decoys = new Map<string, ViewDecoy>();
   for (const d of state.decoys) decoys.set(d.id, { id: d.id, teamId: d.teamId, pos: { ...d.pos } });
   const traps = new Map<string, ViewTrap>();
-  for (const t of state.traps) traps.set(t.id, { id: t.id, owner: t.owner, pos: { ...t.pos } });
+  for (const t of state.traps) traps.set(t.id, { id: t.id, owner: t.owner, pos: { ...t.pos }, abilityId: t.abilityId });
   return {
     units, decoys, traps, takenPowerups: new Set<string>(),
     kills: [state.kills[0], state.kills[1]], status: state.status, winner: state.winner,

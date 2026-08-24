@@ -48,6 +48,8 @@ export interface DrawLog {
    * state, and an empty list means the board is clear of them.
    */
   auras: { outline: Vec2[]; color: number; opacity: number }[];
+  /** Standing Warding Wall panels — the last `drawWalls` call. */
+  walls: { from: Vec2; to: Vec2 }[];
   /** Every animation the app asked for, in order — Phase 8's assertable half. */
   clips: { unitId: string; clip: string; loop: boolean }[];
   /** Each `preloadCharacters` call, as the ids it was given. */
@@ -104,7 +106,7 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
-    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
+    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [],
     board: { units: [], decoys: [], traps: [] },
   };
@@ -185,6 +187,9 @@ export function stubRenderer(): StubRenderer {
       }
     },
     // AIM-PREVIEW-TRUE: a list of outlines per call, one per locus.
+    drawWalls: (panels) => {
+      draw.walls = panels.map((p) => ({ from: { ...p.from }, to: { ...p.to } }));
+    },
     drawAuras: (auras) => {
       draw.auras = auras.map((a) => ({
         outline: a.outline.map((p) => ({ ...p })), color: a.color, opacity: a.opacity,
