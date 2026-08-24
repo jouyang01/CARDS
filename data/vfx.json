@@ -1,0 +1,42 @@
+{
+  "_comment": "PER-ABILITY VFX. Content, not code: adding or restyling an ability's effects must not need an engine or renderer change. Keyed by character, then by ability id. `packages/client/src/ability-vfx.ts` reads this and decides what to draw; the renderer only executes. Colours are duplicated from each character's `magic` block in data/art/<id>.json rather than imported, because that file is an art SOURCE (thesis, build, garment) and does not ship to the browser. `ability-vfx.test.ts` asserts the two agree, so the copy cannot drift.",
+  "aegis": {
+    "_thesis": "Never warm. A paladin's light is given to him; Aegis forces his. Pale, sickly, effortful.",
+    "palette": {
+      "core": "#c9d2c4",
+      "edge": "#8d9c88",
+      "deep": "#5a6657"
+    },
+    "warmthForbidden": true,
+    "abilities": {
+      "shield_bash": {
+        "_comment": "A cone at range 2. Nothing flies; the door does the work. All of the effect is at the far end.",
+        "tracer": "none",
+        "impact": { "kind": "ring", "beats": 0.6, "radiusTiles": 0.85, "shade": "core" }
+      },
+      "barrier_pulse": {
+        "_comment": "He pushes it out of himself and it lands on someone else — so both ends show, and the near end is the effortful one.",
+        "tracer": "streak",
+        "cast": { "kind": "ring", "beats": 0.9, "radiusTiles": 1.5, "shade": "deep" },
+        "impact": { "kind": "ring", "beats": 0.7, "radiusTiles": 1.0, "shade": "edge" }
+      },
+      "intercept": {
+        "_comment": "The blink. He casts, then he is simply somewhere else — see `blink` in animate.ts. A ring at the square he leaves and another where he arrives, so the eye can follow a unit that never crossed the space between.",
+        "blink": true,
+        "tracer": "none",
+        "cast": { "kind": "ring", "beats": 0.8, "radiusTiles": 1.2, "shade": "deep" },
+        "impact": { "kind": "ring", "beats": 0.8, "radiusTiles": 1.2, "shade": "core" }
+      },
+      "warding_wall": {
+        "tracer": "none",
+        "cast": { "kind": "ring", "beats": 0.9, "radiusTiles": 1.3, "shade": "edge" }
+      },
+      "warding_halo": {
+        "_comment": "The ultimate. Bigger and slower than anything else he does, because it is the one time the effort pays off.",
+        "tracer": "none",
+        "cast": { "kind": "ring", "beats": 1.4, "radiusTiles": 2.6, "shade": "core" },
+        "impact": { "kind": "ring", "beats": 0.8, "radiusTiles": 1.1, "shade": "edge" }
+      }
+    }
+  }
+}

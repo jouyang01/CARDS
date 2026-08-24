@@ -39,6 +39,8 @@ import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, 
 import { openingFacings, selectFacing, type Facing } from './facing.js';
 import { FLASH_SECONDS, SHAKE_SECONDS, hitstopMs, newImpacts, seedOf, shakeAmplitude } from './vfx.js';
 import { tracerQuads } from './tracer.js';
+import { aurasAt, vfxFor, type VfxTable } from './ability-vfx.js';
+import vfxTable from '../../../data/vfx.json';
 import { selectClip } from './character-clips.js';
 import { type Cue } from './choreograph.js';
 import {
@@ -284,6 +286,7 @@ const IMPACT = 0xffd166;
  * palette that will replace it (`data/art/aegis.json`, `magic.core`), unread by
  * any code yet.
  */
+const VFX = vfxTable as unknown as VfxTable;
 const TRACER = 0xcfe4ff;
 const TRACER_OPACITY = 0.85;
 /**
@@ -1224,6 +1227,9 @@ export function startHotSeat(
     clearPreviewNumbers();
     for (const layer of PLANNING_LAYERS) renderer.highlight(layer, [], 0);
     for (const shapeLayer of PLANNING_SHAPE_LAYERS) renderer.drawShape([], SHAPE, 0, shapeLayer);
+    // Auras live on their own layer, so they need clearing with the rest or the
+    // last ring of a resolution hangs over the next planning phase.
+    renderer.drawAuras([]);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     paintFog(currentSeat()?.team ?? 0);
@@ -2375,6 +2381,9 @@ export function startHotSeat(
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     for (const shapeLayer of PLANNING_SHAPE_LAYERS) renderer.drawShape([], SHAPE, 0, shapeLayer);
+    // Auras live on their own layer, so they need clearing with the rest or the
+    // last ring of a resolution hangs over the next planning phase.
+    renderer.drawAuras([]);
     renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
 
     let skipped = false;
@@ -2446,6 +2455,11 @@ export function startHotSeat(
     phaseLabel.textContent = phase.toUpperCase();
     phaseLabel.style.display = 'block';
     const posOf = (unitId: string): Vec2 | undefined => units.find((u) => u.unitId === unitId)?.pos;
+    // Which character a unit is, so `data/vfx.json` can be looked up. Read off
+    // the render units rather than `state`, so a decoy or a unit that has left
+    // the board resolves to `undefined` and simply gets no effect.
+    const characterOf = (unitId: string): string | undefined =>
+      units.find((u) => u.unitId === unitId)?.characterId;
     // Move runs on the clip's ground speed, not on the rhythm. See
     // MS_PER_MOVE_STEP: a square takes exactly as long as a stride carries a
     // foot across it, or the feet skate.
@@ -2486,7 +2500,16 @@ export function startHotSeat(
         // its state. That also makes it free under hitstop — a frozen clock
         // redraws the same quad, so the shot hangs in the air with everything
         // else instead of sliding on while the world holds still.
-        renderer.drawShape(tracerQuads(cues, now_t, posOf), TRACER, TRACER_OPACITY, 'tracer');
+        const hasTracer = (unitId: string, abilityId: string): boolean => {
+          const characterId = characterOf(unitId);
+          return characterId === undefined || vfxFor(VFX, characterId, abilityId).tracer === 'streak';
+        };
+        renderer.drawShape(tracerQuads(cues, now_t, posOf, hasTracer), TRACER, TRACER_OPACITY, 'tracer');
+        // PER-ABILITY VFX. Recomputed per frame like the tracers and for the
+        // same reason: an aura's radius and fade ARE functions of `now_t`, so a
+        // frame is the whole of its state and hitstop holds it with everything
+        // else instead of letting it run on.
+        renderer.drawAuras(aurasAt(cues, now_t, VFX, characterOf, posOf));
         if (t >= end) return resolve();
         globalThis.requestAnimationFrame(tick);
       };
@@ -2681,6 +2704,9 @@ export function startHotSeat(
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
     for (const shapeLayer of PLANNING_SHAPE_LAYERS) renderer.drawShape([], SHAPE, 0, shapeLayer);
+    // Auras live on their own layer, so they need clearing with the rest or the
+    // last ring of a resolution hangs over the next planning phase.
+    renderer.drawAuras([]);
     renderer.setSpotlight(null);
     renderer.fitBoard();
     stopTimer();

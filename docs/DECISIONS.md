@@ -6710,3 +6710,51 @@ That is true today and measured, but it is not an invariant anybody has named, a
 the diagnostic; whether the invariant deserves its own test is the Analyzer's call.
 
 **4. No engine work this session, as instructed.** Every change is in `packages/client`.
+
+## 2026-08-24 — Builder session 20 (Aegis's own light, and Intercept as a blink)
+
+VFX step 3, and the first character identity to reach the screen.
+
+**`data/vfx.json` is the table, and the tracer default is deliberately asymmetric.** An ability
+with no entry gets **no aura** but **keeps its tracer**. An aura is identity — a placeholder one on
+every unstyled ability would make the roster look finished and hide which characters nobody has
+designed yet, so absence should be visible. A tracer is legibility, it says a shot crossed the
+board, and it shipped for the whole roster last session; defaulting it off would have quietly
+deleted a feature from eight characters as the price of styling one. The wiring test caught that,
+because Vex has no entry.
+
+**The palette is copied from `data/art/aegis.json`, not imported, and a test holds the copy
+honest.** That file is an art *source* — thesis, build, garment, face — and has no business in the
+browser bundle. `VFX-PALETTE-MATCHES-ART` asserts the three tones agree, so the duplication cannot
+drift.
+
+**`warmthForbidden` is enforced for the first time.** "Never warm. A paladin's light is given to
+him; Aegis forces his." has sat in his art data since he was authored, unenforceable — the kind of
+intent that erodes the first time somebody picks a colour by eye. `isWarm` judges hue, and only
+once saturation makes hue mean anything: his palette is desaturated green-grey, and a near-grey has
+a hue the maths reports and the eye cannot see.
+
+**Intercept blinks, and the engine cannot tell us so.** `resolve.ts` teleports the caster and emits
+a plain `moveStep` — the identical event a walk emits — so playback interpolated it and Aegis
+crossed five squares at walking pace. The one reading of a teleport that is definitely wrong is the
+one that says he ran. `isBlink` is therefore geometric: a walked step is always to a touching
+square, so anything further is a teleport. **The gap this leaves is real:** an Intercept landing on
+a square adjacent to where he stood is indistinguishable from a step and will slide. Closing it
+means the event saying so, which is an engine change and the Builder's call.
+
+**A ring needs a real hole; a keyhole does not work.** Tracing the inner circle back along the same
+outline is the classic trick and it was tried here first — ear clipping fills it straight in and
+the "ring" comes out a disc. Filmed and differenced against a stubbed build, the centre row read as
+one solid run. `Shape.holes` is what Three provides, so `drawOneShape` takes an optional hole and
+the same measurement now reads **14px band, 54px gap, 14px band**. Worth the trouble: a filled
+circle is a wash sitting under the unit, where a band reads as something leaving them, and the
+empty middle stops the aura greying out the character it exists to draw attention to.
+
+**Verified by mutation, first rather than last, on both new paths.** Stubbing `drawAuras` fails
+`AURA-WIRING`; disabling the blink branch fails `BLINK-NEVER-BETWEEN`, which samples the whole beat
+and asserts he is only ever at one end or the other.
+
+**Not seen on screen: the blink.** The film harness aims by sweeping for a damage preview, and
+Intercept targets an ally, so it produces no such preview to aim at. The unit tests are strong and
+the aura path is filmed, but nobody has watched Aegis actually blink. Teaching the harness to aim
+at an ally is the next tooling step.

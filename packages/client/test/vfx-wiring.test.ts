@@ -9,6 +9,7 @@ import { OPEN_MAP, aimAndCommit, armAbility, lockIn, mountUI } from './app-harne
 import catalystData from '../../../data/catalysts.json';
 import vex from '../../../data/characters/vex.json';
 import aegis from '../../../data/characters/aegis.json';
+import vfxTable from '../../../data/vfx.json';
 
 /**
  * VFX-WIRING — a hit reaches the renderer.
@@ -139,6 +140,36 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     }, { timeout: 15000 });
   }, 25000);
 
+  it('AURA-WIRING: Aegis casting paints a ring in his own palette', async () => {
+    // `ability-vfx.test.ts` proves the table and the geometry; only this proves
+    // a single aura reaches the renderer. Same failure this lane keeps hitting:
+    // a pure module with a full test file that nothing calls.
+    const b = duel();
+    const bash = AEGIS.abilities.find((a) => a.id === 'shield_bash')!;
+    armAbility(b.controls, bash.name);
+    aimAndCommit(b.board, { x: 9, y: 9 });
+    lockIn(b.controls);
+    lockIn(b.controls);
+
+    const seen: { color: number; opacity: number }[] = [];
+    await vi.waitFor(() => {
+      for (const a of b.renderer.draw.auras) seen.push({ color: a.color, opacity: a.opacity });
+      expect(seen.length, 'no aura ever reached the renderer').toBeGreaterThan(0);
+    }, { timeout: 15000 });
+
+    // In HIS colours, not a generic effect colour — the whole point of the table.
+    const palette = Object.values(
+      (vfxTable as unknown as Record<string, { palette: Record<string, string> }>)['aegis']!.palette,
+    ).map((hex) => Number.parseInt(hex.replace('#', ''), 16));
+    for (const a of seen) expect(palette, `${a.color.toString(16)} is not one of Aegis's tones`).toContain(a.color);
+    for (const a of seen) expect(a.opacity).toBeGreaterThan(0);
+
+    // And it clears, rather than hanging over the next planning phase.
+    await vi.waitFor(() => {
+      expect(b.renderer.draw.auras).toEqual([]);
+    }, { timeout: 15000 });
+  }, 25000);
+
   it('a turn where nothing lands neither flashes nor shakes, and draws no tracer', async () => {
     const b = duel();
     lockIn(b.controls);
@@ -147,5 +178,6 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     expect(b.renderer.draw.flashes).toEqual([]);
     expect(b.renderer.draw.shakes).toEqual([]);
     expect(b.renderer.draw.shapesByLayer.get('tracer') ?? []).toEqual([]);
+    expect(b.renderer.draw.auras).toEqual([]);
   }, 25000);
 });

@@ -138,6 +138,35 @@ const unit01 = (n: number): number => (Number.isFinite(n) ? Math.max(0, Math.min
 type Leg = Extract<Cue, { kind: 'move' } | { kind: 'displace' }>;
 const isLeg = (c: Cue): c is Leg => c.kind === 'move' || c.kind === 'displace';
 
+/**
+ * How far through the beat a blink lands. He casts, and then he is there.
+ *
+ * Not 0 and not 1. Landing immediately loses the cast — the animation plays to
+ * an empty square and the arrival is over before the eye reaches it; landing at
+ * the very end puts the arrival on the same frame as the next phase. Halfway
+ * gives the wind-up a beat-half and the arrival a beat-half to be read in.
+ */
+export const BLINK_AT = 0.5;
+
+/**
+ * Whether a leg is a teleport rather than a step.
+ *
+ * **Geometric, because the engine does not say.** A teleport emits the same
+ * `moveStep` event as a walk (`resolve.ts`), so the only thing separating them
+ * on this side is that a walked step is always to a touching square — one
+ * orthogonally or diagonally — and a teleport is generally not.
+ *
+ * The gap this leaves is real and worth stating: an Intercept that happens to
+ * land on a square adjacent to where Aegis stood is indistinguishable from a
+ * step, and will slide. Closing it properly means the event saying so, which is
+ * an engine change and the Builder's call; until then this is right in every
+ * case where the difference is visible at all.
+ */
+export function isBlink(leg: Leg): boolean {
+  if (leg.kind !== 'move') return false; // a knockback is thrown, not teleported
+  return Math.max(Math.abs(leg.to.x - leg.from.x), Math.abs(leg.to.y - leg.from.y)) > 1;
+}
+
 /** Phases that dim the board around their actor. Move is deliberately absent. */
 const SPOTLIT: ReadonlySet<Phase> = new Set<Phase>(['prep', 'dash', 'blast']);
 /** Phases whose actors play one at a time — the spotlight follows a single actor. */
@@ -208,6 +237,18 @@ function poseFrom(legs: readonly Leg[], t: number): UnitPose | undefined {
       //
       // Displacement keeps its ease: a knockback is thrown rather than walked,
       // it arcs, and it is always a leg on its own.
+      //
+      // A BLINK does neither: it holds, then it is elsewhere. Intercept is a
+      // teleport, and sliding a unit across five squares of open board is the
+      // one reading of it that is definitely wrong — it says he ran.
+      if (isBlink(leg)) {
+        const there = p >= BLINK_AT ? 1 : 0;
+        return {
+          x: leg.from.x + (leg.to.x - leg.from.x) * there,
+          y: leg.from.y + (leg.to.y - leg.from.y) * there,
+          lift: 0,
+        };
+      }
       const u = leg.kind === 'displace' ? ease(p) : p;
       return {
         x: leg.from.x + (leg.to.x - leg.from.x) * u,
