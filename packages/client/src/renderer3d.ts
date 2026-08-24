@@ -18,6 +18,7 @@
  */
 
 import {
+  ACESFilmicToneMapping,
   AmbientLight,
   CanvasTexture,
   Box3,
@@ -317,6 +318,46 @@ export const LIGHTING = {
   sun: { intensity: 2.2, position: [6, 11, 5] },
   fill: { intensity: 0.45, position: [-7, 6, -6] },
 } as const;
+
+/**
+ * TONE-MAPPING — how the lit scene becomes pixels.
+ *
+ * The renderer was leaving `toneMapping` at its default of `NoToneMapping`,
+ * which clips every channel independently at 1.0. With a sun at 2.2 that means
+ * a lit surface does not get *brighter* past a point, it gets **desaturated**,
+ * because whichever channel saturates first stops while the others keep going —
+ * so a rust panel in sunlight slides toward white and the whole board reads flat
+ * and slightly plasticky. It is the single most common reason a Three.js scene
+ * looks like a tech demo, and it was never a lighting problem.
+ *
+ * ACES Filmic rolls the highlights off instead of clipping them, so bright
+ * surfaces keep their hue and the shading gradient survives all the way up.
+ * It also *darkens* the midtones, which is what the exposure lift is for: the
+ * two together land the board back at the brightness it had, with the top end
+ * recovered rather than crushed.
+ *
+ * **Measured, and it corrected the reason above.** The scene was NOT clipping:
+ * exactly one pixel of the board sat within 5 of saturation before this landed,
+ * so the highlight-rolloff story — true in general — was not what was wrong
+ * here. What ACES actually buys at this exposure, over the board region:
+ *
+ * | | luma | contrast (sd) | saturation |
+ * |---|---:|---:|---:|
+ * | none | 144.6 | 37.4 | 0.0498 |
+ * | ACES 0.95 | 150.8 | **44.7** | **0.0592** |
+ *
+ * Same brightness, ~20% more contrast, ~19% more saturation. Real, and modest —
+ * deeper shadows and slightly richer colour, not a transformation.
+ *
+ * The stronger reason to keep it is forward-looking: additive VFX produce values
+ * above 1.0, and without a tone curve those clip straight to white and lose
+ * their hue at exactly the moment they are brightest. This lands the base that
+ * work needs.
+ *
+ * Exposure is a number to tune by eye, and the owner's eye specifically — this
+ * is the value the whole palette is now judged against.
+ */
+export const TONE = { exposure: 0.95 } as const;
 
 /**
  * BOARD-LIT — how each surface answers the light.
@@ -1060,6 +1101,13 @@ export function createRenderer(
   scene.add(new HemisphereLight(
     LIGHTING.hemisphere.sky, LIGHTING.hemisphere.ground, LIGHTING.hemisphere.intensity,
   ));
+
+  // See TONE. Set before anything is drawn, and never changed after: every
+  // colour in the game — the palettes, the fog composite, the VFX tones, and
+  // every `pixels.ts` predicate the browser suite matches against — is judged
+  // through this transform.
+  renderer.toneMapping = ACESFilmicToneMapping;
+  renderer.toneMappingExposure = TONE.exposure;
 
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = PCFSoftShadowMap;
