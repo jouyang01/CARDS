@@ -40,6 +40,7 @@ import { openingFacings, selectFacing, type Facing } from './facing.js';
 import { FLASH_SECONDS, SHAKE_SECONDS, hitstopMs, newImpacts, seedOf, shakeAmplitude } from './vfx.js';
 import { tracerQuads } from './tracer.js';
 import { aurasAt, vfxFor, type VfxTable } from './ability-vfx.js';
+import { panelsFromCues, panelsFromTraps } from './wall.js';
 import vfxTable from '../../../data/vfx.json';
 import { selectClip } from './character-clips.js';
 import { type Cue } from './choreograph.js';
@@ -287,6 +288,13 @@ const IMPACT = 0xffd166;
  * any code yet.
  */
 const VFX = vfxTable as unknown as VfxTable;
+/**
+ * WARDING WALL's panel. Aegis's own `core` tone rather than a generic barrier
+ * colour: it is his light holding the thing up, and the ring his cast throws is
+ * the same family, so the two read as one ability.
+ */
+const WALL = 0xc9d2c4;
+const WALL_OPACITY = 0.34;
 const TRACER = 0xcfe4ff;
 const TRACER_OPACITY = 0.85;
 /**
@@ -1084,7 +1092,7 @@ export function startHotSeat(
   const viewTraps = (view: ViewState): RenderTrap[] => {
     const viewer = currentSeat()?.team ?? 0;
     return [...view.traps.values()].map((t) => ({
-      id: t.id, pos: { ...t.pos }, owner: t.owner, own: t.owner === viewer,
+      id: t.id, pos: { ...t.pos }, owner: t.owner, own: t.owner === viewer, abilityId: t.abilityId,
     }));
   };
 
@@ -1324,6 +1332,10 @@ export function startHotSeat(
       view.decoys.map((d) => ({ ...d, nameplate: decoyPlate(d) })),
       view.traps, pads(),
     );
+    // WARDING WALL, standing. Driven off the traps rather than the cues here,
+    // because outside playback the cues are gone and the traps are the board's
+    // own record of what is up.
+    renderer.drawWalls(panelsFromTraps(view.traps), WALL, WALL_OPACITY);
     renderer.highlight('fog', view.fogged, FOG, FOG_OPACITY);
     // CAMO-REVEAL: the thicket a unit gave itself away in burns red. Same view
     // as everything else, so it can never out a unit the seat cannot see.
@@ -2510,6 +2522,10 @@ export function startHotSeat(
         // frame is the whole of its state and hitstop holds it with everything
         // else instead of letting it run on.
         renderer.drawAuras(aurasAt(cues, now_t, VFX, characterOf, posOf));
+        // WARDING WALL, while it is being raised. Once the turn resolves the
+        // traps carry it (see `paintWalls`); during playback they do not, because
+        // `trapPlaced` does not name the ability that placed it.
+        renderer.drawWalls(panelsFromCues(cues, now_t), WALL, WALL_OPACITY);
         if (t >= end) return resolve();
         globalThis.requestAnimationFrame(tick);
       };

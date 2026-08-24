@@ -36,6 +36,15 @@ const FRAMES = Number(arg('frames', '24'));
 const PHASE = arg('phase', 'MOVE');
 /** Name of an ability to arm before locking in, e.g. "Shield Bash". Optional. */
 const ABILITY = arg('ability', '');
+/**
+ * Where to aim, as `fx,fy` fractions of the board — skipping the target sweep.
+ *
+ * The sweep hunts for a damage preview, which is the right way to find a target
+ * for anything that hurts somebody and no use at all for the rest of the kit.
+ * Warding Wall goes on the ground and Intercept goes on an ALLY; neither offers
+ * a damage number to aim by, so filming them needs a square named outright.
+ */
+const AIM = arg('aim', '');
 const OUT = arg('out', 'film');
 const STEP_MS = 1000 / FPS;
 
@@ -102,7 +111,12 @@ const main = async () => {
   if (ABILITY !== '') {
     // An ability instead of a move, so a Blast phase has something in it.
     await page.locator(`button:has-text("${ABILITY}")`).first().click();
-    const aim = await findTarget(page, box);
+    const aim = AIM === ''
+      ? await findTarget(page, box)
+      : (() => {
+        const [fx, fy] = AIM.split(',').map(Number);
+        return { x: box.x + box.width * fx, y: box.y + box.height * fy };
+      })();
     if (aim === undefined) {
       console.log(`[film] "${ABILITY}" found nothing to hit — captured nothing`);
       await browser.close();
