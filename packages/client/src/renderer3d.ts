@@ -847,6 +847,17 @@ export interface Renderer {
    * is the whole point of it. Replaces the layer wholesale; empty clears it.
    */
   drawWalls(panels: readonly { from: Vec2; to: Vec2 }[], color: number, opacity?: number): void;
+  /**
+   * IMPACT PARTICLES: camera-facing fragments at a board position and height.
+   *
+   * Billboarded, by the same rule the health bars follow — a flat quad lying on
+   * the ground is a decal, and debris in the air has to face the viewer or it
+   * disappears edge-on exactly when it is highest. Replaces the layer wholesale;
+   * empty clears it.
+   */
+  drawParticles(particles: readonly {
+    x: number; y: number; lift: number; size: number; color: number; opacity: number;
+  }[]): void;
   /** Start/stop the animation loop (orbit and tweens need continuous frames). */
   start(): void;
   stop(): void;
@@ -2362,6 +2373,28 @@ export function createRenderer(
       for (const route of routes) strokeRoute(g, route, color, dashed);
     },
 
+    drawParticles(particles) {
+      const g = layerGroup('particles');
+      disposeChildren(g);
+      for (const p of particles) {
+        if (!(p.size > 0) || !(p.opacity > 0)) continue;
+        const w = squareToWorldXZ(map, { x: p.x, y: p.y });
+        const mesh = new Mesh(
+          new PlaneGeometry(p.size * TILE * 2, p.size * TILE * 2),
+          new MeshBasicMaterial({
+            color: p.color, transparent: true, opacity: p.opacity,
+            side: DoubleSide, depthWrite: false,
+          }),
+        );
+        mesh.position.set(w.x, p.lift * TILE, w.z);
+        // Face the camera. Set once here rather than in `billboard()` because
+        // the layer is rebuilt every frame anyway — there is nothing persistent
+        // to keep turning.
+        mesh.quaternion.copy(camera.quaternion);
+        g.add(mesh);
+      }
+    },
+
     drawWalls(panels, color, opacity = 0.34) {
       const g = layerGroup('wall');
       disposeChildren(g);
@@ -2498,7 +2531,7 @@ export function createRenderer(
   const MUTATORS = [
     'show', 'highlight', 'drawPath', 'drawPaths', 'drawShape',
     'setProjection', 'lookAt', 'fitBoard', 'focusOn', 'resize', 'setSafeInsets',
-    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras', 'drawWalls',
+    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras', 'drawWalls', 'drawParticles',
     'setSpotlight', 'setOrbitEnabled', 'preloadCharacters', 'render',
   ] as const satisfies readonly (keyof Renderer)[];
 
