@@ -184,6 +184,56 @@ async function clickAt(page: Page, fx: number, fy: number): Promise<void> {
   await page.waitForTimeout(220);
 }
 
+/**
+ * The seat's own characters, as points in the sampled image.
+ *
+ * Hoisted out of RENDER-COVERAGE because two tests need it now: the drive that
+ * asks whether a Sprint moved anybody, and the one that needs an aim to land on
+ * something. Bodies rather than an exact square — the landing tile is
+ * `duel-arena`'s wall pillar and MOVE1's re-route talking, and pinning it would
+ * turn a map edit into a movement-bug report.
+ */
+const blueBodies = (image: Image): { x: number; y: number }[] => {
+  let rest = findPixels(image, isTeamBlue, 2);
+  const out: { x: number; y: number }[] = [];
+  // Two characters per seat, and a peel per body; the floor drops the route
+  // line and antialiased fringes, which are not units.
+  for (let i = 0; i < 4 && rest.length > 60; i++) {
+    const blob = largestCluster(rest, 6);
+    if (blob.length < 60) break;
+    const seen = new Set(blob.map((p) => `${p.x},${p.y}`));
+    rest = rest.filter((p) => !seen.has(`${p.x},${p.y}`));
+    out.push({
+      x: Math.round(blob.reduce((s, p) => s + p.x, 0) / blob.length),
+      y: Math.round(blob.reduce((s, p) => s + p.y, 0) / blob.length),
+    });
+  }
+  return out.sort((a, b) => a.y - b.y || a.x - b.x);
+};
+
+/**
+ * A point on a character, as a fraction of the board area.
+ *
+ * The furthest body from the middle of the frame, because the planning camera
+ * centres on the character being planned for — so the *other* blue body is the
+ * teammate, and aiming at a teammate two squares away is the one shot that is
+ * certainly in range on turn 1. With only one body in frame it aims at that
+ * one; an ability that lands on its own caster still resolves, which is all
+ * this drive needs.
+ *
+ * Falls back to the middle of the board area if nothing was found, so a drive
+ * degrades rather than throwing inside a helper that is not under test.
+ */
+async function aimTarget(page: Page): Promise<{ fx: number; fy: number }> {
+  const bodies = blueBodies(await pixels(page));
+  if (bodies.length === 0) return { fx: 0.5, fy: 0.5 };
+  const img = await pixels(page);
+  const centre = { x: img.width / 2, y: img.height / 2 };
+  const far = bodies.reduce((best, b) =>
+    Math.hypot(b.x - centre.x, b.y - centre.y) > Math.hypot(best.x - centre.x, best.y - centre.y) ? b : best);
+  return { fx: far.x / img.width, fy: far.y / img.height };
+}
+
 test.beforeEach(async ({ page }) => {
   const failures: string[] = [];
   page.on('pageerror', (e) => failures.push(`pageerror: ${e.message}`));
@@ -306,17 +356,34 @@ test('a resolved turn animates, logs both ends, and floats a readout', async ({ 
   // playback, which is the most expensive thing the suite does short of the
   // RENDER-COVERAGE block (which already carries its own 150 s).
   test.slow();
-  // Order every seat with its first available ability, aimed across the board,
+  // Order every seat with its first available ability, aimed at a character,
   // then lock in until the turn resolves.
+  //
+  // AIM-AT-A-BODY: this used to aim at a fixed screen fraction (0.78 across),
+  // and it worked by accident. The teams spawn **thirteen** squares apart with
+  // abilities that reach about eight, so no turn-1 shot can cross the map —
+  // what actually happened was that 0.78 landed on the *enemy pair's own
+  // tiles*, and the log this test then asserted on read
+  // "Bastion hit Aegis" — two units on the same team, catching each other.
+  //
+  // CAMERA-CONTROLS moved the frame onto the character being planned for, and
+  // that fraction stopped landing anywhere: measured, two of the four seats
+  // aimed at a point that `squareFromPoint` resolved to **null**, off the board
+  // entirely. No hits, no readouts, an empty log.
+  //
+  // So aim at a body on purpose. The only thing in range on turn 1 is your own
+  // teammate, which is exactly what the fraction was hitting; naming it makes
+  // the premise legible and makes it independent of where the camera is
+  // pointed. Measured after the change: four readouts and two logged hits.
   for (let i = 0; i < 10; i++) {
     const lock = lockIn(page);
     if (!(await lock.isVisible())) break;
     const ability = page.locator('.hud-ability:not([disabled])');
     if (await ability.count() > 0) {
       await ability.first().click();
-      const fy = 0.35 + (i % 3) * 0.15;
-      await pointAt(page, 0.78, fy);
-      await clickAt(page, 0.78, fy);
+      const at = await aimTarget(page);
+      await pointAt(page, at.fx, at.fy);
+      await clickAt(page, at.fx, at.fy);
     }
     await lock.click();
     await page.waitForTimeout(160);
@@ -1299,39 +1366,6 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     expect(sawEnemyUnderFog, 'never composited an enemy while the board was still fogged').toBe(true);
   });
 
-  /**
-   * MOVE-SPRINT-FIRST — the owner's *"Vex's first sprint action does not move
-   * the character"*, asked at the layer the report came from.
-   *
-   * The client modules answer this in `move-sprint-first.test.ts` and answer it
-   * cleanly, which is exactly why the browser has to be asked too: the two
-   * candidate explanations left were the app wiring and a stale bundle, and
-   * neither is visible from a unit test. This is the drive that establishes
-   * which — it fails if the button, the click handler or the order assembly is
-   * broken, and it is green against a build made from this tree.
-   *
-   * Bodies rather than an exact square: the landing tile is `duel-arena`'s wall
-   * pillar and MOVE1's re-route talking, and pinning it would turn a map edit
-   * into a movement-bug report.
-   */
-  const blueBodies = (image: Image): { x: number; y: number }[] => {
-    let rest = findPixels(image, isTeamBlue, 2);
-    const out: { x: number; y: number }[] = [];
-    // Two characters per seat, and a peel per body; the floor drops the route
-    // line and antialiased fringes, which are not units.
-    for (let i = 0; i < 4 && rest.length > 60; i++) {
-      const blob = largestCluster(rest, 6);
-      if (blob.length < 60) break;
-      const seen = new Set(blob.map((p) => `${p.x},${p.y}`));
-      rest = rest.filter((p) => !seen.has(`${p.x},${p.y}`));
-      out.push({
-        x: Math.round(blob.reduce((s, p) => s + p.x, 0) / blob.length),
-        y: Math.round(blob.reduce((s, p) => s + p.y, 0) / blob.length),
-      });
-    }
-    return out.sort((a, b) => a.y - b.y || a.x - b.x);
-  };
-
   test('clicking a character to move onto its tile still moves you (BODY-CLICK)', async ({ page }) => {
     // Owner Dev Note: *"BUG: When moving to a location that another character
     // occupies … the character does not move at all."* Two failures in a row
@@ -1365,6 +1399,21 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
       .toBeLessThan(before.length);
   });
 
+  /**
+   * MOVE-SPRINT-FIRST — the owner's *"Vex's first sprint action does not move
+   * the character"*, asked at the layer the report came from.
+   *
+   * The client modules answer this in `move-sprint-first.test.ts` and answer it
+   * cleanly, which is exactly why the browser has to be asked too: the two
+   * candidate explanations left were the app wiring and a stale bundle, and
+   * neither is visible from a unit test. This is the drive that establishes
+   * which — it fails if the button, the click handler or the order assembly is
+   * broken, and it is green against a build made from this tree.
+   *
+   * Bodies rather than an exact square: the landing tile is `duel-arena`'s wall
+   * pillar and MOVE1's re-route talking, and pinning it would turn a map edit
+   * into a movement-bug report.
+   */
   test('the opening Sprint of the match actually moves a unit (MOVE-SPRINT-FIRST)', async ({ page }) => {
     const sprint = page.locator('.hud-move', { hasText: /^Sprint/ });
     const move = page.locator('.hud-move', { hasText: /^Move/ });

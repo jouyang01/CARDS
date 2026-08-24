@@ -339,21 +339,45 @@ export function largestCluster(
   points: readonly { x: number; y: number }[],
   gap: number,
 ): { x: number; y: number }[] {
-  const unvisited = new Set(points.map((_, i) => i));
+  // Bucket by `gap`, so a point's neighbours can only be in its own cell or the
+  // eight around it. The flood fill below then touches a bounded number of
+  // candidates per point instead of rescanning everything still unvisited.
+  //
+  // This used to be that rescan, on the reasoning that "small frames" made a
+  // quadratic cheaper than an index. That bet lost when CAMERA-CONTROLS moved
+  // the planning frame onto the character: more of the team-coloured spawn edge
+  // came into view, the blue point count rose, and the quadratic went with it —
+  // **136 seconds** for one `blueBodies` call, measured, against a 150s test
+  // budget. The frames were never guaranteed small; they were small so far.
+  const cell = Math.max(1, gap);
+  const buckets = new Map<string, number[]>();
+  const key = (x: number, y: number): string => `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
+  points.forEach((p, i) => {
+    const k = key(p.x, p.y);
+    const bucket = buckets.get(k);
+    if (bucket === undefined) buckets.set(k, [i]);
+    else bucket.push(i);
+  });
+
+  const seen = new Uint8Array(points.length);
   let best: { x: number; y: number }[] = [];
-  while (unvisited.size > 0) {
-    const seed = unvisited.values().next().value as number;
-    unvisited.delete(seed);
-    const blob = [points[seed]!];
-    // Breadth-first over the remaining points; small frames, so the quadratic
-    // scan is cheaper than building an index.
+  for (let start = 0; start < points.length; start++) {
+    if (seen[start] === 1) continue;
+    seen[start] = 1;
+    const blob = [points[start]!];
     for (let head = 0; head < blob.length; head++) {
       const p = blob[head]!;
-      for (const i of [...unvisited]) {
-        const q = points[i]!;
-        if (Math.abs(q.x - p.x) <= gap && Math.abs(q.y - p.y) <= gap) {
-          unvisited.delete(i);
-          blob.push(q);
+      const cx = Math.floor(p.x / cell);
+      const cy = Math.floor(p.y / cell);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (const i of buckets.get(`${cx + dx},${cy + dy}`) ?? []) {
+            if (seen[i] === 1) continue;
+            const q = points[i]!;
+            if (Math.abs(q.x - p.x) > gap || Math.abs(q.y - p.y) > gap) continue;
+            seen[i] = 1;
+            blob.push(q);
+          }
         }
       }
     }

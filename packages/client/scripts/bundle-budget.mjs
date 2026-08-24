@@ -9,9 +9,27 @@
  * into the graph. The budget exists to make that loud.
  *
  * Deliberately a FAILURE, not a warning: a warning in a CI log that already
- * passes is a warning nobody reads. The headroom (roughly 2x today) is what
- * makes failing safe — you have to double the bundle to trip it, and the fix
- * when you do is to code-split the renderer, not to raise the number.
+ * passes is a warning nobody reads.
+ *
+ * **Raised 300 kB -> 350 kB, on the owner's call, and the number is chosen
+ * rather than rounded up.** The original was 300 against a 145 kB bundle —
+ * "roughly 2x today", with the stated fix on breach being to code-split rather
+ * than to raise. The client has since grown to 235 kB honestly (the renderer,
+ * themes, grain, the sky, the camera), so that 2x margin had quietly become
+ * 1.27x and the budget was closer to a tripwire under the pedals than a guard.
+ *
+ * 350 keeps it a real guard, because the failure it exists to catch has a
+ * **size**. The likeliest accident here is a second copy of `three` — a deep
+ * import that defeats deduplication — and three is ~145 kB gzipped. From 235
+ * that lands at ~380, which is over 350 and under 400: the budget still fails
+ * loudly on the one mistake it was built for, while leaving 115 kB (about 49%)
+ * for the client to keep growing on purpose. A round 400 or a doubled 470 would
+ * both have stopped catching it.
+ *
+ * The corollary is that this cannot be raised twice by the same reasoning. At
+ * ~280 kB of honest growth there is no number that both clears the code and
+ * catches a duplicated three, and the answer then is the one the original note
+ * gave: split the renderer out of the main chunk.
  *
  * Run locally with `npm run size -w @cards/client` after a build.
  */
@@ -21,7 +39,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Budget in bytes of gzipped JS. */
-const BUDGET = 300 * 1024;
+const BUDGET = 350 * 1024;
 const DIST = new URL('../dist/assets/', import.meta.url).pathname;
 
 let total = 0;
