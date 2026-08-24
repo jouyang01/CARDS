@@ -1,0 +1,22 @@
+{
+  "props": [
+    {
+      "theme": "proving-floor",
+      "role": "cover",
+      "kind": "barricade",
+      "file": "props/proving-floor_cover.glb",
+      "version": "38013d09f240",
+      "yawSteps": 2,
+      "height": 0.45
+    },
+    {
+      "theme": "proving-floor",
+      "role": "wall",
+      "kind": "pillar",
+      "file": "props/proving-floor_wall.glb",
+      "version": "bc68ce453ac2",
+      "yawSteps": 4,
+      "height": 0.9
+    }
+  ]
+}
