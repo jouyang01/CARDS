@@ -6599,6 +6599,47 @@ which from 235 lands at ~380 — over 350, under 400. The budget still fails lou
 mistake it was built for while leaving 115 kB for deliberate growth. It cannot be raised twice by
 this reasoning; at ~280 kB there is no number that both clears the code and catches a duplicated
 three, and the answer then is the renderer split the original note named.
+## 2026-08-24 — Builder session 19 (tracers: the shot crossing the gap)
+
+VFX step 2. A hit used to teleport — the ability played, and a beat later the victim flashed, with
+nothing crossing the gap for the player to connect.
+
+**Nothing new was scheduled for it.** `choreograph.ts` already puts an `ability` cue at `t` and
+binds its impacts to `sourceUnitId` at the end of that beat, so a hit belongs to the ability that
+caused it (A0). That binding *is* the flight window; `tracer.ts` reads it rather than inventing a
+parallel timeline. Pairing is on `sourceUnitId` **and** `abilityId`, and to the LATEST qualifying
+cast: a unit with two abilities in one phase otherwise dates its second shot to the first cast — a
+tracer that leaves before the gun does.
+
+**The geometry is in the pure module, not the renderer.** What reaches `drawShape` is a quad in
+fractional board coordinates, which is what it already takes for an AoE footprint — so a tracer
+needs no new drawing primitive, and every decision about where the streak is and how long it runs
+is arithmetic a Node test can check. The only renderer change is a lift: every other shape layer is
+a *footprint* and belongs flat on the floor, while a tracer is the one that describes something in
+the air, and at `SHAPE_LIFT` it ran under the feet of both units as a scorch mark.
+
+**Every constant here was measured off a filmed Blast, and the first set was wrong.** At
+`STREAK_TILES = 0.9` and a half width of 0.055 the streak came out **9x46 screen pixels** — legible
+in a difference image, invisible to anyone watching the board. It also emerged from Aegis's waist
+and was cut in half by his own legs, because a line from centre to centre spends its first half
+tile inside the model. Hence `MUZZLE_TILES`, held back at *both* ends: the far end too, so the
+streak stops short of the victim rather than burying its head in the unit at the moment the flash
+is trying to own.
+
+**`MIN_FLIGHT_TILES` is a stand-in and should be replaced.** Below 1.6 tiles nothing is drawn,
+which excludes orthogonal (1.0) and diagonal (1.41) neighbours. The honest version of this belongs
+in the per-ability VFX table: a melee ability should *declare* that it has no projectile, rather
+than being filtered out by how far apart its two units happened to end up. Shield Bash is a cone at
+range 2 and draws no tracer today for the second reason, which gives the right picture for the
+wrong cause.
+
+**Verified in three places, and the middle one is the one that keeps being skipped in this lane:**
+`tracer.test.ts` for the geometry, `TRACER-WIRING` for the call actually reaching the renderer
+(mutation-checked: stubbing the draw fails it), and a filmed Blast differenced against a build with
+the draw stubbed out, which shows the streak growing over ~19 frames of the beat and then handing
+over to the flash. The wiring test had to move to a RANGED ability to keep meaning anything —
+`duel()` stands its two units adjacent so a melee cone connects, which is now correctly no tracer
+at all.
 ---
 
 ## 2026-08-23 — Builder session 16 (RENDER-SUITE-GREEN-2)

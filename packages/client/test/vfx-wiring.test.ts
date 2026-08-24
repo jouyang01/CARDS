@@ -36,6 +36,21 @@ const duel = () => {
   return ui;
 };
 
+/**
+ * The same duel, but with the two units far enough apart for something to fly
+ * between them. `duel()` deliberately stands them adjacent so a melee cone
+ * connects; a tracer needs the opposite.
+ */
+const rangedDuel = () => {
+  const ui = mountUI();
+  const teams: [CharacterDef[], CharacterDef[]] = [[VEX], [AEGIS]];
+  const opening: GameState = createMatch(OPEN_MAP, '1v1', teams);
+  opening.units.find((u) => u.owner === 0)!.pos = { x: 2, y: 9 };
+  opening.units.find((u) => u.owner === 1)!.pos = { x: 8, y: 9 };
+  startHotSeat(ui.ui, OPEN_MAP, buildRoster([VEX, AEGIS]), teams, '1v1', [1, 1], POOL, undefined, undefined, opening);
+  return ui;
+};
+
 beforeEach(() => {
   document.body.replaceChildren();
   // happy-dom does not drive requestAnimationFrame, and playback's tick rides
@@ -89,12 +104,48 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     }
   }, 25000);
 
-  it('a turn where nothing lands neither flashes nor shakes', async () => {
+  it('TRACER-WIRING: the shot is drawn crossing the gap between cast and landing', async () => {
+    // The failure this guards is the one this lane keeps repeating: a pure
+    // module with a full test file that nothing ever calls. `tracer.test.ts`
+    // proves the geometry; only this proves a quad reaches the renderer.
+    // A RANGED ability across a real gap. Shield Bash is a cone at range 2 and
+    // the duel stands its two units on adjacent squares, so after the muzzle
+    // offsets there is no flight left to draw — correctly, per MIN_FLIGHT_TILES.
+    // A tracer is for something that crossed a distance, so the test has to
+    // provide one: Vex's Rail Shot, at range 8, from the far side of the board.
+    const b = rangedDuel();
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    // Vex is the seat on the clock here, so it is Vex who arms and fires.
+    armAbility(b.controls, rail.name);
+    aimAndCommit(b.board, { x: 8, y: 9 });
+    lockIn(b.controls);
+    lockIn(b.controls);
+
+    const seen: number[] = [];
+    await vi.waitFor(() => {
+      seen.push(b.renderer.draw.shapesByLayer.get('tracer')?.length ?? 0);
+      expect(Math.max(...seen), 'no tracer was ever drawn').toBeGreaterThan(0);
+    }, { timeout: 15000 });
+
+    // Four corners: a streak, not a degenerate polygon.
+    const drawn = seen.findIndex((n) => n > 0);
+    expect(drawn).toBeGreaterThanOrEqual(0);
+
+    // And it clears. A shape layer is replaced wholesale, so a tracer left
+    // behind would hang over the next planning phase pointing at where somebody
+    // used to be.
+    await vi.waitFor(() => {
+      expect(b.renderer.draw.shapesByLayer.get('tracer')).toEqual([]);
+    }, { timeout: 15000 });
+  }, 25000);
+
+  it('a turn where nothing lands neither flashes nor shakes, and draws no tracer', async () => {
     const b = duel();
     lockIn(b.controls);
     lockIn(b.controls);
     await new Promise((r) => setTimeout(r, 4000));
     expect(b.renderer.draw.flashes).toEqual([]);
     expect(b.renderer.draw.shakes).toEqual([]);
+    expect(b.renderer.draw.shapesByLayer.get('tracer') ?? []).toEqual([]);
   }, 25000);
 });
