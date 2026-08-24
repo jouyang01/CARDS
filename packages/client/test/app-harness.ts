@@ -23,7 +23,7 @@
 import type { MapDef, TeamId, UnitOrders, Vec2 } from '@cards/engine';
 import type { HotSeatUI, NetPlay } from '../src/app.js';
 import type {
-  HighlightLayer, PathLayer, ProjectionName, RenderDecoy, RenderTrap, RenderUnit, Renderer,
+  HighlightLayer, PathLayer, ProjectionName, RenderDecoy, RenderTrap, RenderUnit, Renderer, ShapeLayer,
 } from '../src/renderer3d.js';
 import type { ClipSet } from '../src/character-clips.js';
 
@@ -32,6 +32,15 @@ export interface DrawLog {
   highlights: Map<HighlightLayer, Vec2[]>;
   paths: { squares: Vec2[]; layer: PathLayer | undefined }[];
   shapes: Vec2[][];
+  /**
+   * The last outlines drawn into each shape layer.
+   *
+   * `shapes` flattens every layer into one list, which cannot answer "is there a
+   * tracer on the board" — an AoE footprint and a tracer streak are both
+   * outlines. A shape layer is replaced wholesale on each draw, so the last call
+   * per layer IS that layer's state.
+   */
+  shapesByLayer: Map<ShapeLayer, Vec2[][]>;
   /** Every animation the app asked for, in order — Phase 8's assertable half. */
   clips: { unitId: string; clip: string; loop: boolean }[];
   /** Each `preloadCharacters` call, as the ids it was given. */
@@ -88,7 +97,7 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
-    highlights: new Map(), paths: [], shapes: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
+    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [],
     board: { units: [], decoys: [], traps: [] },
   };
@@ -169,8 +178,9 @@ export function stubRenderer(): StubRenderer {
       }
     },
     // AIM-PREVIEW-TRUE: a list of outlines per call, one per locus.
-    drawShape: (outlines) => {
+    drawShape: (outlines, _color, _opacity, layer = 'shape') => {
       for (const outline of outlines) draw.shapes.push(outline.map((p) => ({ ...p })));
+      draw.shapesByLayer.set(layer, outlines.map((o) => o.map((p) => ({ ...p }))));
     },
     start: () => {},
     stop: () => {},
