@@ -151,7 +151,7 @@ export function discOutline(centre: Point, radius: number, segments = RING_SEGME
 }
 
 /** How thick a ring's band is, as a fraction of its current radius. */
-export const RING_THICKNESS = 0.34;
+export const RING_THICKNESS = 0.45;
 
 /**
  * A **ring**, not a disc, and the difference is what the effect is for. A filled
@@ -173,8 +173,35 @@ export function ringOutline(centre: Point, radius: number, segments = RING_SEGME
   return { outline, hole: discOutline(centre, radius * (1 - RING_THICKNESS), segments) };
 }
 
-/** Peak opacity of an aura at the instant it is born. */
-export const AURA_PEAK_OPACITY = 0.5;
+/**
+ * Peak opacity of an aura.
+ *
+ * Raised from 0.5 on the owner's read of it in the running game: only Warding
+ * Halo registered, and the reason it did is that it is the one with a big
+ * radius. Everything else was technically on screen and practically invisible.
+ */
+export const AURA_PEAK_OPACITY = 0.85;
+
+/**
+ * How far through its life an aura stays at full strength before fading.
+ *
+ * The first version faded linearly from the moment it was born, which put the
+ * ring at its brightest when it was at its *smallest* — a bright dot and a
+ * broad ghost, and never both bright and broad. Holding the level through the
+ * first half means the ring is fully lit while it is actually large enough to
+ * see, and the fade then reads as it dissipating rather than as it never having
+ * been there.
+ */
+export const AURA_HOLD = 0.55;
+
+/**
+ * The fraction of its full radius an aura is born at.
+ *
+ * Starting at zero spends the opening frames on something too small to register
+ * — at 30fps a 0.6-beat ring is 14 frames, and the first four of them were a
+ * few pixels across. Starting part-grown means it arrives already readable.
+ */
+export const AURA_BIRTH_RADIUS = 0.4;
 
 /**
  * Every aura alive at `t`.
@@ -200,11 +227,13 @@ export function aurasAt(
     if (spec.kind !== 'ring' || at === undefined) return;
     if (!(spec.beats > 0) || age < 0 || age >= spec.beats) return;
     const p = age / spec.beats;
-    const { outline, hole } = ringOutline(at, spec.radiusTiles * p);
+    const radius = spec.radiusTiles * (AURA_BIRTH_RADIUS + (1 - AURA_BIRTH_RADIUS) * p);
+    const { outline, hole } = ringOutline(at, radius);
     if (outline.length === 0) return;
     const shade = table[characterId]?.palette[spec.shade];
     if (shade === undefined) return;
-    out.push({ outline, hole, color: hexColour(shade), opacity: AURA_PEAK_OPACITY * (1 - p) });
+    const fade = p < AURA_HOLD ? 1 : (1 - p) / (1 - AURA_HOLD);
+    out.push({ outline, hole, color: hexColour(shade), opacity: AURA_PEAK_OPACITY * fade });
   };
 
   for (const cue of cues) {

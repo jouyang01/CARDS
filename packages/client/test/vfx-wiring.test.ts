@@ -170,6 +170,26 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     }, { timeout: 15000 });
   }, 25000);
 
+  it('WALL-WIRING: Warding Wall raises a standing panel on the board', async () => {
+    const b = duel();
+    const wall = AEGIS.abilities.find((a) => a.id === 'warding_wall')!;
+    armAbility(b.controls, wall.name);
+    aimAndCommit(b.board, { x: 8, y: 7 });
+    lockIn(b.controls);
+    lockIn(b.controls);
+
+    let panels: { from: { x: number; y: number }; to: { x: number; y: number } }[] = [];
+    await vi.waitFor(() => {
+      if (b.renderer.draw.walls.length > 0) panels = b.renderer.draw.walls;
+      expect(panels.length, 'no wall panel ever reached the renderer').toBeGreaterThan(0);
+    }, { timeout: 15000 });
+
+    // A face with length, not a point: a zero-length panel is an invisible wall.
+    for (const p of panels) {
+      expect(Math.hypot(p.to.x - p.from.x, p.to.y - p.from.y)).toBeGreaterThan(0);
+    }
+  }, 25000);
+
   it('a turn where nothing lands neither flashes nor shakes, and draws no tracer', async () => {
     const b = duel();
     lockIn(b.controls);
@@ -179,5 +199,6 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     expect(b.renderer.draw.shakes).toEqual([]);
     expect(b.renderer.draw.shapesByLayer.get('tracer') ?? []).toEqual([]);
     expect(b.renderer.draw.auras).toEqual([]);
+    expect(b.renderer.draw.walls).toEqual([]);
   }, 25000);
 });
