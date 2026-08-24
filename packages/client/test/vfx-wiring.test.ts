@@ -190,6 +190,33 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     }
   }, 25000);
 
+  it('PARTICLE-WIRING: a landed hit throws debris that reaches the renderer', async () => {
+    const b = duel();
+    const bash = AEGIS.abilities.find((a) => a.id === 'shield_bash')!;
+    armAbility(b.controls, bash.name);
+    aimAndCommit(b.board, { x: 9, y: 9 });
+    lockIn(b.controls);
+    lockIn(b.controls);
+
+    let seen: typeof b.renderer.draw.particles = [];
+    await vi.waitFor(() => {
+      if (b.renderer.draw.particles.length > 0) seen = b.renderer.draw.particles;
+      expect(seen.length, 'no debris ever reached the renderer').toBeGreaterThan(0);
+    }, { timeout: 15000 });
+
+    for (const p of seen) {
+      expect(p.size).toBeGreaterThan(0);
+      expect(p.opacity).toBeGreaterThan(0);
+      expect(p.lift).toBeGreaterThanOrEqual(0);
+    }
+    // Fragments, not one thing: a burst that renders as a single quad is a dot.
+    expect(new Set(seen.map((p) => `${p.x},${p.y}`)).size).toBeGreaterThan(1);
+
+    await vi.waitFor(() => {
+      expect(b.renderer.draw.particles).toEqual([]);
+    }, { timeout: 15000 });
+  }, 25000);
+
   it('a turn where nothing lands neither flashes nor shakes, and draws no tracer', async () => {
     const b = duel();
     lockIn(b.controls);
@@ -200,5 +227,6 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     expect(b.renderer.draw.shapesByLayer.get('tracer') ?? []).toEqual([]);
     expect(b.renderer.draw.auras).toEqual([]);
     expect(b.renderer.draw.walls).toEqual([]);
+    expect(b.renderer.draw.particles).toEqual([]);
   }, 25000);
 });

@@ -50,6 +50,8 @@ export interface DrawLog {
   auras: { outline: Vec2[]; color: number; opacity: number }[];
   /** Standing Warding Wall panels — the last `drawWalls` call. */
   walls: { from: Vec2; to: Vec2 }[];
+  /** Impact debris in the air — the last `drawParticles` call. */
+  particles: { x: number; y: number; lift: number; size: number; color: number; opacity: number }[];
   /** Every animation the app asked for, in order — Phase 8's assertable half. */
   clips: { unitId: string; clip: string; loop: boolean }[];
   /** Each `preloadCharacters` call, as the ids it was given. */
@@ -106,7 +108,7 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
-    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
+    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], particles: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [],
     board: { units: [], decoys: [], traps: [] },
   };
@@ -187,6 +189,9 @@ export function stubRenderer(): StubRenderer {
       }
     },
     // AIM-PREVIEW-TRUE: a list of outlines per call, one per locus.
+    drawParticles: (particles) => {
+      draw.particles = particles.map((p) => ({ ...p }));
+    },
     drawWalls: (panels) => {
       draw.walls = panels.map((p) => ({ from: { ...p.from }, to: { ...p.to } }));
     },
