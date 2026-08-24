@@ -147,8 +147,13 @@ generated geometry is wholly owned — and matches the blocky character aestheti
 `ART_PIPELINE.md` §12b for the pipeline; `data/props/<theme>.json` is the spec,
 `tools/art/generate_prop.py` the generator, `prop-placement.ts` the deterministic per-tile
 selection. Proving Floor ships as a colosseum (stone pillars for walls, wooden barricades for
-cover). The **renderer swap** — instancing the prop `.glb` in place of the terrain box, fail-soft —
-is the remaining step, gated on a real asset existing to verify against.
+cover). The **renderer swap is done** (session 22): `renderer3d.ts` loads the theme's props from
+`public/models/props/manifest.json`, clones one per wall/cover tile with a hashed yaw
+(`prop-placement.ts`), and hides the box it stands over — fail-soft, so a missing manifest or
+`.glb` leaves every tile on its box. It is gated on the `props` flag (`?props=off`, which the whole
+browser suite sets), for the same reason models are: a prop is an async asset that changes the
+frame, and the pixel tests need the plain boxes they were written against. Verified in a real
+browser on duel-arena; the 36-test suite stays green with props off.
 
 Walls and cover become themed meshes; the space beyond the platform gets a skyline. Two rules:
 

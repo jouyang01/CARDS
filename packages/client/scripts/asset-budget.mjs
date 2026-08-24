@@ -78,11 +78,23 @@ export function walk(dir, prefix = '') {
   return out;
 }
 
-/** The report: per-character subtotals and the grand total, sorted by name. */
+/** The report: per-character subtotals, a props subtotal, and the grand total. */
 export function weigh(dir) {
   const files = walk(dir);
   const byCharacter = new Map();
+  // Terrain props (MAP_PIPELINE phase 5) live under `props/` and are NOT
+  // characters — the per-character cap is "one character's load cost", and a
+  // stone pillar is not that. They are their own bucket: still counted toward
+  // the whole-directory TOTAL (a player downloads them too), but grouped apart
+  // so `characters` stays "the rigged roster" and the cap it is checked against
+  // keeps meaning what it says.
+  const isProp = (name) => name.startsWith('props/');
+  let propBytes = 0;
   for (const file of files) {
+    if (isProp(file.name)) {
+      propBytes += file.bytes;
+      continue;
+    }
     const id = characterOf(file.name.split('/').pop() ?? file.name);
     byCharacter.set(id, (byCharacter.get(id) ?? 0) + file.bytes);
   }
@@ -90,6 +102,7 @@ export function weigh(dir) {
     files,
     characters: [...byCharacter.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([id, bytes]) => ({ id, bytes })),
+    props: propBytes,
     total: files.reduce((n, f) => n + f.bytes, 0),
   };
 }
@@ -98,12 +111,23 @@ const mb = (n) => `${(n / 1024 / 1024).toFixed(2)} MB`;
 
 /** The whole check, as a pure function of a directory, so it is testable. */
 export function report(dir) {
-  const { files, characters, total } = weigh(dir);
+  const { files, characters, props, total } = weigh(dir);
   const lines = files.map((f) => `  ${f.name}  ${mb(f.bytes)}`);
   for (const c of characters) lines.push(`  ${c.id} total  ${mb(c.bytes)}`);
+  if (props > 0) lines.push(`  props total  ${mb(props)}`);
   lines.push(`total ${mb(total)} · budget ${mb(TOTAL)} (${mb(PER_CHARACTER)} per character)`);
 
   const errors = [];
+  // All terrain props share one ceiling — the per-character cap is a fine one,
+  // a whole theme's set of pillars and barricades should sit well under a
+  // single rigged character. If props ever approach it, split the bucket per
+  // theme before raising the number.
+  if (props > PER_CHARACTER) {
+    errors.push(
+      `terrain props total ${mb(props)}, over the ${mb(PER_CHARACTER)} budget for props. ` +
+      'Simplify the prop geometry or split the bucket per theme — see docs/ART_PIPELINE.md §12b.',
+    );
+  }
   for (const c of characters) {
     if (c.bytes > PER_CHARACTER) {
       errors.push(
@@ -119,7 +143,7 @@ export function report(dir) {
       'not a bigger number here.',
     );
   }
-  return { lines, errors, total, characters, empty: files.length === 0 };
+  return { lines, errors, total, characters, props, empty: files.length === 0 };
 }
 
 // Only when run as a script, so the helpers above stay importable by a test.

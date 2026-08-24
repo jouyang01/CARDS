@@ -63,6 +63,7 @@ import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
 import { browserRenderOnDemand } from './render-flags.js';
 import { rimBreath } from './ambient-motion.js';
+import { placeProp } from './prop-placement.js';
 import { easeCamera } from './camera-ease.js';
 import { clampCentre, panDelta } from './camera-pan.js';
 
@@ -1032,7 +1033,7 @@ export interface BoardPalette {
 
 export function createRenderer(
   container: HTMLElement, map: MapDef, palette: BoardPalette,
-  options: { ambient?: boolean; renderOnDemand?: boolean } = {},
+  options: { ambient?: boolean; renderOnDemand?: boolean; props?: boolean } = {},
 ): Renderer {
   const scene = new Scene();
   // AMBIENT-FREEZE: resolved once. `?ambient=off` (every browser test) and a
@@ -1040,6 +1041,10 @@ export function createRenderer(
   // decorative that moves is gated on it — so the tests, and anyone who asked
   // their OS to stop motion, get a board frozen byte-identical to a static one.
   const ambientOn = options.ambient ?? true;
+  // PROP-FREEZE: whether themed terrain props may load. Off by default so a
+  // direct caller (the jsdom renderer tests) never kicks off a fetch; the app
+  // passes `browserProps()`, which is off for `?props=off` (the whole e2e).
+  const propsOn = options.props ?? false;
   // SKY-DOME: a ramp rather than a flat clear colour. The fallback keeps a
   // headless context (no 2d canvas) drawing something rather than nothing.
   scene.background = skyTexture(palette.sky) ?? new Color(palette.background);
@@ -1181,10 +1186,14 @@ export function createRenderer(
   grid.position.y = GRID_LIFT;
   world.add(grid);
 
-  for (const [squares, colour, height, surface, grain] of [
-    [map.brush, palette.brush, TERRAIN_HEIGHT.brush, palette.surface.brush, palette.grain.brush],
-    [map.cover, palette.cover, TERRAIN_HEIGHT.cover, palette.surface.cover, palette.grain.cover],
-    [map.walls, palette.wall, TERRAIN_HEIGHT.wall, palette.surface.wall, palette.grain.wall],
+  // A prop may later stand in for a wall/cover box (MAP_PIPELINE phase 5); keep
+  // the boxes it might replace so the swap can hide the box it covers and fall
+  // back to it if the prop never loads.
+  const terrainBoxes = new Map<string, Mesh>();
+  for (const [role, squares, colour, height, surface, grain] of [
+    ['brush', map.brush, palette.brush, TERRAIN_HEIGHT.brush, palette.surface.brush, palette.grain.brush],
+    ['cover', map.cover, palette.cover, TERRAIN_HEIGHT.cover, palette.surface.cover, palette.grain.cover],
+    ['wall', map.walls, palette.wall, TERRAIN_HEIGHT.wall, palette.surface.wall, palette.grain.wall],
   ] as const) {
     for (const p of squares) {
       // Each block gets its own hashed tint, so a wall reads as a run of placed
@@ -1205,6 +1214,7 @@ export function createRenderer(
       box.castShadow = height > TERRAIN_HEIGHT.brush;
       box.receiveShadow = true;
       world.add(box);
+      if (role !== 'brush') terrainBoxes.set(`${role}:${p.x},${p.y}`, box);
     }
   }
 
@@ -1285,6 +1295,68 @@ export function createRenderer(
       : [span, SCENERY.rim.thickness, 0, edge === 'north' ? -offset : offset] as const;
     scenery.add(edgeBar(w, d, x, z, colour, SCENERY.spawnEmissive));
   }
+
+  // ── Terrain props (MAP_PIPELINE phase 5) ──────────────────────────────────
+  // A wall tile becomes a stone pillar, a cover tile a wooden barricade — loaded
+  // from `public/models/props/` and placed over the plain box that is already
+  // standing there. Fail-soft, exactly like a character model: the box is drawn
+  // first and synchronously, so the gameplay read is right from frame one, and a
+  // manifest or `.glb` that 404s simply leaves the box. Nothing here is consulted
+  // by any rule — a prop is scenery that happens to sit on a played square.
+  const propGroup = new Group();
+  propGroup.name = 'props';
+  world.add(propGroup);
+
+  const loadProps = async (): Promise<void> => {
+    try {
+      const base = 'models';
+      const res = await fetch(`${base}/props/manifest.json`, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`props manifest ${res.status}`);
+      const manifest = (await res.json()) as {
+        props?: { theme: string; role: string; file: string; version?: string; yawSteps?: number }[];
+      };
+      const mine = (manifest.props ?? []).filter((e) => e.theme === palette.themeId);
+      if (mine.length === 0) return; // this theme has no props yet — boxes it is
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+      const loader = new GLTFLoader();
+
+      for (const entry of mine) {
+        const squares = entry.role === 'wall' ? map.walls : entry.role === 'cover' ? map.cover : [];
+        if (squares.length === 0) continue;
+        let template: Group;
+        try {
+          const url = entry.version === undefined || entry.version === ''
+            ? `${base}/${entry.file}`
+            : `${base}/${entry.file}?v=${encodeURIComponent(entry.version)}`;
+          template = (await loader.loadAsync(url)).scene as Group;
+        } catch (err) {
+          // One role missing is not the others' problem — its tiles keep their box.
+          console.warn(`[cards] terrain prop "${entry.theme}/${entry.role}" did not load: ${String(err)}`);
+          continue;
+        }
+        template.traverse((o) => {
+          if ((o as Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; }
+        });
+        for (const sq of squares) {
+          const inst = template.clone(true);
+          const { yawRadians } = placeProp(map.id, sq.x, sq.y, { yawSteps: entry.yawSteps });
+          inst.position.copy(toWorld(map, sq)); // prop base sits at local y=0 = the floor
+          inst.rotation.y = yawRadians;
+          propGroup.add(inst);
+          // Hide the box this prop now stands for. Kept (not removed) so a future
+          // theme swap could bring it back without rebuilding the board.
+          const box = terrainBoxes.get(`${entry.role}:${sq.x},${sq.y}`);
+          if (box !== undefined) box.visible = false;
+        }
+      }
+      markDirty();
+    } catch (err) {
+      // The whole load failing is ordinary — an older build with no props, a
+      // path typo — and it must never break the board: every tile keeps its box.
+      console.warn(`[cards] terrain props not loaded, drawing boxes: ${String(err)}`);
+    }
+  };
+  if (propsOn) void loadProps();
 
   // ── Keyed unit objects (A1's principle, in 3D) ────────────────────────────
   const unitObjects = new Map<string, Group>();

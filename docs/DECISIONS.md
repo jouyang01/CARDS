@@ -6962,3 +6962,52 @@ correct.
 
 Verified by filming Vex — a character with no table entry at all — and differencing against a build
 with `drawParticles` stubbed: debris from f052, peaking ~647 differing pixels at f057, gone by f063.
+
+## 2026-08-24 — Session 22 (Builder): the prop renderer swap, with the owner's assets in hand
+
+The owner ran `generate_prop.py` on their Blender machine and pushed the two Proving Floor `.glb`
+(pillar 13.6 kB, barricade 20 kB) plus the manifest. Before wiring anything I parsed both: valid
+glTF v2, geometry exactly where the dry-run predicted — pillar in three stone parts base-at-floor,
+barricade stakes-and-posts inside the tile. The generator's untested half (the Blender run) came
+back clean, which is the confirmation the dry-run could not give.
+
+**The swap mirrors the character model path, because that path already solved this.** `renderer3d`
+fetches `props/manifest.json` (`no-cache`), filters to the board's `themeId`, loads each role's
+`.glb` once, clones it per wall/cover tile with a hashed yaw from `prop-placement.ts`, positions it
+base-at-floor, and hides the box it now stands over. Every failure mode is ordinary and warns
+rather than throws: no manifest, a 404 `.glb`, a theme with no props (iron-basin) — each leaves the
+plain box. The box is drawn first and synchronously, so the gameplay read is right from frame one
+and the prop is a later, cosmetic swap on top.
+
+**The box is hidden, not removed.** A prop that loads sets `box.visible = false` on the tile it
+covers, rather than deleting the box. It costs a hidden mesh, and buys two things: a future theme
+swap can bring the box back without rebuilding the board, and the fail-soft story stays a one-liner
+(the box always exists; the prop either reveals over it or never arrives).
+
+**PROP-FREEZE is its own flag, parallel to models — and it had to be.** duel-arena carries the
+proving-floor theme and is the *default e2e map*, so an ungated prop load would change the frame in
+FOG-ZORDER, PREVIEW-NUMBERS, STEALTH-CONFIRM and more, and the byte-equality tests would break
+permanently. `?props=off` (set in the e2e fixtures alongside `ambient=off`/`models=off`) holds every
+tile on its box, byte-identical to the board the predicates were written against. Kept separate
+from `models` rather than folded in, because character art and terrain art are different pipelines
+and a session may reasonably want one without the other; the cost is one more flag, the benefit is
+that "models on, props off" is expressible. The 36-test suite is green with props off, which is the
+proof the swap is a true no-op under freeze.
+
+**Asset budget: props are their own bucket now.** `characterOf` was treating `proving-floor_wall`
+and the manifest as pseudo-characters, which broke the "one rigged character so far" assertion the
+moment real props landed — the exact grouping wart flagged when the pipeline shipped. Files under
+`props/` are now weighed apart: still counted toward the 12 MB whole-directory total (a player
+downloads them), but out of the character roster and its per-character cap, which is "one
+character's load cost" and never meant a stone pillar. All Proving Floor props together are 34 kB,
+well under any ceiling.
+
+**Verified, not assumed.** Screenshotted duel-arena with props on at two pitches: top-down, the
+barricades read as wooden stake fences and the pillars as pale stone filling the wall tiles; at a
+low orbit, the columns show plinth → tapered fluted shaft → flared capital, which is the colosseum
+the owner art-directed. The stone is the theme's own bright-but-achromatic wall colour, so it clears
+every saturated UI family §4 guards without being dim.
+
+**Still Proving Floor's, not done:** the spectator tiers / skyline beyond the platform (the other
+half of phase 5's "set pieces") are a backdrop, not tile props, and a larger separate piece. And
+Drained Works still has no prop spec — its own art direction first.

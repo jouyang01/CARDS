@@ -26,6 +26,9 @@ const FLAGS: Readonly<Record<string, string>> = {
   ambient: 'off',
   // Rigged models are covered by `models.spec.ts` on its own budget.
   models: 'off',
+  // Terrain props load async and change the frame; the pixel tests need the
+  // plain terrain boxes they were written against. models.spec keeps this off too.
+  props: 'off',
   // RENDER-ON-DEMAND, and the single biggest thing keeping this suite honest.
   //
   // `page.screenshot` cannot return until the compositor hands it a frame, and
