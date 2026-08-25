@@ -69,6 +69,10 @@ mark it `ENGINE ASK` — don't assume.
   **Mandatory before generating or editing any character art.** §6b is the anatomy spec
   (every proportion as a number, most enforced by `tools/art/validate.py`) and §14 lists
   every trap found building the pipeline — none of them discoverable from the code alone.
+- `docs/CHARACTER_PLAYBOOK.md` — the judgment `ART_PIPELINE.md` does not carry: what is
+  roster-wide vs per-character, how a thesis reaches all the way into VFX, the two
+  decisions to make **before** character #2 exists, and the measurement discipline
+  (mutation-check every visual test). **Read it before starting a new character.**
 - `packages/engine` — pure deterministic simulation + tests. The heart of the project.
 - `packages/client` — Vite + TypeScript, orthographic 3D rendering (Three.js,
   `renderer3d.ts`). **Not SVG** — that was swapped out; see `docs/ARCHITECTURE.md`.

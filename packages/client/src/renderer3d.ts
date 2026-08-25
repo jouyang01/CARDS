@@ -24,6 +24,7 @@ import {
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
+  Float32BufferAttribute,
   Color,
   DoubleSide,
   DirectionalLight,
@@ -53,11 +54,13 @@ import {
 } from 'three';
 import type { CharacterModels, ModelInstance } from './character-model.js';
 import { FLASH_SECONDS, shakeOffset } from './vfx.js';
+import { chamferFor, chamferedBox } from './chamfer.js';
+import { jitterFor } from './jitter.js';
 import type { ClipChoice, ClipSet } from './character-clips.js';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
-import { intentTexture, plateTexture, grainTexture, skyTexture } from './textures.js';
+import { intentTexture, plateTexture, grainTexture, grainNormalTexture, contactTexture, skyTexture } from './textures.js';
 import { type SkyRamp } from './sky.js';
 import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
@@ -564,6 +567,15 @@ export const SHAPE_LIFT = LAYER_LIFT.select + 0.004;
  * everyone's eyes reads as hitting all of them.
  */
 export const TRACER_LIFT = TILE * MODEL_HEIGHT_TILES * 0.55;
+/**
+ * How far past a solid's footprint its contact patch reaches.
+ *
+ * Enough for the falloff to finish. Tighter and the patch has a visible edge of
+ * its own — which replaces one hard seam with another.
+ */
+export const CONTACT_SPREAD = 1.9;
+/** Just clear of the floor, under everything else that draws there. */
+export const CONTACT_LIFT = 0.004;
 /**
  * How tall a Warding Wall stands, in world units.
  *
@@ -1133,8 +1145,11 @@ export function createRenderer(
    * theme allocates no texture and keeps phase 2's look exactly.
    */
   const grainClones = new Map<string, ReturnType<typeof grainTexture>>();
+  /** The normal-map twin of `grainClones`, keyed identically. */
+  const grainNormals = new Map<string, ReturnType<typeof grainTexture>>();
   const grainMap = (spec: GrainSpec, repeatX: number, repeatY: number): {
     map?: ReturnType<typeof grainTexture>;
+    normalMap?: ReturnType<typeof grainTexture>;
   } => {
     const base = grainTexture(grainSeedFor(spec), spec);
     if (base === null) return {};
@@ -1147,12 +1162,26 @@ export function createRenderer(
     // starved the timing-sensitive tests into failing.
     const key = `${grainSeedFor(spec)}|${spec.style}|${spec.speckle}|${repeatX}|${repeatY}`;
     const cached = grainClones.get(key);
-    if (cached !== undefined) return { map: cached };
+    if (cached !== undefined) return { map: cached, normalMap: grainNormals.get(key) ?? undefined };
     const cloned = base.clone();
     cloned.needsUpdate = true;
     cloned.repeat.set(repeatX, repeatY);
     grainClones.set(key, cloned);
-    return { map: cloned };
+
+    // The same pattern, read as a height field, so the sun can find it. Cloned
+    // and cached exactly like the albedo — a normal map with a different repeat
+    // from the colour it belongs to would slide across it.
+    const normalBase = grainNormalTexture(grainSeedFor(spec), spec);
+    let normal: typeof cloned | undefined;
+    if (normalBase !== null) {
+      normal = normalBase.clone() as typeof cloned;
+      normal.needsUpdate = true;
+      normal.repeat.set(repeatX, repeatY);
+      normal.wrapS = cloned.wrapS;
+      normal.wrapT = cloned.wrapT;
+      grainNormals.set(key, normal);
+    }
+    return { map: cloned, normalMap: normal };
   };
 
   /**
@@ -1215,6 +1244,68 @@ export function createRenderer(
   // A prop may later stand in for a wall/cover box (MAP_PIPELINE phase 5); keep
   // the boxes it might replace so the swap can hide the box it covers and fall
   // back to it if the prop never loads.
+  /**
+   * A block, with its edges taken off.
+   *
+   * CHAMFER — every solid on this board was a raw `BoxGeometry`, and a raw box
+   * has one thing wrong with it that no colour, texture or light rig can fix:
+   * its edges are perfectly sharp, and nothing real is. A 90° corner presents
+   * exactly two surfaces to the light, so lit face meets shadowed face across
+   * zero pixels and reads as a line drawn on the screen rather than an edge in
+   * the world. The narrow third surface a bevel adds catches a highlight the
+   * other two cannot, and that thin bright line along the top of a wall is most
+   * of what says a thing was *made*.
+   *
+   * Falls back to a plain box when the bevel would be sub-pixel: below
+   * `CHAMFER_MIN` the chamfered form is forty-four triangles drawing the same
+   * silhouette as twelve, and its corner triangles degenerate to zero area.
+   */
+  const solidGeometry = (w: number, h: number, d: number): BufferGeometry => {
+    const bevel = chamferFor(w, h, d);
+    if (bevel <= 0) return new BoxGeometry(w, h, d);
+    const { positions, indices } = chamferedBox(w, h, d, bevel);
+    const indexed = new BufferGeometry();
+    indexed.setAttribute('position', new Float32BufferAttribute(positions, 3));
+    indexed.setIndex(indices);
+    // FLAT-SHADED, and `toNonIndexed` is what makes it so.
+    //
+    // `computeVertexNormals` averages the normals of every triangle meeting at
+    // a vertex, and in a chamfered box every vertex is shared between a face
+    // and its bevels — so on indexed geometry it smooths the bevel *into* the
+    // face and the crisp highlight this exists to create becomes a soft
+    // gradient, which is the look being got away from. Splitting the vertices
+    // first gives each triangle its own, so each face keeps its true normal.
+    const geometry = indexed.toNonIndexed();
+    indexed.dispose();
+    geometry.computeVertexNormals();
+    return geometry;
+  };
+
+  /**
+   * The soft darkening where a solid meets the floor.
+   *
+   * The sun's shadow map handles the shadow a block *throws*; what it cannot
+   * resolve at this resolution is the crevice at the base, where the block
+   * occludes almost the whole sky. Without it every box meets the floor along a
+   * hard seam and reads as sitting *on* the scene rather than being *in* it.
+   *
+   * Scaled past the footprint so the falloff has somewhere to happen, and
+   * `depthWrite: false` like every other overlay here so it cannot occlude what
+   * is behind it.
+   */
+  const contactPatch = (width: number, depth: number): Mesh | undefined => {
+    const texture = contactTexture();
+    if (texture === null) return undefined;
+    const mesh = new Mesh(
+      new PlaneGeometry(width * CONTACT_SPREAD, depth * CONTACT_SPREAD),
+      new MeshBasicMaterial({
+        map: texture, transparent: true, depthWrite: false, opacity: 1,
+      }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    return mesh;
+  };
+
   const terrainBoxes = new Map<string, Mesh>();
   for (const [role, squares, colour, height, surface, grain] of [
     ['brush', map.brush, palette.brush, TERRAIN_HEIGHT.brush, palette.surface.brush, palette.grain.brush],
@@ -1241,7 +1332,7 @@ export function createRenderer(
       // affordable here in a way it would not be for the floor: the shipped maps
       // carry fifty-odd terrain squares between them, not several hundred.
       const box = new Mesh(
-        new BoxGeometry(...dims),
+        solidGeometry(...dims),
         new MeshStandardMaterial({
           color: shade(colour, tileTint(grainSeed, p.x, p.y, grain.tint)),
           ...surface,
@@ -1249,6 +1340,21 @@ export function createRenderer(
         }),
       );
       box.position.copy(toWorld(map, p)).setY(h / 2);
+      // JITTER. A run of identical blocks at a fixed pitch reads as tiling,
+      // which is a property of software rather than of places.
+      //
+      // Solids only, and both exclusions are load-bearing. Faced cover is
+      // placed exactly on the boundary it guards (COVER-EDGE), and nudging it
+      // misreports which side is protected. Brush is a 0.02 LID lying flush on
+      // its tile — it has no form for a nudge to flatter, and rotating it just
+      // slides a floor covering off its floor, showing bare board at the
+      // corners. Filmed: it read as a misaligned decal, not as variation.
+      if (facing === undefined && h > TERRAIN_HEIGHT.brush) {
+        const nudge = jitterFor(p.x, p.y);
+        box.rotation.y = nudge.yaw;
+        box.position.x += nudge.dx * TILE;
+        box.position.z += nudge.dy * TILE;
+      }
       if (facing) {
         // Sit the panel ON the tile boundary it guards, so the square stays
         // visibly walk-onto-able and the wall reads as the line between tiles.
@@ -1263,6 +1369,16 @@ export function createRenderer(
       box.castShadow = h > TERRAIN_HEIGHT.brush;
       box.receiveShadow = true;
       world.add(box);
+
+      // CONTACT. Brush is flush with the floor and occludes nothing, so it gets
+      // none — a patch under a 0.02 lid is a smudge with no cause.
+      if (h > TERRAIN_HEIGHT.brush) {
+        const patch = contactPatch(dims[0], dims[2]);
+        if (patch !== undefined) {
+          patch.position.copy(box.position).setY(CONTACT_LIFT);
+          world.add(patch);
+        }
+      }
       if (role !== 'brush') terrainBoxes.set(`${role}:${p.x},${p.y}`, box);
     }
   }
