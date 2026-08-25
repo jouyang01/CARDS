@@ -136,7 +136,9 @@ describe('DEV-CHARSELECT-ERROR: a bad id refuses to load', () => {
   });
 
   it('too few for the format is the same kind of complaint', () => {
-    expect(errorsFor('?format=4v4&chars=kestrel,vex')[0]).toContain('needs 8 characters');
+    // 4v4 lives on iron-basin now (Proving Grounds is a dedicated 2v2 map), so
+    // name it — otherwise the spawn-count check trips first and hides the point.
+    expect(errorsFor('?map=iron-basin&format=4v4&chars=kestrel,vex')[0]).toContain('needs 8 characters');
   });
 
   it('a good `chars` produces no error at all', () => {
