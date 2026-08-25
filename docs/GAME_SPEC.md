@@ -109,10 +109,19 @@ Every turn = **Decision Phase** then **Resolution**.
   end of next turn) — and **adjacent here means the four orthogonal neighbours**
   (Manhattan ≤ 1), so a diagonal neighbour does not reveal them. Free-aimed
   attacks may still be fired into unseen squares.
-- **Cover:** if a defender is **orthogonally adjacent** to a cover square and the
-  attack's line from attacker to defender crosses that side, damage is reduced
-  **50% (round down)**. Cover is directional. Melee-range attacks (range ≤ 1) ignore
-  cover.
+- **Cover** comes in two forms, both directional, both reducing crossing damage
+  **50% (round down)**, neither blocking line of sight, and both ignored by
+  melee-range attacks (range ≤ 1):
+  - **Edge cover (half-wall, `{x,y,facing}`).** A barricade on the one `facing`
+    edge (N/S/E/W) of its tile. You may **walk onto the tile** to take cover, but
+    **movement across that edge is blocked** in both directions (you cannot walk
+    *through* it from the side it faces). The occupant standing on it is reduced
+    against any attack whose line crosses the faced edge. This is the default
+    cover on Proving Grounds.
+  - **Full-block cover (`{x,y}`).** Occupies the whole square: blocks entry and
+    pass-through like a wall (but not sight), and reduces an **orthogonally
+    adjacent** defender when the attack line crosses the shared side. The v1
+    form, kept for iron-basin.
 
 ## 4. Characters and abilities
 

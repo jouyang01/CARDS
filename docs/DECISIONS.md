@@ -7044,3 +7044,33 @@ clear it), every candidate was run through a scratch reimplementation of the mov
 rules checking rotational symmetry, dead-pocket reachability, per-row clear runs, and
 spawn-shot safety. Coordinate-coupled tests (board, vision, real-characters, spawns,
 content, and four client lobby tests that assumed duel-arena seated 4v4) were re-pointed.
+
+## 2026-08-24 — Directional edge cover (the AR half-wall), revisiting the v1 simplification
+
+**Cover can now be edge-mounted and walk-on (COVER-EDGE), the finer-grained model
+the 2026-08-11 entry deferred "until playtests demand it."** A cover entry is now
+either the old full-square block (`{x,y}`) or a directional barricade
+(`{x,y,facing}`) on one edge (N/S/E/W): you **walk onto** the tile to take cover, but
+**cannot cross its faced edge** (both directions); the **occupant** is reduced 50%
+against attacks whose line crosses that edge; it does **not** block line of sight; and
+melee still ignores it. The two coexist so **iron-basin's full-block strongpoint is
+untouched** — only entries that opt in with a `facing` change behaviour.
+
+**Owner-chosen semantics** (this session): see over it (movement + reduction, not LoS);
+the occupant is protected, not adjacent neighbours (that stays the full-block model).
+
+**One geometry, movement and combat share it.** The segment/edge intersection that
+already decided cover reduction now also decides whether a step crosses a barricade —
+extracted to `geometry.ts` (`segmentsIntersect`, `edgeCorners`, `FACING_VEC`). A
+barricade you cannot shoot a defender across is one you cannot walk across either, by
+construction. `coverEdgeBlocks` gates both `reachableSquares` and `validateMovePath`;
+`blocksMovement` now only stops walls and full-block cover; `isBehindCover` gained the
+occupant-edge case and restricts its adjacent case to `solidCover`.
+
+**Proving Grounds' 14 cover tiles are now directional**, facings rotationally
+symmetric (E↔W, N↔S flip under 180°): the spawn-approach posts face the enemy
+(west cover faces E, east faces W), and the two pinwheel posts face S/N as the owner
+specified. The content symmetry guard now checks the facing flips too. Renderer draws
+edge cover as a thin barricade slab shoved to its faced edge (full-block cover keeps
+its box); the prop-swap fallback and pixel baseline may want a refresh when props are
+re-screenshotted.

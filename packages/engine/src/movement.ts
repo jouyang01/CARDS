@@ -23,6 +23,7 @@
 import {
   type Board,
   blocksMovement,
+  coverEdgeBlocks,
   diagonalCornerBlocked,
   inBounds,
   isAdjacentStep,
@@ -173,9 +174,10 @@ export function reachableSquares(
 
       for (const d of MOVE_STEPS) {
         const np: Vec2 = { x: node.x + d.x, y: node.y + d.y };
-        if (blocksMovement(board, np)) continue; // walls/cover/edge block entry
+        if (blocksMovement(board, np)) continue; // walls/full-block cover stop entry
         if (impassable?.has(vecKey(np)) === true) continue; // CHASE-COLLIDE: a body is a wall here
         if (d.x !== 0 && d.y !== 0 && diagonalCornerBlocked(board, node, d.x, d.y)) continue;
+        if (coverEdgeBlocks(board, node, np)) continue; // COVER-EDGE: can't cross a barricade's faced side
         const nc = cost + stepCost(d.x, d.y);
         if (nc > budget) continue;
         const nkey = vecKey(np);
@@ -268,6 +270,9 @@ export function validateMovePath(
       };
     }
     if (isDiagonalStep(prev, p) && diagonalCornerBlocked(board, prev, p.x - prev.x, p.y - prev.y)) {
+      return { valid: false, error: { code: 'cornerBlocked', index: i } };
+    }
+    if (coverEdgeBlocks(board, prev, p)) { // COVER-EDGE: crossing a barricade's faced side
       return { valid: false, error: { code: 'cornerBlocked', index: i } };
     }
     cost += stepCost(p.x - prev.x, p.y - prev.y); // a diagonal costs 2 (MET1)
