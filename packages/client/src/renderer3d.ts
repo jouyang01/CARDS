@@ -1342,7 +1342,7 @@ export function createRenderer(
       const res = await fetch(`${base}/props/manifest.json`, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`props manifest ${res.status}`);
       const manifest = (await res.json()) as {
-        props?: { theme: string; role: string; file: string; version?: string; yawSteps?: number }[];
+        props?: { theme: string; role: string; file: string; version?: string; yawSteps?: number; height?: number }[];
       };
       const mine = (manifest.props ?? []).filter((e) => e.theme === palette.themeId);
       if (mine.length === 0) return; // this theme has no props yet — boxes it is
@@ -1368,9 +1368,23 @@ export function createRenderer(
         });
         for (const sq of squares) {
           const inst = template.clone(true);
-          const { yawRadians } = placeProp(map.id, sq.x, sq.y, { yawSteps: entry.yawSteps });
           inst.position.copy(toWorld(map, sq)); // prop base sits at local y=0 = the floor
-          inst.rotation.y = yawRadians;
+          const facing = entry.role === 'cover' ? (sq as { facing?: 'N' | 'S' | 'E' | 'W' }).facing : undefined;
+          if (facing) {
+            // COVER-EDGE: the barricade is a half-wall on ONE edge. Sit it on that
+            // tile boundary and turn it to run ALONG the edge (its stakes are
+            // built spanning +x, so N/S keep yaw 0 and E/W turn a quarter), then
+            // stretch it to crouch-cover height. Not the hashed placeProp yaw —
+            // a directional fence's orientation is the facing, not a coin flip.
+            const off = TILE * 0.5;
+            if (facing === 'E') { inst.position.x += off; inst.rotation.y = Math.PI / 2; }
+            else if (facing === 'W') { inst.position.x -= off; inst.rotation.y = Math.PI / 2; }
+            else if (facing === 'S') { inst.position.z += off; inst.rotation.y = 0; }
+            else { inst.position.z -= off; inst.rotation.y = 0; } // N
+            inst.scale.y = EDGE_COVER_HEIGHT / (entry.height ?? COVER_HEIGHT);
+          } else {
+            inst.rotation.y = placeProp(map.id, sq.x, sq.y, { yawSteps: entry.yawSteps }).yawRadians;
+          }
           propGroup.add(inst);
           // Hide the box this prop now stands for. Kept (not removed) so a future
           // theme swap could bring it back without rebuilding the board.
