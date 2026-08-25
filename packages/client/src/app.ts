@@ -33,6 +33,7 @@ import {
 } from '@cards/engine';
 import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
 import { browserAmbient, browserModels, browserProps, browserRenderOnDemand } from './render-flags.js';
+import type { FofPalette } from './fof.js';
 import { WALL_FIELD_OPACITY, createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
@@ -240,11 +241,29 @@ export interface NetPlay {
 /**
  * MAP-THEMES — the board palette is now half data and half constant.
  *
- * The themed half comes from `data/themes/*.json` via `themeFor(map)`; the two
- * team colours do not, and must not. They are identity rather than decoration:
- * a map that re-tints the teams changes friend-from-foe reading per map, and
- * `TEAM_CSS` below plus the e2e's colour families both encode them.
+ * The themed half comes from `data/themes/*.json` via `themeFor(map)`; the
+ * identity colours do not, and must not. They are identity rather than
+ * decoration: a map that re-tinted them changes friend-from-foe reading per
+ * map, and `TEAM_CSS` below plus the e2e's colour families both encode them.
+ *
+ * FOF-COLORS: identity is now *friend or foe from the viewer* rather than team
+ * number. Still global across maps — that part of MAP-THEMES sharpened rather
+ * than changed.
  */
+/**
+ * FOF-COLORS: three identity hues, viewer-relative at the point of use.
+ *
+ * The blue and red are the old team colours unchanged — only *who* gets them
+ * moved. Green is new, and is the one the mirror matchup needed: it separates
+ * "on your side" from "yours to order".
+ *
+ * Module-level so the board palette and the overlay constants below read the
+ * same three numbers. Two sources would drift, and the drift would show up as
+ * an ally's committed AoE being a slightly different blue from the ally
+ * standing inside it.
+ */
+const FOF: FofPalette = { self: 0x4f8cff, ally: 0x5fd97a, foe: 0xff6b5e };
+
 const paletteFor = (map: MapDef): BoardPalette => {
   const theme = themeFor(map);
   return {
@@ -253,8 +272,7 @@ const paletteFor = (map: MapDef): BoardPalette => {
     wall: theme.terrain.wall,
     cover: theme.terrain.cover,
     brush: theme.terrain.brush,
-    team0: 0x4f8cff,
-    team1: 0xff6b5e,
+    fof: FOF,
     background: theme.sky.top,
     surface: theme.surface,
     grain: theme.grain,
@@ -272,11 +290,20 @@ const AIM = 0xff9a3e;
 const SHAPE = 0xffc98a;
 const SELECT = 0xf0f0f0;
 /**
- * AIM-PREVIEW-TRUE — a plan on this side that is already locked in. Cooler and
- * paler than the live aim on purpose: it is a decision that has been made, and
- * it must never compete with the one still being composed over it.
+ * A committed plan on the viewer's own side — theirs or a teammate's.
+ *
+ * AIM-PREVIEW-TRUE made it cool and pale (`0x8fa6c4`) so a decision already
+ * made never competed with the one being composed over it. FOF-OVERLAYS keeps
+ * that job and gives it a side: *"Blue lines meant your ally was moving or
+ * aiming there."* The **weights** carry the "already decided" reading now — a
+ * 0.28 wash under a 0.9 live aim — and the **hue** carries friend-or-foe, which
+ * is the thing a mirror matchup cannot otherwise answer.
+ *
+ * Deliberately the friendly *side* colour rather than the ally green: an ally's
+ * plan and your own other character's plan are both "my team's", and splitting
+ * them would put three colours on a question the player asks in two.
  */
-const LOCKED = 0x8fa6c4;
+const PLAN_FRIENDLY = FOF.self;
 const IMPACT = 0xffd166;
 /**
  * TRACERS. Pale and cold on purpose, and deliberately NOT `IMPACT`'s warm amber:
@@ -475,6 +502,30 @@ export function startHotSeat(
   function ownUnits(): UnitState[] {
     const team = seats[seatIdx]?.team ?? 0;
     return state.units.filter((u) => u.owner === team && u.alive);
+  }
+
+  /**
+   * FOF-COLORS: tell the renderer whose seat it is drawing for.
+   *
+   * Called immediately before every `show()` rather than once at boot, because
+   * the answer changes mid-match: hot-seat hands the board to the other team on
+   * every Lock In, and a board still coloured for the seat that just finished
+   * is the exact bug this system exists to remove — only worse, because it
+   * would look deliberate.
+   *
+   * `setViewer` compares before it repaints, so calling it on every paint costs
+   * a set comparison and nothing else.
+   *
+   * A hoisted `function` reading `seats`/`seatIdx` directly, for the reason
+   * `ownUnits` above is: the opening paint happens during construction, above
+   * where `currentSeat` is declared.
+   */
+  function syncViewer(): void {
+    const seat = seats[seatIdx];
+    renderer.setViewer({
+      team: seat?.team ?? 0,
+      seatUnitIds: new Set(seat?.unitIds ?? []),
+    });
   }
   /** SCORE1's running ledger, folded from each turn's event log as it plays. */
   let totals: MatchTotals = initTotals(state);
@@ -1331,6 +1382,7 @@ export function startHotSeat(
     // and the authoritative state, with no fog view in the way.
     const resting = [...toRenderUnits(view.units, team), ...toGhostUnits(view.ghosts)];
     applyResting(resting);
+    syncViewer();
     renderer.show(
       resting,
       // UI-NAMEPLATES: a decoy being taken for a real unit wears a real unit's
@@ -1614,15 +1666,23 @@ export function startHotSeat(
         teamRoutes.push([other.pos, { ...theirs.aim[0] }]);
       }
     }
-    renderer.highlight('locked', lockedTiles, LOCKED, 0.28);
-    renderer.drawShape(lockedShapes, LOCKED, 0.1, 'shapeLocked');
-    // The route goes out in the MOVEMENT colour rather than the committed-plan
-    // one. `LOCKED` is deliberately "cooler and dimmer" because it is the colour
-    // of an ability *area* that has already been decided; a route is the answer
-    // to "where is my ally going", and the owner's note is that this specifically
-    // does not read. Same layer, same call, one constant — it now speaks the
-    // vocabulary the player's own move line already uses.
-    renderer.drawPaths(teamRoutes, MOVE_LINE, true, 'teamPath');
+    // FOF-OVERLAYS: the committed area and its outline read as *this side's*.
+    // Dev Note part 2 — *"Blast Phase Overlays: AoE templates were heavily
+    // colour-coded so you wouldn't confuse an ally's ultimate with an enemy
+    // mirror character's ultimate."* That confusion is only possible when the
+    // two are the same shape, which is exactly the mirror case.
+    renderer.highlight('locked', lockedTiles, PLAN_FRIENDLY, 0.28);
+    renderer.drawShape(lockedShapes, PLAN_FRIENDLY, 0.1, 'shapeLocked');
+    // The route reads friendly too — *"Blue lines meant your ally was moving or
+    // aiming there"* — and in the same blue as the area above rather than the
+    // pale `MOVE_LINE` it used to share with the viewer's own live move line.
+    //
+    // That separation is the point rather than a side effect: your own line is
+    // a decision still being made and a teammate's is one already taken, so the
+    // two want to be told apart at a glance even though both are yours to plan
+    // around. `MOVE_LINE` stays exactly what it was for the live line, which is
+    // the "own aim unchanged" half of this item.
+    renderer.drawPaths(teamRoutes, PLAN_FRIENDLY, true, 'teamPath');
 
     // ── FREE-UI: the free ability's own aim, in its own layer ───────────────
     // Same reasoning as the catalyst layer below: a trap being placed and a
@@ -2404,6 +2464,22 @@ export function startHotSeat(
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
     renderer.drawParticles([]);
+    // PAN-RELEASE-PLAYBACK — a planning pan is released HERE, at the
+    // planning→resolution transition and before the first playback `focusOn`.
+    //
+    // Builder session-16 OQ #1, now ruled. Pan was specced against free orbit,
+    // which does not release either, and copying it left the camera frozen
+    // wherever the player had dragged it while the turn resolved somewhere
+    // else — so the one moment the auto-camera exists for was the one moment it
+    // was stood down. A pan is a planning gesture: it says "let me look over
+    // there while I decide", and the deciding is over.
+    //
+    // `resetPan` clears the latch and nothing else — yaw, pitch and span are
+    // untouched — so the orbit the player set and the zoom they chose both
+    // survive the release. Only the thing that was fighting the playback lets
+    // go, which is what makes this a release rather than a camera reset.
+    renderer.resetPan();
+    syncViewer();
     renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
 
     let skipped = false;
@@ -2417,6 +2493,7 @@ export function startHotSeat(
       clearReadouts();
       const rest = viewUnits(player.view);
       applyResting(rest);
+      syncViewer();
       renderer.show(rest, viewDecoys(player.view), viewTraps(player.view), pads(player.view));
       renderer.highlight('camo', viewCamo(player.view), CAMO_RED, CAMO_OPACITY);
     };
@@ -2470,6 +2547,7 @@ export function startHotSeat(
     cancelled: () => boolean,
   ): Promise<void> {
     const { start, end } = phaseWindow(cues, phase);
+    syncViewer();
     renderer.show(units, decoys, traps, padList);
     renderer.highlight('camo', camo, CAMO_RED, CAMO_OPACITY);
     phaseLabel.textContent = phase.toUpperCase();
@@ -2727,6 +2805,7 @@ export function startHotSeat(
     const revealed = revealedView(state, currentSeat()?.team ?? 0);
     const over = toRenderUnits(revealed.units, currentSeat()?.team ?? 0);
     applyResting(over);
+    syncViewer();
     renderer.show(over, revealed.decoys, revealed.traps, pads());
     for (const layer of PLANNING_LAYERS) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);

@@ -136,22 +136,50 @@ export function countPixels(image: Image, matches: (px: Rgb) => boolean, step = 
  * literally `#4f8cff` on screen. Asserting the family is the honest test — it
  * catches "nothing drew" without breaking on a lighting tweak.
  */
-export const isTeamBlue = (px: Rgb): boolean =>
+export const isSelfBlue = (px: Rgb): boolean =>
   px.b > 130 && px.b - px.r > 50 && px.g < px.b
-  // …and blue-dominant, not cyan. Team blue is `#4f8cff`, whose green sits 61
+  // …and blue-dominant, not cyan. Self blue is `#4f8cff`, whose green sits 61
   // above its red; PADS-INDICATOR's Energy pad is `#3fe8ff`, where green runs
   // 169 above red and the pixel reads as cyan to any eye. Without this clamp a
-  // pad would be counted as a unit, and "team 0's units are on screen" would
-  // pass on a board with no units at all.
+  // pad would be counted as a unit, and "the viewer's units are on screen"
+  // would pass on a board with no units at all.
   && px.g - px.r < 110;
+
 /**
- * Team red is `#ff6b5e` — red-dominant with green and blue close together. The
+ * FOF-COLORS' ally green (`#5fd97a`) — the viewer's team, not the viewer's seat.
+ *
+ * The `g − r` floor is what keeps this out of **brush**, and it is a ratio
+ * rather than a level on purpose. Lambert shading scales all three channels
+ * together, so a *level* test ("bright enough to be a unit") fails the moment a
+ * shoulder turns away from the light, while the *relationship* between the
+ * channels survives it. Proving Floor's brush is `#54613f` — a muted olive
+ * whose green leads its red by 13 — and the ally green leads by 122. Nothing
+ * shading can do to either crosses a threshold set between them.
+ */
+export const isAllyGreen = (px: Rgb): boolean =>
+  px.g > px.r + 40 && px.g > px.b + 20 && px.g > 60;
+
+/**
+ * Foe red is `#ff6b5e` — red-dominant with green and blue close together. The
  * `|g − b|` clamp is what separates it from the *orange* aim overlay and the
  * brown of cover, both of which are also red-dominant; without it, arming an
  * ability quadrupled the "red unit" count.
  */
-export const isTeamRed = (px: Rgb): boolean =>
+export const isFoeRed = (px: Rgb): boolean =>
   px.r > 130 && px.r - px.g > 80 && Math.abs(px.g - px.b) < 40;
+
+/**
+ * **Anything on the viewer's own side** — self blue or ally green.
+ *
+ * FOF-COLORS made the identity question viewer-relative, so the suite's
+ * question changed with it: "are team 0's units drawn" was only ever a proxy
+ * for "are the viewer's units drawn", and the two stopped being the same thing
+ * the moment a seat on team 1 could look at the board. Tests that meant the
+ * proxy now say what they meant.
+ */
+export const isFriendly = (px: Rgb): boolean => isSelfBlue(px) || isAllyGreen(px);
+/** The enemy team, from the viewer's seat. */
+export const isFoe = isFoeRed;
 /**
  * Fogged board (VISION1), composited over whichever floor it lies on.
  *
@@ -181,7 +209,14 @@ export const isAimOrange = (px: Rgb): boolean =>
  * out.
  */
 export const isBrushGreen = (px: Rgb): boolean =>
-  px.g > px.r + 10 && px.g > px.b + 8 && px.g > 44 && px.g < 160 && px.r < 110;
+  px.g > px.r + 10 && px.g > px.b + 8 && px.g > 44 && px.g < 160 && px.r < 110
+  // …and MUTED, which is what separates terrain from FOF-COLORS' ally green.
+  // Brush is an olive whose green leads its red by ~13; a unit's green leads by
+  // ~122. The old upper bound on `g` alone could not tell them apart, because
+  // shading scales a bright green straight down through it — a shadowed ally
+  // would have been counted as undergrowth, and FOG-ZORDER would then measure
+  // overlay coverage against a denominator that included the units.
+  && px.g - px.r < 40;
 
 /** Where a predicate matches, in pixel coordinates — for "is it drawn HERE". */
 export function findPixels(image: Image, matches: (px: Rgb) => boolean, step = 3): { x: number; y: number }[] {

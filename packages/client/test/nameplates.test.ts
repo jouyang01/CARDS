@@ -222,33 +222,33 @@ describe('UI-NAMEPLATES: the texture cache key', () => {
   it('is stable for an unchanged plate — the plate is rebuilt every frame', () => {
     // `show()` runs on every pointer move during mouse-follow aiming. If the key
     // moved with it, the client would rasterise text sixty times a second.
-    const a = nameplateKey(unitNameplate(base, roster, 0), 0);
-    const b = nameplateKey(unitNameplate(base, roster, 0), 0);
+    const a = nameplateKey(unitNameplate(base, roster, 0), 'self');
+    const b = nameplateKey(unitNameplate(base, roster, 0), 'self');
     expect(a).toBe(b);
   });
 
   it('changes when the HP does — a stale bar is the worst possible bug here', () => {
     const hurt = { ...base, hp: 40 };
-    expect(nameplateKey(unitNameplate(hurt, roster, 0), 0))
-      .not.toBe(nameplateKey(unitNameplate(base, roster, 0), 0));
+    expect(nameplateKey(unitNameplate(hurt, roster, 0), 'self'))
+      .not.toBe(nameplateKey(unitNameplate(base, roster, 0), 'self'));
   });
 
   it('changes when the ULT tag lights', () => {
     const charged = { ...base, energy: ULT_COST };
-    expect(nameplateKey(unitNameplate(charged, roster, 0), 0))
-      .not.toBe(nameplateKey(unitNameplate({ ...base, energy: 0 }, roster, 0), 0));
+    expect(nameplateKey(unitNameplate(charged, roster, 0), 'self'))
+      .not.toBe(nameplateKey(unitNameplate({ ...base, energy: 0 }, roster, 0), 'self'));
   });
 
   it('changes when a status lands or its countdown ticks', () => {
     const slowed = { ...base, statuses: [{ kind: 'slow' as const, remaining: 2 }] };
     const ticking = { ...base, statuses: [{ kind: 'slow' as const, remaining: 1 }] };
-    const keys = [base, slowed, ticking].map((u) => nameplateKey(unitNameplate(u, roster, 0), 0));
+    const keys = [base, slowed, ticking].map((u) => nameplateKey(unitNameplate(u, roster, 0), 'self'));
     expect(new Set(keys).size).toBe(3);
   });
 
   it('and separates the teams, since the name is inked in the team colour', () => {
     const plate = unitNameplate(base, roster, 0);
-    expect(nameplateKey(plate, 0)).not.toBe(nameplateKey(plate, 1));
+    expect(nameplateKey(plate, 'self')).not.toBe(nameplateKey(plate, 'foe'));
   });
 });
 
