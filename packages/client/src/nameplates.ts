@@ -23,6 +23,7 @@
  */
 
 import { ULT_COST, type EffectKind, type Roster, type TeamId, type UnitState } from '@cards/engine';
+import type { Fof } from './fof.js';
 import { statusPips, viewableStatuses, type StatusPip } from './status-pips.js';
 
 /** Everything drawn above one unit. */
@@ -170,10 +171,13 @@ export function snapshotDecoy(
  * once per frame, and the numbers in it are exactly the things that change
  * rarely.
  */
-export function nameplateKey(plate: Nameplate, team: TeamId): string {
+export function nameplateKey(plate: Nameplate, fof: Fof): string {
   const pips = plate.pips.map((p) => `${p.kind}${p.numeral ?? ''}`).join(',');
   return [
-    team, plate.name, plate.hp, plate.maxHp, plate.shield,
+    // FOF-COLORS: keyed on the viewer-relative identity, not on `owner`. Two
+    // seats look at the same unit and want two different plates, so a key that
+    // said `0`/`1` would serve the first seat's blue plate to the second.
+    fof, plate.name, plate.hp, plate.maxHp, plate.shield,
     plate.energy, plate.ult ? 'U' : '', pips,
   ].join('|');
 }
