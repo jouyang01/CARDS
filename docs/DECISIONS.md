@@ -7290,14 +7290,33 @@ tension; `app.ts`).** Separated by weight, not hue, and untested on a real board
 committed plan under a live aim. Designer call, as the item said — flagging that it is now a live
 overlap rather than a hypothetical one.
 
-**3. The single-column pad tests need a re-spec, not a re-point (RENDER-SUITE-GREEN-3;
-`e2e/render.spec.ts` RENDER-COVERAGE).** "A pad marker survives the next turn boundary" reads 0 teal
-pixels after a boundary. On the old map a *mirrored pair* made it robust: one pad could be consumed
-and the other still armed. Proving Grounds has one Health pad at (8,1), and a consumed pad drops to
-0.14 opacity — deliberately below `isPadTeal`'s floor — so "still drawn" is no longer observable
-with that predicate. Either the assertion becomes "it re-arms on its `everyTurns` cycle", or this
-one test moves to Iron Basin for its pairs. Both are defensible and it is a spec choice, so it is
-left rather than guessed.
+**3. Both pad tests need a re-spec, not a re-point (RENDER-SUITE-GREEN-3; `e2e/render.spec.ts`
+RENDER-COVERAGE).** Both read **0** teal — not a low count, none at all — after driving five turns,
+so the Health pad never composites rather than merely fading. What is established:
+
+- Proving Grounds carries **one** Health pad, at **(8, 1)**, against the mirrored pair the test's
+  comment describes. `isPadTeal` is Health-specific, so no other pad can stand in.
+- The pad arms on turn 4 (`firstTurn: 4`) and the drive resolves five turns, so the schedule is not
+  the blocker; the drive completed and asserted rather than timing out.
+- **Best hypothesis, unconfirmed: the pad is off-frame.** (8, 1) is the board's north edge, and
+  since CAMERA-CONTROLS the planning camera centres on the *character being ordered* while
+  BOARD_ZOOM keeps the frame tighter than the board. From a seat at (1, 4) that is seven columns and
+  three rows away. `lookStraightDown` changes the pitch, not the centre, so the existing top-down
+  guard does not cover this.
+- A probe that fitted the board between turns to test that hypothesis **exhausted the 180 s budget**
+  driving six turns, which is its own finding: this drive is at the edge of what a browser test can
+  afford, and a fix that adds work per turn will time out rather than fail.
+
+So the choice is the Analyzer's: assert on a pad the camera actually frames, fit the board before
+sampling (and pay for it somewhere else), or move this pair to Iron Basin for its mirrored pads.
+Guessing between them would have been inventing scope.
+
+**3b. DASH-CAT-ROUTE is fixed, and its fix is the pattern the pads want.** Its four hard-coded
+fractions were measured against a camera that framed the whole board. It now sweeps a *ring* around
+the frame centre — where the character-centred camera puts the caster — at every offset that could
+be three squares at any zoom. Map-independent by construction, which is why it will not need
+re-measuring after the next reframing. The pad drive's `clickAt(0.28/0.72, 0.5)` is the same species
+of assumption and is the remaining instance of it.
 
 **4. VFX-FLASH-ON-SCREEN measures a spike that is not there (`e2e/vfx.spec.ts:71`).** Lit-pixel
 counts across the resolution are 6670 flat → 3544 flat → ~6600, with a best spike of 165 against a
