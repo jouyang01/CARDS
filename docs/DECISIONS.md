@@ -7277,6 +7277,35 @@ redraws an *identical* frame forever holds its pixels and still burns a GPU fram
 after a quiet stretch with **no screenshot between them**: `page.screenshot` forces a composite, so
 the obvious way to measure this has the instrument answer its own question.
 
+**Owner playtest, same day — three bugs and a weight, all in this session's own FoF work.**
+
+*"When locking in, east side team turns green and west side turns red."* Locking in the last
+character runs `seatIdx` past the end of `seats`, so for the whole resolution `seats[seatIdx]` is
+undefined — and a viewer built from that is team 0 with an **empty** unit set. That is not "no seat",
+it is a seat that controls nothing, so every unit on the viewer's own team fell from `self` to
+`ally`. `syncViewer` now falls back to the last seat that was actually on the clock: the player who
+just committed watches the turn resolve from their own side, which is the only continuous answer
+once nobody is on the clock. **The general lesson is about the fallback, not the index** — `?? 0`
+with an empty set looked like a safe default and was a wrong answer wearing a default's clothes.
+
+*"The color bars are both white."* The colour was resolved correctly and thrown away: an edge bar is
+built glowing (`emissive: colour` at `spawnEmissive`), and the repaint set only `color`, so both
+bars kept burning the white they were constructed with. Extracted as `paintEdgeBar`, which sets
+both. Worth recording as a shape rather than an incident: on a self-illuminated material, colour
+lives in two properties and setting one is always a bug.
+
+*"The circles should be thinner."* The ring spanned 0.12 of a tile — a band, not an outline — and on
+a crowded square read as a coloured floor tile competing with the selection ring it sits under. Same
+outer radius, a third of the weight.
+
+*"Blue should be all of your characters… green all characters ally is controlling… red all
+enemies."* No change: that is what the resolver already decides. It read as wrong because the two
+bugs above were making it wrong on screen — an own team turning green on lock-in is exactly the
+green being reported, and with both bars white there was no side colour to anchor it against.
+
+**Both regression tests were verified against the unfixed code and fail there.** Recorded because
+the lock-in bug is the kind a test written after the fix accommodates without noticing.
+
 ## Open Questions for the Analyzer — 2026-08-25
 
 **1. FOF-UNITS' model outline is not shipped (FOF-UNITS AC bullet 3;
@@ -7317,6 +7346,13 @@ the frame centre — where the character-centred camera puts the caster — at e
 be three squares at any zoom. Map-independent by construction, which is why it will not need
 re-measuring after the next reframing. The pad drive's `clickAt(0.28/0.72, 0.5)` is the same species
 of assumption and is the remaining instance of it.
+
+**3c. FOG-ZORDER now boots but its aimed half reads zero (`e2e/render.spec.ts`).** Moving it to Iron
+Basin at 4v4 fixed the "invalid setup" crash and the coarse floor passes — but `bestAimed` is 0, so
+no ability's aim reaches brush from any of the six sampled candidates. The candidates are spread
+across the whole brush set, which on a 22×19 map is a long way from a seat that spawns at x=4. This
+is the same species as the DASH-CAT-ROUTE fix (sample relative to the caster, not to the board), and
+is the most likely of the remaining failures to fall to it.
 
 **4. VFX-FLASH-ON-SCREEN measures a spike that is not there (`e2e/vfx.spec.ts:71`).** Lit-pixel
 counts across the resolution are 6670 flat → 3544 flat → ~6600, with a best spike of 165 against a
