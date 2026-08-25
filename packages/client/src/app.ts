@@ -33,6 +33,7 @@ import {
 } from '@cards/engine';
 import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
 import { browserAmbient, browserModels, browserProps, browserRenderOnDemand } from './render-flags.js';
+import type { FofPalette } from './fof.js';
 import { WALL_FIELD_OPACITY, createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
@@ -249,6 +250,20 @@ export interface NetPlay {
  * number. Still global across maps — that part of MAP-THEMES sharpened rather
  * than changed.
  */
+/**
+ * FOF-COLORS: three identity hues, viewer-relative at the point of use.
+ *
+ * The blue and red are the old team colours unchanged — only *who* gets them
+ * moved. Green is new, and is the one the mirror matchup needed: it separates
+ * "on your side" from "yours to order".
+ *
+ * Module-level so the board palette and the overlay constants below read the
+ * same three numbers. Two sources would drift, and the drift would show up as
+ * an ally's committed AoE being a slightly different blue from the ally
+ * standing inside it.
+ */
+const FOF: FofPalette = { self: 0x4f8cff, ally: 0x5fd97a, foe: 0xff6b5e };
+
 const paletteFor = (map: MapDef): BoardPalette => {
   const theme = themeFor(map);
   return {
@@ -257,11 +272,7 @@ const paletteFor = (map: MapDef): BoardPalette => {
     wall: theme.terrain.wall,
     cover: theme.terrain.cover,
     brush: theme.terrain.brush,
-    // FOF-COLORS: three identity hues, viewer-relative at the point of use.
-    // The blue and red are the old team colours unchanged — only *who* gets
-    // them moved. Green is new, and is the one the mirror matchup needed: it
-    // separates "on your side" from "yours to order".
-    fof: { self: 0x4f8cff, ally: 0x5fd97a, foe: 0xff6b5e },
+    fof: FOF,
     background: theme.sky.top,
     surface: theme.surface,
     grain: theme.grain,
@@ -279,11 +290,20 @@ const AIM = 0xff9a3e;
 const SHAPE = 0xffc98a;
 const SELECT = 0xf0f0f0;
 /**
- * AIM-PREVIEW-TRUE — a plan on this side that is already locked in. Cooler and
- * paler than the live aim on purpose: it is a decision that has been made, and
- * it must never compete with the one still being composed over it.
+ * A committed plan on the viewer's own side — theirs or a teammate's.
+ *
+ * AIM-PREVIEW-TRUE made it cool and pale (`0x8fa6c4`) so a decision already
+ * made never competed with the one being composed over it. FOF-OVERLAYS keeps
+ * that job and gives it a side: *"Blue lines meant your ally was moving or
+ * aiming there."* The **weights** carry the "already decided" reading now — a
+ * 0.28 wash under a 0.9 live aim — and the **hue** carries friend-or-foe, which
+ * is the thing a mirror matchup cannot otherwise answer.
+ *
+ * Deliberately the friendly *side* colour rather than the ally green: an ally's
+ * plan and your own other character's plan are both "my team's", and splitting
+ * them would put three colours on a question the player asks in two.
  */
-const LOCKED = 0x8fa6c4;
+const PLAN_FRIENDLY = FOF.self;
 const IMPACT = 0xffd166;
 /**
  * TRACERS. Pale and cold on purpose, and deliberately NOT `IMPACT`'s warm amber:
@@ -1646,15 +1666,23 @@ export function startHotSeat(
         teamRoutes.push([other.pos, { ...theirs.aim[0] }]);
       }
     }
-    renderer.highlight('locked', lockedTiles, LOCKED, 0.28);
-    renderer.drawShape(lockedShapes, LOCKED, 0.1, 'shapeLocked');
-    // The route goes out in the MOVEMENT colour rather than the committed-plan
-    // one. `LOCKED` is deliberately "cooler and dimmer" because it is the colour
-    // of an ability *area* that has already been decided; a route is the answer
-    // to "where is my ally going", and the owner's note is that this specifically
-    // does not read. Same layer, same call, one constant — it now speaks the
-    // vocabulary the player's own move line already uses.
-    renderer.drawPaths(teamRoutes, MOVE_LINE, true, 'teamPath');
+    // FOF-OVERLAYS: the committed area and its outline read as *this side's*.
+    // Dev Note part 2 — *"Blast Phase Overlays: AoE templates were heavily
+    // colour-coded so you wouldn't confuse an ally's ultimate with an enemy
+    // mirror character's ultimate."* That confusion is only possible when the
+    // two are the same shape, which is exactly the mirror case.
+    renderer.highlight('locked', lockedTiles, PLAN_FRIENDLY, 0.28);
+    renderer.drawShape(lockedShapes, PLAN_FRIENDLY, 0.1, 'shapeLocked');
+    // The route reads friendly too — *"Blue lines meant your ally was moving or
+    // aiming there"* — and in the same blue as the area above rather than the
+    // pale `MOVE_LINE` it used to share with the viewer's own live move line.
+    //
+    // That separation is the point rather than a side effect: your own line is
+    // a decision still being made and a teammate's is one already taken, so the
+    // two want to be told apart at a glance even though both are yours to plan
+    // around. `MOVE_LINE` stays exactly what it was for the live line, which is
+    // the "own aim unchanged" half of this item.
+    renderer.drawPaths(teamRoutes, PLAN_FRIENDLY, true, 'teamPath');
 
     // ── FREE-UI: the free ability's own aim, in its own layer ───────────────
     // Same reasoning as the catalyst layer below: a trap being placed and a
