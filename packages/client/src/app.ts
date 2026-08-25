@@ -32,6 +32,8 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
+import { browserAmbient, browserModels, browserRenderOnDemand } from './render-flags.js';
+import { WALL_FIELD_OPACITY, createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { browserAmbient, browserModels, browserProps, browserRenderOnDemand } from './render-flags.js';
 import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
@@ -295,7 +297,12 @@ const VFX = vfxTable as unknown as VfxTable;
  * the same family, so the two read as one ability.
  */
 const WALL = 0xc9d2c4;
-const WALL_OPACITY = 0.34;
+/**
+ * How solid the wall's field is. Lives beside the renderer's own
+ * `WALL_FIELD_OPACITY` and must agree with it — this is the value that wins,
+ * because both call sites pass it explicitly.
+ */
+const WALL_OPACITY = WALL_FIELD_OPACITY;
 const TRACER = 0xcfe4ff;
 const TRACER_OPACITY = 0.85;
 /**

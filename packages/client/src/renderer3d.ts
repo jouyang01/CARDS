@@ -572,6 +572,26 @@ export const TRACER_LIFT = TILE * MODEL_HEIGHT_TILES * 0.55;
  * cover — a thing that stops line of sight, which this explicitly does not do.
  */
 export const WALL_PANEL_HEIGHT = TILE * MODEL_HEIGHT_TILES * 0.72;
+/**
+ * How solid the field between the posts is.
+ *
+ * Raised from 0.34 on the owner's read: too transparent to see. It still has to
+ * be see-through — the board behind it is information, and anyone can walk
+ * through it — so this is as far as it can go before it starts hiding units,
+ * and the pillars carry the rest of the legibility.
+ */
+export const WALL_FIELD_OPACITY = 0.55;
+/**
+ * The posts at each end: concrete, solid, and shorter than the field.
+ *
+ * Shorter on purpose. A post as tall as the haze reads as a doorframe, which
+ * says "go around"; a post at waist height reads as an anchor holding something
+ * up, which is what it is. The wall stops nobody.
+ */
+export const WALL_PILLAR_HEIGHT = TILE * MODEL_HEIGHT_TILES * 0.5;
+export const WALL_PILLAR_WIDTH = TILE * 0.19;
+/** Poured concrete — deliberately inert, so the field is what carries colour. */
+export const WALL_PILLAR_COLOUR = 0x9a9c99;
 
 /**
  * A decoy, as one viewer should see it (DECOY-RENDER). `asEnemy` decides the
@@ -2510,7 +2530,7 @@ export function createRenderer(
       }
     },
 
-    drawWalls(panels, color, opacity = 0.34) {
+    drawWalls(panels, color, opacity = WALL_FIELD_OPACITY) {
       const g = layerGroup('wall');
       disposeChildren(g);
       for (const panel of panels) {
@@ -2532,6 +2552,28 @@ export function createRenderer(
         // perpendicular to the run it stands along.
         mesh.rotation.y = Math.atan2(b.x - a.x, b.z - a.z) + Math.PI / 2;
         g.add(mesh);
+
+        // PILLARS. The field alone was too easy to miss: it is deliberately
+        // see-through, and a see-through thing over a busy board reads as a
+        // smudge rather than as a structure. Two SOLID posts give it ends, and
+        // ends are what make a barrier legible — the eye reads "this runs from
+        // here to here" from the posts and then accepts the haze between them
+        // as the wall. It also answers the question the field cannot: where
+        // does it stop, and therefore where can I go round it.
+        //
+        // Opaque and depth-writing, unlike every other overlay in this file.
+        // They are small enough to hide nothing that matters, and a translucent
+        // pillar would defeat the whole point of adding them.
+        for (const end of [a, b]) {
+          const pillar = new Mesh(
+            new BoxGeometry(WALL_PILLAR_WIDTH, WALL_PILLAR_HEIGHT, WALL_PILLAR_WIDTH),
+            new MeshStandardMaterial({ color: WALL_PILLAR_COLOUR, roughness: 0.92, metalness: 0 }),
+          );
+          pillar.position.set(end.x, WALL_PILLAR_HEIGHT / 2, end.z);
+          pillar.castShadow = true;
+          pillar.receiveShadow = true;
+          g.add(pillar);
+        }
       }
     },
 
