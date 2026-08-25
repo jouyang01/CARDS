@@ -27,9 +27,9 @@
             "width": 0.78
           },
           "palette": {
-            "shaft": "#d8d5cd",
+            "shaft": "#b8b6af",
             "plinth": "#b7b3aa",
-            "capital": "#cbc7bf"
+            "capital": "#b9b6ae"
           }
         },
         {
@@ -74,7 +74,7 @@
             ]
           },
           "palette": {
-            "shaft": "#cfcbc2",
+            "shaft": "#b6b2a9",
             "plinth": "#b2aea5",
             "rubble": "#a7a299"
           }
@@ -100,9 +100,9 @@
             "width": 0.86
           },
           "palette": {
-            "shaft": "#cec9c0",
+            "shaft": "#b3afa6",
             "plinth": "#a8a49b",
-            "capital": "#c2beb5"
+            "capital": "#b0aca3"
           }
         }
       ]

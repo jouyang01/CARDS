@@ -1,21 +1,21 @@
 {
   "id": "proving-floor",
   "name": "Proving Floor",
-  "note": "A raised ceremonial duelling platform in full daylight. Bleached limestone, weathered stone barricades, dry scrub in the cracks. The bright theme \u2014 the board is lit rather than lurking. Deliberately DESATURATED: the first draft was warm sand and it competed with the amber AoE previews, so the stone keeps its value and gives up its chroma. The UI owns the saturated hues; terrain is the ground they are read against. The sky is deep blue rather than the warm grey it started as: that grey passed through the theme's own terrain, so a fogged tile matched the sky ramp and isSceneBackground answered yes to the board.",
+  "note": "A raised ceremonial duelling platform in full daylight. Bleached limestone, weathered stone barricades, dry scrub in the cracks. The bright theme \u2014 the board is lit rather than lurking. Deliberately DESATURATED: the first draft was warm sand and it competed with the amber AoE previews, so the stone keeps its value and gives up its chroma. The UI owns the saturated hues; terrain is the ground they are read against. The sky is deep blue rather than the warm grey it started as: that grey passed through the theme's own terrain, so a fogged tile matched the sky ramp and isSceneBackground answered yes to the board. VALUE-BUDGET: the terrain is also deliberately capped in VALUE, not only in chroma. It was authored at wall 213 / open 172, which put the two least important surfaces in the game at the very top of the histogram and left units (Aegis composited at 112) reading as holes in a bright floor. Wall and open are scaled down to 182 / 138 with their hue and chroma untouched, keeping the 44-point separation between them (a first pass that narrowed it to 26 made the frame MORE uniform, not less — measured), so this is still plainly the bright theme — Drained Works opens at 41 — while the top ~105 of the range is reserved for units, VFX and impacts. See packages/client/src/value-budget.ts.",
   "terrain": {
-    "open": "#b0aca4",
-    "wall": "#d8d5cd",
+    "open": "#8d8a83",
+    "wall": "#b9b6af",
     "cover": "#78736a",
     "brush": "#54613f"
   },
   "surface": {
     "open": {
-      "roughness": 0.92,
-      "metalness": 0.02
+      "roughness": 0.74,
+      "metalness": 0.04
     },
     "wall": {
-      "roughness": 0.88,
-      "metalness": 0.03
+      "roughness": 0.58,
+      "metalness": 0.08
     },
     "cover": {
       "roughness": 0.45,

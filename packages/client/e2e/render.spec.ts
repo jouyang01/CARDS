@@ -14,11 +14,11 @@ import {
   isDashYellow,
   isDecoyPurple,
   isFogged,
-  isTeamBlue,
+  isFriendly,
   isMoveLine,
   isRangeWash,
   isSceneBackground,
-  isTeamRed,
+  isFoe,
   largestCluster,
   pixelAt,
   type Image,
@@ -225,7 +225,7 @@ async function clickAt(page: Page, fx: number, fy: number): Promise<void> {
  * turn a map edit into a movement-bug report.
  */
 const blueBodies = (image: Image): { x: number; y: number }[] => {
-  let rest = findPixels(image, isTeamBlue, 2);
+  let rest = findPixels(image, isFriendly, 2);
   const out: { x: number; y: number }[] = [];
   // Two characters per seat, and a peel per body; the floor drops the route
   // line and antialiased fringes, which are not units.
@@ -285,8 +285,8 @@ test('the board composites an actual scene, fogged to the seat on the clock', as
   // screen; team 1 spawns further than sight reaches, so under VISION1 it is
   // not drawn at all. Both halves matter: the first catches "nothing drew", the
   // second catches fog quietly doing nothing.
-  expect(countPixels(image, isTeamBlue), 'team 0 units are missing from the board').toBeGreaterThan(0);
-  expect(countPixels(image, isTeamRed), 'the unseen enemy team must not be drawn').toBe(0);
+  expect(countPixels(image, isFriendly), 'team 0 units are missing from the board').toBeGreaterThan(0);
+  expect(countPixels(image, isFoe), 'the unseen enemy team must not be drawn').toBe(0);
   expect(countPixels(image, isFogged), 'the board is not fogged — VISION1 did not paint').toBeGreaterThan(0);
 
   // The HUD came up with it, so this is a live match rather than a
@@ -324,9 +324,9 @@ test('the opening frame is already fogged — no turn-1 grace reveal', async ({ 
       const image = decodePng(await page.screenshot({ clip: await boardClip(page) }));
       // Only judge frames that have actually drawn something — an empty canvas
       // before the first composite is not evidence either way.
-      if (countPixels(image, isTeamBlue) > 0) {
+      if (countPixels(image, isFriendly) > 0) {
         sampled += 1;
-        expect(countPixels(image, isTeamRed), `frame ${i} flashed the enemy team`).toBe(0);
+        expect(countPixels(image, isFoe), `frame ${i} flashed the enemy team`).toBe(0);
         expect(countPixels(image, isFogged), `frame ${i} drew before fog engaged`).toBeGreaterThan(0);
       }
     }
@@ -376,6 +376,63 @@ test('AMBIENT-FREEZE: a settled board with ambient off draws the same frame twic
   const a = await frame(page);
   await page.waitForTimeout(600);
   expect(same(await frame(page), a), 'a still board must not repaint itself differently').toBe(true);
+});
+
+/**
+ * SETTLED-BOARD-INVARIANT — the property three other tests quietly stand on.
+ *
+ * `same()` is used above and below to claim a resolution animated, that a
+ * right-drag orbited the camera, and that ambient motion is frozen. Every one
+ * of those reads "the frame changed" as evidence about the *scene*, and that
+ * inference is only sound while a scene with nothing to draw produces an
+ * identical frame. That is a property of the render loop, not of the assertion,
+ * and nobody had written it down.
+ *
+ * The failure it exists to name is a **missed `markDirty()`** — or its mirror,
+ * a mark nobody needed. Without this test, the first symptom of either is one
+ * of those three tests failing for a reason that has nothing to do with what it
+ * is about: "the resolution must be animating" going red because the board
+ * animates all the time now.
+ *
+ * Two assertions, because the property has two halves and they can break
+ * independently: the loop must stop *drawing*, and what it last drew must stay
+ * put. A board that redraws an identical frame forever passes the second and
+ * fails the first, and it is the one that costs a GPU frame every 16 ms.
+ *
+ * `?render=always` is the diagnostic if this ever goes red: if the failure
+ * survives it, the bug is in what is being drawn rather than in when.
+ */
+test('SETTLED-BOARD-INVARIANT: an idle board stops drawing, and holds what it drew', async ({ page }) => {
+  await expect(boardCanvas(page)).toBeVisible();
+  // Long enough for the camera ease to finish. It is bounded in seconds
+  // (`camera-ease.ts`), so this is a wait for a known settle rather than a
+  // hopeful sleep.
+  await page.waitForTimeout(1500);
+
+  const frames = async (): Promise<number> => page.evaluate(
+    () => (globalThis as unknown as { __cardsRenderer?: { frameCount(): number } })
+      .__cardsRenderer?.frameCount() ?? -1,
+  );
+
+  const settled = await frames();
+  expect(settled, 'the renderer is reachable and has drawn').toBeGreaterThan(0);
+  const held = await frame(page);
+
+  // RENDER-IDLE-QUIET's loop half. `page.screenshot` itself forces a composite,
+  // so the count is read BEFORE and AFTER a quiet stretch with no screenshot in
+  // the middle — asking the question with the instrument that changes the
+  // answer is the easy way to get this wrong.
+  await page.waitForTimeout(2500);
+  expect(
+    await frames(),
+    'an idle board kept drawing — a markDirty() nobody needed, or a loop that never idles',
+  ).toBe(settled);
+
+  // …and the frame it stopped on is the frame it keeps.
+  expect(
+    same(await frame(page), held),
+    'a still board repainted itself differently — the premise three same() callers rest on',
+  ).toBe(true);
 });
 
 test('a committing click locks the action so it stops following the mouse (UI1-fix)', async ({ page }) => {
@@ -600,7 +657,7 @@ test.describe('the dev map/format toggle', () => {
     // through — "playable", not just "painted".
     const image = await pixels(page);
     expect(distinctColours(image), 'the 4v4 board looks flat').toBeGreaterThan(MIN_DISTINCT_COLOURS);
-    expect(countPixels(image, isTeamBlue), 'no units on the 4v4 board').toBeGreaterThan(0);
+    expect(countPixels(image, isFriendly), 'no units on the 4v4 board').toBeGreaterThan(0);
     await expect(page.locator('.hud-ability').first()).toBeVisible();
     await expect(lockIn(page)).toBeVisible();
   });
@@ -720,7 +777,7 @@ test.describe('UI-VIEWPORT: the scene fills the viewport and the controls stay o
 
         // 5. And it is a live scene, not a stretched empty canvas.
         const image = await pixels(page);
-        expect(countPixels(image, isTeamBlue), 'units stopped drawing at this size').toBeGreaterThan(0);
+        expect(countPixels(image, isFriendly), 'units stopped drawing at this size').toBeGreaterThan(0);
       });
     }
   }
@@ -866,7 +923,10 @@ test.describe('HUD-LAYOUT: the blocks moved and the board got the space', () => 
  * both lights the brush and puts it inside an ability's reach. (The old
  * duel-arena sat a brush band inside a 4v4 seat's opening vision; the rebuild
  * moved it to the seam between the teams, so the test closes on it rather than
- * starting on top of it.)
+ * starting on top of it. Iron Basin at 4v4 lights a brush band on the opening
+ * frame, but its bands sit in corners the mid-field seats cannot aim at — the
+ * range wash reaches them, the aim never does — so this drives on Proving
+ * Grounds instead.)
  */
 test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async ({ page }) => {
   test.setTimeout(180_000); // drives several real turns to close on the centre brush
@@ -1508,7 +1568,7 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     // else — by its pixels — and click the middle of the biggest red cluster.
     const baseline = await pixels(page);
     const before = countPixels(baseline, isChaseOrange);
-    const allRed = findPixels(baseline, isTeamRed, 2);
+    const allRed = findPixels(baseline, isFoe, 2);
     expect(allRed.length, 'no enemy on screen after closing the distance').toBeGreaterThan(10);
     // One BODY, not every red pixel on the frame. With two enemies in view the
     // median of all of them lands in the gap between the two — empty ground,
@@ -1556,7 +1616,7 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
       // Both at once: an enemy body composited, and fog still covering part of
       // the board. Either alone is uninteresting — the pair is the state a
       // ghost is drawn in, and the state a "draw everything" regression breaks.
-      sawEnemyUnderFog = countPixels(image, isFogged) > 0 && countPixels(image, isTeamRed) > 0;
+      sawEnemyUnderFog = countPixels(image, isFogged) > 0 && countPixels(image, isFoe) > 0;
       if (!sawEnemyUnderFog && !(await resolveTurn(page, closeTheDistance))) break;
     }
     expect(sawEnemyUnderFog, 'never composited an enemy while the board was still fogged').toBe(true);

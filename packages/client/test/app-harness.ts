@@ -29,7 +29,25 @@ import type { ClipSet } from '../src/character-clips.js';
 
 /** What the stub renderer was told to draw, by layer. */
 export interface DrawLog {
+  /**
+   * FOF-COLORS: the seat the renderer was last told it is drawing for.
+   *
+   * Recorded rather than merely accepted, because "the board is coloured for
+   * the wrong seat" is invisible to a stub that draws nothing — the only
+   * observable is what the controller *said*.
+   */
+  viewer: { team: 0 | 1; seatUnitIds: string[] } | undefined;
   highlights: Map<HighlightLayer, Vec2[]>;
+  /**
+   * FOF-OVERLAYS: the colour each layer was last drawn in.
+   *
+   * Parallel maps rather than a richer `highlights` entry, so the dozens of
+   * tests that only ever ask "which squares" keep reading the shape they were
+   * written against. Colour is a new question, and it gets a new place to look.
+   */
+  highlightColours: Map<HighlightLayer, number>;
+  shapeColours: Map<ShapeLayer, number>;
+  pathColours: Map<string, number>;
   paths: { squares: Vec2[]; layer: PathLayer | undefined }[];
   shapes: Vec2[][];
   /**
@@ -73,6 +91,16 @@ export interface DrawLog {
   /** Every `panBy`, so a spec can drive a drag and read what the camera did. */
   pans: { dx: number; dy: number }[];
   /**
+   * PAN-RELEASE-PLAYBACK: the calls that would move the **zoom**.
+   *
+   * `focusOn` frames without choosing a span; `lookAt` and `fitBoard` are the
+   * two that set one. Recording them is how "releasing a pan did not also
+   * re-zoom the board" becomes an assertion instead of a hope — the release is
+   * supposed to hand back the centre and nothing else.
+   */
+  lookAts: { centre: Vec2; span: number }[];
+  fitBoards: number;
+  /**
    * WALL-CAST-FIX — the **board itself**, as of the last `show()`: the units,
    * decoys and traps the viewing seat can currently see.
    *
@@ -108,8 +136,10 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
+    viewer: undefined,
+    highlightColours: new Map(), shapeColours: new Map(), pathColours: new Map(),
     highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], particles: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
-    focus: [], pans: [],
+    focus: [], pans: [], lookAts: [], fitBoards: 0,
     board: { units: [], decoys: [], traps: [] },
   };
   let orbit = false;
@@ -122,6 +152,9 @@ export function stubRenderer(): StubRenderer {
     // RENDER-ON-DEMAND: the stub never draws, so it has drawn nothing.
     frameCount: () => 0,
     withClips: (sets) => { clipSets = sets; },
+    setViewer: (viewer) => {
+      draw.viewer = { team: viewer.team, seatUnitIds: [...viewer.seatUnitIds].sort() };
+    },
     show: (units, decoys = [], traps = []) => {
       draw.board = {
         units: units.map((u) => ({ ...u })),
@@ -129,13 +162,18 @@ export function stubRenderer(): StubRenderer {
         traps: traps.map((t) => ({ ...t, pos: { ...t.pos } })),
       };
     },
-    highlight: (layer, squares) => { draw.highlights.set(layer, squares.map((p) => ({ ...p }))); },
+    highlight: (layer, squares, color) => {
+      draw.highlights.set(layer, squares.map((p) => ({ ...p })));
+      draw.highlightColours.set(layer, color);
+    },
     // A board square per client pixel, so a test aims by naming the square.
     squareFromPoint: (clientX, clientY) => ({ x: Math.round(clientX), y: Math.round(clientY) }),
     screenPosition: (x, y) => ({ x, y }),
     setProjection: (_name: ProjectionName) => {},
-    lookAt: () => {},
-    fitBoard: () => {},
+    lookAt: (centre, spanSquares) => {
+      draw.lookAts.push({ centre: { ...centre }, span: spanSquares });
+    },
+    fitBoard: () => { draw.fitBoards += 1; },
     objectFor: () => undefined,
     setUnitAt: () => {},
     setUnitFade: () => {},
@@ -182,7 +220,8 @@ export function stubRenderer(): StubRenderer {
     // entry each, so a test reads them exactly as it reads a single path — and
     // an empty call still records the clear, which is how "the plan went away"
     // is asserted.
-    drawPaths: (routes, _color, _dashed, layer) => {
+    drawPaths: (routes, color, _dashed, layer) => {
+      draw.pathColours.set(layer ?? 'path', color);
       if (routes.length === 0) { draw.paths.push({ squares: [], layer }); return; }
       for (const route of routes) {
         draw.paths.push({ squares: route.map((p) => ({ ...p })), layer });
@@ -200,7 +239,8 @@ export function stubRenderer(): StubRenderer {
         outline: a.outline.map((p) => ({ ...p })), color: a.color, opacity: a.opacity,
       }));
     },
-    drawShape: (outlines, _color, _opacity, layer = 'shape') => {
+    drawShape: (outlines, color, _opacity, layer = 'shape') => {
+      draw.shapeColours.set(layer, color);
       for (const outline of outlines) draw.shapes.push(outline.map((p) => ({ ...p })));
       draw.shapesByLayer.set(layer, outlines.map((o) => o.map((p) => ({ ...p }))));
     },

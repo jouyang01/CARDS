@@ -42,6 +42,7 @@ import {
   OrthographicCamera,
   PCFSoftShadowMap,
   PlaneGeometry,
+  RingGeometry,
   Raycaster,
   Scene,
   Path,
@@ -56,10 +57,17 @@ import type { CharacterModels, ModelInstance } from './character-model.js';
 import { FLASH_SECONDS, shakeOffset } from './vfx.js';
 import { chamferFor, chamferedBox } from './chamfer.js';
 import { jitterFor } from './jitter.js';
+// NOTE the name collision with `rimBreath` below: that is the *arena rim*, a map
+// fixture (MAP_PIPELINE §5). This is the edge light on a unit. Unrelated things
+// that English gave the same word.
+import { RIM_COLOUR, RIM_POWER, RIM_STRENGTH } from './rim.js';
 import type { ClipChoice, ClipSet } from './character-clips.js';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
 import { type Nameplate } from './nameplates.js';
+import {
+  fofColour, fofFor, sideColour, unitColour, type Fof, type FofPalette, type Viewer,
+} from './fof.js';
 import { intentTexture, plateTexture, grainTexture, grainNormalTexture, contactTexture, skyTexture } from './textures.js';
 import { type SkyRamp } from './sky.js';
 import { overlayBoost } from './themes.js';
@@ -312,6 +320,19 @@ export const TERRAIN_HEIGHT = { brush: 0.02, cover: COVER_HEIGHT, wall: WALL_HEI
  * ground, so a box *top* and a box *side* differ in hue as well as in value
  * before the sun reaches either. One light, and the silhouette reads.
  *
+ * **The sun and the fill are tinted, and for a while they were not.** Both were
+ * `0xffffff`, which made the paragraph above only half true: the hemisphere's
+ * warm end is `#2b2118`, a very dark brown, so against a cool `#a8c4ec` sky it
+ * contributes almost nothing and the rig was cool-only. Measured off a real
+ * composite, lit surfaces came back at `R − B = −2` and shadowed ones at `−14` —
+ * no warm/cool separation anywhere, just neutral and slightly-cooler-neutral.
+ *
+ * A warm key against a cool fill is the oldest trick there is and it costs two
+ * constants. Both are kept close to white on purpose: this is meant to read as
+ * *daylight*, not as a colour grade, and the terrain has already given up its
+ * chroma so the UI can own saturated hues (see the theme note). A strongly
+ * tinted key would take that chroma straight back.
+ *
  * The `fill` is deliberately not a caster. It exists so the side facing away
  * from the sun keeps an edge instead of going to ambient flat, and a second
  * shadow map to buy that would be paying real per-frame cost for a detail
@@ -324,9 +345,31 @@ export const TERRAIN_HEIGHT = { brush: 0.02, cover: COVER_HEIGHT, wall: WALL_HEI
 export const LIGHTING = {
   ambient: { intensity: 0.35 },
   hemisphere: { sky: 0xa8c4ec, ground: 0x2b2118, intensity: 1.0 },
-  sun: { intensity: 2.2, position: [6, 11, 5] },
-  fill: { intensity: 0.45, position: [-7, 6, -6] },
+  sun: { colour: 0xfff1dc, intensity: 2.2, position: [6, 11, 5] },
+  fill: { colour: 0xc6d8ff, intensity: 0.45, position: [-7, 6, -6] },
 } as const;
+
+/**
+ * The RIM term, as GLSL, generated from the same constants `rimFactor` uses.
+ *
+ * Written out of `rim.ts`'s numbers rather than typed as literals so the shader
+ * and the Node-testable curve cannot drift apart: `rim.test.ts` pins
+ * `rimFactor`, and this string is the only other place the expression exists.
+ *
+ * `vViewPosition` is the fragment's position relative to the eye, so normalising
+ * it gives the direction *to* the viewer; `normal` is view-space and already
+ * normalised by `<normal_fragment_begin>`.
+ */
+export const RIM_GLSL = [
+  '{',
+  '  vec3 rimV = normalize( vViewPosition );',
+  '  float rimNdotV = clamp( dot( normal, rimV ), 0.0, 1.0 );',
+  `  float rimF = pow( 1.0 - rimNdotV, ${RIM_POWER.toFixed(4)} );`,
+  `  totalEmissiveRadiance += vec3( ${(((RIM_COLOUR >> 16) & 0xff) / 255).toFixed(4)}, `
+    + `${(((RIM_COLOUR >> 8) & 0xff) / 255).toFixed(4)}, `
+    + `${((RIM_COLOUR & 0xff) / 255).toFixed(4)} ) * ( rimF * ${RIM_STRENGTH.toFixed(4)} );`,
+  '}',
+].join('\n');
 
 /**
  * BOARD-LIT — how each surface answers the light.
@@ -546,6 +589,19 @@ export const LAYER_LIFT: Record<HighlightLayer, number> = {
 const LAYER_INSET: Record<HighlightLayer, number> = {
   fog: 1, camo: 1, range: 0.92, reach: 0.92, locked: 0.78, aim: 0.92, band: 0.62, impact: 0.86, free: 0.8, catalyst: 0.72, waypoint: 0.5, chase: 0.98, select: 0.92,
 };
+/**
+ * FOF-COLORS' foot ring — the bottom of the *unit-marker* stack.
+ *
+ * Above every aim overlay, because it marks a unit rather than an area; below
+ * `chase` and `select`, which keep their louder "this is the one you are
+ * ordering / chasing" meaning. A player should be able to read allegiance and
+ * selection at the same glance without the two competing.
+ */
+export const FOF_RING_LIFT = LAYER_LIFT.chase - 0.0005;
+/** Radii as a fraction of a tile — a ring at the feet, not a puddle under them. */
+const FOF_RING_INNER = 0.30;
+const FOF_RING_OUTER = 0.42;
+
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;
 /**
@@ -719,6 +775,15 @@ export interface RenderUnit {
 
 export interface Renderer {
   /** Draw/refresh the board for these units and decoys. Objects are reconciled. */
+  /**
+   * FOF-COLORS: whose seat the board is drawn for.
+   *
+   * Idempotent and cheap to call every frame — it compares before it repaints.
+   * Colour is pure view: this never reaches game state, and two clients on
+   * opposite teams resolve the same board to mirrored colours with neither
+   * being wrong.
+   */
+  setViewer(viewer: Viewer): void;
   show(units: readonly RenderUnit[], decoys?: readonly RenderDecoy[], traps?: readonly RenderTrap[], pads?: readonly RenderPad[]): void;
   /**
    * Highlight squares. Layers stack bottom-up in the order listed here:
@@ -1051,16 +1116,22 @@ export function staleUnitGroups(
  * MAP-THEMES — what the renderer needs to draw a board.
  *
  * The themed half (terrain colours, the material each is made of, the sky ramp,
- * the platform) comes from `data/themes/*.json`; the global half (`team0`,
- * `team1`) does not, and must not. Team colour is identity rather than
- * decoration: a map that re-tints the teams changes friend-from-foe reading per
- * map, and `TEAM_CSS` in the HUD plus the e2e's colour families both encode it.
+ * the platform) comes from `data/themes/*.json`; the global half (`fof`) does
+ * not, and must not. Identity is not decoration: a map that re-tinted it would
+ * change friend-from-foe reading per map, and `TEAM_CSS` in the HUD plus the
+ * e2e's colour families both encode it.
+ *
+ * FOF-COLORS sharpened that principle rather than replacing it. The global
+ * identity used to be *team number* (`team0`/`team1`); it is now *friend or foe
+ * from the viewer*, still global across maps — which is what makes a mirror
+ * matchup readable.
  */
 export interface BoardPalette {
   /** Which theme this came from — the grain hash is seeded from it. */
   themeId: string;
   open: number; wall: number; cover: number; brush: number;
-  team0: number; team1: number;
+  /** FOF-COLORS: the three viewer-relative identity hues. */
+  fof: FofPalette;
   /** Clear colour if the sky raster cannot be built (no 2d context). */
   background: number;
   surface: Record<'open' | 'wall' | 'cover' | 'brush', { roughness: number; metalness: number }>;
@@ -1107,7 +1178,7 @@ export function createRenderer(
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = PCFSoftShadowMap;
 
-  const sun = new DirectionalLight(0xffffff, LIGHTING.sun.intensity);
+  const sun = new DirectionalLight(LIGHTING.sun.colour, LIGHTING.sun.intensity);
   sun.position.set(...LIGHTING.sun.position);
   sun.castShadow = true;
   sun.shadow.mapSize.set(SHADOW_MAP_PX, SHADOW_MAP_PX);
@@ -1125,7 +1196,7 @@ export function createRenderer(
   sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun);
 
-  const fill = new DirectionalLight(0xffffff, LIGHTING.fill.intensity);
+  const fill = new DirectionalLight(LIGHTING.fill.colour, LIGHTING.fill.intensity);
   fill.position.set(...LIGHTING.fill.position);
   scene.add(fill);
 
@@ -1383,6 +1454,27 @@ export function createRenderer(
     }
   }
 
+  // ── FOF-COLORS: who is looking ────────────────────────────────────────────
+  /**
+   * The seat the board is being drawn for.
+   *
+   * Defaults to team 0 driving nothing, which is the honest answer before
+   * `setViewer` is called: the opening paint happens during boot, and a
+   * renderer that guessed would put the wrong colours on screen for one frame.
+   * Every unit reads `foe` under that default rather than `self`, so the
+   * failure mode of forgetting to call `setViewer` is a board that looks
+   * uniformly hostile — loud, and impossible to mistake for working.
+   */
+  let viewer: Viewer = { team: 0, seatUnitIds: new Set() };
+  /** The two arena end-bars, kept so a seat change can repaint them. */
+  const sideMaterials = new Map<0 | 1, MeshStandardMaterial>();
+
+  function paintSides(): void {
+    for (const [team, material] of sideMaterials) {
+      material.color.setHex(shade(sideColour(team, viewer, palette.fof), SCENERY.spawnShade));
+    }
+  }
+
   // ── Scenery (SCENE-DIORAMA) ───────────────────────────────────────────────
   // Purely decorative: drawn, never consulted. It lives in `world` so it tracks
   // the board's own transform, and in its own group so a later set piece has an
@@ -1449,17 +1541,28 @@ export function createRenderer(
   // gameplay: after a free orbit has spun the board 180° "which way is home"
   // stops being obvious, and the fix belongs in the scenery rather than in
   // another HUD element competing for the same corner.
+  //
+  // FOF-COLORS / the owner's note — *"the colored bars on each side of the map
+  // should be blue for ally and red for enemy side. This should change
+  // depending on player perspective."* A bar is a **side**, so it takes the two
+  // side colours rather than the three unit ones: an end of the arena is not
+  // "the character you are ordering", so the ally green would be a category
+  // error. The materials are kept because the answer changes when the seat
+  // does — in hot-seat that is every Lock In, and a board that kept team 0's
+  // reading after the pass would be worse than the absolute colours were.
   for (const team of [0, 1] as const) {
     const edge = spawnEdge(map, team);
-    const colour = shade(team === 0 ? palette.team0 : palette.team1, SCENERY.spawnShade);
     const lengthwise = edge === 'west' || edge === 'east';
     const span = (lengthwise ? slabH : slabW) * SCENERY.spawnSpan;
     const offset = (lengthwise ? slabW : slabH) / 2 - SCENERY.rim.thickness * 1.6;
     const [w, d, x, z] = lengthwise
       ? [SCENERY.rim.thickness, span, edge === 'west' ? -offset : offset, 0] as const
       : [span, SCENERY.rim.thickness, 0, edge === 'north' ? -offset : offset] as const;
-    scenery.add(edgeBar(w, d, x, z, colour, SCENERY.spawnEmissive));
+    const bar = edgeBar(w, d, x, z, 0xffffff, SCENERY.spawnEmissive);
+    sideMaterials.set(team, bar.material as MeshStandardMaterial);
+    scenery.add(bar);
   }
+  paintSides();
 
   // ── Terrain props (MAP_PIPELINE phase 5) ──────────────────────────────────
   // A wall tile becomes a stone pillar, a cover tile a wooden barricade — loaded
@@ -1593,12 +1696,12 @@ export function createRenderer(
    * fogged square is still a marker saying "something is here", which is the
    * whole thing the fog is for.
    */
-  const setPlate = (bars: Group, plate: Nameplate | undefined, team: 0 | 1): void => {
+  const setPlate = (bars: Group, plate: Nameplate | undefined, fof: Fof): void => {
     const mesh = bars.getObjectByName('plate');
     if (!(mesh instanceof Mesh)) return;
     mesh.visible = plate !== undefined;
     if (plate === undefined) return;
-    (mesh.material as MeshBasicMaterial).map = plateTexture(plate, team);
+    (mesh.material as MeshBasicMaterial).map = plateTexture(plate, fof);
     (mesh.material as MeshBasicMaterial).needsUpdate = true;
   };
 
@@ -1632,6 +1735,90 @@ export function createRenderer(
    */
   const facingOf = new Map<string, { dx: number; dy: number }>();
 
+  /**
+   * Give every mesh under a unit the RIM edge term — see `rim.ts`.
+   *
+   * A shader patch rather than a light, because three tests a light's layers
+   * against the **camera** and not against each mesh, so there is no such thing
+   * as a light that only reaches units. The patch is injected after
+   * `<emissivemap_fragment>`, which is the first point in the standard fragment
+   * shader where `normal` exists (`<normal_fragment_begin>` runs just above it)
+   * and where `totalEmissiveRadiance` is still open to be added to.
+   *
+   * Adding to *emissive* is what makes the rim compose correctly with the two
+   * things already writing to these materials: the victim flash raises
+   * `emissive` and the rim rides on top of it rather than fighting it, and the
+   * deferred-death fade scales `opacity`, which emissive does not touch. Both
+   * are safe here only because `detachMaterials` has already given each unit its
+   * own copies (`character-model.ts`) — patching shared materials would put the
+   * rim on every unit of a character at once, which is the same bug that
+   * function exists to prevent.
+   */
+  const applyRim = (root: Object3D): void => {
+    root.traverse((o) => {
+      if (!(o instanceof Mesh)) return;
+      const list = Array.isArray(o.material) ? o.material : [o.material];
+      for (const material of list) {
+        material.onBeforeCompile = (shader: { fragmentShader: string }): void => {
+          shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <emissivemap_fragment>',
+            `#include <emissivemap_fragment>\n${RIM_GLSL}`,
+          );
+        };
+        // Patched and unpatched standard materials must not share a compiled
+        // program. Without a distinct key three reuses whichever was compiled
+        // first, and the rim either applies to nothing or to everything.
+        material.customProgramCacheKey = () => 'rim';
+        material.needsUpdate = true;
+      }
+    });
+  };
+
+  /**
+   * FOF-COLORS' ring beneath a unit's feet.
+   *
+   * **Parented to the unit, not drawn as a highlight layer.** A highlight is
+   * keyed to a board *square*, and units do not live on squares during
+   * playback — `setUnitAt` slides them between tiles a frame at a time. A
+   * square-keyed ring would jump a whole tile at the end of a move while the
+   * body it belongs to glided, which reads as the ring belonging to the ground
+   * rather than to the character.
+   *
+   * `MeshBasicMaterial` so it does not take the scene lighting: this is a UI
+   * mark that happens to live in the world, and a friend/foe read that dimmed
+   * in shadow would fail exactly where the board is hardest to parse.
+   */
+  const buildFootRing = (): Mesh => {
+    const ring = asOverlay(new Mesh(
+      new RingGeometry(TILE * FOF_RING_INNER, TILE * FOF_RING_OUTER, 28),
+      new MeshBasicMaterial({ transparent: true, opacity: 0.85, depthWrite: false }),
+    ), PLATE_ORDER - 1);
+    ring.name = 'fofRing';
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = FOF_RING_LIFT;
+    return ring;
+  };
+
+  /**
+   * Paint one unit's friend/foe colour — body tint where there is one, and the
+   * foot ring always.
+   *
+   * Runs on every `show()` rather than at build time, so a seat change repaints
+   * instead of rebuilding. See the note where the body material is created.
+   */
+  const paintFof = (g: Group, subject: { unitId: string; owner: 0 | 1 }): Fof => {
+    const fof = fofFor(subject, viewer);
+    const colour = fofColour(fof, palette.fof);
+    const ring = g.getObjectByName('fofRing');
+    if (ring instanceof Mesh) (ring.material as MeshBasicMaterial).color.setHex(colour);
+    // Only the box body takes the tint. A rigged model keeps its own texture —
+    // repainting a character's skin in team colour is not what "outline" means,
+    // and the ring plus the nameplate carry the read for those.
+    const body = g.getObjectByName('body');
+    if (body instanceof Mesh) (body.material as MeshStandardMaterial).color.setHex(colour);
+    return fof;
+  };
+
   const buildUnit = (unit: RenderUnit): Group => {
     const g = new Group();
     g.name = unit.unitId;
@@ -1664,7 +1851,13 @@ export function createRenderer(
       instance.attachProps(scale, TILE);
       instance.root.name = 'body';
       instances.set(unit.unitId, instance);
-      g.add(instance.root, buildBars(TILE * MODEL_HEIGHT_TILES));
+      // RIM goes on the model only — never on the foot ring, which is a UI
+      // mark in MeshBasicMaterial with no emissive to add to.
+      applyRim(instance.root);
+      // The ring matters MORE on the model path, not less: a rigged character
+      // wears its own texture, so the body carries no team tint at all and the
+      // ring is the whole friend/foe read at the unit itself.
+      g.add(instance.root, buildBars(TILE * MODEL_HEIGHT_TILES), buildFootRing());
       world.add(g);
       return g;
     }
@@ -1675,14 +1868,19 @@ export function createRenderer(
       // needs a shader recompile (`needsUpdate`), and forgetting it makes every
       // fade and dim silently do nothing. Paying for blending up front is the
       // cheap, un-forgettable version.
-      new MeshStandardMaterial({
-        color: unit.owner === 0 ? palette.team0 : palette.team1, transparent: true, ...SURFACE.unit,
-      }),
+      // Colour is NOT set here. FOF-COLORS is viewer-relative, and a unit
+      // group outlives the seat that built it — in hot-seat the same body is
+      // reused across a Lock In that swaps which side is "self". Tinting on
+      // build would freeze the first viewer's answer onto the mesh; `show()`
+      // re-applies it every paint instead, which is also what makes
+      // `setViewer` a repaint rather than a rebuild.
+      new MeshStandardMaterial({ transparent: true, ...SURFACE.unit }),
     );
     body.name = 'body';
     body.castShadow = true;
     body.position.y = UNIT_HEIGHT / 2;
-    g.add(body, buildBars(UNIT_HEIGHT));
+    applyRim(body);
+    g.add(body, buildBars(UNIT_HEIGHT), buildFootRing());
     world.add(g);
     return g;
   };
@@ -2230,6 +2428,24 @@ export function createRenderer(
   let lastShown: Parameters<Renderer['show']> | undefined;
 
   const api: Renderer = {
+    setViewer(next) {
+      // Cheap identity check first: `show()` runs on every pointer move during
+      // mouse-follow aiming, and the app calls this beside it. Repainting the
+      // board because nothing changed is exactly the kind of idle work
+      // RENDER-IDLE-QUIET exists to remove.
+      const same = next.team === viewer.team
+        && next.seatUnitIds.size === viewer.seatUnitIds.size
+        && [...next.seatUnitIds].every((id) => viewer.seatUnitIds.has(id));
+      if (same) return;
+      viewer = { team: next.team, seatUnitIds: new Set(next.seatUnitIds) };
+      paintSides();
+      // Re-run the last paint so live units, decoys and traps pick the new
+      // answer up immediately — a seat change that only took effect on the next
+      // unrelated redraw would leave the board lying about whose side it is on.
+      if (lastShown !== undefined) this.show(...lastShown);
+      markDirty();
+    },
+
     show(units, decoys = [], traps = [], pads = []) {
       lastShown = [units, decoys, traps, pads];
       // `show()` is the snap-to-truth call: it places every unit on its whole
@@ -2249,12 +2465,16 @@ export function createRenderer(
         // Dead units read as hollow/faded rather than vanishing, so a corpse
         // still tells you where the fight happened.
         baseAlpha.set(unit.unitId, unit.ghost === true ? GHOST_ALPHA : unit.alive ? 1 : DEAD_ALPHA);
+        // FOF-COLORS, every paint: the body tint, the foot ring and the plate
+        // all read from the viewer, and the viewer can change under a group
+        // that already exists.
+        const fof = paintFof(g, unit);
         const bars = g.getObjectByName('bars');
         if (bars instanceof Group) {
           // A ghost reports nothing live: its HP, energy and statuses are all
           // things the viewer stopped being able to see when it went dark.
           const known = unit.ghost !== true;
-          setPlate(bars, known && unit.alive ? unit.nameplate : undefined, unit.owner);
+          setPlate(bars, known && unit.alive ? unit.nameplate : undefined, fof);
           setIntent(bars, known && unit.alive ? unit.intent : undefined);
         }
         refreshOpacity(unit.unitId);
@@ -2325,7 +2545,10 @@ export function createRenderer(
       const trapLayer = layerGroup('trap');
       disposeChildren(trapLayer);
       for (const trap of traps) {
-        const colour = trap.owner === 0 ? palette.team0 : palette.team1;
+        // Friend/foe from the viewer, and the two SIDE colours rather than the
+        // three unit ones: a mine is not a character you order, so the
+        // self/ally split has nothing to separate here.
+        const colour = sideColour(trap.owner, viewer, palette.fof);
         const at = toWorld(map, trap.pos);
         const plate = new Mesh(
           new PlaneGeometry(TILE * TRAP_SIZE, TILE * TRAP_SIZE),
@@ -2358,15 +2581,17 @@ export function createRenderer(
           // same geometry, same colour a real one gets, fully opaque. Drawing it
           // as a translucent ghost is what gave every decoy away for free.
           //
-          // The colour is the DECOY'S OWN team, not a constant. It used to be
-          // hardcoded to `team1`, which is only right when the viewer is team 0:
-          // to team 1, a team-0 decoy came out in team 1's own red and read as a
-          // friendly unit — the opposite of impersonating an enemy.
+          // The colour is resolved from the VIEWER, exactly like a real unit's
+          // (FOF-COLORS). It was hardcoded to `team1` once, then to the decoy's
+          // own team number — both of which read correctly from only one of the
+          // two seats. `asEnemy` already means "the viewer is the team being
+          // fooled", so this lands on foe-red; deriving it rather than asserting
+          // it is what keeps the decoy indistinguishable from a real enemy, which
+          // is the entire mechanic.
+          const fof = fofFor({ unitId: decoy.id, owner: decoy.owner }, viewer);
           const body = new Mesh(
             new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-            new MeshStandardMaterial({
-              color: decoy.owner === 0 ? palette.team0 : palette.team1, ...SURFACE.unit,
-            }),
+            new MeshStandardMaterial({ color: fofColour(fof, palette.fof), ...SURFACE.unit }),
           );
           body.position.copy(at).setY(UNIT_HEIGHT / 2);
           decoyLayer.add(body);
@@ -2380,7 +2605,7 @@ export function createRenderer(
             const plate = asOverlay(new Mesh(
               new PlaneGeometry(PLATE_W, PLATE_H),
               new MeshBasicMaterial({
-                map: plateTexture(decoy.nameplate, decoy.owner),
+                map: plateTexture(decoy.nameplate, fof),
                 transparent: true,
                 depthWrite: false,
               }),
