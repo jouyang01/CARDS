@@ -23,6 +23,7 @@ import {
 import {
   ICON_GAP_PX, ICON_PX, PLATE_PAD_PX, PLATE_PX, nameplateKey, plateLayout, type Nameplate,
 } from './nameplates.js';
+import type { Fof } from './fof.js';
 import { SKY_PX, rgbOf, type SkyRamp } from './sky.js';
 import { NORMAL_STRENGTH, heightToNormal } from './normal-map.js';
 import { GRAIN_BASE, clampGrain, hashUnit, type GrainSpec } from './grain.js';
@@ -272,6 +273,16 @@ export function glyphTexture(pip: StatusPip): CanvasTexture | null {
  * to avoid a cost nobody can perceive.
  */
 const plateTextures = new Map<string, CanvasTexture>();
+/**
+ * The nameplate name tint, per FoF identity.
+ *
+ * Paler than the board colours on purpose: this is text over a dark plate, and
+ * the saturated board hues (`0x4f8cff` / `0x5fd97a` / `0xff6b5e`) go muddy at
+ * 26px. Same three families, lifted for legibility.
+ */
+const PLATE_NAME_TINT: Record<Fof, string> = {
+  self: '#9dc2ff', ally: '#a8e6b4', foe: '#ffb3aa',
+};
 const PLATE_CACHE_MAX = 240;
 
 /** Bar colours, kept as the pre-UI-NAMEPLATES quads had them. */
@@ -420,8 +431,8 @@ function drawStatusRow(
   ctx.fillText(`+${layout.overflow}`, x, layout.iconY + ICON_PX / 2);
 }
 
-export function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | null {
-  const key = nameplateKey(plate, team);
+export function plateTexture(plate: Nameplate, fof: Fof): CanvasTexture | null {
+  const key = nameplateKey(plate, fof);
   const cached = plateTextures.get(key);
   if (cached !== undefined) return cached;
   if (plateTextures.size > PLATE_CACHE_MAX) {
@@ -439,8 +450,11 @@ export function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | nul
   const barW = PLATE_PX_W - pad * 2;
 
   // NAMEPLATE-LAYOUT: name hard left above the bar (it was centred), in the
-  // team's colour so friend/foe reads before the name is even parsed — and the
+  // FoF colour so friend/foe reads before the name is even parsed — and the
   // status row on the same line, immediately to its right.
+  //
+  // FOF-COLORS: viewer-relative, so the plate over the character you are
+  // ordering is blue from *your* seat whichever team number you drew.
   ctx.font = '700 26px system-ui, sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
@@ -448,7 +462,7 @@ export function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | nul
   ctx.lineWidth = 5;
   ctx.strokeStyle = 'rgba(9, 10, 14, 0.92)';
   ctx.strokeText(plate.name, layout.nameX, 2);
-  ctx.fillStyle = team === 0 ? '#9dc2ff' : '#ffb3aa';
+  ctx.fillStyle = PLATE_NAME_TINT[fof];
   ctx.fillText(plate.name, layout.nameX, 2);
   drawStatusRow(ctx, plate.pips, layout);
 

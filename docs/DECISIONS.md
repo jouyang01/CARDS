@@ -7254,3 +7254,122 @@ is the first one.
 
 Rim verified by mutation: strength 0.34 against 0.0 differs by 10,746 pixels, max channel
 delta 120, bounded to x 411–553 / y 218–496 — exactly the two units, no terrain.
+## 2026-08-25 — Builder session 17 (FOF-UNITS, FOF-OVERLAYS, RENDER-SUITE-GREEN-3, PAN-RELEASE-PLAYBACK, RENDER-IDLE-QUIET, SETTLED-BOARD-INVARIANT)
+
+**Judgment call — friend/foe is three colours, and `self` is seat-relative while `ally` is
+team-relative.** The ruling names self/ally/foe; what it does not say is which of *seat* and *team*
+decides `self`, and the two come apart in every format this game supports. 2v2 with one player per
+character makes your teammate's unit an ally; 2v2 with one player driving both makes them both
+self. Collapsing the pair into "my team" would be right today in hot-seat and wrong the moment two
+humans share a side, so the resolver takes both and checks seat first — checking team first paints
+the character you are ordering in the ally colour.
+
+**Judgment call — a *side* takes two colours, not three.** The owner's note asks for the map's end
+bars to be "blue for ally and red for enemy side". An end of the arena is not a character you
+order, so the self/ally split has nothing to separate there; `sideColour` returns friendly-blue or
+foe-red and never green. Same reasoning applied to trap markers, which belong to a team rather than
+to a unit.
+
+**Judgment call — the foot ring is parented to the unit, not drawn as a highlight layer.** Every
+other ground mark in the renderer is a highlight, so the ring wanted to be one. It cannot be:
+highlights are keyed to a board *square*, and units do not live on squares during playback —
+`setUnitAt` slides them between tiles a frame at a time. A square-keyed ring would jump a whole
+tile at the end of a move while the body it belongs to glided, which reads as the ring belonging to
+the ground rather than to the character.
+
+**Judgment call — the FoF tint is applied on every `show()` rather than at build time.** A unit
+group outlives the seat that built it: hot-seat hands the board to the other team on every Lock In
+and reuses the same meshes. Tinting on build froze the first viewer's answer onto the mesh. Painting
+per show also makes `setViewer` a repaint rather than a rebuild, and it compares before repainting
+so calling it beside every paint costs a set comparison.
+
+**AC not fully met, and flagged rather than forced — the model outline.** FOF-UNITS asks for "model
+outline/tint and the nameplate". The nameplate and the foot ring ship; a rigged character's *body*
+does not take the FoF colour. Two reasons, both structural. `emissive` is the victim flash's
+channel — `paintFlash` documents it as "additive light with a natural rest value of black, so
+releasing it is setting it to zero", and making FoF the rest value would break that stated
+invariant and the test that pins it. A true inverted-hull outline is new geometry per skinned mesh,
+on the render path that already measured ~3× slower under SwiftShader and cost the browser suite 14
+timeouts once. Rigged characters carry the read on the ring and the plate, which is the minimal
+compliant version; a real outline is its own item with its own budget.
+
+**FOF-OVERLAYS — the enemy telegraph was confirmed before it was built, and it is one thing.** The
+AC said to check what the client actually surfaces rather than invent a telegraph system. It
+surfaces exactly one: LAST-KNOWN ghosts, where a team last *saw* each enemy. Those are
+`RenderUnit`s, so they already take foe colour through FOF-UNITS' resolver — the reuse the item
+asked for rather than a second notion of "enemy red". No enemy trajectory or AoE telegraph exists,
+and golden rule #5 keeps this-turn enemy plans hidden until resolution, so nothing was invented.
+
+**Designer-flagged tension, unresolved and now real.** The friendly overlay colour is the same
+`0x4f8cff` as `REACH`, the viewer's own reach envelope. The item anticipated this and said the hues
+are a Designer call. What separates them today is **weight**, not hue: a committed plan is a 0.28
+wash under a 0.9 live aim, which is the reading AIM-PREVIEW-TRUE already relied on. It has not been
+seen on a real board with an ally and a live aim overlapping.
+
+**Judgment call — `isBrushGreen` gains a saturation clamp, and it is load-bearing.** The new ally
+green would otherwise have been counted as brush, which corrupts FOG-ZORDER silently rather than
+loudly: that test measures overlay coverage against every lit brush pixel it can find, so units
+joining the set is a wrong answer, not a failure. Separated on the **ratio** `g − r` (brush olive
+leads by ~13, ally green by ~122) rather than a brightness level, because Lambert shading scales
+all three channels together — a level test fails the moment a shoulder turns away from the light,
+while the relationship between channels survives it.
+
+**Measured, and it changed the fix — FOG-ZORDER's map.** `?map=duel-arena&format=4v4` does not fail
+an assertion; it throws "invalid setup" and the canvas never appears, because Proving Grounds has
+two spawns a side. The tempting repair is dropping to 2v2, and it is wrong: lit brush on the
+opening frame is **32 px** on Proving Grounds at 2v2 against that test's own floor of 100, versus
+**2042 px** on Iron Basin at 4v4. Downgrading the format would have swapped a crash for a test that
+passes without looking at anything, which is worse because it stops reporting.
+
+**Measured, and it changed the item — RENDER-IDLE-QUIET is not a leak.** The item was filed on
+"~49 camera marks + 15 highlights over 5 idle seconds". Instrumenting the controller and advancing
+five seconds of fake time says the app issues **nothing** when idle: those 15 highlights are the
+opening paint, once, and the camera marks were the ease, which is bounded in seconds now and stops
+marking when it settles. Both tests shipped as **pins** rather than fixes. Worth having anyway —
+the property is easy to lose by accident (one `setInterval` that repaints, one hover handler
+re-issuing an unchanged highlight) and losing it costs a frame every tick forever, which is
+invisible in a unit test and expensive in a browser.
+
+**Investigated and dismissed — the loop's `instances.size === 0` guard.** It reads as a bug: the
+comment beside it says a frame is worth drawing when "a rigged model is **mid-clip**", while the
+code asks whether a model *exists*. It is correct as written. `character-model.ts` starts every
+rigged character on a looping idle clip, so a model-bearing board is genuinely animating and the
+two conditions coincide. The comment is loose; the behaviour is right. Recorded so the next reader
+does not spend the same hour on it.
+
+**SETTLED-BOARD-INVARIANT is two assertions because the halves break independently.** A board that
+redraws an *identical* frame forever holds its pixels and still burns a GPU frame every 16 ms, so
+"stopped drawing" and "held what it drew" are separate claims. `frameCount` is read before and
+after a quiet stretch with **no screenshot between them**: `page.screenshot` forces a composite, so
+the obvious way to measure this has the instrument answer its own question.
+
+## Open Questions for the Analyzer — 2026-08-25
+
+**1. FOF-UNITS' model outline is not shipped (FOF-UNITS AC bullet 3;
+`packages/client/src/renderer3d.ts`).** Ring + nameplate carry the read for rigged characters; the
+body does not take the FoF colour. Reasons above — `emissive` belongs to the victim flash, an
+inverted hull is new geometry per skinned mesh on an already-slow path. Needs a ruling: accept as
+shipped, or re-spec as its own item with a technique named.
+
+**2. The friendly overlay blue is the same hue as `REACH` (FOF-OVERLAYS Spec Notes' flagged
+tension; `app.ts`).** Separated by weight, not hue, and untested on a real board with an ally's
+committed plan under a live aim. Designer call, as the item said — flagging that it is now a live
+overlap rather than a hypothetical one.
+
+**3. The single-column pad tests need a re-spec, not a re-point (RENDER-SUITE-GREEN-3;
+`e2e/render.spec.ts` RENDER-COVERAGE).** "A pad marker survives the next turn boundary" reads 0 teal
+pixels after a boundary. On the old map a *mirrored pair* made it robust: one pad could be consumed
+and the other still armed. Proving Grounds has one Health pad at (8,1), and a consumed pad drops to
+0.14 opacity — deliberately below `isPadTeal`'s floor — so "still drawn" is no longer observable
+with that predicate. Either the assertion becomes "it re-arms on its `everyTurns` cycle", or this
+one test moves to Iron Basin for its pairs. Both are defensible and it is a spec choice, so it is
+left rather than guessed.
+
+**4. VFX-FLASH-ON-SCREEN measures a spike that is not there (`e2e/vfx.spec.ts:71`).** Lit-pixel
+counts across the resolution are 6670 flat → 3544 flat → ~6600, with a best spike of 165 against a
+floor of 800: a step change in overall scene brightness rather than one victim lighting and
+releasing. Pre-existing (in the Analyzer's own count of 7 red), and it is not obviously a
+coordinate or colour problem like its six neighbours, so it may be a real VFX regression rather
+than test drift. Not diagnosed this session.
+
+**5. No engine work this session, as instructed.** Every change is in `packages/client`.
