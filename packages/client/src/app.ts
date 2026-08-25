@@ -32,10 +32,8 @@ import {
   type Vec2,
 } from '@cards/engine';
 import { FOG_INK, FOG_OPACITY, themeFor } from './themes.js';
-import { browserAmbient, browserModels, browserRenderOnDemand } from './render-flags.js';
-import { WALL_FIELD_OPACITY, createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { browserAmbient, browserModels, browserProps, browserRenderOnDemand } from './render-flags.js';
-import { createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
+import { WALL_FIELD_OPACITY, createRenderer, type BoardPalette, type HighlightLayer, type ProjectionName, type RenderDecoy, type RenderTrap, type RenderUnit, type Renderer, type ShapeLayer } from './renderer3d.js';
 import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { openingFacings, selectFacing, type Facing } from './facing.js';
