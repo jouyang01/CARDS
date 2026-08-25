@@ -859,12 +859,21 @@ test.describe('HUD-LAYOUT: the blocks moved and the board got the space', () => 
  * shows up **on those same pixels** — not merely somewhere on screen, which is
  * what a whole-frame colour count would have let through.
  *
- * 4v4 on purpose: in the default format the seat's vision never reaches either
- * brush band, so every green pixel on screen is fogged brush and there is
- * nothing to prove anything against.
+ * **Iron Basin at 4v4**, and both halves of that are load-bearing.
+ *
+ * 4v4 because in a duel the seat's vision never reaches a brush band, so every
+ * green pixel on screen is fogged brush and there is nothing to prove anything
+ * against. Iron Basin because Proving Grounds — which this used to name — has
+ * **two spawns a side**, so `format=4v4` on it is not a harder test, it is an
+ * "invalid setup" error and a board that never boots.
+ *
+ * Measured rather than reasoned, because the two failure modes look identical
+ * from the assertion: lit brush on the opening frame is 32 px on Proving
+ * Grounds at 2v2 (below this test's own floor of 100) against 2042 px on Iron
+ * Basin at 4v4. Only one of the four map/format pairs can carry this test.
  */
 test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async ({ page }) => {
-  await page.goto('./?map=duel-arena&format=4v4');
+  await page.goto('./?map=iron-basin&format=4v4');
   await expect(boardCanvas(page)).toBeVisible();
   await page.waitForTimeout(700);
 
@@ -957,7 +966,7 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
  * once the turn stops being a plan.
  */
 test('an aimed action floats its numbers before Lock In (PREVIEW-NUMBERS)', async ({ page }) => {
-  await page.goto('./?map=duel-arena&format=4v4');
+  await page.goto('./?map=iron-basin&format=4v4');
   await expect(boardCanvas(page)).toBeVisible();
   await page.waitForTimeout(700);
 
