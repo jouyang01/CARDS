@@ -117,6 +117,12 @@ const UNIT_HEIGHT = TILE * MODEL_HEIGHT_TILES;
 const BOARD_ZOOM = 1.75;
 const WALL_HEIGHT = 0.9;
 const COVER_HEIGHT = 0.45;
+// Directional edge cover draws taller and thinner than a full-block crate: a
+// chest-high barricade that hides a crouching model (Aegis stands 1.73 tiles, so
+// a crouch ≈ 1.0 and its torso ≈ 0.8), sitting ON the tile boundary so it reads
+// as a low wall you walk up to, not a block filling the square (COVER-EDGE).
+const EDGE_COVER_HEIGHT = 0.8;
+const EDGE_COVER_THICK = 0.16;
 
 /** The two shipped projections. Isometric is the true 35.264° arctan(1/√2). */
 export const PITCH = { top: 90, isometric: 35.264 } as const;
@@ -1201,12 +1207,15 @@ export function createRenderer(
       // the tile reads as "cover from the east" rather than "solid". A bare
       // {x,y} cover entry (and every wall/brush) keeps the full 0.96 box.
       const facing = role === 'cover' ? (p as { facing?: 'N' | 'S' | 'E' | 'W' }).facing : undefined;
-      const SLAB = TILE * 0.24; // barricade thickness across the faced edge
+      // Edge cover: a chest-high barricade panel, thin across its faced axis and
+      // full-width along the edge, standing EDGE_COVER_HEIGHT tall. Everything
+      // else (walls, full-block cover, brush) keeps the full 0.96 box.
+      const h = facing ? EDGE_COVER_HEIGHT : height;
       const dims: [number, number, number] = facing
         ? facing === 'E' || facing === 'W'
-          ? [SLAB, height, TILE * 0.96]
-          : [TILE * 0.96, height, SLAB]
-        : [TILE * 0.96, height, TILE * 0.96];
+          ? [EDGE_COVER_THICK, h, TILE * 0.96]
+          : [TILE * 0.96, h, EDGE_COVER_THICK]
+        : [TILE * 0.96, h, TILE * 0.96];
       // Each block gets its own hashed tint, so a wall reads as a run of placed
       // blocks rather than one shape stamped along a line. A material apiece is
       // affordable here in a way it would not be for the floor: the shipped maps
@@ -1219,9 +1228,11 @@ export function createRenderer(
           ...grainMap(grain, 1, 1),
         }),
       );
-      box.position.copy(toWorld(map, p)).setY(height / 2);
+      box.position.copy(toWorld(map, p)).setY(h / 2);
       if (facing) {
-        const off = TILE * 0.38; // shove the slab out to the edge it guards
+        // Sit the panel ON the tile boundary it guards, so the square stays
+        // visibly walk-onto-able and the wall reads as the line between tiles.
+        const off = TILE * 0.5;
         if (facing === 'E') box.position.x += off;
         else if (facing === 'W') box.position.x -= off;
         else if (facing === 'S') box.position.z += off;
@@ -1229,7 +1240,7 @@ export function createRenderer(
       }
       // Brush is a 0.02-high lid: it has no silhouette to throw and casting from
       // it only buys shadow acne on the tile it is lying on.
-      box.castShadow = height > TERRAIN_HEIGHT.brush;
+      box.castShadow = h > TERRAIN_HEIGHT.brush;
       box.receiveShadow = true;
       world.add(box);
       if (role !== 'brush') terrainBoxes.set(`${role}:${p.x},${p.y}`, box);
