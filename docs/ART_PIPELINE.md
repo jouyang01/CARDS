@@ -839,7 +839,13 @@ concrete blocks?) before a spec is written, not a guess.
 
 ---
 
-## 13. Phase 10 — VFX (planned)
+## 13. Phase 10 — VFX (shipped)
+
+> **Shipped, not planned.** All five build-order steps below are built. The architecture
+> that came out of it — the universal/identity split, the default asymmetry, and the five
+> rules the pure modules obey — is in **`docs/CHARACTER_PLAYBOOK.md` §4**, which is the
+> file to read before adding a character's VFX. This section is kept for the reasoning
+> that led there.
 
 Mixamo supplies the *gesture*. It supplies nothing that leaves the body. VFX is entirely
 code — no Blender, no Mixamo, no downloaded assets.
@@ -884,13 +890,17 @@ everything else in this document, and is the correct first commit of the actual 
   rule #1, but unseeded means a replayed turn looks different every time.
 - **Area telegraphs are already built** — `drawShape` renders `area: Vec2[]`.
 
-### Build order
+### Build order — all shipped
 
-1. Hitstop, victim flash, screen shake
-2. Weapon props on hand bones
-3. Tracers and projectiles off the ability→impact window
-4. Impact particles
-5. Per-ability VFX table in `data/`
+1. ✅ Hitstop, victim flash, screen shake — `vfx.ts`
+2. ✅ Weapon props on hand bones — §12
+3. ✅ Tracers and projectiles off the ability→impact window — `tracer.ts`
+4. ✅ Impact particles — `particles.ts`
+5. ✅ Per-ability VFX table in `data/vfx.json` — `ability-vfx.ts`
+
+Plus two that were not foreseen: `wall.ts` (a barrier that stands on the board rather than
+being marked flat on it) and the `blink` treatment for teleports. The order held up —
+step 1 really did work on the boxes that existed, and really was the correct first commit.
 
 ---
 
