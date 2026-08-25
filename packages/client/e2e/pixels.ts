@@ -157,7 +157,15 @@ export const isSelfBlue = (px: Rgb): boolean =>
  * shading can do to either crosses a threshold set between them.
  */
 export const isAllyGreen = (px: Rgb): boolean =>
-  px.g > px.r + 40 && px.g > px.b + 20 && px.g > 60;
+  px.g > px.r + 40 && px.g > px.b + 20 && px.g > 60
+  // …and WARM: blue below red. This is the clamp that keeps the nameplate HP
+  // bar out, and it is the reason the ally hue is yellow-leaning at all.
+  // `#5ad17f` (the bar) and a cool ally green sit within a few counts of each
+  // other on every channel, so no threshold could separate them — the fix had
+  // to be in the palette, and this is the predicate half of it. Without the
+  // clamp, `blueBodies` counts one HP bar per unit as an extra character and
+  // every drive that clicks "the second body" clicks a nameplate.
+  && px.b < px.r + 10;
 
 /**
  * Foe red is `#ff6b5e` — red-dominant with green and blue close together. The
