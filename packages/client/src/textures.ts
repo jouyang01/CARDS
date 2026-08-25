@@ -24,6 +24,7 @@ import {
   ICON_GAP_PX, ICON_PX, PLATE_PAD_PX, PLATE_PX, nameplateKey, plateLayout, type Nameplate,
 } from './nameplates.js';
 import { SKY_PX, rgbOf, type SkyRamp } from './sky.js';
+import { NORMAL_STRENGTH, heightToNormal } from './normal-map.js';
 import { GRAIN_BASE, clampGrain, hashUnit, type GrainSpec } from './grain.js';
 
 /**
@@ -500,3 +501,100 @@ export function plateTexture(plate: Nameplate, team: 0 | 1): CanvasTexture | nul
   return texture;
 }
 
+/**
+ * The grain, as a normal map.
+ *
+ * Reads back the very canvas `grainTexture` drew — the same greyscale pattern,
+ * interpreted as a height field rather than as paint. Nothing new is authored:
+ * this is the information the grain already carries, in the channel that lets
+ * the sun answer it. See `normal-map.ts` for why that matters and how far it is
+ * allowed to push.
+ *
+ * Cached alongside the albedo texture and keyed the same way, because the two
+ * are always wanted together and generating one without the other is a bug
+ * waiting to happen.
+ */
+const grainNormals = new Map<string, CanvasTexture | null>();
+
+export function grainNormalTexture(seed: number, raw: GrainSpec): CanvasTexture | null {
+  const spec = clampGrain(raw);
+  const key = `${seed}|${spec.style}|${spec.speckle}`;
+  const cached = grainNormals.get(key);
+  if (cached !== undefined) return cached;
+
+  const albedo = grainTexture(seed, raw);
+  const source = albedo?.image as HTMLCanvasElement | undefined;
+  const ctx = source?.getContext('2d') ?? null;
+  if (albedo === null || source === undefined || ctx === null) {
+    grainNormals.set(key, null);
+    return null;
+  }
+
+  const { width: size } = source;
+  const pixels = ctx.getImageData(0, 0, size, size).data;
+  // The grain is achromatic by construction, so the red channel IS the height.
+  const height = new Uint8ClampedArray(size * size);
+  for (let i = 0; i < size * size; i++) height[i] = pixels[i * 4] ?? 0;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const out = canvas.getContext('2d');
+  if (out === null) {
+    grainNormals.set(key, null);
+    return null;
+  }
+  const image = out.createImageData(size, size);
+  image.data.set(heightToNormal(height, size, NORMAL_STRENGTH));
+  out.putImageData(image, 0, 0);
+
+  const texture = new CanvasTexture(canvas);
+  grainNormals.set(key, texture);
+  return texture;
+}
+
+/**
+ * CONTACT — the soft darkening where a solid meets the floor.
+ *
+ * The sun casts a shadow map, which handles the *cast* shadow a block throws
+ * across the board. What it cannot resolve at this resolution is the crevice:
+ * the few centimetres right at the base, where almost no light reaches because
+ * the block itself occludes nearly the whole sky. Without it every box meets
+ * the floor along a hard seam and reads as *sitting on* the scene rather than
+ * *being in* it — the same tell as a badly cut-out photograph.
+ *
+ * A radial falloff on a quad, drawn under each solid. Not a substitute for
+ * ambient occlusion in general; it is the one case AO is most missed and the
+ * only one worth an extra draw call per block.
+ *
+ * Black with an alpha ramp rather than a dark colour: the floor underneath is a
+ * different hue in every theme, and a tinted contact patch would be wrong in
+ * eight of the nine.
+ */
+const CONTACT_PX = 64;
+let contact: CanvasTexture | null | undefined;
+
+export function contactTexture(): CanvasTexture | null {
+  if (contact !== undefined) return contact;
+  const canvas = document.createElement('canvas');
+  canvas.width = CONTACT_PX;
+  canvas.height = CONTACT_PX;
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) {
+    contact = null;
+    return null;
+  }
+  const half = CONTACT_PX / 2;
+  const gradient = ctx.createRadialGradient(half, half, 0, half, half, half);
+  // Flat through the middle, then a fast falloff. A linear ramp from the centre
+  // looks like a vignette; what a contact shadow does is stay dark right up to
+  // the object's footprint and then let go quickly.
+  gradient.addColorStop(0, 'rgba(0, 0, 0, 0.55)');
+  gradient.addColorStop(0.45, 'rgba(0, 0, 0, 0.42)');
+  gradient.addColorStop(0.72, 'rgba(0, 0, 0, 0.14)');
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, CONTACT_PX, CONTACT_PX);
+  contact = new CanvasTexture(canvas);
+  return contact;
+}

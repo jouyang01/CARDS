@@ -7120,3 +7120,68 @@ specified. The content symmetry guard now checks the facing flips too. Renderer 
 edge cover as a thin barricade slab shoved to its faced edge (full-block cover keeps
 its box); the prop-swap fallback and pixel baseline may want a refresh when props are
 re-screenshotted.
+
+---
+
+## 2026-08-25 — Board material polish: chamfers, normal maps, contact shading, off-grid jitter
+
+The owner named four things that read as unfinished about the board and props. All four
+landed together because they compound — a bevel only sells the object if something is
+grounding it, and a normal map only reads if the silhouette is not a perfect cube.
+
+**Chamfered edges (`chamfer.ts`).** Every terrain solid is now a chamfered box rather
+than a `BoxGeometry`. The bevel scales off the **shortest** side (`chamferFor`), not the
+longest, because a thin panel bevelled at a fraction of its length inverts itself; it is
+clamped below half the shortest side and skipped entirely below `CHAMFER_MIN` where it
+would be sub-pixel and just cost triangles.
+
+Two bugs my own tests caught, both invisible in a screenshot:
+- **20 of 44 triangles wound inward.** I had hand-derived the winding for each of the 6
+  faces, 12 edge bevels and 8 corners, and got a third of them backwards. Replaced with a
+  programmatic orient pass: for a convex solid centred on the origin, any triangle whose
+  normal points back at the centroid is flipped. `CHAMFER-OUTWARD` asserts it.
+- **The vertex scheme inset the wrong axes.** Each corner carries three vertices; each
+  must sit at *full* extent on one axis and inset on the other two. My first version inset
+  one axis and left two full, so no face reached the box's stated dimensions — the solid
+  was uniformly undersized. `CHAMFER-PLUS-X-FACES-PLUS-X` is deliberately hand-checked and
+  independent of the orient pass, and is what caught it.
+
+Geometry is converted with `toNonIndexed()` before `computeVertexNormals()`. On indexed
+geometry the shared corner vertices average the bevel into the neighbouring faces and the
+whole point of the chamfer — a distinct highlight *on* the bevel — is smoothed away.
+
+**Normal maps (`normal-map.ts`).** The grain generator already produces a height-like
+pattern; `heightToNormal` Sobels it into a tangent-space normal map, cached alongside the
+albedo under the same key. Edges are **wrapped, not clamped**: the grain texture tiles, so
+a clamped Sobel puts a visible seam-coloured strip along every tile boundary where the
+gradient is forced to zero.
+
+**Contact shading (`renderer3d.ts`).** A soft radial dark patch (`contactTexture`) is
+drawn under every solid taller than the brush lid, at `CONTACT_SPREAD = 1.9` of the
+footprint with `depthWrite: false`. This is the cheap stand-in for ambient occlusion; it
+is what makes a box sit *in* the scene rather than *on* it.
+
+**Off-grid jitter (`jitter.ts`).** A small per-tile yaw and offset, hashed from the tile
+coordinates rather than drawn from a counter — a counter makes the same tile jitter
+differently depending on draw order, which is exactly the kind of thing that would make
+two clients disagree if it ever leaked anywhere that mattered.
+
+Jitter is applied **only** to solids with no declared `facing` and height above the brush.
+Facing is a game-legible property (a barricade's edge), so rotating it would lie. The
+brush restriction came out of filming: brush is a 0.02 lid flush with the board, and
+rotating a flush lid exposes bare board at its corners — it read as a misaligned decal,
+not as a natural placement.
+
+**Verification.** Filmed against a control build with each feature stubbed out; chamfer
+highlights, contact darkening and jitter are all independently visible in the difference,
+and the brush mistake above is what that pass caught.
+
+**Pre-existing render-suite failures, not from this change.** The Playwright render suite
+is 7 red, and all 7 reproduce identically on a clean control (`git stash`, rebuild, re-run).
+Root cause is `373b0a1` "Rebuild duel-arena as dedicated 2v2 Proving Grounds", which
+reshaped the map from 18×15 to 17×11, cut spawns to 2 per team, and replaced the mirrored
+pair of Health pads with a single pad at (8,1). Two tests still boot `?map=duel-arena&format=4v4`
+(now a setup error — the map has 2 spawns per team, needs 4); the rest hard-code screen
+fractions or assert "a mirrored pair of Health pads" against the old layout. These are
+test-side fixes in the map lane's territory, deliberately left out of this change rather
+than widening it.
