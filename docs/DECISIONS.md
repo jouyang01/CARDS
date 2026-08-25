@@ -7347,12 +7347,23 @@ be three squares at any zoom. Map-independent by construction, which is why it w
 re-measuring after the next reframing. The pad drive's `clickAt(0.28/0.72, 0.5)` is the same species
 of assumption and is the remaining instance of it.
 
-**3c. FOG-ZORDER now boots but its aimed half reads zero (`e2e/render.spec.ts`).** Moving it to Iron
-Basin at 4v4 fixed the "invalid setup" crash and the coarse floor passes — but `bestAimed` is 0, so
-no ability's aim reaches brush from any of the six sampled candidates. The candidates are spread
-across the whole brush set, which on a 22×19 map is a long way from a seat that spawns at x=4. This
-is the same species as the DASH-CAT-ROUTE fix (sample relative to the caster, not to the board), and
-is the most likely of the remaining failures to fall to it.
+**3c. FOG-ZORDER needs a drive, not a coordinate — measured to the boundary.** Moving it to Iron
+Basin at 4v4 fixed the "invalid setup" crash and the coarse floor passes. Sampling the brush
+*nearest the caster* rather than spread across the map — the same correction DASH-CAT-ROUTE needed —
+moved `bestAimed` from **0 to 1**, against a floor of 20. That single pixel is the finding: the aim
+overlay now reaches brush, and only just, which says the nearest lit brush sits at the very edge of
+what a turn-1 ability can cover rather than outside it.
+
+So no choice of candidate fixes this, and the two obvious re-points are both blocked by measurement:
+Iron Basin at 4v4 has 2042 lit brush px but none of it comfortably in range from spawn, and Proving
+Grounds at 2v2 has brush in range but only **32** lit px — below the test's own precondition of 100,
+because most of its brush is fogged on the opening frame.
+
+What is left is a **drive**: walk a character a turn or two toward a brush band, then measure. That
+is a re-spec of the test rather than a re-point, and it lands in the same place as the pad pair —
+which is why both are here rather than guessed at. Worth noting the two are now the same shape: a
+suite written against a board that framed everything, asked to work on one where the camera and the
+map both moved.
 
 **4. VFX-FLASH-ON-SCREEN measures a spike that is not there (`e2e/vfx.spec.ts:71`).** Lit-pixel
 counts across the resolution are 6670 flat → 3544 flat → ~6600, with a best spike of 165 against a
