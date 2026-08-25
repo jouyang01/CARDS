@@ -170,7 +170,7 @@ describe('VISION1-opening: no turn-1 grace reveal', () => {
     // see the other team. Spawn separation is 13 and sight is 6 — but that is
     // a map property, so it is asserted rather than assumed.
     for (const [mapDef, format, perTeam] of [
-      [DUEL_ARENA, '2v2', 2], [DUEL_ARENA, '4v4', 4], [IRON_BASIN, '4v4', 4],
+      [DUEL_ARENA, '1v1', 1], [DUEL_ARENA, '2v2', 2], [IRON_BASIN, '4v4', 4],
     ] as const) {
       const teams = dealTeams(CATALOG, perTeam);
       const s = createMatch(mapDef, format, teams);

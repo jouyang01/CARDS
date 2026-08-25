@@ -43,7 +43,20 @@ occupants can still shoot out along the row).
 **Density fell relative to the board.** duel-arena: 26 blocked tiles on 270 (9.6%); iron-basin:
 26 on 418 (6.2%). The old map was 18 on 225 (8%). Same order of magnitude, far more structure.
 
-## 3. `duel-arena` — 18 × 15 (1v1 / 2v2 default; 4v4 supported)
+## 3. `duel-arena` — REBUILT as "Proving Grounds", 17 × 11 (dedicated 2v2; 1v1 supported)
+
+> **Superseded 2026-08-24** (see `docs/DECISIONS.md`). The original entry below described an
+> 18×15 board that hosted a four-unit 2v2 on a 4v4-sized stadium with two full-width sniper
+> alleys. It was rebuilt as a purpose-built 2v2 map: **17 × 11, two spawns a side (1v1/2v2
+> only — iron-basin owns 4v4), 180° rotational symmetry** (organic, not left-right mirror,
+> still fair team-vs-team). Spawns **x=1 and x=15** (separation 14, true centre tile), one
+> retreat column each side. A central wall **pinwheel** rings the Might pad (8,5) with
+> walkable **brush** at its core; the Health (8,1) and Energy (8,9) pads sit on the centre
+> column, equidistant to both teams; offset teeth hold the longest clear firing lane to 10;
+> cover fuses to the spawn approaches with free-standing step-out posts by each spawn. The
+> content/board/vision tests carry the authoritative coordinates now.
+
+_Original (18 × 15) design, retained for history:_
 
 Spawns **x=2 and x=15** (separation 13), two depth columns behind each spawn (x=0–1, x=16–17)
 kept clear as retreat room.

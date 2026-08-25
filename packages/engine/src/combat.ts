@@ -17,6 +17,7 @@
  */
 
 import { type Board, terrainAt } from './board.js';
+import { centre, edgeCorners, FACING_VEC, segmentsIntersect } from './geometry.js';
 import {
   COVER_REDUCTION_PCT,
   ENERGIZED_PCT,
@@ -125,41 +126,6 @@ export function grantEnergy(unit: UnitState, base: number, scale = true): number
 
 // ── Cover ───────────────────────────────────────────────────────────────────
 
-/**
- * Integer test: does the segment [p1,p2] share any point with segment [p3,p4]?
- * Standard orientation method; collinear-overlap and endpoint touches count as
- * intersecting, which makes a shot through a square's corner graze both flanking
- * edges (a corner-tucked defender gets cover from either side). All inputs are
- * integers, so the result is identical on every machine.
- */
-function segmentsIntersect(p1: Vec2, p2: Vec2, p3: Vec2, p4: Vec2): boolean {
-  const cross = (o: Vec2, a: Vec2, b: Vec2) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  const onSeg = (o: Vec2, a: Vec2, b: Vec2) =>
-    Math.min(a.x, b.x) <= o.x && o.x <= Math.max(a.x, b.x) && Math.min(a.y, b.y) <= o.y && o.y <= Math.max(a.y, b.y);
-  const d1 = cross(p3, p4, p1);
-  const d2 = cross(p3, p4, p2);
-  const d3 = cross(p1, p2, p3);
-  const d4 = cross(p1, p2, p4);
-  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
-  if (d1 === 0 && onSeg(p1, p3, p4)) return true;
-  if (d2 === 0 && onSeg(p2, p3, p4)) return true;
-  if (d3 === 0 && onSeg(p3, p1, p2)) return true;
-  if (d4 === 0 && onSeg(p4, p1, p2)) return true;
-  return false;
-}
-
-/** The two corners of `defender`'s square on the `dir` side, in doubled coords. */
-function edgeCorners(defender: Vec2, dir: Vec2): [Vec2, Vec2] {
-  const x0 = 2 * defender.x;
-  const y0 = 2 * defender.y;
-  const x1 = x0 + 2;
-  const y1 = y0 + 2;
-  if (dir.x === 1) return [{ x: x1, y: y0 }, { x: x1, y: y1 }]; // east edge
-  if (dir.x === -1) return [{ x: x0, y: y0 }, { x: x0, y: y1 }]; // west edge
-  if (dir.y === 1) return [{ x: x0, y: y1 }, { x: x1, y: y1 }]; // south edge
-  return [{ x: x0, y: y0 }, { x: x1, y: y0 }]; // north edge
-}
-
 const CARDINALS: readonly Vec2[] = [
   { x: 1, y: 0 },
   { x: -1, y: 0 },
@@ -170,8 +136,13 @@ const CARDINALS: readonly Vec2[] = [
 /**
  * Is `defenderPos` behind cover from an attack fired at it from `attackerPos`?
  *
- * True when some orthogonally-adjacent cover square sits on a side of the
- * defender that the attack line (attacker centre → defender centre) crosses.
+ * Two ways, both decided by the same integer edge geometry — the attack line
+ * (attacker centre → defender centre) crossing a cover edge:
+ *   • **Directional edge cover** the defender stands on — the line crosses one
+ *     of the barricade's faced edges (COVER-EDGE); this is the "walk on to take
+ *     cover" case.
+ *   • **v1 full-block cover** on an orthogonally-adjacent square — the line
+ *     crosses the shared edge (the pre-COVER-EDGE model, kept for older maps).
  * Melee attacks (`range` ≤ 1) ignore cover (GAME_SPEC §3). Centres live at odd
  * doubled coordinates so the segment/edge intersection is exact integer math.
  */
@@ -182,11 +153,20 @@ export function isBehindCover(
   range: number,
 ): boolean {
   if (range <= 1) return false;
-  const a: Vec2 = { x: 2 * attackerPos.x + 1, y: 2 * attackerPos.y + 1 };
-  const d: Vec2 = { x: 2 * defenderPos.x + 1, y: 2 * defenderPos.y + 1 };
+  const a = centre(attackerPos);
+  const d = centre(defenderPos);
+  // Directional cover the defender is standing on: shielded from its faced side.
+  const facings = board.coverFacings.get(`${defenderPos.x},${defenderPos.y}`);
+  if (facings) {
+    for (const f of facings) {
+      const [e1, e2] = edgeCorners(defenderPos, FACING_VEC[f]);
+      if (segmentsIntersect(a, d, e1, e2)) return true;
+    }
+  }
+  // v1 full-block cover on an adjacent square (edge cover next door does NOT count).
   for (const dir of CARDINALS) {
     const c: Vec2 = { x: defenderPos.x + dir.x, y: defenderPos.y + dir.y };
-    if (terrainAt(board, c) !== 'cover') continue;
+    if (terrainAt(board, c) !== 'cover' || !board.solidCover.has(`${c.x},${c.y}`)) continue;
     const [e1, e2] = edgeCorners(defenderPos, dir);
     if (segmentsIntersect(a, d, e1, e2)) return true;
   }

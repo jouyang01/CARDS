@@ -137,13 +137,14 @@ describe('the create screen', () => {
     expect(navigated, 'straight into the lobby boot').toEqual(['?room=WXYZ']);
   });
 
-  it('changing to a map that cannot seat the chosen format re-picks one it can', () => {
-    // The pair must stay seatable. Leaving 4v4 selected on a two-spawn map would
-    // mint a room that throws at `createMatch`.
+  it('a two-spawn map only offers formats it can seat — the pair stays seatable', () => {
+    // The default map is Proving Grounds (duel-arena), a dedicated 2v2 map. Its
+    // format menu must not offer 4v4, or the host could mint a room that throws
+    // at `createMatch`.
     const { root } = mounted(async () => okResponse({ code: 'WXYZ' }));
-    const formats = select(root, 'format');
-    expect([...formats.options].map((o) => o.value), 'duel-arena seats four a side')
-      .toContain('4v4');
+    const values = [...select(root, 'format').options].map((o) => o.value);
+    expect(values, 'duel-arena is 2v2, not 4v4').not.toContain('4v4');
+    expect(values).toContain('2v2');
   });
 
   it('a refusal is shown and the browser stays put', async () => {

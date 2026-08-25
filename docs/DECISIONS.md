@@ -7009,3 +7009,114 @@ nobody.
 **And the opacity constant was being overridden.** `drawWalls` took a default the two call sites
 both passed past — raising the default did nothing until `app.ts` was pointed at the same shared
 constant. A default that no caller uses is not a default.
+## 2026-08-24 — Session 22 (Builder): the prop renderer swap, with the owner's assets in hand
+
+The owner ran `generate_prop.py` on their Blender machine and pushed the two Proving Floor `.glb`
+(pillar 13.6 kB, barricade 20 kB) plus the manifest. Before wiring anything I parsed both: valid
+glTF v2, geometry exactly where the dry-run predicted — pillar in three stone parts base-at-floor,
+barricade stakes-and-posts inside the tile. The generator's untested half (the Blender run) came
+back clean, which is the confirmation the dry-run could not give.
+
+**The swap mirrors the character model path, because that path already solved this.** `renderer3d`
+fetches `props/manifest.json` (`no-cache`), filters to the board's `themeId`, loads each role's
+`.glb` once, clones it per wall/cover tile with a hashed yaw from `prop-placement.ts`, positions it
+base-at-floor, and hides the box it now stands over. Every failure mode is ordinary and warns
+rather than throws: no manifest, a 404 `.glb`, a theme with no props (iron-basin) — each leaves the
+plain box. The box is drawn first and synchronously, so the gameplay read is right from frame one
+and the prop is a later, cosmetic swap on top.
+
+**The box is hidden, not removed.** A prop that loads sets `box.visible = false` on the tile it
+covers, rather than deleting the box. It costs a hidden mesh, and buys two things: a future theme
+swap can bring the box back without rebuilding the board, and the fail-soft story stays a one-liner
+(the box always exists; the prop either reveals over it or never arrives).
+
+**PROP-FREEZE is its own flag, parallel to models — and it had to be.** duel-arena carries the
+proving-floor theme and is the *default e2e map*, so an ungated prop load would change the frame in
+FOG-ZORDER, PREVIEW-NUMBERS, STEALTH-CONFIRM and more, and the byte-equality tests would break
+permanently. `?props=off` (set in the e2e fixtures alongside `ambient=off`/`models=off`) holds every
+tile on its box, byte-identical to the board the predicates were written against. Kept separate
+from `models` rather than folded in, because character art and terrain art are different pipelines
+and a session may reasonably want one without the other; the cost is one more flag, the benefit is
+that "models on, props off" is expressible. The 36-test suite is green with props off, which is the
+proof the swap is a true no-op under freeze.
+
+**Asset budget: props are their own bucket now.** `characterOf` was treating `proving-floor_wall`
+and the manifest as pseudo-characters, which broke the "one rigged character so far" assertion the
+moment real props landed — the exact grouping wart flagged when the pipeline shipped. Files under
+`props/` are now weighed apart: still counted toward the 12 MB whole-directory total (a player
+downloads them), but out of the character roster and its per-character cap, which is "one
+character's load cost" and never meant a stone pillar. All Proving Floor props together are 34 kB,
+well under any ceiling.
+
+**Verified, not assumed.** Screenshotted duel-arena with props on at two pitches: top-down, the
+barricades read as wooden stake fences and the pillars as pale stone filling the wall tiles; at a
+low orbit, the columns show plinth → tapered fluted shaft → flared capital, which is the colosseum
+the owner art-directed. The stone is the theme's own bright-but-achromatic wall colour, so it clears
+every saturated UI family §4 guards without being dim.
+
+**Still Proving Floor's, not done:** the spectator tiers / skyline beyond the platform (the other
+half of phase 5's "set pieces") are a backdrop, not tile props, and a larger separate piece. And
+Drained Works still has no prop spec — its own art direction first.
+
+## 2026-08-24 — Proving Grounds: duel-arena rebuilt as a dedicated 2v2 map
+
+**duel-arena is now a purpose-built 2v2 map, renamed "Proving Grounds" (id unchanged).**
+The old board was a 4v4-sized stadium (18×15, 68 tiles/unit at 2v2) hosting a four-unit
+duel, with two full-width sniper alleys (rows 5 and 9 ran clear the whole 18 wide) and its
+health/energy pads parked in the dead outer thirds that 2v2 units never enter. It has been
+rebuilt at **17×11 (47 tiles/unit)** with **two spawns a side**, so it now hosts **1v1/2v2
+only**; iron-basin owns 4v4. `formatsSupportedByMap` reflects this, and the client's
+create-screen already filters formats per map, so no host can pick 4v4 on it.
+
+**The map is 180° rotationally symmetric, not left-right mirror.** The owner asked for an
+organic, less mechanical board, and rotational symmetry is what lets top-left differ from
+top-right while staying provably fair — team-vs-team, each team faces the 180° twin of what
+the other faces. This changed the `content.test.ts` fairness invariant from "left-right
+mirror" to "180° rotational" for terrain and spawns (both shipped maps pass; iron-basin is
+4-fold). Pads stay on the **mirror** check: Proving Grounds' three pads sit on the centre
+column (health 8,1 · might 8,5 · energy 8,9), equidistant to both teams, and a centre-column
+pad is trivially mirror-symmetric even though rotation would map health↔energy.
+
+**Shape.** A central wall **pinwheel** around the Might pad with walkable **brush** at its
+core (concealment, not cover — you hold the centre hidden, not armoured); cover fused to the
+spawn approaches plus free-standing step-out posts by each spawn; offset "teeth" that keep
+the longest clear firing lane to 10 (was 18) without a mechanical comb; and the dead outer
+retreat column trimmed to one. Separation stays 14 (the roster turn-1-threat guard is
+derived, and passes), with a true centre tile for the equidistant Might.
+
+**Verification.** Beyond the repo validators (validateMap clean, MAP-CAPS runs under
+5/4/3, SHADOW-ROW clear — the energy pad's edge-cap wall was offset off the pad column to
+clear it), every candidate was run through a scratch reimplementation of the movement/LoS
+rules checking rotational symmetry, dead-pocket reachability, per-row clear runs, and
+spawn-shot safety. Coordinate-coupled tests (board, vision, real-characters, spawns,
+content, and four client lobby tests that assumed duel-arena seated 4v4) were re-pointed.
+
+## 2026-08-24 — Directional edge cover (the AR half-wall), revisiting the v1 simplification
+
+**Cover can now be edge-mounted and walk-on (COVER-EDGE), the finer-grained model
+the 2026-08-11 entry deferred "until playtests demand it."** A cover entry is now
+either the old full-square block (`{x,y}`) or a directional barricade
+(`{x,y,facing}`) on one edge (N/S/E/W): you **walk onto** the tile to take cover, but
+**cannot cross its faced edge** (both directions); the **occupant** is reduced 50%
+against attacks whose line crosses that edge; it does **not** block line of sight; and
+melee still ignores it. The two coexist so **iron-basin's full-block strongpoint is
+untouched** — only entries that opt in with a `facing` change behaviour.
+
+**Owner-chosen semantics** (this session): see over it (movement + reduction, not LoS);
+the occupant is protected, not adjacent neighbours (that stays the full-block model).
+
+**One geometry, movement and combat share it.** The segment/edge intersection that
+already decided cover reduction now also decides whether a step crosses a barricade —
+extracted to `geometry.ts` (`segmentsIntersect`, `edgeCorners`, `FACING_VEC`). A
+barricade you cannot shoot a defender across is one you cannot walk across either, by
+construction. `coverEdgeBlocks` gates both `reachableSquares` and `validateMovePath`;
+`blocksMovement` now only stops walls and full-block cover; `isBehindCover` gained the
+occupant-edge case and restricts its adjacent case to `solidCover`.
+
+**Proving Grounds' 14 cover tiles are now directional**, facings rotationally
+symmetric (E↔W, N↔S flip under 180°): the spawn-approach posts face the enemy
+(west cover faces E, east faces W), and the two pinwheel posts face S/N as the owner
+specified. The content symmetry guard now checks the facing flips too. Renderer draws
+edge cover as a thin barricade slab shoved to its faced edge (full-block cover keeps
+its box); the prop-swap fallback and pixel baseline may want a refresh when props are
+re-screenshotted.

@@ -105,12 +105,12 @@ describe('the shipped duel-arena map', () => {
   const board = buildBoard(duelArena as unknown as MapDef);
 
   it('indexes to the same terrain the JSON declares', () => {
-    expect(board.width).toBe(18);
-    expect(board.height).toBe(15);
-    expect(terrainAt(board, { x: 5, y: 7 })).toBe('wall'); // west sightline-breaker
-    expect(terrainAt(board, { x: 7, y: 6 })).toBe('cover'); // central strongpoint
-    expect(terrainAt(board, { x: 6, y: 1 })).toBe('brush'); // north flank corridor
-    expect(terrainAt(board, { x: 2, y: 6 })).toBe('open'); // team 0 spawn
+    expect(board.width).toBe(17);
+    expect(board.height).toBe(11);
+    expect(terrainAt(board, { x: 6, y: 5 })).toBe('wall'); // central pinwheel
+    expect(terrainAt(board, { x: 3, y: 4 })).toBe('cover'); // spawn step-out post
+    expect(terrainAt(board, { x: 7, y: 4 })).toBe('brush'); // centre concealment
+    expect(terrainAt(board, { x: 1, y: 4 })).toBe('open'); // team 0 spawn
   });
 
   it('both spawn squares are stand-able', () => {

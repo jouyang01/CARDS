@@ -53,8 +53,8 @@ describe('map/format validation', () => {
     expect(formatsSupportedByMap(twoSpawns, ['1v1', '2v2', '4v4'])).toEqual(['1v1', '2v2']);
   });
 
-  it('the real duel-arena supports every format (4 spawns per side)', () => {
-    expect(formatsSupportedByMap(ARENA, ['1v1', '2v2', '4v4'])).toEqual(['1v1', '2v2', '4v4']);
+  it('the real Proving Grounds is a dedicated 2v2 map (2 spawns per side)', () => {
+    expect(formatsSupportedByMap(ARENA, ['1v1', '2v2', '4v4'])).toEqual(['1v1', '2v2']);
   });
 });
 

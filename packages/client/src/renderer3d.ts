@@ -63,6 +63,7 @@ import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
 import { browserRenderOnDemand } from './render-flags.js';
 import { rimBreath } from './ambient-motion.js';
+import { placeProp } from './prop-placement.js';
 import { easeCamera } from './camera-ease.js';
 import { clampCentre, panDelta } from './camera-pan.js';
 
@@ -116,6 +117,12 @@ const UNIT_HEIGHT = TILE * MODEL_HEIGHT_TILES;
 const BOARD_ZOOM = 1.75;
 const WALL_HEIGHT = 0.9;
 const COVER_HEIGHT = 0.45;
+// Directional edge cover draws taller and thinner than a full-block crate: a
+// chest-high barricade that hides a crouching model (Aegis stands 1.73 tiles, so
+// a crouch ≈ 1.0 and its torso ≈ 0.8), sitting ON the tile boundary so it reads
+// as a low wall you walk up to, not a block filling the square (COVER-EDGE).
+const EDGE_COVER_HEIGHT = 0.8;
+const EDGE_COVER_THICK = 0.16;
 
 /** The two shipped projections. Isometric is the true 35.264° arctan(1/√2). */
 export const PITCH = { top: 90, isometric: 35.264 } as const;
@@ -1052,7 +1059,7 @@ export interface BoardPalette {
 
 export function createRenderer(
   container: HTMLElement, map: MapDef, palette: BoardPalette,
-  options: { ambient?: boolean; renderOnDemand?: boolean } = {},
+  options: { ambient?: boolean; renderOnDemand?: boolean; props?: boolean } = {},
 ): Renderer {
   const scene = new Scene();
   // AMBIENT-FREEZE: resolved once. `?ambient=off` (every browser test) and a
@@ -1060,6 +1067,10 @@ export function createRenderer(
   // decorative that moves is gated on it — so the tests, and anyone who asked
   // their OS to stop motion, get a board frozen byte-identical to a static one.
   const ambientOn = options.ambient ?? true;
+  // PROP-FREEZE: whether themed terrain props may load. Off by default so a
+  // direct caller (the jsdom renderer tests) never kicks off a fetch; the app
+  // passes `browserProps()`, which is off for `?props=off` (the whole e2e).
+  const propsOn = options.props ?? false;
   // SKY-DOME: a ramp rather than a flat clear colour. The fallback keeps a
   // headless context (no 2d canvas) drawing something rather than nothing.
   scene.background = skyTexture(palette.sky) ?? new Color(palette.background);
@@ -1201,30 +1212,58 @@ export function createRenderer(
   grid.position.y = GRID_LIFT;
   world.add(grid);
 
-  for (const [squares, colour, height, surface, grain] of [
-    [map.brush, palette.brush, TERRAIN_HEIGHT.brush, palette.surface.brush, palette.grain.brush],
-    [map.cover, palette.cover, TERRAIN_HEIGHT.cover, palette.surface.cover, palette.grain.cover],
-    [map.walls, palette.wall, TERRAIN_HEIGHT.wall, palette.surface.wall, palette.grain.wall],
+  // A prop may later stand in for a wall/cover box (MAP_PIPELINE phase 5); keep
+  // the boxes it might replace so the swap can hide the box it covers and fall
+  // back to it if the prop never loads.
+  const terrainBoxes = new Map<string, Mesh>();
+  for (const [role, squares, colour, height, surface, grain] of [
+    ['brush', map.brush, palette.brush, TERRAIN_HEIGHT.brush, palette.surface.brush, palette.grain.brush],
+    ['cover', map.cover, palette.cover, TERRAIN_HEIGHT.cover, palette.surface.cover, palette.grain.cover],
+    ['wall', map.walls, palette.wall, TERRAIN_HEIGHT.wall, palette.surface.wall, palette.grain.wall],
   ] as const) {
     for (const p of squares) {
+      // Directional cover (COVER-EDGE) is a half-wall on one edge you walk onto,
+      // not a full block: draw a thin barricade slab pushed to its faced side so
+      // the tile reads as "cover from the east" rather than "solid". A bare
+      // {x,y} cover entry (and every wall/brush) keeps the full 0.96 box.
+      const facing = role === 'cover' ? (p as { facing?: 'N' | 'S' | 'E' | 'W' }).facing : undefined;
+      // Edge cover: a chest-high barricade panel, thin across its faced axis and
+      // full-width along the edge, standing EDGE_COVER_HEIGHT tall. Everything
+      // else (walls, full-block cover, brush) keeps the full 0.96 box.
+      const h = facing ? EDGE_COVER_HEIGHT : height;
+      const dims: [number, number, number] = facing
+        ? facing === 'E' || facing === 'W'
+          ? [EDGE_COVER_THICK, h, TILE * 0.96]
+          : [TILE * 0.96, h, EDGE_COVER_THICK]
+        : [TILE * 0.96, h, TILE * 0.96];
       // Each block gets its own hashed tint, so a wall reads as a run of placed
       // blocks rather than one shape stamped along a line. A material apiece is
       // affordable here in a way it would not be for the floor: the shipped maps
       // carry fifty-odd terrain squares between them, not several hundred.
       const box = new Mesh(
-        new BoxGeometry(TILE * 0.96, height, TILE * 0.96),
+        new BoxGeometry(...dims),
         new MeshStandardMaterial({
           color: shade(colour, tileTint(grainSeed, p.x, p.y, grain.tint)),
           ...surface,
           ...grainMap(grain, 1, 1),
         }),
       );
-      box.position.copy(toWorld(map, p)).setY(height / 2);
+      box.position.copy(toWorld(map, p)).setY(h / 2);
+      if (facing) {
+        // Sit the panel ON the tile boundary it guards, so the square stays
+        // visibly walk-onto-able and the wall reads as the line between tiles.
+        const off = TILE * 0.5;
+        if (facing === 'E') box.position.x += off;
+        else if (facing === 'W') box.position.x -= off;
+        else if (facing === 'S') box.position.z += off;
+        else box.position.z -= off; // N
+      }
       // Brush is a 0.02-high lid: it has no silhouette to throw and casting from
       // it only buys shadow acne on the tile it is lying on.
-      box.castShadow = height > TERRAIN_HEIGHT.brush;
+      box.castShadow = h > TERRAIN_HEIGHT.brush;
       box.receiveShadow = true;
       world.add(box);
+      if (role !== 'brush') terrainBoxes.set(`${role}:${p.x},${p.y}`, box);
     }
   }
 
@@ -1305,6 +1344,82 @@ export function createRenderer(
       : [span, SCENERY.rim.thickness, 0, edge === 'north' ? -offset : offset] as const;
     scenery.add(edgeBar(w, d, x, z, colour, SCENERY.spawnEmissive));
   }
+
+  // ── Terrain props (MAP_PIPELINE phase 5) ──────────────────────────────────
+  // A wall tile becomes a stone pillar, a cover tile a wooden barricade — loaded
+  // from `public/models/props/` and placed over the plain box that is already
+  // standing there. Fail-soft, exactly like a character model: the box is drawn
+  // first and synchronously, so the gameplay read is right from frame one, and a
+  // manifest or `.glb` that 404s simply leaves the box. Nothing here is consulted
+  // by any rule — a prop is scenery that happens to sit on a played square.
+  const propGroup = new Group();
+  propGroup.name = 'props';
+  world.add(propGroup);
+
+  const loadProps = async (): Promise<void> => {
+    try {
+      const base = 'models';
+      const res = await fetch(`${base}/props/manifest.json`, { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`props manifest ${res.status}`);
+      const manifest = (await res.json()) as {
+        props?: { theme: string; role: string; file: string; version?: string; yawSteps?: number; height?: number }[];
+      };
+      const mine = (manifest.props ?? []).filter((e) => e.theme === palette.themeId);
+      if (mine.length === 0) return; // this theme has no props yet — boxes it is
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+      const loader = new GLTFLoader();
+
+      for (const entry of mine) {
+        const squares = entry.role === 'wall' ? map.walls : entry.role === 'cover' ? map.cover : [];
+        if (squares.length === 0) continue;
+        let template: Group;
+        try {
+          const url = entry.version === undefined || entry.version === ''
+            ? `${base}/${entry.file}`
+            : `${base}/${entry.file}?v=${encodeURIComponent(entry.version)}`;
+          template = (await loader.loadAsync(url)).scene as Group;
+        } catch (err) {
+          // One role missing is not the others' problem — its tiles keep their box.
+          console.warn(`[cards] terrain prop "${entry.theme}/${entry.role}" did not load: ${String(err)}`);
+          continue;
+        }
+        template.traverse((o) => {
+          if ((o as Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; }
+        });
+        for (const sq of squares) {
+          const inst = template.clone(true);
+          inst.position.copy(toWorld(map, sq)); // prop base sits at local y=0 = the floor
+          const facing = entry.role === 'cover' ? (sq as { facing?: 'N' | 'S' | 'E' | 'W' }).facing : undefined;
+          if (facing) {
+            // COVER-EDGE: the barricade is a half-wall on ONE edge. Sit it on that
+            // tile boundary and turn it to run ALONG the edge (its stakes are
+            // built spanning +x, so N/S keep yaw 0 and E/W turn a quarter), then
+            // stretch it to crouch-cover height. Not the hashed placeProp yaw —
+            // a directional fence's orientation is the facing, not a coin flip.
+            const off = TILE * 0.5;
+            if (facing === 'E') { inst.position.x += off; inst.rotation.y = Math.PI / 2; }
+            else if (facing === 'W') { inst.position.x -= off; inst.rotation.y = Math.PI / 2; }
+            else if (facing === 'S') { inst.position.z += off; inst.rotation.y = 0; }
+            else { inst.position.z -= off; inst.rotation.y = 0; } // N
+            inst.scale.y = EDGE_COVER_HEIGHT / (entry.height ?? COVER_HEIGHT);
+          } else {
+            inst.rotation.y = placeProp(map.id, sq.x, sq.y, { yawSteps: entry.yawSteps }).yawRadians;
+          }
+          propGroup.add(inst);
+          // Hide the box this prop now stands for. Kept (not removed) so a future
+          // theme swap could bring it back without rebuilding the board.
+          const box = terrainBoxes.get(`${entry.role}:${sq.x},${sq.y}`);
+          if (box !== undefined) box.visible = false;
+        }
+      }
+      markDirty();
+    } catch (err) {
+      // The whole load failing is ordinary — an older build with no props, a
+      // path typo — and it must never break the board: every tile keeps its box.
+      console.warn(`[cards] terrain props not loaded, drawing boxes: ${String(err)}`);
+    }
+  };
+  if (propsOn) void loadProps();
 
   // ── Keyed unit objects (A1's principle, in 3D) ────────────────────────────
   const unitObjects = new Map<string, Group>();

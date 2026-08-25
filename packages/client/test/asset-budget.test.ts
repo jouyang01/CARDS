@@ -106,4 +106,18 @@ describe('ASSET-WEIGHT-BUDGET: it actually fails', () => {
     expect(out.characters.map((c) => c.id), 'one rigged character so far').toEqual(['aegis']);
     expect(out.lines.join('\n')).toContain('budget');
   });
+
+  it('counts terrain props apart from characters, but still toward the total', async () => {
+    // Props under `props/` are a bucket of their own — a stone pillar is not a
+    // rigged character and must not pollute the roster list or its cap — while
+    // still being bytes a player downloads, so they count toward the grand total.
+    const { report } = await load();
+    const out = report(new URL('../public/models/', import.meta.url).pathname);
+    expect(out.characters.map((c) => c.id), 'props are not in the character list').toEqual(['aegis']);
+    expect(out.props, 'the Proving Floor props are weighed').toBeGreaterThan(0);
+    expect(out.props, 'and are well under the per-character cap').toBeLessThan(1.5 * 1024 * 1024);
+    expect(out.total, 'the total includes them').toBeGreaterThan(
+      out.characters.reduce((n, c) => n + c.bytes, 0));
+    expect(out.lines.join('\n')).toContain('props total');
+  });
 });

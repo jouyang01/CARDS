@@ -7,7 +7,7 @@ import { distance } from '../src/board.js';
 import { getFormat, type FormatId } from '../src/formats.js';
 import { movementBudget } from '../src/movement.js';
 import { createMatch, validateMapForFormat } from '../src/setup.js';
-import { EFFECT_KINDS, type CharacterDef, type MapDef } from '../src/types.js';
+import { EFFECT_KINDS, type CharacterDef, type CoverEdge, type MapDef } from '../src/types.js';
 
 import vex from '../../../data/characters/vex.json';
 import bastion from '../../../data/characters/bastion.json';
@@ -27,7 +27,7 @@ const map = duelArena as unknown as MapDef;
 const IRON = ironBasin as unknown as MapDef;
 /** Every shipped map, with the formats it is meant to host. */
 const MAPS: { map: MapDef; formats: FormatId[] }[] = [
-  { map, formats: ['1v1', '2v2', '4v4'] },
+  { map, formats: ['1v1', '2v2'] }, // Proving Grounds is a dedicated 2v2 map (M1); iron-basin owns 4v4
   { map: IRON, formats: ['4v4'] },
 ];
 
@@ -64,19 +64,38 @@ describe('map content', () => {
       }
     });
 
-    it(`${m.id} is left-right mirror symmetric (fair for both players)`, () => {
-      const mirror = (x: number) => m.width - 1 - x;
+    it(`${m.id} is 180° rotationally symmetric (fair for both players)`, () => {
+      // The fairness transform for a west-vs-east duel is the one that swaps the
+      // two teams' start regions onto each other. **Rotational** symmetry (rotate
+      // the board 180° about its centre) is exactly that transform, and it is what
+      // makes a deliberately *organic* map — top-left unlike top-right — still
+      // perfectly fair: whatever one team faces, the other faces its 180° twin.
+      // iron-basin is 4-fold and satisfies this too; Proving Grounds is rotational
+      // by design (the pinwheel centre and offset teeth are not left-right mirrors).
+      const rot = (p: { x: number; y: number }) => ({ x: m.width - 1 - p.x, y: m.height - 1 - p.y });
       const key = (p: { x: number; y: number }) => `${p.x},${p.y}`;
       for (const kind of ['walls', 'cover', 'brush'] as const) {
         const set = new Set(m[kind].map(key));
         for (const p of m[kind]) {
-          expect(set.has(key({ x: mirror(p.x), y: p.y })), `${m.id} ${kind} at (${p.x},${p.y}) lacks its mirror`).toBe(true);
+          expect(set.has(key(rot(p))), `${m.id} ${kind} at (${p.x},${p.y}) lacks its 180° twin`).toBe(true);
         }
       }
-      // Spawns must mirror too, or one team starts closer to the middle.
+      // Directional cover (COVER-EDGE): the twin's facing must be the 180° flip,
+      // or one team's barricade shelters a side the other's does not.
+      const flip = { N: 'S', S: 'N', E: 'W', W: 'E' } as const;
+      const facingAt = new Map(
+        m.cover.filter((c): c is CoverEdge => 'facing' in c).map((c) => [key(c), c.facing]),
+      );
+      for (const c of m.cover) {
+        if (!('facing' in c)) continue;
+        expect(facingAt.get(key(rot(c))), `${m.id} cover (${c.x},${c.y}) facing ${c.facing} lacks its flipped twin`)
+          .toBe(flip[c.facing]);
+      }
+      // Spawns must map onto the enemy's under the same rotation, or one team
+      // starts closer to the middle.
       const spawnKeys = new Set(m.spawns[1].map(key));
       for (const p of m.spawns[0]) {
-        expect(spawnKeys.has(key({ x: mirror(p.x), y: p.y })), `${m.id} spawn (${p.x},${p.y}) lacks its mirror`).toBe(true);
+        expect(spawnKeys.has(key(rot(p))), `${m.id} spawn (${p.x},${p.y}) lacks its 180° twin`).toBe(true);
       }
     });
 
