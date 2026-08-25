@@ -240,10 +240,14 @@ export interface NetPlay {
 /**
  * MAP-THEMES — the board palette is now half data and half constant.
  *
- * The themed half comes from `data/themes/*.json` via `themeFor(map)`; the two
- * team colours do not, and must not. They are identity rather than decoration:
- * a map that re-tints the teams changes friend-from-foe reading per map, and
- * `TEAM_CSS` below plus the e2e's colour families both encode them.
+ * The themed half comes from `data/themes/*.json` via `themeFor(map)`; the
+ * identity colours do not, and must not. They are identity rather than
+ * decoration: a map that re-tinted them changes friend-from-foe reading per
+ * map, and `TEAM_CSS` below plus the e2e's colour families both encode them.
+ *
+ * FOF-COLORS: identity is now *friend or foe from the viewer* rather than team
+ * number. Still global across maps — that part of MAP-THEMES sharpened rather
+ * than changed.
  */
 const paletteFor = (map: MapDef): BoardPalette => {
   const theme = themeFor(map);
@@ -253,8 +257,11 @@ const paletteFor = (map: MapDef): BoardPalette => {
     wall: theme.terrain.wall,
     cover: theme.terrain.cover,
     brush: theme.terrain.brush,
-    team0: 0x4f8cff,
-    team1: 0xff6b5e,
+    // FOF-COLORS: three identity hues, viewer-relative at the point of use.
+    // The blue and red are the old team colours unchanged — only *who* gets
+    // them moved. Green is new, and is the one the mirror matchup needed: it
+    // separates "on your side" from "yours to order".
+    fof: { self: 0x4f8cff, ally: 0x5fd97a, foe: 0xff6b5e },
     background: theme.sky.top,
     surface: theme.surface,
     grain: theme.grain,
@@ -475,6 +482,30 @@ export function startHotSeat(
   function ownUnits(): UnitState[] {
     const team = seats[seatIdx]?.team ?? 0;
     return state.units.filter((u) => u.owner === team && u.alive);
+  }
+
+  /**
+   * FOF-COLORS: tell the renderer whose seat it is drawing for.
+   *
+   * Called immediately before every `show()` rather than once at boot, because
+   * the answer changes mid-match: hot-seat hands the board to the other team on
+   * every Lock In, and a board still coloured for the seat that just finished
+   * is the exact bug this system exists to remove — only worse, because it
+   * would look deliberate.
+   *
+   * `setViewer` compares before it repaints, so calling it on every paint costs
+   * a set comparison and nothing else.
+   *
+   * A hoisted `function` reading `seats`/`seatIdx` directly, for the reason
+   * `ownUnits` above is: the opening paint happens during construction, above
+   * where `currentSeat` is declared.
+   */
+  function syncViewer(): void {
+    const seat = seats[seatIdx];
+    renderer.setViewer({
+      team: seat?.team ?? 0,
+      seatUnitIds: new Set(seat?.unitIds ?? []),
+    });
   }
   /** SCORE1's running ledger, folded from each turn's event log as it plays. */
   let totals: MatchTotals = initTotals(state);
@@ -1331,6 +1362,7 @@ export function startHotSeat(
     // and the authoritative state, with no fog view in the way.
     const resting = [...toRenderUnits(view.units, team), ...toGhostUnits(view.ghosts)];
     applyResting(resting);
+    syncViewer();
     renderer.show(
       resting,
       // UI-NAMEPLATES: a decoy being taken for a real unit wears a real unit's
@@ -2404,6 +2436,7 @@ export function startHotSeat(
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
     renderer.drawParticles([]);
+    syncViewer();
     renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
 
     let skipped = false;
@@ -2417,6 +2450,7 @@ export function startHotSeat(
       clearReadouts();
       const rest = viewUnits(player.view);
       applyResting(rest);
+      syncViewer();
       renderer.show(rest, viewDecoys(player.view), viewTraps(player.view), pads(player.view));
       renderer.highlight('camo', viewCamo(player.view), CAMO_RED, CAMO_OPACITY);
     };
@@ -2470,6 +2504,7 @@ export function startHotSeat(
     cancelled: () => boolean,
   ): Promise<void> {
     const { start, end } = phaseWindow(cues, phase);
+    syncViewer();
     renderer.show(units, decoys, traps, padList);
     renderer.highlight('camo', camo, CAMO_RED, CAMO_OPACITY);
     phaseLabel.textContent = phase.toUpperCase();
@@ -2727,6 +2762,7 @@ export function startHotSeat(
     const revealed = revealedView(state, currentSeat()?.team ?? 0);
     const over = toRenderUnits(revealed.units, currentSeat()?.team ?? 0);
     applyResting(over);
+    syncViewer();
     renderer.show(over, revealed.decoys, revealed.traps, pads());
     for (const layer of PLANNING_LAYERS) renderer.highlight(layer, [], 0);
     renderer.drawPath([], MOVE_LINE, false);

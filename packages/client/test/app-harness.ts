@@ -29,6 +29,14 @@ import type { ClipSet } from '../src/character-clips.js';
 
 /** What the stub renderer was told to draw, by layer. */
 export interface DrawLog {
+  /**
+   * FOF-COLORS: the seat the renderer was last told it is drawing for.
+   *
+   * Recorded rather than merely accepted, because "the board is coloured for
+   * the wrong seat" is invisible to a stub that draws nothing — the only
+   * observable is what the controller *said*.
+   */
+  viewer: { team: 0 | 1; seatUnitIds: string[] } | undefined;
   highlights: Map<HighlightLayer, Vec2[]>;
   paths: { squares: Vec2[]; layer: PathLayer | undefined }[];
   shapes: Vec2[][];
@@ -108,6 +116,7 @@ export interface StubRenderer extends Renderer {
  */
 export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
+    viewer: undefined,
     highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], particles: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [],
     board: { units: [], decoys: [], traps: [] },
@@ -122,6 +131,9 @@ export function stubRenderer(): StubRenderer {
     // RENDER-ON-DEMAND: the stub never draws, so it has drawn nothing.
     frameCount: () => 0,
     withClips: (sets) => { clipSets = sets; },
+    setViewer: (viewer) => {
+      draw.viewer = { team: viewer.team, seatUnitIds: [...viewer.seatUnitIds].sort() };
+    },
     show: (units, decoys = [], traps = []) => {
       draw.board = {
         units: units.map((u) => ({ ...u })),
