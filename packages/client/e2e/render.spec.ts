@@ -378,6 +378,63 @@ test('AMBIENT-FREEZE: a settled board with ambient off draws the same frame twic
   expect(same(await frame(page), a), 'a still board must not repaint itself differently').toBe(true);
 });
 
+/**
+ * SETTLED-BOARD-INVARIANT — the property three other tests quietly stand on.
+ *
+ * `same()` is used above and below to claim a resolution animated, that a
+ * right-drag orbited the camera, and that ambient motion is frozen. Every one
+ * of those reads "the frame changed" as evidence about the *scene*, and that
+ * inference is only sound while a scene with nothing to draw produces an
+ * identical frame. That is a property of the render loop, not of the assertion,
+ * and nobody had written it down.
+ *
+ * The failure it exists to name is a **missed `markDirty()`** — or its mirror,
+ * a mark nobody needed. Without this test, the first symptom of either is one
+ * of those three tests failing for a reason that has nothing to do with what it
+ * is about: "the resolution must be animating" going red because the board
+ * animates all the time now.
+ *
+ * Two assertions, because the property has two halves and they can break
+ * independently: the loop must stop *drawing*, and what it last drew must stay
+ * put. A board that redraws an identical frame forever passes the second and
+ * fails the first, and it is the one that costs a GPU frame every 16 ms.
+ *
+ * `?render=always` is the diagnostic if this ever goes red: if the failure
+ * survives it, the bug is in what is being drawn rather than in when.
+ */
+test('SETTLED-BOARD-INVARIANT: an idle board stops drawing, and holds what it drew', async ({ page }) => {
+  await expect(boardCanvas(page)).toBeVisible();
+  // Long enough for the camera ease to finish. It is bounded in seconds
+  // (`camera-ease.ts`), so this is a wait for a known settle rather than a
+  // hopeful sleep.
+  await page.waitForTimeout(1500);
+
+  const frames = async (): Promise<number> => page.evaluate(
+    () => (globalThis as unknown as { __cardsRenderer?: { frameCount(): number } })
+      .__cardsRenderer?.frameCount() ?? -1,
+  );
+
+  const settled = await frames();
+  expect(settled, 'the renderer is reachable and has drawn').toBeGreaterThan(0);
+  const held = await frame(page);
+
+  // RENDER-IDLE-QUIET's loop half. `page.screenshot` itself forces a composite,
+  // so the count is read BEFORE and AFTER a quiet stretch with no screenshot in
+  // the middle — asking the question with the instrument that changes the
+  // answer is the easy way to get this wrong.
+  await page.waitForTimeout(2500);
+  expect(
+    await frames(),
+    'an idle board kept drawing — a markDirty() nobody needed, or a loop that never idles',
+  ).toBe(settled);
+
+  // …and the frame it stopped on is the frame it keeps.
+  expect(
+    same(await frame(page), held),
+    'a still board repainted itself differently — the premise three same() callers rest on',
+  ).toBe(true);
+});
+
 test('a committing click locks the action so it stops following the mouse (UI1-fix)', async ({ page }) => {
   // RENDER-SUITE-GREEN: **slow by measurement, not by suspicion.** A composited
   // screenshot of a 1400×950 canvas under SwiftShader costs 8–12 s, and this
