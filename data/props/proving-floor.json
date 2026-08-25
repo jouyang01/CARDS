@@ -10,7 +10,7 @@
       "plinth": { "height": 0.11, "width": 0.84 },
       "shaft": { "exponent": 4.0, "sides": 16, "bottomWidth": 0.62, "topWidth": 0.5, "flutes": 8, "fluteDepth": 0.012 },
       "capital": { "height": 0.1, "width": 0.78 },
-      "palette": { "shaft": "#d8d5cd", "plinth": "#b7b3aa", "capital": "#cbc7bf" }
+      "palette": { "shaft": "#b8b6af", "plinth": "#9c9991", "capital": "#adaaa3" }
     },
     "cover": {
       "kind": "barricade",

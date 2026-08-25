@@ -7185,3 +7185,72 @@ pair of Health pads with a single pad at (8,1). Two tests still boot `?map=duel-
 fractions or assert "a mirrored pair of Health pads" against the old layout. These are
 test-side fixes in the map lane's territory, deliberately left out of this change rather
 than widening it.
+
+---
+
+## 2026-08-25 — Value budget, a tinted rig, and a unit rim light
+
+The owner asked what else would make the board look better. Rather than answer from
+taste, I filmed the shipping build (models, props and ambient on, Aegis on the board) and
+measured it. The measurement said something specific: **the four material items from
+#164 were not what was holding the image back.** Chamfers, normal maps, contact shading
+and jitter had all already shipped in the frame I photographed.
+
+**What the histogram said.** p95 and p99 were the *same number* (193.8) — the top of the
+range was a flat plateau, 0.8% of the frame above 200, and 33% of it inside a single
+ten-wide bucket. Terrain owned that plateau (`wall` 213, `open` 172) while the things the
+player looks at sat underneath it: Aegis composited at 112, a team-blue box at 90. Units
+read as holes in a bright surface because they measurably were darker than the ground
+they stood on. Both directional lights were `0xffffff`, and lit surfaces came back at
+`R − B = 0` against shadows at `−11` — no warm/cool separation anywhere, despite a doc
+comment promising one.
+
+**Three changes, and two of them were wrong the first time.**
+
+*Value budget* (`value-budget.ts`). Terrain gets a luminance ceiling of 185 and everything
+above it is reserved. Only terrain is constrained: unit colour is about to become
+viewer-relative friend-or-foe (BACKLOG FOF-UNITS), and a rule pinning unit values would be
+this module deciding something that is not its to decide.
+
+My first pass scaled `wall` and `open` to 176/150 — and **narrowed the gap between them
+from 41 to 26**, which made the frame *more* uniform, not less (biggest bucket 33% → 39%).
+Lowering a ceiling is not the same operation as compressing a ramp. Corrected to 182/138,
+keeping a 44-point separation.
+
+Then the composite did not move at all: p95 and p99 stayed at **exactly** 185.4 across two
+passes while `wall` went 176 → 182. The plateau was never terrain. It was 19,508 pixels of
+one RGB from `data/props/proving-floor.json`, whose `shaft` was `#d8d5cd` — the *old* wall
+colour, copied when the props were authored and never re-derived. A budget that only knew
+about `terrain` would have been satisfied by a board that had not changed, so it walks
+arbitrary palettes now (`paletteViolations`) and the props were regenerated through
+Blender at the new values.
+
+*A tinted rig.* `sun` → `#fff1dc`, `fill` → `#c6d8ff`. Both stay close to white on purpose:
+the terrain has already given up its chroma so the UI can own saturated hues, and a
+strongly tinted key takes that straight back.
+
+*A rim light on units* (`rim.ts`). **Not a light.** Three tests a light's layers against
+the *camera*, not against each mesh (`WebGLRenderer.projectObject`), so a light restricted
+to units does not exist — it would climb over the terrain and swing across the map on
+every orbit. It is a Fresnel term injected after `<emissivemap_fragment>`, the first point
+where `normal` exists and `totalEmissiveRadiance` is still open. Unit-scoped by
+construction, and it rides on top of the victim flash rather than fighting it.
+
+**The rim is achromatic, and that is a constraint rather than a taste.** FOF-UNITS gives
+hue on a unit a job — self blue, ally green, foe red, on a foot ring, an outline and the
+nameplate — and the rim sits exactly where that outline will sit. A tinted rim would be a
+fourth colour competing for a channel that is about to mean *whose side are they on*.
+`rim.test.ts` asserts it so a later tuning pass cannot quietly reintroduce a tint.
+
+**What it actually bought, measured.** Unit-vs-floor deficit roughly halved: Ravok
+−74.5 → −37.4, Aegis −47.8 → −23.9. The plateau broke (p99 − p95: 0.0 → 6.1). Warm/cool
+split arrived (lit `R − B` 0.0 → +5.5 against shadows at −6.5). Props came down 191 → 155.
+
+**What it did not buy, stated plainly.** Units are still *darker* than the floor, just half
+as much, and the top ~90 of the range is now reserved and empty — nothing above 200 yet.
+Filling it needs bright VFX and a tone curve to roll them off, which is the next item and
+was deliberately not bundled here. Reserving the space and occupying it are two jobs; this
+is the first one.
+
+Rim verified by mutation: strength 0.34 against 0.0 differs by 10,746 pixels, max channel
+delta 120, bounded to x 411–553 / y 218–496 — exactly the two units, no terrain.
