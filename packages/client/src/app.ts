@@ -2464,6 +2464,21 @@ export function startHotSeat(
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
     renderer.drawParticles([]);
+    // PAN-RELEASE-PLAYBACK — a planning pan is released HERE, at the
+    // planning→resolution transition and before the first playback `focusOn`.
+    //
+    // Builder session-16 OQ #1, now ruled. Pan was specced against free orbit,
+    // which does not release either, and copying it left the camera frozen
+    // wherever the player had dragged it while the turn resolved somewhere
+    // else — so the one moment the auto-camera exists for was the one moment it
+    // was stood down. A pan is a planning gesture: it says "let me look over
+    // there while I decide", and the deciding is over.
+    //
+    // `resetPan` clears the latch and nothing else — yaw, pitch and span are
+    // untouched — so the orbit the player set and the zoom they chose both
+    // survive the release. Only the thing that was fighting the playback lets
+    // go, which is what makes this a release rather than a camera reset.
+    renderer.resetPan();
     syncViewer();
     renderer.show(viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), pads(player.view));
 

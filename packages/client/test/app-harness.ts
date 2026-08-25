@@ -91,6 +91,16 @@ export interface DrawLog {
   /** Every `panBy`, so a spec can drive a drag and read what the camera did. */
   pans: { dx: number; dy: number }[];
   /**
+   * PAN-RELEASE-PLAYBACK: the calls that would move the **zoom**.
+   *
+   * `focusOn` frames without choosing a span; `lookAt` and `fitBoard` are the
+   * two that set one. Recording them is how "releasing a pan did not also
+   * re-zoom the board" becomes an assertion instead of a hope — the release is
+   * supposed to hand back the centre and nothing else.
+   */
+  lookAts: { centre: Vec2; span: number }[];
+  fitBoards: number;
+  /**
    * WALL-CAST-FIX — the **board itself**, as of the last `show()`: the units,
    * decoys and traps the viewing seat can currently see.
    *
@@ -129,7 +139,7 @@ export function stubRenderer(): StubRenderer {
     viewer: undefined,
     highlightColours: new Map(), shapeColours: new Map(), pathColours: new Map(),
     highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], particles: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
-    focus: [], pans: [],
+    focus: [], pans: [], lookAts: [], fitBoards: 0,
     board: { units: [], decoys: [], traps: [] },
   };
   let orbit = false;
@@ -160,8 +170,10 @@ export function stubRenderer(): StubRenderer {
     squareFromPoint: (clientX, clientY) => ({ x: Math.round(clientX), y: Math.round(clientY) }),
     screenPosition: (x, y) => ({ x, y }),
     setProjection: (_name: ProjectionName) => {},
-    lookAt: () => {},
-    fitBoard: () => {},
+    lookAt: (centre, spanSquares) => {
+      draw.lookAts.push({ centre: { ...centre }, span: spanSquares });
+    },
+    fitBoard: () => { draw.fitBoards += 1; },
     objectFor: () => undefined,
     setUnitAt: () => {},
     setUnitFade: () => {},
