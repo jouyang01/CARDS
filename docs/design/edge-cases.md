@@ -1105,6 +1105,32 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   `visibleSquaresForTeam` gate. (If the owner later wants own-traps hidden even from their placer,
   that is a separate call; the directive says "the team … who can see it", so own-team-always is
   the reading.)
+- **PROPOSED — FOF-COLORS: friend/foe colour is VIEWER-RELATIVE, not absolute team number (owner Dev Note
+  2026-10-05; backlog FOF-UNITS + FOF-OVERLAYS; client).** The client colours units by **absolute team**
+  today — `unit.owner === 0 ? team0(blue) : team1(red)` (`renderer3d.ts:1645`) — so a player seated on
+  **team 1 sees themselves red and the enemy blue**, backwards from the Atlas-Reactor convention the owner
+  is asking for (and there is already a `renderer3d.ts:2306` comment admitting a colour is *"only right when
+  the viewer is team 0"*). **Ruling:** colour is decided from the **viewer's** seat, so the answer to
+  "friend or foe" never depends on which team *number* you drew — the mirror-matchup problem this fixes.
+  - **Three unit colours, viewer-relative:** the units the **viewer's seat controls** = **self (blue)**;
+    other units on the **viewer's team** = **ally (green)**; the **enemy team** = **foe (red)**. Applied to
+    the model tint/outline, a **ring beneath each unit's feet**, and the **nameplate**. Consistent even in a
+    mirror (the enemy's identical character still wears red).
+  - **Two overlay colours, viewer-relative:** committed/telegraphed **ability lines, move arrows and
+    Blast/AoE templates** read **friendly (blue)** for the viewer's team and **foe (red)** for the enemy —
+    so an ally's ult and an enemy mirror's ult are never confused (Dev Note part 2). *The viewer's own
+    in-progress aim keeps the existing meaning-coded palette* (amber aim, blue range, etc.) — it is
+    unambiguously theirs; only **committed** plans and **enemy telegraphs** take FoF colour. Reconciling the
+    FoF overlay colours with the meaning-coded overlay vocabulary (AOE-CLASH / OVERLAY-BY-THEME) is a
+    **Designer call** flagged in the backlog.
+  - **Friend/foe becomes the global identity that team colour used to be.** The MAP-THEMES principle "team
+    colour is identity, global, not re-tinted per map" **stands and sharpens**: the identity is now
+    *friend/foe from the viewer*, still global across maps. The e2e colour-family predicates (`isTeamBlue`/
+    `isTeamRed`, `e2e/pixels.ts`) become **viewer-relative** (`isFriendly`/`isFoe`) — folded into
+    RENDER-SUITE-GREEN-3, which is already re-pointing those tests for the Proving Grounds rebuild.
+  - **Fog and impersonation compose unchanged (golden rule #5):** a fogged enemy is still not drawn at all;
+    a decoy impersonating a unit wears that unit's FoF colour from the viewer's seat (the existing
+    per-viewer decoy path, now viewer-relative rather than team-1-assuming).
 - **RULED — Client renders fog of war from the engine's existing vision (owner directive
   2026-08-25; backlog VISION1; client).** The engine already models AR-style vision — LoS
   blocked by walls (not cover), Manhattan sight radius (MET1), brush concealment with the
