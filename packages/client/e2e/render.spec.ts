@@ -859,14 +859,58 @@ test.describe('HUD-LAYOUT: the blocks moved and the board got the space', () => 
  * shows up **on those same pixels** — not merely somewhere on screen, which is
  * what a whole-frame colour count would have let through.
  *
- * 4v4 on purpose: in the default format the seat's vision never reaches either
- * brush band, so every green pixel on screen is fogged brush and there is
- * nothing to prove anything against.
+ * Driven into range on purpose. Proving Grounds runs its brush down the centre
+ * line — the ground both teams cross — so on the opening frame every seat is on
+ * a flank with the brush in fog, and there is nothing lit to prove anything
+ * against. A couple of Sprints toward mid-board bring a unit up beside it, which
+ * both lights the brush and puts it inside an ability's reach. (The old
+ * duel-arena sat a brush band inside a 4v4 seat's opening vision; the rebuild
+ * moved it to the seam between the teams, so the test closes on it rather than
+ * starting on top of it.)
  */
 test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async ({ page }) => {
-  await page.goto('./?map=duel-arena&format=4v4');
+  test.setTimeout(150_000); // drives several real turns to close on the centre brush
+  await page.goto('./');
   await expect(boardCanvas(page)).toBeVisible();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(500);
+
+  // Sprint every seat toward mid-board until the brush there lights up. Naming
+  // the centre square outright does not work: it is further than a Sprint
+  // reaches, and an order beyond the budget is not taken at all (the same trap
+  // `closeTheDistance` documents). CAMERA-CONTROLS centres the planning camera on
+  // the unit, so a click a fifth of the way toward the far side is a few squares
+  // in the right direction at any zoom — team 0 (labelled "Team 1") spawns low on
+  // x and drives right, team 1 drives left, and they meet over the centre brush.
+  const bodyByBrush = async (): Promise<boolean> => {
+    const img = await pixels(page);
+    const bodies = blueBodies(img);
+    const br = findPixels(img, isBrushGreen, 3);
+    return br.length > 100 && bodies.length > 0
+      && br.some((p) => bodies.some((b) => Math.hypot(p.x - b.x, p.y - b.y) < 90));
+  };
+  const sprintToCentre = async (): Promise<void> => {
+    const sprint = page.locator('.hud-move', { hasText: /^Sprint/ });
+    const move = page.locator('.hud-move', { hasText: /^Move/ });
+    const ctl = (await sprint.isVisible()) && !(await sprint.isDisabled()) ? sprint : move;
+    if (!(await ctl.isVisible()) || (await ctl.isDisabled())) return;
+    await ctl.click();
+    const seat = (await page.locator('#status').textContent()) ?? '';
+    await clickAt(page, /Team 1\b/.test(seat) ? 0.7 : 0.3, 0.5);
+  };
+  for (let turn = 0; turn < 6 && !(await bodyByBrush()); turn++) {
+    for (let seat = 0; seat < 6; seat++) {
+      const lk = lockIn(page);
+      if (!(await lk.isVisible())) break;
+      await sprintToCentre();
+      await lk.click().catch(() => {});
+      await page.waitForTimeout(150);
+      if (await page.locator('.hud-playback').isVisible()) break;
+    }
+    for (let i = 0; i < 40; i++) {
+      if (await lockIn(page).isVisible()) { await page.waitForTimeout(250); break; }
+      await page.waitForTimeout(200);
+    }
+  }
 
   const bare = await pixels(page);
   const brush = findPixels(bare, isBrushGreen, 2);
@@ -957,7 +1001,7 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
  * once the turn stops being a plan.
  */
 test('an aimed action floats its numbers before Lock In (PREVIEW-NUMBERS)', async ({ page }) => {
-  await page.goto('./?map=duel-arena&format=4v4');
+  await page.goto('./?map=iron-basin&format=4v4');
   await expect(boardCanvas(page)).toBeVisible();
   await page.waitForTimeout(700);
 
@@ -1025,12 +1069,15 @@ test('aiming Shift draws a yellow route to its landing square (DASH-CAT-ROUTE)',
   const before = countPixels(await pixels(page), isDashYellow);
 
   await page.locator('.hud-catalyst').nth(1).click(); // Shift
-  // Shift reaches 3, so sweep close to the unit rather than across the board.
+  // Shift reaches 3, and CAMERA-CONTROLS centres the planning camera on the
+  // dashing unit — so its landing squares fan out around the middle of the
+  // frame, not the old left-of-centre spawn. Sweep a small grid straddling the
+  // centre and stop on the first square that paints a route.
   let painted = before;
-  for (const [fx, fy] of [[0.30, 0.5], [0.26, 0.42], [0.34, 0.58], [0.30, 0.62]] as const) {
+  outer: for (const fy of [0.4, 0.5, 0.6, 0.3]) for (const fx of [0.5, 0.6, 0.4, 0.7]) {
     await pointAt(page, fx, fy);
     painted = Math.max(painted, countPixels(await pixels(page), isDashYellow));
-    if (painted > before) break;
+    if (painted > before) break outer;
   }
   expect(painted, 'Shift drew no yellow route — it still reads as an area, not a move')
     .toBeGreaterThan(before);
@@ -1341,14 +1388,27 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
 
   /** Switch to the top-down projection, where a ground mark cannot be occluded. */
   const lookStraightDown = async (page: Page): Promise<void> => {
-    const proj = page.locator('.hud-view .hud-small').first();
-    // The button is labelled with the projection it is currently *in*.
-    if ((await proj.textContent()) !== 'Top-down') await proj.click();
-    await expect(proj).toHaveText('Top-down');
+    // Drive the renderer straight to the top projection rather than the HUD
+    // button. The button's label is the projection it will switch *to*, not the
+    // one it is in, so toggling by text is a coin flip; and playback re-frames
+    // (`focusOn`) touch only centre and span, never pitch, so a projection set
+    // here holds for the rest of the drive.
+    await page.evaluate(() => (globalThis as unknown as {
+      __cardsRenderer?: { setProjection(name: 'isometric' | 'top'): void };
+    }).__cardsRenderer?.setProjection('top'));
     await page.waitForTimeout(200);
   };
 
   const drivePadOpen = async (page: Page): Promise<number> => {
+    // Iron Basin, not the default Proving Grounds: its Health pad sits on `(5,5)`,
+    // one square off team 0's `(4,6)` spawn, so it is inside the seat's own vision
+    // from turn 1 and reads at full brightness the moment it arms. Proving
+    // Grounds parks its lone Health pad on `(8,1)`, deep in the fog band the seat
+    // never sees into, where the plate composites against near-black and no
+    // amount of driving an idle turn brings it into sight.
+    await page.goto('./?map=iron-basin&format=4v4');
+    await expect(boardCanvas(page)).toBeVisible();
+    await page.waitForTimeout(500);
     await lookStraightDown(page);
     let teal = countPixels(await pixels(page), isPadTeal);
     for (let turn = 0; turn < PAD_TURNS && teal <= 20; turn++) {
@@ -1360,8 +1420,9 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
   };
 
   test('an armed pad marker is on the board, in its own colour family', async ({ page }) => {
-    // duel-arena ships a mirrored pair of Health pads, and they are public
-    // terrain — drawn for both teams, fog or no fog.
+    // Iron Basin ships a mirrored pair of Health pads on the flanks, one of them
+    // a square off team 0's spawn — public terrain, lit from turn 1 and armed by
+    // turn 4 (`drivePadOpen` navigates there and looks straight down).
     expect(
       await drivePadOpen(page),
       'no pad marker composited — the maps carry pads nobody can see',
@@ -1471,12 +1532,32 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     await page.locator('.hud-move', { hasText: /^Move/ }).click();
     await page.waitForTimeout(150);
 
-    // The teammate is whichever body is not the selected one; either works, so
-    // take the second in the suite's stable top-to-bottom order.
+    // The teammate is whichever body is not the selected one. Arming Move wraps
+    // the *selected* character in a blue range wash that `blueBodies` then splits
+    // into several false clusters around it — and CAMERA-CONTROLS has already
+    // centred the board on that same character — so the target cannot be "the
+    // second body in the armed frame" (that is a wash fragment of the selected
+    // one's own tile, and clicking your own tile moves nobody). Take the teammate
+    // from the *clean* pre-arm frame as the body farthest from board centre (the
+    // selected character is the centred one), then snap to the nearest real body
+    // in the armed frame so a few pixels of camera drift cannot miss it.
     const clip = await boardClip(page);
     const image = await pixels(page);
     const scale = { x: clip.width / image.width, y: clip.height / image.height };
-    const mate = blueBodies(image)[1]!;
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+    // The selected character is the one the wash surrounds, so the centroid of
+    // the armed frame's blue clusters is pulled toward it (its own body plus the
+    // wash fragments); the teammate is the clean pre-arm body farthest from that
+    // centroid. Board centre is no use here — the HUD fills the lower frame, so
+    // the *image* centre sits below the board and mislabels the lower body.
+    const armed = blueBodies(image);
+    const centroid = {
+      x: armed.reduce((s, a) => s + a.x, 0) / armed.length,
+      y: armed.reduce((s, a) => s + a.y, 0) / armed.length,
+    };
+    const teammate = before.reduce((far, b) => (dist(b, centroid) > dist(far, centroid) ? b : far));
+    const mate = armed.reduce((best, a) => (dist(a, teammate) < dist(best, teammate) ? a : best));
     await page.mouse.click(clip.x + mate.x * scale.x, clip.y + mate.y * scale.y);
     await page.waitForTimeout(250);
 
