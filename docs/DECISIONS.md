@@ -7185,3 +7185,39 @@ pair of Health pads with a single pad at (8,1). Two tests still boot `?map=duel-
 fractions or assert "a mirrored pair of Health pads" against the old layout. These are
 test-side fixes in the map lane's territory, deliberately left out of this change rather
 than widening it.
+
+---
+
+## 2026-08-25 — Wisp (character #2): generalise the pipeline rather than fork it
+
+Building Wisp forced the single-character art pipeline to become multi-character.
+The generator and painter were hardwired to Aegis's iron-and-rust palette (swatch
+names `iron`/`leather`/`rust`), his plate-armour geometry (pauldrons and plates
+drawn unconditionally), and his exhausted face. Three judgment calls:
+
+**Per-character palette, dispatched archetypes — not a second script.** A spec may
+now declare its own `swatchOrder`; the swatch helpers index into it, defaulting to
+Aegis's layout when absent. `build_body` dispatches on `garment.kind` (`wrap` →
+`build_body_wrap`) and `paint_atlas.build` on the same, alongside a
+`bored-seductive` face. This keeps Aegis **byte-identical** (verified: atlas md5
+unchanged, 1772 tris, 14/14 validate) while Wisp is data + one new archetype. The
+alternative — copying the scripts per character — was rejected as the drift factory
+golden rule #2 exists to prevent.
+
+**The smoke silhouette is VFX, not mesh.** Wisp's "one big idea" is an outline that
+dissolves into smoke. Mixamo needs a solid, symmetric, single mesh, so the mesh
+carries the hard silhouette (crown, hair, daggers) and the dissolving is ambient
+VFX layered at runtime. This split is also what makes the decoy safe.
+
+**Ambient smoke deferred to post-Mixamo renderer integration, on purpose.** The
+constant smoke needs a loaded model to attach to; building the module now would be
+a pure module nothing calls — the failure mode CHARACTER_PLAYBOOK §5 names. Shipped
+instead: her ability VFX in `data/vfx.json` (the wired, tested system) and a
+decoy-safety guard (`wisp-decoy.test.ts`) that pins the §8 rule — no state-driven
+visuals on her model, ambient smoke constant. Full spec in `docs/design/wisp.md`.
+
+**Not committing Wisp `.glb`/manifest until the body exists.** `build_prop.py` runs
+without Mixamo and the dagger `.glb` is final, but `model-manifest.test.ts` requires
+any committed manifest to ship its mesh + clip map and `asset-budget.test.ts`
+asserts the roster is `[aegis]`. So the daggers ship with the rigged body,
+post-Mixamo, not before.
