@@ -8,6 +8,8 @@ import type { Vec2 } from '@cards/engine';
 import table from '../../../data/vfx.json';
 import aegisArt from '../../../data/art/aegis.json';
 import aegis from '../../../data/characters/aegis.json';
+import wispArt from '../../../data/art/wisp.json';
+import wisp from '../../../data/characters/wisp.json';
 
 const VFX = table as unknown as VfxTable;
 const BEAT = 1;
@@ -51,6 +53,52 @@ describe('the table agrees with the art it was copied from', () => {
     for (const id of ids) {
       expect(Object.keys(VFX['aegis']!.abilities), `no VFX for aegis/${id}`).toContain(id);
     }
+  });
+});
+
+describe("Wisp's smoke reads as one cold language", () => {
+  it('VFX-PALETTE-MATCHES-ART: Wisp draws in the colours her art data specifies', () => {
+    // Same drift guard as Aegis: data/vfx.json copies her `magic` block rather
+    // than importing the art source, so this is what stops the copy rotting.
+    const magic = (wispArt as unknown as { magic: Record<string, string> }).magic;
+    expect(VFX['wisp']!.palette.core).toBe(magic['core']);
+    expect(VFX['wisp']!.palette.edge).toBe(magic['edge']);
+    expect(VFX['wisp']!.palette.deep).toBe(magic['deep']);
+  });
+
+  it('VFX-NEVER-WARM: her smoke is cold plum and may not drift warm', () => {
+    // "Cold and weightless — not fire, not steam." Plum is a violet hue, so the
+    // constraint holds; this pins it against a future eyeball recolour.
+    expect(VFX['wisp']!.warmthForbidden).toBe(true);
+    for (const [shade, hex] of Object.entries(VFX['wisp']!.palette)) {
+      expect(isWarm(hex), `${shade} (${hex}) is warm, and her smoke is cold`).toBe(false);
+    }
+  });
+
+  it('VFX-COVERS-THE-KIT: every ability she has, and the ultimate, is styled', () => {
+    const ids = [
+      ...(wisp as unknown as { abilities: { id: string }[] }).abilities.map((a) => a.id),
+      (wisp as unknown as { ultimate: { id: string } }).ultimate.id,
+    ];
+    for (const id of ids) {
+      expect(Object.keys(VFX['wisp']!.abilities), `no VFX for wisp/${id}`).toContain(id);
+    }
+  });
+
+  it('VFX-TELEPORTS-BLINK: both her teleports blink the caster; her melee and throw do not', () => {
+    // A blink draws a ring at the square she leaves and the one she arrives at,
+    // so the eye follows a unit that never crossed between — the whole read of a
+    // phantom. Dagger Flurry and Bola travel normally.
+    expect(blinks(VFX, 'wisp', 'blink')).toBe(true);
+    expect(blinks(VFX, 'wisp', 'shadowstep_strike')).toBe(true);
+    for (const id of ['dagger_flurry', 'bola', 'veil_decoy']) {
+      expect(blinks(VFX, 'wisp', id), id).toBe(false);
+    }
+  });
+
+  it('VFX-ONLY-THE-BOLA-FLIES: the one thing that crosses the board keeps its tracer', () => {
+    expect(vfxFor(VFX, 'wisp', 'bola').tracer).toBe('streak');
+    expect(vfxFor(VFX, 'wisp', 'dagger_flurry').tracer).toBe('none');
   });
 });
 

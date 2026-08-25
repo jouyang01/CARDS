@@ -1,6 +1,150 @@
 {
   "id": "wisp",
-  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
+  "thesis": "Every one of her tools is a lie about where she is. The decoy is a lie about position, stealth a lie by omission, the teleport a truth that changes after you have already committed. She performs flirtation and helplessness as deliberate misdirection and is ruthlessly self-interested underneath — and she is a little tired of how well it keeps working. Read her bored: half-lidded, faintly amused, unimpressed. Seductive with contempt rather than with effort. Sexy, but every bit of it is on purpose — deliberate reads as tasteful, accidental reads as cheap, and nothing about her is accidental.",
+  "_thesisLook": "She never fully has a silhouette. Her outline is fabric in some places and smoke in others — a hem that dissolves, a sleeve that is not quite there, hair that trails off into smoke rather than into tips. Even standing still she reads as half-present. That smoke is the one big idea: it renders the design thesis as visual language, keeps her silhouette coherent at token size by filling the gaps bare skin would leave as holes, makes the decoy trivially consistent (the decoy is the same smoke holding a shape), and carries the scanty costume structurally. One accent colour — cold plum smoke — against low-chroma neutrals.",
+
+  "build": {
+    "_comment": "Light, agile, lowest-HP in the roster. Shorter and slimmer than Aegis (1.78, plate). headScale is the one roster-wide value (docs/CHARACTER_PLAYBOOK.md §2) and must stay 1.25 — mixed head scales across a team read as a bug. Everything else is per-character.",
+    "height": 1.66,
+    "headScale": 1.25,
+    "shoulderWidth": 0.98,
+    "neckLength": 1.05,
+    "torsoDepth": 0.82,
+    "limbThickness": 0.9
+  },
+
+  "posture": {
+    "_comment": "APPLIED AFTER RIGGING as bone offsets (docs/ART_PIPELINE.md §3), never baked into the T-pose — Mixamo needs a symmetric T-pose. Hers is deliberately small: the knowing, loose carriage is the idle clip's job (bible §4: motion carries it), not a baked pose. A faint drop in both shoulders reads as relaxed-unbothered; chin very slightly up reads as looking down at you. dropShoulder 'both' is honoured by the renderer as a symmetric drop.",
+    "dropShoulder": "both",
+    "dropShoulderDeg": 5,
+    "hunchDeg": 0,
+    "headForwardDeg": -4
+  },
+
+  "garment": {
+    "_comment": "Owner's brief: scantily clad, sexy, but tasteful. The operative principle is that DELIBERATE reads as tasteful. A covered throat against an exposed torso is a chosen costume; uniform exposure is the absence of one — so the HIGH CLOSED COLLAR is the load-bearing piece. Nothing torn, slipping, or falling off: clothing that looks like it is FAILING is the cheap register and wrong for her.",
+    "kind": "wrap",
+    "collar": "high-closed",
+    "haori": "open",
+    "underlayer": "minimal",
+    "sash": "asymmetric",
+    "sashSide": "right",
+    "shoulders": "bare",
+    "legs": "bare-midthigh",
+    "hair": "long-smoke"
+  },
+
+  "palette": {
+    "_comment": "One accent (the smoke, in `magic`) plus neutrals. Fabric is low-chroma so the smoke is the only saturated thing about her, and it is COLD — cool charcoals with the faintest plum cast, not warm browns. Tested to separate from the near-black background #12141a and the cool-slate terrain rather than on white.",
+    "haori": "#2b2833",
+    "haoriDark": "#1a1820",
+    "haoriLight": "#3b3745",
+    "underlayer": "#4a4653",
+    "sash": "#5a4a63",
+    "skin": "#cdb1a4",
+    "skinShadow": "#9d8074",
+    "hair": "#1d1b24",
+    "hairSmoke": "#6a5c78"
+  },
+
+  "magic": {
+    "_comment": "The smoke, and her only saturated colour. Cold and weightless — not fire, not steam. Desaturated plum/mauve (violet hue, so it never reads warm). Slow drift, no upward buoyancy. Reused across the whole kit at different intensities so four abilities read as one character: teleport out/in, stealth fade, decoy spawn, decoy destruction.",
+    "core": "#9a7fb0",
+    "edge": "#6f5c86",
+    "deep": "#44394f",
+    "warmthForbidden": true
+  },
+
+  "face": {
+    "_comment": "THE EXPRESSION IS THE WHOLE READ: bored. Half-lidded, faintly amused, unimpressed — seductive with contempt rather than with effort, visibly a little tired of how well it works. Played KNOWING, never eager. Where Aegis's face is 'exhausted', hers is 'bored-seductive'; paint_atlas.py dispatches on this.",
+    "style": "bored-seductive",
+    "eyes": "half-lidded",
+    "brow": "relaxed-flat",
+    "mouth": "faint-knowing-smile",
+    "liner": "sharp-winged",
+    "lips": "muted-plum",
+    "beautyMark": { "side": "left", "under": "eye" },
+    "scar": null,
+    "stubble": false
+  },
+
+  "weapon": {
+    "_comment": "Twin daggers held REVERSED (icepick grip), low and loose, as though she has not yet decided to use them. One mesh, attached to both hands. The bola is thrown VFX, not a carried prop.",
+    "mainHand": {
+      "kind": "dagger",
+      "grip": "reversed",
+      "bladeLengthTiles": 0.34,
+      "bladeWidthTiles": 0.055,
+      "guard": "slim",
+      "heightTiles": 0.52,
+      "attach": {
+        "_comment": "Reversed grip: the blade runs back along the forearm, edge out. Offsets are in the bone's local space, position in TILES, rotation in XYZ degrees — STARTING GUESSES, to be refined in-client the way Aegis's door was (docs/ART_PIPELINE.md §12: edit the manifest, reload, look, then write the numbers back here). Right hand.",
+        "bone": "mixamorigRightHand",
+        "position": [0, 0.03, 0.02],
+        "rotation": [180, 0, 0]
+      }
+    },
+    "offHand": {
+      "kind": "dagger",
+      "grip": "reversed",
+      "bladeLengthTiles": 0.34,
+      "bladeWidthTiles": 0.055,
+      "guard": "slim",
+      "heightTiles": 0.52,
+      "attach": {
+        "_comment": "Same dagger mesh, mirrored onto the left hand. Same tuning caveat as mainHand.",
+        "bone": "mixamorigLeftHand",
+        "position": [0, 0.03, 0.02],
+        "rotation": [180, 0, 0]
+      }
+    }
+  },
+
+  "vfxLanguage": {
+    "_comment": "One smoke language, reused across everything, so her whole kit reads as a single character rather than four unrelated effects. The primitive is smoke; ability rings are drawn in the plum tones above, and the constant ambient smoke lives in the client's ambient-motion layer (never state-driven — see the decoy rule in docs/design/wisp.md §8).",
+    "primitive": "smoke",
+    "shared": true,
+    "cold": true,
+    "buoyancy": 0
+  },
+
+  "style": {
+    "_comment": "blockiness (superellipse exponent) and sides are roster-wide (docs/CHARACTER_PLAYBOOK.md §2). Mixed values read as a bug. 3.4 = squircle.",
+    "blockiness": 3.4,
+    "sides": 10
+  },
+
   "weaponClass": "dual",
-  "_weaponClassNote": "A blade in each hand. Fast, asymmetric, never a wind-up."
+  "_weaponClassNote": "A blade in each hand. Fast, asymmetric, never a wind-up.",
+
+  "swatchOrder": [
+    "haori",
+    "haoriDark",
+    "haoriLight",
+    "underlayer",
+    "sash",
+    "skin",
+    "skinShadow",
+    "hair",
+    "hairSmoke",
+    "magic_core",
+    "magic_edge",
+    "magic_deep"
+  ],
+
+  "clips": {
+    "_comment": "Clip names as they will appear in build/art/wisp/wisp.glb after Mixamo. Proposed search terms in docs/design/wisp.md §8. Blink and Shadowstep Strike share the teleport pair; the decoy only ever plays idle (bible §8).",
+    "idle": "wisp_idle",
+    "run": "dual_blades_run",
+    "hit": "dual_blades_impact",
+    "death": "falling_back_death",
+    "knockback": "knocked_down",
+    "abilities": {
+      "dagger_flurry": "wisp_flurry",
+      "bola": "wisp_bola_throw",
+      "blink": "wisp_teleport",
+      "veil_decoy": "wisp_veil",
+      "shadowstep_strike": "wisp_teleport"
+    }
+  }
 }

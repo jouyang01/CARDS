@@ -40,5 +40,48 @@
         "particles": { "count": 22, "beats": 1.0, "speedTiles": 2.6, "size": 0.1, "shade": "edge" }
       }
     }
+  },
+  "wisp": {
+    "_thesis": "One smoke language, reused at different intensities so four abilities read as one character. Cold plum, never warm — the same misdirection whether she is leaving a square, arriving at one, or leaving a decoy behind. The constant AMBIENT smoke is not here: it lives in the client's ambient-motion layer, never state-driven, so the decoy can mimic it (docs/design/wisp.md §8, §9).",
+    "palette": {
+      "core": "#9a7fb0",
+      "edge": "#6f5c86",
+      "deep": "#44394f"
+    },
+    "warmthForbidden": true,
+    "abilities": {
+      "dagger_flurry": {
+        "_comment": "A melee cone. Nothing flies — the daggers do the work where she stands, so all the effect is the impact and a low burst of debris.",
+        "tracer": "none",
+        "impact": { "kind": "ring", "beats": 0.6, "radiusTiles": 1.4, "shade": "core" },
+        "particles": { "count": 12, "beats": 0.6, "speedTiles": 1.8, "size": 0.07, "shade": "edge" }
+      },
+      "bola": {
+        "_comment": "Thrown down a line. The one thing of hers that crosses the board, so it keeps its tracer; the slow lands as a lingering low ring on the target.",
+        "tracer": "streak",
+        "impact": { "kind": "ring", "beats": 0.8, "radiusTiles": 1.5, "shade": "edge" },
+        "particles": { "count": 8, "beats": 0.7, "speedTiles": 1.6, "size": 0.06, "shade": "deep" }
+      },
+      "blink": {
+        "_comment": "The dodge. She does not cross the space — a ring of smoke where she leaves (deep, the effortful near end) and another where she arrives (core), so the eye can follow a unit that was never in between. See `blink` in animate.ts.",
+        "blink": true,
+        "tracer": "none",
+        "cast": { "kind": "ring", "beats": 0.7, "radiusTiles": 1.8, "shade": "deep" },
+        "impact": { "kind": "ring", "beats": 0.7, "radiusTiles": 1.8, "shade": "core" }
+      },
+      "veil_decoy": {
+        "_comment": "The vanish. A single soft fade at her square as the smoke closes over her — the same material the decoy is made of, which is the point. Self-cast, so nothing flies.",
+        "tracer": "none",
+        "cast": { "kind": "ring", "beats": 0.9, "radiusTiles": 1.6, "shade": "edge" }
+      },
+      "shadowstep_strike": {
+        "_comment": "The ultimate. Bigger and slower than the plain blink — the one arrival that costs 100 energy — and it lands damage, so both ends show and the far end bursts.",
+        "blink": true,
+        "tracer": "none",
+        "cast": { "kind": "ring", "beats": 1.3, "radiusTiles": 2.4, "shade": "deep" },
+        "impact": { "kind": "ring", "beats": 0.9, "radiusTiles": 2.0, "shade": "core" },
+        "particles": { "count": 18, "beats": 0.9, "speedTiles": 2.4, "size": 0.09, "shade": "edge" }
+      }
+    }
   }
 }
