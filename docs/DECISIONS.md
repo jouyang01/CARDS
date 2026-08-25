@@ -7277,6 +7277,35 @@ redraws an *identical* frame forever holds its pixels and still burns a GPU fram
 after a quiet stretch with **no screenshot between them**: `page.screenshot` forces a composite, so
 the obvious way to measure this has the instrument answer its own question.
 
+**Owner playtest, same day — three bugs and a weight, all in this session's own FoF work.**
+
+*"When locking in, east side team turns green and west side turns red."* Locking in the last
+character runs `seatIdx` past the end of `seats`, so for the whole resolution `seats[seatIdx]` is
+undefined — and a viewer built from that is team 0 with an **empty** unit set. That is not "no seat",
+it is a seat that controls nothing, so every unit on the viewer's own team fell from `self` to
+`ally`. `syncViewer` now falls back to the last seat that was actually on the clock: the player who
+just committed watches the turn resolve from their own side, which is the only continuous answer
+once nobody is on the clock. **The general lesson is about the fallback, not the index** — `?? 0`
+with an empty set looked like a safe default and was a wrong answer wearing a default's clothes.
+
+*"The color bars are both white."* The colour was resolved correctly and thrown away: an edge bar is
+built glowing (`emissive: colour` at `spawnEmissive`), and the repaint set only `color`, so both
+bars kept burning the white they were constructed with. Extracted as `paintEdgeBar`, which sets
+both. Worth recording as a shape rather than an incident: on a self-illuminated material, colour
+lives in two properties and setting one is always a bug.
+
+*"The circles should be thinner."* The ring spanned 0.12 of a tile — a band, not an outline — and on
+a crowded square read as a coloured floor tile competing with the selection ring it sits under. Same
+outer radius, a third of the weight.
+
+*"Blue should be all of your characters… green all characters ally is controlling… red all
+enemies."* No change: that is what the resolver already decides. It read as wrong because the two
+bugs above were making it wrong on screen — an own team turning green on lock-in is exactly the
+green being reported, and with both bars white there was no side colour to anchor it against.
+
+**Both regression tests were verified against the unfixed code and fail there.** Recorded because
+the lock-in bug is the kind a test written after the fix accommodates without noticing.
+
 ## Open Questions for the Analyzer — 2026-08-25
 
 **1. FOF-UNITS' model outline is not shipped (FOF-UNITS AC bullet 3;
@@ -7290,14 +7319,51 @@ tension; `app.ts`).** Separated by weight, not hue, and untested on a real board
 committed plan under a live aim. Designer call, as the item said — flagging that it is now a live
 overlap rather than a hypothetical one.
 
-**3. The single-column pad tests need a re-spec, not a re-point (RENDER-SUITE-GREEN-3;
-`e2e/render.spec.ts` RENDER-COVERAGE).** "A pad marker survives the next turn boundary" reads 0 teal
-pixels after a boundary. On the old map a *mirrored pair* made it robust: one pad could be consumed
-and the other still armed. Proving Grounds has one Health pad at (8,1), and a consumed pad drops to
-0.14 opacity — deliberately below `isPadTeal`'s floor — so "still drawn" is no longer observable
-with that predicate. Either the assertion becomes "it re-arms on its `everyTurns` cycle", or this
-one test moves to Iron Basin for its pairs. Both are defensible and it is a spec choice, so it is
-left rather than guessed.
+**3. Both pad tests need a re-spec, not a re-point (RENDER-SUITE-GREEN-3; `e2e/render.spec.ts`
+RENDER-COVERAGE).** Both read **0** teal — not a low count, none at all — after driving five turns,
+so the Health pad never composites rather than merely fading. What is established:
+
+- Proving Grounds carries **one** Health pad, at **(8, 1)**, against the mirrored pair the test's
+  comment describes. `isPadTeal` is Health-specific, so no other pad can stand in.
+- The pad arms on turn 4 (`firstTurn: 4`) and the drive resolves five turns, so the schedule is not
+  the blocker; the drive completed and asserted rather than timing out.
+- **Best hypothesis, unconfirmed: the pad is off-frame.** (8, 1) is the board's north edge, and
+  since CAMERA-CONTROLS the planning camera centres on the *character being ordered* while
+  BOARD_ZOOM keeps the frame tighter than the board. From a seat at (1, 4) that is seven columns and
+  three rows away. `lookStraightDown` changes the pitch, not the centre, so the existing top-down
+  guard does not cover this.
+- A probe that fitted the board between turns to test that hypothesis **exhausted the 180 s budget**
+  driving six turns, which is its own finding: this drive is at the edge of what a browser test can
+  afford, and a fix that adds work per turn will time out rather than fail.
+
+So the choice is the Analyzer's: assert on a pad the camera actually frames, fit the board before
+sampling (and pay for it somewhere else), or move this pair to Iron Basin for its mirrored pads.
+Guessing between them would have been inventing scope.
+
+**3b. DASH-CAT-ROUTE is fixed, and its fix is the pattern the pads want.** Its four hard-coded
+fractions were measured against a camera that framed the whole board. It now sweeps a *ring* around
+the frame centre — where the character-centred camera puts the caster — at every offset that could
+be three squares at any zoom. Map-independent by construction, which is why it will not need
+re-measuring after the next reframing. The pad drive's `clickAt(0.28/0.72, 0.5)` is the same species
+of assumption and is the remaining instance of it.
+
+**3c. FOG-ZORDER needs a drive, not a coordinate — measured to the boundary.** Moving it to Iron
+Basin at 4v4 fixed the "invalid setup" crash and the coarse floor passes. Sampling the brush
+*nearest the caster* rather than spread across the map — the same correction DASH-CAT-ROUTE needed —
+moved `bestAimed` from **0 to 1**, against a floor of 20. That single pixel is the finding: the aim
+overlay now reaches brush, and only just, which says the nearest lit brush sits at the very edge of
+what a turn-1 ability can cover rather than outside it.
+
+So no choice of candidate fixes this, and the two obvious re-points are both blocked by measurement:
+Iron Basin at 4v4 has 2042 lit brush px but none of it comfortably in range from spawn, and Proving
+Grounds at 2v2 has brush in range but only **32** lit px — below the test's own precondition of 100,
+because most of its brush is fogged on the opening frame.
+
+What is left is a **drive**: walk a character a turn or two toward a brush band, then measure. That
+is a re-spec of the test rather than a re-point, and it lands in the same place as the pad pair —
+which is why both are here rather than guessed at. Worth noting the two are now the same shape: a
+suite written against a board that framed everything, asked to work on one where the camera and the
+map both moved.
 
 **4. VFX-FLASH-ON-SCREEN measures a spike that is not there (`e2e/vfx.spec.ts:71`).** Lit-pixel
 counts across the resolution are 6670 flat → 3544 flat → ~6600, with a best spike of 165 against a

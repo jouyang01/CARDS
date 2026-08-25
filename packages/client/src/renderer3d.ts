@@ -434,6 +434,24 @@ export const shade = (hex: number, factor: number): number => {
   return channel(16) | channel(8) | channel(0);
 };
 
+/**
+ * Recolour a glowing edge bar — **both** of the properties that carry its hue.
+ *
+ * Exported and separate for the reason `paintFlash` is: the bug it fixes is
+ * invisible from the closure that had it. An edge bar is built glowing
+ * (`emissive: colour` at `spawnEmissive` intensity), so a repaint that set only
+ * `color` left the bar burning whatever it was constructed with — the owner saw
+ * two white bars and no sides at all, on a board where the colour was in fact
+ * being computed correctly and thrown away.
+ *
+ * The two properties are one colour on this material. Setting one is always a
+ * bug, and this is the only place that has to remember it.
+ */
+export function paintEdgeBar(material: MeshStandardMaterial, hex: number): void {
+  material.color.setHex(hex);
+  material.emissive.setHex(hex);
+}
+
 /** Seam ink: the floor colour, darkened. A grid is a shade of its floor. */
 export const gridInk = (open: number): number => shade(open, GRID_DARKEN);
 
@@ -598,8 +616,17 @@ const LAYER_INSET: Record<HighlightLayer, number> = {
  * selection at the same glance without the two competing.
  */
 export const FOF_RING_LIFT = LAYER_LIFT.chase - 0.0005;
-/** Radii as a fraction of a tile — a ring at the feet, not a puddle under them. */
-const FOF_RING_INNER = 0.30;
+/**
+ * Radii as a fraction of a tile — a **thin** ring at the feet, not a puddle
+ * under them.
+ *
+ * Owner playtest: *"the circles should be thinner lines, it's too big and bulky
+ * right now."* The first pair spanned 0.12 of a tile, which at this zoom is a
+ * band rather than an outline: on a crowded square it read as a coloured floor
+ * tile and competed with the selection ring it is supposed to sit under. Same
+ * outer radius — the ring still meets the feet — at a third of the weight.
+ */
+const FOF_RING_INNER = 0.38;
 const FOF_RING_OUTER = 0.42;
 
 /** A trap marker rides in the overlay band, just under the selection ring. */
@@ -1471,7 +1498,7 @@ export function createRenderer(
 
   function paintSides(): void {
     for (const [team, material] of sideMaterials) {
-      material.color.setHex(shade(sideColour(team, viewer, palette.fof), SCENERY.spawnShade));
+      paintEdgeBar(material, shade(sideColour(team, viewer, palette.fof), SCENERY.spawnShade));
     }
   }
 

@@ -3,6 +3,8 @@ import {
   fofColour, fofFor, friendly, sideColour, sideFriendly, unitColour,
   type FofPalette, type Viewer,
 } from '../src/fof.js';
+import { MeshStandardMaterial } from 'three';
+import { paintEdgeBar } from '../src/renderer3d.js';
 
 /**
  * FOF-COLORS — the resolver, checked without a WebGL context.
@@ -122,5 +124,40 @@ describe('FOF-UNITS: a side is two colours, not three', () => {
     const spectatorish: Viewer = { team: 1, seatUnitIds: new Set() };
     expect(sideFriendly(1, spectatorish)).toBe(true);
     expect(sideFriendly(0, spectatorish)).toBe(false);
+  });
+});
+
+// ── The edge bars: the owner's third note ───────────────────────────────────
+
+/**
+ * *"The color bars on the 'blue side' and 'red side' are both white."*
+ *
+ * The colour was being resolved correctly and then thrown away: an edge bar is
+ * built glowing, and the repaint set `color` while the *emissive* — the half
+ * actually on screen at that intensity — kept the white it was constructed
+ * with. Pinned here rather than in a browser because the defect is arithmetic,
+ * not pixels: a material is constructible without a GL context, and "did both
+ * properties move" is exactly the question that was answered wrongly.
+ */
+describe('FOF-UNITS: an edge bar takes its colour in both places', () => {
+  it('THE PLAYTEST BUG: repainting sets the emissive too, not just the colour', () => {
+    const material = new MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff });
+    paintEdgeBar(material, 0x4f8cff);
+    expect(material.color.getHex(), 'the diffuse colour').toBe(0x4f8cff);
+    expect(material.emissive.getHex(), 'and the glow, which is what shows').toBe(0x4f8cff);
+  });
+
+  it('and both sides end up different colours from one viewer', () => {
+    // The whole of the note in one check: two bars, one repaint each, and they
+    // must not agree — a board where both ends read the same says nothing about
+    // which way is home.
+    const viewer = seat(0, 'a');
+    const west = new MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff });
+    const east = new MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff });
+    paintEdgeBar(west, sideColour(0, viewer, PALETTE));
+    paintEdgeBar(east, sideColour(1, viewer, PALETTE));
+    expect(west.emissive.getHex()).toBe(PALETTE.self);
+    expect(east.emissive.getHex()).toBe(PALETTE.foe);
+    expect(west.emissive.getHex()).not.toBe(east.emissive.getHex());
   });
 });

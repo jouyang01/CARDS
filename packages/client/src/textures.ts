@@ -281,7 +281,7 @@ const plateTextures = new Map<string, CanvasTexture>();
  * 26px. Same three families, lifted for legibility.
  */
 const PLATE_NAME_TINT: Record<Fof, string> = {
-  self: '#9dc2ff', ally: '#a8e6b4', foe: '#ffb3aa',
+  self: '#9dc2ff', ally: '#c8e89a', foe: '#ffb3aa',
 };
 const PLATE_CACHE_MAX = 240;
 

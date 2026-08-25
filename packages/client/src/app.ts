@@ -261,8 +261,17 @@ export interface NetPlay {
  * same three numbers. Two sources would drift, and the drift would show up as
  * an ally's committed AoE being a slightly different blue from the ally
  * standing inside it.
+ *
+ * **The ally green is warm — blue below red — and that is a fix, not a taste.**
+ * The first choice (`0x5fd97a`) was within a few counts of the nameplate HP
+ * bar's `#5ad17f` on every channel: an ally's body and every unit's health bar
+ * were effectively the same colour. It read as a palette question and was a
+ * legibility one, and the browser suite found it the hard way — its
+ * body-finding drive started picking HP bars up as characters. A yellow-leaning
+ * green is unmistakable against a bar that leans blue, at a glance and to a
+ * predicate.
  */
-const FOF: FofPalette = { self: 0x4f8cff, ally: 0x5fd97a, foe: 0xff6b5e };
+const FOF: FofPalette = { self: 0x4f8cff, ally: 0x7ad14f, foe: 0xff6b5e };
 
 const paletteFor = (map: MapDef): BoardPalette => {
   const theme = themeFor(map);
@@ -520,8 +529,26 @@ export function startHotSeat(
    * `ownUnits` above is: the opening paint happens during construction, above
    * where `currentSeat` is declared.
    */
+  /**
+   * The last seat that was actually on the clock.
+   *
+   * Load-bearing during resolution. Locking in the final character runs
+   * `seatIdx += 1` past the end of `seats`, so for the whole of the playback
+   * `seats[seatIdx]` is undefined — and a viewer built from that is team 0 with
+   * an **empty** unit set, which is not "no seat", it is a seat that controls
+   * nothing. Every unit on the viewer's own team then resolves to `ally`, and
+   * the owner watched their side turn green the moment they locked in.
+   */
+  let lastSeat: Seat | undefined;
+
   function syncViewer(): void {
-    const seat = seats[seatIdx];
+    // The seat on the clock, or the one that just left it. Falling back to the
+    // last real seat is what keeps the colours still across the lock-in: the
+    // player who just committed watches the turn resolve from their own side,
+    // which is the only continuous answer in a hot-seat where "the viewer" has
+    // no other definition once nobody is on the clock.
+    const seat = seats[seatIdx] ?? lastSeat;
+    if (seats[seatIdx] !== undefined) lastSeat = seats[seatIdx];
     renderer.setViewer({
       team: seat?.team ?? 0,
       seatUnitIds: new Set(seat?.unitIds ?? []),

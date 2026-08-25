@@ -226,20 +226,39 @@ async function clickAt(page: Page, fx: number, fy: number): Promise<void> {
  */
 const blueBodies = (image: Image): { x: number; y: number }[] => {
   let rest = findPixels(image, isFriendly, 2);
-  const out: { x: number; y: number }[] = [];
-  // Two characters per seat, and a peel per body; the floor drops the route
-  // line and antialiased fringes, which are not units.
-  for (let i = 0; i < 4 && rest.length > 60; i++) {
+  const blobs: { x: number; y: number }[] = [];
+  // Up to EIGHT peels, not four: since FOF-UNITS a character is drawn as a body
+  // *and* a foot ring in the same colour, so one unit can yield two blobs.
+  for (let i = 0; i < 8 && rest.length > 60; i++) {
     const blob = largestCluster(rest, 6);
     if (blob.length < 60) break;
     const seen = new Set(blob.map((p) => `${p.x},${p.y}`));
     rest = rest.filter((p) => !seen.has(`${p.x},${p.y}`));
-    out.push({
+    blobs.push({
       x: Math.round(blob.reduce((s, p) => s + p.x, 0) / blob.length),
       y: Math.round(blob.reduce((s, p) => s + p.y, 0) / blob.length),
     });
   }
-  return out.sort((a, b) => a.y - b.y || a.x - b.x);
+  // …and then a body and the ring under it are folded back into one character.
+  //
+  // This is what FOF-UNITS broke here, and it broke a *drive* rather than an
+  // assertion, which is the expensive kind. BODY-CLICK takes `[1]` as "the
+  // seat's other character"; with rings peeled as separate blobs, `[1]` became
+  // the FIRST character's ring — so the drive clicked the tile the selected
+  // unit was already standing on, and "clicking a character produced no
+  // movement" was true and meant nothing.
+  //
+  // Concentric is the tell: a ring is centred on the body above it, and two
+  // real characters spawn two squares apart. `MERGE_PX` sits between those —
+  // comfortably wider than the body-to-ring offset the pitched camera opens up,
+  // and far narrower than the gap between two units.
+  const MERGE_PX = 48;
+  const merged: { x: number; y: number }[] = [];
+  for (const b of blobs) {
+    const near = merged.find((m) => Math.hypot(m.x - b.x, m.y - b.y) < MERGE_PX);
+    if (near === undefined) merged.push(b);
+  }
+  return merged.sort((a, b) => a.y - b.y || a.x - b.x);
 };
 
 /**
@@ -949,10 +968,29 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
   const covered = (img: Image): number => brush.filter((p) => !isBrushGreen(pixelAt(img, p.x, p.y))).length;
   const aimed = (img: Image): number => brush.filter((p) => isAimOrange(pixelAt(img, p.x, p.y))).length;
 
-  // Candidates spread across both bands: only one of them is inside any given
-  // ability's range, and which one depends on where the seat's units spawned.
-  const step = Math.max(1, Math.floor(brush.length / 6));
-  const candidates = Array.from({ length: 6 }, (_, i) => brush[i * step]).filter((p) => p !== undefined);
+  // Candidates are the brush NEAREST THE CASTER, not a spread across the map.
+  //
+  // Spreading them evenly over every lit brush pixel was right when the camera
+  // framed the whole board and the map was 17 wide. On Iron Basin's 22x19 an
+  // even spread puts most samples a dozen squares from a seat that spawns at
+  // x=4, and no ability reaches any of them — the coarse half passed on the
+  // range wash while `bestAimed` stayed 0, which reads as "brush ate the
+  // overlay" and means "nothing was ever aimed at brush".
+  //
+  // Since CAMERA-CONTROLS the planning camera centres on the character being
+  // ordered, so distance from the frame centre IS distance from the caster.
+  // Sorting by it and keeping a spread-out handful is the same correction
+  // DASH-CAT-ROUTE needed, for the same reason.
+  const mid = { x: bare.width / 2, y: bare.height / 2 };
+  const near = [...brush].sort((a2, b2) =>
+    Math.hypot(a2.x - mid.x, a2.y - mid.y) - Math.hypot(b2.x - mid.x, b2.y - mid.y));
+  // …spread out, so six samples are six squares rather than six pixels of one.
+  const SPREAD_PX = 30;
+  const candidates: { x: number; y: number }[] = [];
+  for (const p of near) {
+    if (candidates.length >= 6) break;
+    if (candidates.every((c) => Math.hypot(c.x - p.x, c.y - p.y) > SPREAD_PX)) candidates.push(p);
+  }
 
   const abilities = page.locator('.hud-ability:not([disabled])');
   const count = await abilities.count();
@@ -1091,9 +1129,23 @@ test('aiming Shift draws a yellow route to its landing square (DASH-CAT-ROUTE)',
   const before = countPixels(await pixels(page), isDashYellow);
 
   await page.locator('.hud-catalyst').nth(1).click(); // Shift
-  // Shift reaches 3, so sweep close to the unit rather than across the board.
+  // Shift reaches 3, and since CAMERA-CONTROLS the planning camera is centred
+  // on the character being ordered — so the caster is at the middle of the
+  // FRAME, and "within three squares" is a small ring around 0.5, not a fifth
+  // of the way across the board.
+  //
+  // The four hard-coded points this replaces were measured against a camera
+  // that framed the whole board, on a map that has since been rebuilt. Rather
+  // than re-measure them into the next reframing, sweep a ring: every offset
+  // that could be three squares at any zoom, in four directions, and stop at
+  // the first one that paints. Map-independent by construction, which is the
+  // property the old version lacked.
   let painted = before;
-  for (const [fx, fy] of [[0.30, 0.5], [0.26, 0.42], [0.34, 0.58], [0.30, 0.62]] as const) {
+  const OFFSETS = [0.03, 0.06, 0.09, 0.12, 0.16, 0.20];
+  const RING = OFFSETS.flatMap((d) => [
+    [0.5 - d, 0.5], [0.5 + d, 0.5], [0.5, 0.5 - d], [0.5, 0.5 + d],
+  ] as const);
+  for (const [fx, fy] of RING) {
     await pointAt(page, fx, fy);
     painted = Math.max(painted, countPixels(await pixels(page), isDashYellow));
     if (painted > before) break;
