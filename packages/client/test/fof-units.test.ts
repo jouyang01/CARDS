@@ -172,6 +172,48 @@ describe('FOF-UNITS: a real board, resolved from the seat', () => {
   });
 });
 
+describe('FOF-UNITS: the colours hold still across a lock-in', () => {
+  /**
+   * Owner playtest: *"When locking in, east side team turns green and west side
+   * team turns red — they should stay consistent with the friendly rules."*
+   *
+   * Locking in the last character runs `seatIdx` past the end of `seats`, so for
+   * the whole resolution `seats[seatIdx]` is undefined. A viewer built from that
+   * is team 0 with an **empty** unit set — not "no seat" but a seat that
+   * controls nothing — and every unit on the viewer's own team drops from `self`
+   * to `ally`. The player's own side turned green at the exact moment they
+   * committed to a turn.
+   */
+  it('THE PLAYTEST BUG: your own characters stay blue when you lock in', async () => {
+    const b = match();
+    const before = viewerOf(b);
+    expect(before.seatUnitIds.size, 'the seat controls its characters').toBeGreaterThan(0);
+
+    // Lock every character in — the last one pushes the seat index off the end.
+    for (let i = 0; i < 6; i++) lockIn(b.controls);
+
+    const after = viewerOf(b);
+    expect(after.seatUnitIds.size, 'the viewer still controls somebody').toBeGreaterThan(0);
+    for (const u of b.opening.units.filter((x) => x.owner === after.team)) {
+      expect(fofFor(u, after), `${u.unitId} is still the viewer's own`).not.toBe('ally');
+    }
+  });
+
+  it('and nothing ever resolves to ally when one seat drives the whole team', async () => {
+    // The general form of the same bug: with `[1, 1]` a seat owns both
+    // characters, so `ally` is unreachable by construction. Any green at all is
+    // a viewer that has lost track of what it controls.
+    const b = match();
+    const seen = new Set<string>();
+    for (let i = 0; i < 6; i++) {
+      const viewer = viewerOf(b);
+      for (const u of b.opening.units) seen.add(fofFor(u, viewer));
+      lockIn(b.controls);
+    }
+    expect([...seen].sort(), 'self and foe only — never ally').toEqual(['foe', 'self']);
+  });
+});
+
 describe('FOF-UNITS: colour is pure view', () => {
   it('passing the board does not edit a single game value', () => {
     // The determinism guard the spec asks for, stated where it can fail: FoF is
