@@ -6962,3 +6962,50 @@ correct.
 
 Verified by filming Vex — a character with no table entry at all — and differencing against a build
 with `drawParticles` stubbed: debris from f052, peaking ~647 differing pixels at f057, gone by f063.
+
+## 2026-08-25 — Builder session 24 (tone mapping, measured and withdrawn; the wall gets ends)
+
+**ACES filmic tone mapping was tried and reverted, and the measuring is the useful part.**
+
+The reasoning going in was the standard one: `toneMapping` was never set, so it sat at
+`NoToneMapping`, which clips each channel independently — and with a sun at 2.2 a lit surface stops
+getting brighter and starts getting *desaturated*. True in general. **Measured false here:** exactly
+one pixel of the board sat within 5 of saturation. Nothing was being crushed, so the premise did not
+apply to this scene.
+
+What ACES actually bought at exposure 0.95, over the board region:
+
+| | luma | contrast (sd) | saturation |
+|---|---:|---:|---:|
+| none | 144.6 | 37.4 | 0.0498 |
+| ACES 0.95 | 150.8 | 44.7 | 0.0592 |
+
+Same brightness, ~20% more contrast, ~19% more saturation. Real, and modest. (The first attempt at
+exposure 1.15 looked *worse* to me and I called it washed out; the numbers said contrast had gone
+**up**. I had mistaken brighter for flatter — worth recording, because it is the second time this
+month an eyeball reading has disagreed with a measurement and lost.)
+
+**The cost was three red render tests, and they are the reason it went back.** Two pad-marker tests
+and, less obviously, MOVE-SPRINT-FIRST — which locates units by counting team-blue pixels, so a
+shifted transform stops it finding anybody and it reports that nothing moved. All three pass without
+the change and fail with it. `pixels.ts` predicates carry tight inter-channel margins (`isPadTeal`
+needs `g - b > 15`), they are shared with other lanes, and re-deriving them is a recurring tax on
+every future change to the transform.
+
+**Modest gain, shared-infrastructure churn, and a premise that measurement disproved: not worth it
+now.** The forward-looking argument stands — additive VFX produce values above 1.0, which clip to
+white and lose their hue without a tone curve — so this should land *with* that work, where the
+predicate churn is paid once for something substantial rather than for a 20% contrast tweak.
+
+**Warding Wall gets concrete pillars, and the field gets more solid.** The owner's read: too
+transparent, hard to see. A see-through thing over a busy board reads as a smudge rather than a
+structure. Two solid posts give it *ends*, and ends are what make a barrier legible — the eye reads
+"this runs from here to here" from the posts and accepts the haze between them. They also answer the
+question the field cannot: where does it stop, and therefore where can I go round it. The posts are
+opaque and depth-writing, unlike every other overlay in this file, and deliberately SHORTER than the
+field: a post as tall as the haze reads as a doorframe, which says "go around", and the wall stops
+nobody.
+
+**And the opacity constant was being overridden.** `drawWalls` took a default the two call sites
+both passed past — raising the default did nothing until `app.ts` was pointed at the same shared
+constant. A default that no caller uses is not a default.
