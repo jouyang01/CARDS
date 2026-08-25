@@ -1196,12 +1196,23 @@ export function createRenderer(
     ['wall', map.walls, palette.wall, TERRAIN_HEIGHT.wall, palette.surface.wall, palette.grain.wall],
   ] as const) {
     for (const p of squares) {
+      // Directional cover (COVER-EDGE) is a half-wall on one edge you walk onto,
+      // not a full block: draw a thin barricade slab pushed to its faced side so
+      // the tile reads as "cover from the east" rather than "solid". A bare
+      // {x,y} cover entry (and every wall/brush) keeps the full 0.96 box.
+      const facing = role === 'cover' ? (p as { facing?: 'N' | 'S' | 'E' | 'W' }).facing : undefined;
+      const SLAB = TILE * 0.24; // barricade thickness across the faced edge
+      const dims: [number, number, number] = facing
+        ? facing === 'E' || facing === 'W'
+          ? [SLAB, height, TILE * 0.96]
+          : [TILE * 0.96, height, SLAB]
+        : [TILE * 0.96, height, TILE * 0.96];
       // Each block gets its own hashed tint, so a wall reads as a run of placed
       // blocks rather than one shape stamped along a line. A material apiece is
       // affordable here in a way it would not be for the floor: the shipped maps
       // carry fifty-odd terrain squares between them, not several hundred.
       const box = new Mesh(
-        new BoxGeometry(TILE * 0.96, height, TILE * 0.96),
+        new BoxGeometry(...dims),
         new MeshStandardMaterial({
           color: shade(colour, tileTint(grainSeed, p.x, p.y, grain.tint)),
           ...surface,
@@ -1209,6 +1220,13 @@ export function createRenderer(
         }),
       );
       box.position.copy(toWorld(map, p)).setY(height / 2);
+      if (facing) {
+        const off = TILE * 0.38; // shove the slab out to the edge it guards
+        if (facing === 'E') box.position.x += off;
+        else if (facing === 'W') box.position.x -= off;
+        else if (facing === 'S') box.position.z += off;
+        else box.position.z -= off; // N
+      }
       // Brush is a 0.02-high lid: it has no silhouette to throw and casting from
       // it only buys shadow acne on the tile it is lying on.
       box.castShadow = height > TERRAIN_HEIGHT.brush;

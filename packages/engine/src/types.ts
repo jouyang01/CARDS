@@ -453,6 +453,32 @@ export interface CharacterDef {
 
 export type TerrainKind = 'wall' | 'cover' | 'brush';
 
+/** The edge a directional cover barricade sits on (COVER-EDGE). */
+export type CoverFacing = 'N' | 'S' | 'E' | 'W';
+
+/**
+ * Directional (edge-mounted) cover — the Atlas Reactor half-wall. A barricade on
+ * the `facing` edge of tile `(x,y)`: you may **stand on** the tile to take cover,
+ * but movement across that one edge is blocked (both directions), and the
+ * occupant is shielded from attacks crossing it. It does **not** block line of
+ * sight (you see over it). A bare `Vec2` cover entry stays the v1 full-square
+ * block (impassable, adjacent-defender reduction); the two coexist so older maps
+ * are untouched (COVER-EDGE, revisiting the 2026-08-11 v1 simplification).
+ */
+export interface CoverEdge {
+  x: number;
+  y: number;
+  facing: CoverFacing;
+}
+
+/** A cover entry is either the v1 full block (`Vec2`) or a directional edge. */
+export type CoverCell = Vec2 | CoverEdge;
+
+/** Narrow a cover entry to the directional (edge-mounted) kind. */
+export function isCoverEdge(c: CoverCell): c is CoverEdge {
+  return typeof (c as CoverEdge).facing === 'string';
+}
+
 /** The three power-up pad flavours (PADS1, ar-parity §7.3). */
 export const POWERUP_TYPES = ['health', 'might', 'energy'] as const;
 export type PowerupType = (typeof POWERUP_TYPES)[number];
@@ -482,8 +508,13 @@ export interface MapDef {
   height: number;
   /** Blocks movement AND line of sight. */
   walls: Vec2[];
-  /** Blocks movement, NOT LoS; grants directional 50% damage reduction. */
-  cover: Vec2[];
+  /**
+   * Cover. A bare `Vec2` is the v1 full-square block (impassable, does not block
+   * LoS, 50% reduction to an adjacent defender). A `CoverEdge` is a directional
+   * half-wall (walk onto it; blocks crossing its one faced edge; 50% reduction
+   * to the occupant from that side; does not block LoS). Neither blocks sight.
+   */
+  cover: CoverCell[];
   /** Concealment patches. */
   brush: Vec2[];
   /** spawns[teamId] = list of that team's spawn squares (one per character). */

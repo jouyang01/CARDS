@@ -8,7 +8,9 @@
  * Line of sight / vision deliberately live elsewhere, in `vision.ts`.
  */
 
-import type { MapDef, TerrainKind, Vec2 } from './types.js';
+import type { CoverFacing, MapDef, TerrainKind, Vec2 } from './types.js';
+import { isCoverEdge } from './types.js';
+import { centre, edgeCorners, FACING_VEC, segmentsIntersect } from './geometry.js';
 
 /** What occupies a square. `oob` = outside the map rectangle. */
 export type SquareKind = 'open' | TerrainKind | 'oob';
@@ -19,9 +21,15 @@ export interface Board {
   readonly height: number;
   /**
    * Row-major terrain index (`y * width + x`); `undefined` means open ground.
-   * A flat array keeps lookups O(1) and iteration order stable.
+   * A flat array keeps lookups O(1) and iteration order stable. Both full-block
+   * and edge cover index as `'cover'` here (so a tile still reads as cover);
+   * `solidCover` and `coverFacings` carry the distinction that changes movement.
    */
   readonly terrain: readonly (TerrainKind | undefined)[];
+  /** Keys (`x,y`) of v1 full-block cover — impassable, unlike edge cover. */
+  readonly solidCover: ReadonlySet<string>;
+  /** For edge-cover tiles, the set of faced edges (COVER-EDGE). */
+  readonly coverFacings: ReadonlyMap<string, ReadonlySet<CoverFacing>>;
 }
 
 // ── Vector helpers ──────────────────────────────────────────────────────────
@@ -130,10 +138,48 @@ export function buildBoard(map: MapDef): Board {
     if (!overwrite && terrain[i] !== undefined) return;
     terrain[i] = kind;
   };
+  const solidCover = new Set<string>();
+  const coverFacings = new Map<string, Set<CoverFacing>>();
   for (const p of map.brush) put(p, 'brush', true);
-  for (const p of map.cover) put(p, 'cover', true);
+  for (const c of map.cover) {
+    put(c, 'cover', true);
+    const k = `${c.x},${c.y}`;
+    if (isCoverEdge(c)) {
+      const set = coverFacings.get(k) ?? new Set<CoverFacing>();
+      set.add(c.facing);
+      coverFacings.set(k, set);
+    } else {
+      solidCover.add(k);
+    }
+  }
   for (const p of map.walls) put(p, 'wall', true);
-  return { map, width: map.width, height: map.height, terrain };
+  return { map, width: map.width, height: map.height, terrain, solidCover, coverFacings };
+}
+
+/**
+ * True when the step from `from` to `to` is blocked by a directional cover
+ * barricade (COVER-EDGE) — the centre-to-centre line crosses a faced edge of
+ * `from`, `to`, or (for a diagonal) either corner tile between them. Reuses the
+ * same integer edge geometry as cover reduction, so a barricade you cannot shoot
+ * a defender across is a barricade you cannot walk across either.
+ */
+export function coverEdgeBlocks(board: Board, from: Vec2, to: Vec2): boolean {
+  if (board.coverFacings.size === 0) return false;
+  const a = centre(from);
+  const b = centre(to);
+  const tiles: Vec2[] = [from, to];
+  if (from.x !== to.x && from.y !== to.y) {
+    tiles.push({ x: to.x, y: from.y }, { x: from.x, y: to.y });
+  }
+  for (const t of tiles) {
+    const facings = board.coverFacings.get(`${t.x},${t.y}`);
+    if (!facings) continue;
+    for (const f of facings) {
+      const [e1, e2] = edgeCorners(t, FACING_VEC[f]);
+      if (segmentsIntersect(a, b, e1, e2)) return true;
+    }
+  }
+  return false;
 }
 
 export function inBounds(board: Board, p: Vec2): boolean {
@@ -159,7 +205,10 @@ export function terrainAt(board: Board, p: Vec2): SquareKind {
  */
 export function blocksMovement(board: Board, p: Vec2): boolean {
   const t = terrainAt(board, p);
-  return t === 'oob' || t === 'wall' || t === 'cover';
+  if (t === 'oob' || t === 'wall') return true;
+  // Full-block (v1) cover stops entry; directional edge cover is walk-on and
+  // only blocks the crossing of its faced edge (see `coverEdgeBlocks`).
+  return t === 'cover' && board.solidCover.has(`${p.x},${p.y}`);
 }
 
 /** In-bounds orthogonal neighbours in fixed ORTHOGONAL_STEPS order. */

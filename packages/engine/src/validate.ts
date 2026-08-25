@@ -1,6 +1,7 @@
 import {
   type AbilityDef,
   type CharacterDef,
+  type CoverFacing,
   type MapDef,
   type PowerupPad,
   type Vec2,
@@ -20,6 +21,7 @@ import { HARMFUL_KINDS } from './polarity.js';
  */
 
 const ABILITY_PHASES = ['prep', 'dash', 'blast'] as const;
+const COVER_FACINGS: readonly CoverFacing[] = ['N', 'S', 'E', 'W'];
 
 /**
  * Every key an `AbilityDef` may carry (VALIDATE-KEYS).
@@ -417,6 +419,14 @@ export function validateMap(m: MapDef): string[] {
         if (solid.has(key(p))) errs.push(`${path}.${kind}[${i}]: overlaps another solid square at (${p.x},${p.y})`);
         solid.add(key(p));
       }
+    }
+  }
+  // COVER-EDGE: a directional cover entry must name a valid faced edge. A bare
+  // {x,y} is the v1 full block and needs no facing.
+  for (const [i, c] of (m.cover ?? []).entries()) {
+    const f = (c as { facing?: unknown }).facing;
+    if (f !== undefined && !COVER_FACINGS.includes(f as CoverFacing)) {
+      errs.push(`${path}.cover[${i}]: facing must be one of N|S|E|W (got ${JSON.stringify(f)})`);
     }
   }
   if (!Array.isArray(m.spawns) || m.spawns.length !== 2) {
