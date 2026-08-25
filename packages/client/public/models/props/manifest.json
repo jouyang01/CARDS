@@ -5,7 +5,7 @@
       "role": "cover",
       "kind": "barricade",
       "file": "props/proving-floor_cover.glb",
-      "version": "38013d09f240",
+      "version": "53c8fc4c6886",
       "yawSteps": 2,
       "height": 0.45
     },
@@ -14,7 +14,7 @@
       "role": "wall",
       "kind": "pillar",
       "file": "props/proving-floor_wall.glb",
-      "version": "bc68ce453ac2",
+      "version": "0583585f0ad4",
       "yawSteps": 4,
       "height": 0.9
     }
