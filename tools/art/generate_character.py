@@ -45,6 +45,20 @@ ROOT = HERE.parents[1]
 LAYOUT = json.loads((HERE / "atlas_layout.json").read_text())
 ATLAS = LAYOUT["size"]
 
+# Which palette/magic keys the swatch cells hold, in grid order. Aegis's set is
+# the default in atlas_layout.json; a character with a different material story
+# (Wisp's fabric-and-smoke instead of Aegis's iron-and-rust) declares its own
+# `swatchOrder` in data/art/<id>.json. set_swatch_order() points the whole module
+# at the right list before any geometry is built, so swatch_cell() indexes into
+# the same order paint_atlas.py painted. Same grid (4×3) either way — a character
+# may use up to 12 cells; unused trailing cells just repeat the last colour.
+ACTIVE_SWATCH_ORDER = LAYOUT["swatchOrder"]
+
+
+def set_swatch_order(spec: dict) -> None:
+    global ACTIVE_SWATCH_ORDER
+    ACTIVE_SWATCH_ORDER = spec.get("swatchOrder", LAYOUT["swatchOrder"])
+
 
 def uv_rect(region: str):
     """Region pixels -> Blender UV floats.
@@ -64,7 +78,7 @@ def swatch_cell(name: str):
     is what lets a plate carry scratches at all — one pixel cannot be scratched.
     """
     grid = LAYOUT["swatchGrid"]
-    i = LAYOUT["swatchOrder"].index(name)
+    i = ACTIVE_SWATCH_ORDER.index(name)
     r, c = divmod(i, grid["cols"])
     x0, y0, x1, y1 = LAYOUT["regions"]["swatches"]
     cw = (x1 - x0) / grid["cols"]
@@ -414,6 +428,19 @@ def add_head(bm, uv_layer, centre_z, r, sides=14, exponent=2.7):
 # ── the character ───────────────────────────────────────────────────────────
 
 def build_body(spec):
+    # Point the swatch helpers at this character's material set before any
+    # geometry is built. Aegis has none, so it falls back to the layout default
+    # and his output is unchanged.
+    set_swatch_order(spec)
+
+    # Garment archetype dispatch. The head, the T-pose skeleton and the anatomy
+    # rules validate.py enforces are shared; what changes between characters is
+    # the surface — plate versus an open wrap. Each archetype is its own builder
+    # so adding one never risks the others (golden rule #2: a new mechanic gets a
+    # generic, reusable implementation rather than a special case bolted on).
+    if spec.get("garment", {}).get("kind") == "wrap":
+        return build_body_wrap(spec)
+
     b = spec["build"]
     g = spec["garment"]
     style = spec.get("style", {})
@@ -585,6 +612,192 @@ def build_body(spec):
     return finish(obj, mesh, bm)
 
 
+def build_body_wrap(spec):
+    """The `wrap` archetype: an open haori over a minimal underlayer, bare
+    shoulders and legs, a high closed collar, and long hair that trails behind.
+
+    Built for the same Mixamo T-pose and the same anatomy spec validate.py
+    enforces — the skeleton placement mirrors the plate builder, which is why the
+    proportion checks pass unchanged — but the surface is fabric and skin instead
+    of iron, and there are no pauldrons or plates. The costume's central idea (a
+    silhouette that dissolves into smoke) is carried by ambient VFX, not mesh:
+    the mesh is a solid, riggable body; the smoke lives in the client's
+    ambient-motion layer so the decoy can mimic it (docs/design/wisp.md §8).
+    """
+    b = spec["build"]
+    g = spec["garment"]
+    style = spec.get("style", {})
+    exp = style.get("blockiness", 4.0)
+    sides = style.get("sides", 10)
+
+    h = b["height"]
+    head_r = 0.115 * b["headScale"]
+    shoulder = 0.20 * b["shoulderWidth"]
+    limb = 0.055 * b["limbThickness"]
+    depth = 0.115 * b["torsoDepth"]
+
+    hip_z = h * 0.505
+    chest_z = h * 0.72
+    neck_z = chest_z + 0.10 * b["neckLength"]
+    head_z = neck_z + head_r
+
+    obj, mesh, bm, uv = new_mesh("body")
+
+    def tube(axis, a, c, profile, swatch, **kw):
+        kw.setdefault("sides", sides)
+        kw.setdefault("exponent", exp)
+        return add_tube(bm, uv, axis, a, c, profile, swatch, **kw)
+
+    # ── head ──
+    add_head(bm, uv, head_z, head_r, sides=max(sides, 14), exponent=2.7)
+
+    # A smaller, softer nose wedge than Aegis's — a lighter face. Still real
+    # geometry, or the projected portrait reads as a decal off-centre.
+    fy = -head_r * 0.82
+    add_wedge(bm,
+              (0, fy - head_r * 0.14, head_z - head_r * 0.10),
+              (-head_r * 0.10, fy, head_z + head_r * 0.10),
+              (head_r * 0.10, fy, head_z + head_r * 0.10),
+              (0, fy, head_z - head_r * 0.34), uv, "skin")
+
+    # ── neck ── bare skin; the collar overlaps its lower half.
+    tube("z", (0, 0, neck_z - 0.08), (0, 0, neck_z + 0.04),
+         taper((0.0, limb * 1.30, limb * 1.26),
+               (0.5, limb * 1.18, limb * 1.14),
+               (1.0, limb * 1.10, limb * 1.06)), "skin")
+
+    # ── torso ── feminine taper: hip flare, a narrow waist, a modest bust.
+    # Swatch is the minimal underlayer, since the haori is open down the front.
+    tube("z", (0, 0, hip_z - 0.05), (0, 0, chest_z + 0.04), taper(
+        (0.00, shoulder * 0.78, depth * 0.80),   # pelvis — legs hang INSIDE this
+        (0.12, shoulder * 0.86, depth * 0.86),   # widest hip
+        (0.34, shoulder * 0.50, depth * 0.64),   # waist — cinched
+        (0.56, shoulder * 0.58, depth * 0.86),   # bust underline
+        (0.72, shoulder * 0.64, depth * 0.98),   # bust
+        (0.90, shoulder * 0.58, depth * 0.78),   # upper chest
+        (1.00, shoulder * 0.50, depth * 0.62),   # clavicle / bare shoulders
+    ), "underlayer")
+
+    # ── high closed collar ── the load-bearing costume piece. A closed ring
+    # around the throat, standing up to just under the jaw. Covered throat over
+    # exposed torso is what reads as a chosen costume (bible §4).
+    tube("z", (0, 0, chest_z + 0.00), (0, 0, chest_z + 0.105),
+         taper((0.00, shoulder * 0.56, depth * 0.72),
+               (0.55, shoulder * 0.50, depth * 0.62),
+               (1.00, shoulder * 0.44, depth * 0.52)), "haoriDark")
+
+    # ── open haori ── two panels down the back and sides that never meet in
+    # front, so the underlayer and skin show down the centre and the robe trails
+    # behind her. This is most of the top-down silhouette (bible §7).
+    for side in (-1, 1):
+        px = side * shoulder * 0.52
+        tube("z", (px, depth * 0.34, hip_z - 0.30), (px, depth * 0.30, chest_z + 0.02),
+             taper((0.00, shoulder * 0.34, depth * 0.30),
+                   (0.20, shoulder * 0.40, depth * 0.34),
+                   (0.70, shoulder * 0.44, depth * 0.30),
+                   (1.00, shoulder * 0.40, depth * 0.26)),
+             "haori", cap_start=True, cap_end=False)
+    # A yoke across the shoulders at the back joins the two panels, so the robe
+    # reads as one open garment rather than two loose strips.
+    tube("x", (-shoulder * 0.60, depth * 0.30, chest_z - 0.02),
+         (shoulder * 0.60, depth * 0.30, chest_z - 0.02),
+         taper((0.0, shoulder * 0.16, depth * 0.30),
+               (0.5, shoulder * 0.18, depth * 0.34),
+               (1.0, shoulder * 0.16, depth * 0.30)), "haoriDark",
+         cap_start=False, cap_end=False)
+
+    # ── one asymmetric sash ── a band at the waist, with a knot on sashSide.
+    # The asymmetry is the tell that the outfit was chosen and arranged.
+    waist_z = hip_z + (chest_z - hip_z) * 0.30
+    tube("z", (0, 0, waist_z - 0.055), (0, 0, waist_z + 0.055),
+         taper((0.0, shoulder * 0.54, depth * 0.70),
+               (0.5, shoulder * 0.56, depth * 0.72),
+               (1.0, shoulder * 0.54, depth * 0.70)), "sash")
+    knot = 1 if g.get("sashSide", "right") == "right" else -1
+    add_box(bm, (knot * shoulder * 0.52, -depth * 0.30, waist_z),
+            (shoulder * 0.20, depth * 0.34, 0.11), {"_default": "sash"}, uv)
+    # A short tail of the sash hanging from the knot.
+    tube("z", (knot * shoulder * 0.52, -depth * 0.32, waist_z - 0.22),
+         (knot * shoulder * 0.52, -depth * 0.30, waist_z),
+         taper((0.0, shoulder * 0.09, 0.02), (1.0, shoulder * 0.12, 0.03)),
+         "sash", cap_end=False)
+
+    # ── hair ── a long mass behind the head and down the upper back. Real
+    # geometry so it reads in the top-down silhouette (bible §7); the ENDS
+    # resolving into smoke are VFX, not mesh. Centred on x, so it is symmetric and
+    # never trips the landmark check.
+    tube("z", (0, head_r * 0.30, chest_z - 0.10), (0, head_r * 0.86, head_z + head_r * 0.60),
+         taper((0.00, head_r * 0.70, head_r * 0.30),   # tail end (fades to smoke)
+               (0.30, head_r * 0.95, head_r * 0.42),
+               (0.62, head_r * 1.15, head_r * 0.52),   # widest — behind the shoulders
+               (0.86, head_r * 1.05, head_r * 0.66),   # behind the head
+               (1.00, head_r * 0.80, head_r * 0.70)),  # crown
+         "hair", cap_start=False, cap_end=True)
+
+    # ── arms ── bare skin, slim, no pauldron. Same T-pose placement as the plate
+    # builder so the shoulder-height, arm-reach and armpit-gap checks hold.
+    arm_z = chest_z + 0.005
+    gap = shoulder * 0.86
+    arm_len = h * 0.224
+    for side in (-1, 1):
+        ax = gap + limb * 0.60
+        seg = arm_len * 0.52
+        # Upper arm.
+        tube("x", (side * ax, 0, arm_z), (side * (ax + seg), 0, arm_z),
+             taper((0.0, limb * 1.06, limb * 1.06),
+                   (0.5, limb * 0.96, limb * 0.96),
+                   (1.0, limb * 0.86, limb * 0.86)), "skin",
+             cap_start=True, cap_end=False)
+        # Forearm.
+        bx = ax + seg
+        tube("x", (side * bx, 0, arm_z), (side * (bx + seg), 0, arm_z),
+             taper((0.0, limb * 0.90, limb * 0.90),
+                   (0.45, limb * 0.80, limb * 0.80),
+                   (1.0, limb * 0.70, limb * 0.70)), "skin",
+             cap_start=False, cap_end=False)
+        # Hand: a rounded mitt, near-elliptical section like the plate builder's.
+        cx = bx + seg
+        tube("x", (side * cx, 0, arm_z), (side * (cx + 0.09), 0, arm_z),
+             taper((0.00, limb * 0.66, limb * 0.78),
+                   (0.18, limb * 0.86, limb * 1.06),
+                   (0.46, limb * 0.94, limb * 1.18),
+                   (0.72, limb * 0.90, limb * 1.12),
+                   (0.90, limb * 0.76, limb * 0.92),
+                   (1.00, limb * 0.50, limb * 0.60)), "skin",
+             exponent=2.1, sides=max(sides, 12))
+
+    # ── legs ── a short covered upper thigh (underlayer), bare skin below, a
+    # small foot. Legs hang inside the pelvis; feet stay separated and near the
+    # floor.
+    for side in (-1, 1):
+        lx = side * shoulder * 0.435
+        # Upper thigh — short shorts / covered hem.
+        tube("z", (lx, 0, hip_z * 0.70), (lx, 0, hip_z + 0.02), taper(
+            (0.0, limb * 1.14, limb * 1.22),
+            (1.0, limb * 1.30, limb * 1.40),
+        ), "underlayer")
+        # Thigh (skin) below the hem.
+        tube("z", (lx, 0, hip_z * 0.46), (lx, 0, hip_z * 0.72), taper(
+            (0.0, limb * 1.02, limb * 1.10),
+            (1.0, limb * 1.16, limb * 1.24),
+        ), "skin", cap_start=False, cap_end=False)
+        # Shin (skin).
+        tube("z", (lx, 0, 0.055), (lx, 0, hip_z * 0.48), taper(
+            (0.0, limb * 0.72, limb * 0.80),
+            (0.45, limb * 0.92, limb * 1.02),
+            (1.0, limb * 1.04, limb * 1.12),
+        ), "skin", cap_start=False, cap_end=False)
+        # Foot: forward-biased so it reads as a foot from above. Dark — a sandal.
+        tube("y", (lx, depth * 0.30, 0.040), (lx, -depth * 0.66, 0.040), taper(
+            (0.00, limb * 0.80, limb * 0.92),
+            (0.45, limb * 0.92, limb * 1.06),
+            (0.80, limb * 0.88, limb * 0.98),
+            (1.00, limb * 0.66, limb * 0.72),
+        ), "haoriDark")
+
+    return finish(obj, mesh, bm)
+
+
 def build_door(spec):
     """The prop. Exported on its own — it must not be in the rigged upload."""
     w = spec["weapon"]["mainHand"]
@@ -602,6 +815,57 @@ def build_door(spec):
                     (w["widthTiles"] * 0.14, w["thickness"] * 1.6, 0.10),
                     {"_default": "rustDeep"}, uv)
     return finish(obj, mesh, bm, bevel=0.004)
+
+
+def build_dagger(spec, w):
+    """A single dagger, built blade-up and centred on the grip so the runtime
+    attach offsets place it. Wisp carries one in each hand — the same mesh is
+    hung off both hand bones (docs/ART_PIPELINE.md §12), so it is built once.
+
+    Reversed (icepick) grip is a runtime rotation, not baked here: the mesh is a
+    plain blade so the same geometry could serve a forward grip on another
+    character. Steel reads cold in her palette — the blade samples `hairSmoke`,
+    the coolest neutral, rather than a warm iron she does not own.
+    """
+    blade_len = w.get("bladeLengthTiles", 0.34)
+    hw = w.get("bladeWidthTiles", 0.055) / 2
+    hd = max(hw * 0.28, 0.006)          # a thin, flat blade
+    grip_len = 0.13
+    obj, mesh, bm, uv = new_mesh("dagger")
+
+    def tube(axis, a, c, profile, swatch, **kw):
+        kw.setdefault("sides", 8)
+        kw.setdefault("exponent", spec.get("style", {}).get("blockiness", 3.4))
+        return add_tube(bm, uv, axis, a, c, profile, swatch, **kw)
+
+    # Grip: a short wrapped handle below the guard.
+    tube("z", (0, 0, -grip_len), (0, 0, -0.01),
+         taper((0.00, hw * 0.62, hw * 0.62),
+               (0.15, hw * 0.70, hw * 0.70),
+               (0.85, hw * 0.66, hw * 0.66),
+               (1.00, hw * 0.74, hw * 0.74)), "haoriDark")
+    # Pommel cap.
+    add_box(bm, (0, 0, -grip_len - 0.01), (hw * 1.5, hw * 1.5, 0.02),
+            {"_default": "haoriLight"}, uv)
+    # Guard: a slim crossbar.
+    if w.get("guard", "slim") != "none":
+        add_box(bm, (0, 0, 0.0), (hw * 4.2, hd * 3.2, 0.022),
+                {"_default": "haoriLight"}, uv)
+    # Blade: tapers to a point, flat cross-section (width >> thickness).
+    tube("z", (0, 0, 0.012), (0, 0, 0.012 + blade_len),
+         taper((0.00, hw, hd),
+               (0.55, hw * 0.9, hd * 0.92),
+               (0.82, hw * 0.62, hd * 0.7),
+               (1.00, hw * 0.05, hd * 0.18)), "hairSmoke",
+         exponent=2.4, sides=6, cap_start=False)
+    return finish(obj, mesh, bm, bevel=0.003)
+
+
+def build_prop_mesh(spec, w):
+    """Dispatch a weapon slot to its mesh builder by `kind`."""
+    if w.get("kind") == "dagger":
+        return build_dagger(spec, w)
+    return build_door(spec)
 
 
 # ── material ────────────────────────────────────────────────────────────────
@@ -679,14 +943,25 @@ def main():
     export_fbx([body], out_dir / f"{cid}.fbx")
     print(f"  body  {tri_count(body):>5} tris  ->  {out_dir / f'{cid}.fbx'}")
 
-    if (spec.get("weapon") or {}).get("mainHand"):
-        door = build_door(spec)
-        attach_material(door, atlas, f"{cid}_door_mat")
-        export_fbx([door], out_dir / f"{cid}_door.fbx")
-        print(f"  door  {tri_count(door):>5} tris  ->  {out_dir / f'{cid}_door.fbx'}")
+    # Props: one mesh per distinct kind. Wisp's off-hand dagger is the same mesh
+    # as her main hand, so it is built once and attached to both bones at runtime.
+    weapon = spec.get("weapon") or {}
+    built_kinds = set()
+    for slot in ("mainHand", "offHand"):
+        w = weapon.get(slot)
+        if not w:
+            continue
+        kind = w.get("kind", slot)
+        if kind in built_kinds:
+            continue
+        built_kinds.add(kind)
+        prop = build_prop_mesh(spec, w)
+        attach_material(prop, atlas, f"{cid}_{kind}_mat")
+        export_fbx([prop], out_dir / f"{cid}_{kind}.fbx")
+        print(f"  {kind:<6}{tri_count(prop):>5} tris  ->  {out_dir / f'{cid}_{kind}.fbx'}")
 
     print("\n  Upload ONLY the body FBX (zipped with the atlas PNG) to Mixamo.")
-    print("  The door is a prop — it attaches to the hand bone after rigging.")
+    print("  Weapons are props — they attach to hand bones after rigging.")
 
 
 if __name__ == "__main__":

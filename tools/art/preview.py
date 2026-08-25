@@ -117,24 +117,48 @@ def main():
     if posture:
         body.rotation_euler[0] = math.radians(posture.get("hunchDeg", 0)) * 0.5
 
-    door_obj = None
-    if (spec.get("weapon") or {}).get("mainHand"):
+    # Props, placed for evaluation only (the real attach is a bone parent at
+    # runtime, docs/ART_PIPELINE.md §12). Dispatch on kind so a door hangs off
+    # one arm and a pair of daggers sit in both hands.
+    prop_objs = []
+    weapon = spec.get("weapon") or {}
+    b = spec["build"]
+    if weapon.get("mainHand", {}).get("kind") == "door":
+        w = weapon["mainHand"]
         door_obj = gc.build_door(spec)
         gc.attach_material(door_obj, atlas, f"{cid}_preview_door_mat")
-        w = spec["weapon"]["mainHand"]
-        b = spec["build"]
         side = -1 if posture.get("dropShoulder", "left") == "left" else 1
         # Dragged, not carried: low, tilted off vertical, held out from the body.
         door_obj.location = (side * (b["shoulderWidth"] * 0.30 + w["thickness"] * 2.2),
                              -b["torsoDepth"] * 0.30,
                              w["heightTiles"] * 0.34)
         door_obj.rotation_euler = (math.radians(-6), math.radians(side * -9), math.radians(side * 4))
+        prop_objs.append(door_obj)
+    else:
+        # Estimate the hand position from the same build maths the body uses, so
+        # daggers land in the T-pose hands. Reversed grip: blade points down.
+        shoulder = 0.20 * b["shoulderWidth"]
+        limb = 0.055 * b["limbThickness"]
+        arm_z = b["height"] * 0.72 + 0.005
+        seg = b["height"] * 0.224 * 0.52
+        hand_x = shoulder * 0.86 + limb * 0.60 + seg * 2 + 0.045
+        for slot, sign in (("mainHand", 1), ("offHand", -1)):
+            w = weapon.get(slot)
+            if not w:
+                continue
+            dg = gc.build_prop_mesh(spec, w)
+            gc.attach_material(dg, atlas, f"{cid}_preview_{slot}_mat")
+            dg.location = (sign * hand_x, -b["torsoDepth"] * 0.06, arm_z - 0.02)
+            reversed_grip = w.get("grip") == "reversed"
+            dg.rotation_euler = (math.radians(180 if reversed_grip else 0),
+                                 0, math.radians(sign * 8))
+            prop_objs.append(dg)
 
     tris = gc.tri_count(body)
     print(f"\n  {cid}: {tris} tris")
 
     # Frame on the character's real bounds rather than assuming its height.
-    parts = [body] + ([door_obj] if door_obj else [])
+    parts = [body] + prop_objs
     zs = [(o.matrix_world @ v.co).z for o in parts for v in o.data.vertices]
     xs = [(o.matrix_world @ v.co).x for o in parts for v in o.data.vertices]
     lo, hi = min(zs), max(zs)

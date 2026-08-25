@@ -254,6 +254,165 @@ def paint_face(atlas: Atlas, pal: dict, face: dict) -> None:
                            atlas.rng.uniform(0.1, 0.45)), width=1)
 
 
+# ── the bored face ────────────────────────────────────────────────────────────
+#
+# The whole read is bored: half-lidded, faintly amused, unimpressed. Seductive
+# with contempt rather than with effort — played KNOWING, never eager. Where
+# Aegis's face is grim and sunken, hers is smooth and composed: heavy upper lids
+# carrying most of the read, a relaxed flat brow, a faint asymmetric smile, and
+# sharp winged liner. One accent — plum — on the eyes and lips, tying her to the
+# smoke; everything else low-chroma.
+
+def paint_face_bored(atlas: Atlas, pal: dict, magic: dict, face: dict) -> None:
+    skin = hex_rgb(pal["skin"])
+    shadow = hex_rgb(pal["skinShadow"])
+    hair = hex_rgb(pal["hair"])
+    hair_smoke = hex_rgb(pal["hairSmoke"])
+    plum = hex_rgb(magic["core"])
+    plum_edge = hex_rgb(magic["edge"])
+    plum_deep = hex_rgb(magic["deep"])
+    liner = mix(hair, (0, 0, 0), 0.2)
+    lip = mix(mix(skin, plum, 0.5), (0, 0, 0), 0.12)
+
+    atlas.fill("head_front", skin)
+
+    # Soft contour only — the geometry carries the form. Cheekbone hollows and a
+    # narrow jaw read as feminine without any hard edges.
+    atlas.polygon("head_front", [(0, 150), (44, 120), (40, 210), (0, 236)], mix(skin, shadow, 0.28))
+    atlas.polygon("head_front", [(256, 150), (212, 120), (216, 210), (256, 236)], mix(skin, shadow, 0.28))
+    atlas.polygon("head_front", [(96, 214), (160, 214), (150, 236), (106, 236)], mix(skin, shadow, 0.22))
+    # A little warmth high on the cheeks — deliberate, not flushed.
+    for cx in (74, 182):
+        for ring in range(4, 0, -1):
+            rr = 20 * ring / 4
+            atlas.ellipse("head_front", (cx - rr, 150 - rr * 0.7, cx + rr, 150 + rr * 0.7),
+                          mix(skin, lip, 0.05 * (5 - ring)))
+
+    # ── hair ── a soft side-swept fringe framing the face. Dark at the crown,
+    # resolving toward smoke at the tips (the mesh ends fade to real smoke in
+    # VFX; here the colour makes the promise). The fringe is deliberately NOT a
+    # sharp centre part — a hard widow's-peak V plus low brows reads as a scowl.
+    atlas.box("head_front", (0, 0, 256, 46), hair)
+    # A gentle off-centre parting: a shallow, wide dip rather than a point.
+    atlas.polygon("head_front", [(0, 0), (256, 0), (256, 58), (168, 56), (118, 66), (92, 58), (0, 56)], hair)
+    # Side sweeps: long bangs down past the cheekbones, tapering, kept clear of
+    # the brow so the eyes have room to read.
+    for d, base in ((1, 0), (-1, 256)):
+        atlas.polygon("head_front", [
+            (base, 36), (base + d * 62, 50), (base + d * 50, 150),
+            (base + d * 30, 182), (base, 172),
+        ], hair)
+        for k in range(6):
+            sx = base + d * (12 + k * 8)
+            atlas.line("head_front", [(sx, 52), (sx + d * 8, 120), (sx - d * 2, 176)],
+                       mix(hair, hair_smoke, 0.12 + 0.12 * k), width=2)
+    for _ in range(90):
+        side = atlas.rng.choice((-1, 1))
+        x = 128 + side * atlas.rng.randint(74, 120)
+        y = atlas.rng.randint(150, 210)
+        atlas.ellipse("head_front", (x - 3, y - 3, x + 3, y + 3),
+                      mix(hair_smoke, skin, atlas.rng.uniform(0.0, 0.4)))
+
+    # ── brows ── thin, set HIGH and well apart, with a soft arch that falls away
+    # at the outer end. High + separated + thin reads as unbothered; low, thick
+    # and converging reads as angry. Barely engaged, which is the point.
+    for cx, d in ((80, 1), (176, -1)):
+        # inner end is higher and softer; the tail drops gently outward.
+        pts = [(cx - 22 * d, 82), (cx - 2 * d, 78), (cx + 20 * d, 82), (cx + 34 * d, 88)]
+        atlas.line("head_front", pts, mix(hair, skin, 0.5), width=3)
+        atlas.line("head_front", pts, mix(hair, skin, 0.3), width=2)
+
+    # ── eyes ── the heart of the read: HALF-LIDDED. A heavy upper lid comes down
+    # over the top ~40% of the iris and sits nearly level, so only a calm sliver
+    # of eye shows. Plum shadow on the lid above, a sharp winged flick out of the
+    # outer corner, and the outer corner set slightly LOWER than the inner — a
+    # downward-relaxed tilt, not the upward-tense one that reads as a glare.
+    for cx, d in ((84, 1), (176, -1)):
+        # Plum lid shadow filling the socket between brow and lid crease.
+        atlas.polygon("head_front", [
+            (cx - 26 * d, 98), (cx + 30 * d, 96), (cx + 34 * d, 110), (cx - 22 * d, 112),
+        ], mix(skin, plum_edge, 0.22))
+        atlas.polygon("head_front", [
+            (cx + 12 * d, 98), (cx + 32 * d, 98), (cx + 34 * d, 108), (cx + 14 * d, 108),
+        ], mix(skin, plum_edge, 0.42))
+        # The visible eye: a low, shallow almond. Inner corner higher than outer.
+        atlas.polygon("head_front", [
+            (cx - 24 * d, 118), (cx - 4 * d, 116), (cx + 18 * d, 117),
+            (cx + 30 * d, 122), (cx + 14 * d, 128), (cx - 12 * d, 127),
+        ], (236, 234, 233))
+        # Iris — plum — sitting low, its top eaten by the lid.
+        atlas.ellipse("head_front", (cx - 10, 115, cx + 10, 132), mix(plum, (0, 0, 0), 0.18))
+        atlas.ellipse("head_front", (cx - 9, 117, cx + 9, 131), mix(plum_edge, (0, 0, 0), 0.12))
+        atlas.ellipse("head_front", (cx - 4, 121, cx + 4, 129), (14, 12, 16))
+        atlas.ellipse("head_front", (cx - 3, 118, cx + 1, 122), (236, 232, 238))  # catchlight
+        # The heavy lid: a skin-toned hood dropping over the top of the iris to
+        # the crease, so the eye reads as mostly closed.
+        atlas.polygon("head_front", [
+            (cx - 24 * d, 112), (cx + 30 * d, 112), (cx + 30 * d, 119),
+            (cx + 16 * d, 117), (cx - 6 * d, 116), (cx - 24 * d, 118),
+        ], mix(skin, plum_edge, 0.10))
+        # The lid line itself — low, nearly level, thickening into the lashes.
+        atlas.line("head_front", [(cx - 24 * d, 118), (cx - 2 * d, 116), (cx + 20 * d, 117)],
+                   liner, width=4)
+        # Winged liner: a single elegant flick, angled down-and-out.
+        atlas.line("head_front", [(cx + 20 * d, 117), (cx + 40 * d, 116)], liner, width=3)
+        atlas.polygon("head_front", [
+            (cx + 24 * d, 119), (cx + 42 * d, 116), (cx + 30 * d, 121),
+        ], liner)
+        # A few upper lashes at the outer corner only — understated.
+        for k in range(3):
+            lx = cx + d * (12 + k * 6)
+            atlas.line("head_front", [(lx, 116), (lx + d * 4, 112)], liner, width=1)
+
+    # ── nose ── slim, just a pair of soft shadows and a small tip.
+    atlas.polygon("head_front", [(122, 116), (127, 158), (118, 160)], mix(skin, shadow, 0.28))
+    atlas.polygon("head_front", [(134, 116), (129, 158), (138, 160)], mix(skin, shadow, 0.16))
+    atlas.polygon("head_front", [(120, 158), (136, 158), (133, 166), (123, 166)], mix(skin, shadow, 0.22))
+
+    # ── lips ── muted plum, softly full, with a faint ASYMMETRIC smile: the
+    # portrait-right corner lifts while the left stays level. Amused, not
+    # smiling — she finds it tedious that it works. Kept small and unforced.
+    atlas.polygon("head_front", [
+        (110, 184), (128, 181), (148, 183), (146, 187), (128, 186), (112, 188),
+    ], mix(lip, skin, 0.12))                            # upper lip, soft
+    atlas.polygon("head_front", [
+        (112, 188), (128, 186), (146, 187), (143, 193), (128, 195), (115, 193),
+    ], lip)                                             # lower lip, fuller
+    # The parting line, tilted up on the right — the whole smirk lives here.
+    atlas.line("head_front", [(112, 188), (128, 186), (148, 182)], mix(lip, (0, 0, 0), 0.35), width=2)
+    atlas.line("head_front", [(148, 182), (154, 179)], mix(lip, (0, 0, 0), 0.35), width=2)
+    atlas.line("head_front", [(118, 191), (140, 191)], mix(skin, lip, 0.45), width=1)  # highlight
+
+    # ── beauty mark ── a single small dot, placed on purpose.
+    bm = face.get("beautyMark")
+    if bm:
+        mx = 96 if bm.get("side") == "left" else 160
+        my = 138 if bm.get("under") == "eye" else 150
+        atlas.ellipse("head_front", (mx - 2, my - 2, mx + 2, my + 2), mix(hair, skin, 0.2))
+
+    # ── back, sides, crown ── long dark hair, seen constantly under the 360°
+    # camera, with smoke bleeding into the lower ends.
+    atlas.fill("head_back", hair)
+    atlas.fill("head_sides", hair)
+    atlas.fill("crown", mix(hair, (0, 0, 0), 0.25))
+    for region in ("head_back", "head_sides"):
+        w, h = atlas.size(region)
+        for _ in range(360):
+            x, y = atlas.rng.randrange(w), atlas.rng.randrange(h)
+            ln = atlas.rng.randint(10, 34)
+            # Strands lower down carry more smoke; the tips dissolve.
+            t = y / h
+            tone = mix(hair, hair_smoke, min(0.6, t * 0.8)) if atlas.rng.random() < 0.6 \
+                else mix(hair, (0, 0, 0), 0.4)
+            atlas.line(region, [(x, y), (x + atlas.rng.randint(-3, 3), y + ln)], tone, width=1)
+        # A band of smoke along the bottom edge — where the length ends.
+        for _ in range(140):
+            x = atlas.rng.randrange(w)
+            y = atlas.rng.randint(int(h * 0.82), h - 1)
+            atlas.ellipse(region, (x - 4, y - 3, x + 4, y + 3),
+                          mix(hair_smoke, hair, atlas.rng.uniform(0.0, 0.5)))
+
+
 # ── the door ────────────────────────────────────────────────────────────────
 #
 # The tally marks are the whole character. One per person he didn't reach in
@@ -375,12 +534,20 @@ def paint_torso(atlas: Atlas, pal: dict) -> None:
 SWATCH_ORDER = LAYOUT["swatchOrder"]
 
 
-def paint_swatches(atlas: Atlas, pal: dict, magic: dict) -> None:
+def paint_swatches(atlas: Atlas, pal: dict, magic: dict,
+                   order: list | None = None, soft_names: set | None = None) -> None:
     """Flat colours for everything that needs no detail — limbs, boots, gloves.
 
     This is the economy of the whole approach: most of the body samples a single
     pixel from here, so only the face and the door cost real texture space.
+
+    `order` is the character's swatch list (Aegis's default lives in
+    atlas_layout.json; Wisp declares fabric-and-smoke instead). `soft_names`
+    names the cells that scuff rather than take bright metal gouges — pass the
+    whole set for an all-fabric character; the default (leather/skin) preserves
+    Aegis's worn-metal look exactly.
     """
+    order = order or SWATCH_ORDER
     w, h = atlas.size("swatches")
     cols, rows = LAYOUT["swatchGrid"]["cols"], LAYOUT["swatchGrid"]["rows"]
     cell_w, cell_h = w // cols, h // rows
@@ -399,14 +566,14 @@ def paint_swatches(atlas: Atlas, pal: dict, magic: dict) -> None:
     # a whole cell, so the wear painted here lands on every plate and boot.
     rng = atlas.rng
     for i in range(cols * rows):
-        name = SWATCH_ORDER[min(i, len(SWATCH_ORDER) - 1)]
+        name = order[min(i, len(order) - 1)]
         r, c = divmod(i, cols)
         x0, y0 = c * cell_w, r * cell_h
         x1, y1 = x0 + cell_w, y0 + cell_h
         base = lookup(name)
         atlas.box("swatches", (x0, y0, x1, y1), base)
 
-        soft = name in ("leather", "skin", "skinShadow")
+        soft = (name in soft_names) if soft_names is not None else name in ("leather", "skin", "skinShadow")
         dark = mix(base, (0, 0, 0), 0.55)
         light = mix(base, (255, 250, 240), 0.42)
 
@@ -449,11 +616,25 @@ def paint_swatches(atlas: Atlas, pal: dict, magic: dict) -> None:
 def build(spec: dict, seed: int) -> Image.Image:
     atlas = Atlas(seed)
     pal, magic = spec["palette"], spec["magic"]
-    paint_face(atlas, pal, spec["face"])
-    paint_torso(atlas, pal)
-    paint_swatches(atlas, pal, magic)
+    order = spec.get("swatchOrder", SWATCH_ORDER)
+
+    # Face and body surface dispatch on the character's material story. The wrap
+    # archetype (Wisp) is matte fabric and skin with a different face read; the
+    # plate archetype (Aegis) is worn metal. Adding one leaves the other exactly
+    # as it was.
+    if spec.get("garment", {}).get("kind") == "wrap":
+        paint_face_bored(atlas, pal, magic, spec["face"])
+        # The torso tube samples the `underlayer` swatch, not the torso region,
+        # so there is no plate to paint — just keep the region off pure black.
+        atlas.fill("torso", mix(hex_rgb(pal["underlayer"]), (0, 0, 0), 0.15))
+        paint_swatches(atlas, pal, magic, order=order, soft_names=set(order))
+    else:
+        paint_face(atlas, pal, spec["face"])
+        paint_torso(atlas, pal)
+        paint_swatches(atlas, pal, magic, order=order)
+
     door = (spec.get("weapon") or {}).get("mainHand")
-    if door:
+    if door and door.get("kind") == "door":
         paint_door(atlas, pal, door)
     # A whisper of blur knocks the hard pixel edges off the weathering without
     # softening the face, which is drawn large enough to survive it.
@@ -468,7 +649,8 @@ def verify(spec: dict, path: pathlib.Path) -> int:
     wrong colour — which looks like an art problem and is really an index bug.
     """
     img = Image.open(path).convert("RGB")
-    grid, order = LAYOUT["swatchGrid"], LAYOUT["swatchOrder"]
+    grid = LAYOUT["swatchGrid"]
+    order = spec.get("swatchOrder", LAYOUT["swatchOrder"])
     x0, y0, x1, y1 = REGION["swatches"]
     cw, ch = (x1 - x0) / grid["cols"], (y1 - y0) / grid["rows"]
     pad = LAYOUT.get("swatchInset", 4)
