@@ -789,14 +789,14 @@ blender --background --python tools/art/generate_prop.py -- proving-floor wall
 ```
 
 That reads `data/props/<theme>.json`, builds each role's mesh, and writes
-`packages/client/public/models/props/<theme>_<role>.glb` plus a `manifest.json` beside it
+`packages/client/public/models/props/<theme>_<role>_<i>.glb` — one file per variant — plus a `manifest.json` beside them
 (content-hashed for cache-busting, same reason as the character manifest). **Commit the
 `.glb` and the manifest** — like `aegis.glb`, they are runtime assets under `public/models/`
 and the asset budget counts them there.
 
 | Script | Blender? | Reads | Produces |
 |---|---|---|---|
-| `generate_prop.py` | yes | `data/props/<theme>.json` | `public/models/props/<theme>_<role>.glb` + `manifest.json` |
+| `generate_prop.py` | yes | `data/props/<theme>.json` | `public/models/props/<theme>_<role>_<i>.glb` (one per variant) + `manifest.json` |
 | `prop-placement.ts` | — (client) | — | the per-tile variant + yaw, hashed from `(mapId, x, y)` |
 
 ### Why it does not reuse the character generator
@@ -829,6 +829,24 @@ helpers would drag the whole atlas contract into terrain for no benefit.
 > **Fail soft.** A theme with no prop `.glb` renders the plain terrain box, exactly as today.
 > The renderer swap is gated on the manifest existing; a missing or 404ing prop is the box,
 > not a broken board — the identical posture as a missing character model.
+
+### Variety and cohesion — a role is a list, and fences align to their run
+
+A role in `data/props/<theme>.json` is a **list of `variants`**, not one prop. The board picks
+one per tile by a hash of `(mapId, x, y)`, so a run of walls is no longer the same column
+repeated — Proving Floor ships three wall variants (fluted, broken, heavy) and three cover
+variants (stakes, tall stakes, stone block). Adding another is a data change: append a variant
+object with its `kind` and params; `generate_prop.py` builds and numbers it and the renderer
+picks it up. The generator dry-runs every variant's geometry (base at floor, top at height,
+inside a tile) before it ships, so a bad variant is caught in the repo, not on the board.
+
+**Orientation of cover is the map's job, not the prop's.** A cover tile carries a per-tile
+`facing` (`N`/`S`/`E`/`W`) — the COVER-EDGE system — and the renderer sits the chosen barricade
+variant on that tile boundary, turns it to run along the edge, and stretches it to crouch-cover
+height. So variety here is *which* barricade a tile shows (hashed variant) while the map decides
+*which way it faces*. Walls have no facing and take a hashed quarter-turn for variety. **True
+autotiling — end caps where a run stops, corner pieces where it turns — is the next step**, and it
+wants meshes built for it (a wall *segment* that tiles seamlessly, an *end*, a *corner*).
 
 ### Art direction is per theme, and it is the owner's
 

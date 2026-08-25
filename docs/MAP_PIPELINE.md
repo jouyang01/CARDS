@@ -155,6 +155,15 @@ browser suite sets), for the same reason models are: a prop is an async asset th
 frame, and the pixel tests need the plain boxes they were written against. Verified in a real
 browser on duel-arena; the 36-test suite stays green with props off.
 
+**Variety, cohesion and the low-angle fade landed next (session 23).** A role is now a list of
+`variants` picked per tile by hash (Proving Floor: three wall, three cover), so a run is no longer
+one prop repeated (orientation stays the map's job via COVER-EDGE's per-tile `facing`, which the
+renderer honours when placing the chosen variant); and props ghost toward transparent as the orbit drops to
+a low angle (`propOpacity`, applied from `applyCamera`), the Atlas-Reactor answer to a tall pillar
+hiding the board. All three are off in the browser suite with the rest of the props. **Next: true
+autotiling** — end caps and corner meshes chosen by the neighbour mask the renderer already computes
+— and the spectator tiers / skyline beyond the platform.
+
 Walls and cover become themed meshes; the space beyond the platform gets a skyline. Two rules:
 
 - **Selection is deterministic** — hashed from `(mapId, x, y)`, never `Math.random()`. Same

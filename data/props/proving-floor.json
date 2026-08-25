@@ -1,27 +1,190 @@
 {
   "theme": "proving-floor",
-  "note": "Colosseum set dressing for the Proving Floor arena. Phase 0 art direction (owner): a ceremonial duelling platform ringed by spectators — standing stone pillars where the map has walls, rough wooden stake barricades where it has cover. Everything here is authored in TILES and placed 1:1 (a prop is NOT auto-scaled the way a character is): a pillar is exactly WALL_HEIGHT tall and a barricade exactly COVER_HEIGHT, so replacing a terrain box with its prop cannot change what the square reads as. Colours are deliberately neutral stone and dark wood — MAP_PIPELINE §4 forbids a permanent fixture landing in a saturated UI colour family (the amber AoE, the team hues), and a bleached-limestone grey (r≈g≈b) or a dark brown (every channel well under 130) sits clear of all of them. The stone matches the theme's own wall colour so a pillar and a plain wall tile read as the same material.",
+  "note": "Colosseum set dressing for the Proving Floor / Proving Grounds arena. Phase 0 art direction (owner): a ceremonial duelling platform ringed by spectators \u2014 standing stone where the map has walls, rough gladiatorial cover where it has cover. Each role is a LIST of interchangeable variants; the board picks one per tile by a hash of the square, so a run is no longer the same mesh repeated. Everything is authored in TILES and placed 1:1 \u2014 a wall prop is exactly WALL_HEIGHT (0.9) tall, a cover prop exactly COVER_HEIGHT (0.45) \u2014 so a prop cannot change what a square reads as. Colours are neutral stone and dark wood: MAP_PIPELINE \u00a74 forbids a permanent fixture landing in a saturated UI colour family, and greys (r\u2248g\u2248b) and dark wood (every channel well under 130) sit clear of the amber AoE and the team hues. ORIENTATION of cover is NOT set here: the map authors a per-tile `facing` (COVER-EDGE) and the renderer sits the barricade on that edge and turns it along the boundary, stretched to crouch height. Walls have no facing and take a hashed quarter-turn per tile for variety.",
   "props": {
     "wall": {
-      "kind": "pillar",
-      "comment": "A standing colosseum column: square plinth, gently tapered fluted shaft, flared capital. Radially near-symmetric, so it may take any quarter-turn per tile.",
       "yawSteps": 4,
       "height": 0.9,
-      "plinth": { "height": 0.11, "width": 0.84 },
-      "shaft": { "exponent": 4.0, "sides": 16, "bottomWidth": 0.62, "topWidth": 0.5, "flutes": 8, "fluteDepth": 0.012 },
-      "capital": { "height": 0.1, "width": 0.78 },
-      "palette": { "shaft": "#d8d5cd", "plinth": "#b7b3aa", "capital": "#cbc7bf" }
+      "variants": [
+        {
+          "kind": "pillar",
+          "comment": "The standing fluted column: square plinth, tapered fluted shaft, flared capital.",
+          "height": 0.9,
+          "plinth": {
+            "height": 0.11,
+            "width": 0.84
+          },
+          "shaft": {
+            "exponent": 4.0,
+            "sides": 16,
+            "bottomWidth": 0.62,
+            "topWidth": 0.5,
+            "flutes": 8,
+            "fluteDepth": 0.012
+          },
+          "capital": {
+            "height": 0.1,
+            "width": 0.78
+          },
+          "palette": {
+            "shaft": "#d8d5cd",
+            "plinth": "#b7b3aa",
+            "capital": "#cbc7bf"
+          }
+        },
+        {
+          "kind": "pillar",
+          "comment": "A broken column: no capital, the shaft snapped short and uneven, fallen chunks at the base. Reads as a ruin but still fills the wall square.",
+          "height": 0.9,
+          "plinth": {
+            "height": 0.13,
+            "width": 0.82
+          },
+          "shaft": {
+            "exponent": 4.0,
+            "sides": 16,
+            "bottomWidth": 0.6,
+            "topWidth": 0.52,
+            "flutes": 8,
+            "fluteDepth": 0.012
+          },
+          "broken": {
+            "jag": 0.16,
+            "rubble": [
+              [
+                0.3,
+                0.18,
+                0.15
+              ],
+              [
+                -0.28,
+                -0.2,
+                0.12
+              ],
+              [
+                0.16,
+                -0.31,
+                0.1
+              ],
+              [
+                -0.22,
+                0.27,
+                0.09
+              ]
+            ]
+          },
+          "palette": {
+            "shaft": "#cfcbc2",
+            "plinth": "#b2aea5",
+            "rubble": "#a7a299"
+          }
+        },
+        {
+          "kind": "pillar",
+          "comment": "A heavy, squat column \u2014 thicker shaft, deeper flutes, a broad plinth and capital. Weight and variety next to the slender fluted one.",
+          "height": 0.9,
+          "plinth": {
+            "height": 0.14,
+            "width": 0.9
+          },
+          "shaft": {
+            "exponent": 5.0,
+            "sides": 16,
+            "bottomWidth": 0.74,
+            "topWidth": 0.66,
+            "flutes": 6,
+            "fluteDepth": 0.018
+          },
+          "capital": {
+            "height": 0.13,
+            "width": 0.86
+          },
+          "palette": {
+            "shaft": "#cec9c0",
+            "plinth": "#a8a49b",
+            "capital": "#c2beb5"
+          }
+        }
+      ]
     },
     "cover": {
-      "kind": "barricade",
-      "comment": "A rough wooden stake barricade: four uneven vertical stakes lashed to a crossbar between two heavier end posts. Has a facing (it is a fence, not a column), so it only takes a half-turn — never a quarter — or it would stand edge-on and stop reading as a wall of stakes.",
       "yawSteps": 2,
       "height": 0.45,
-      "footprint": 0.9,
-      "posts": { "width": 0.11, "thickness": 0.11 },
-      "stakes": { "count": 4, "width": 0.1, "thickness": 0.07, "topJitter": [0.0, -0.06, -0.03, -0.09] },
-      "rail": { "atFrac": 0.66, "height": 0.07, "thickness": 0.09 },
-      "palette": { "wood": "#5a4632", "woodDark": "#42301f" }
+      "variants": [
+        {
+          "kind": "barricade",
+          "comment": "The rough wooden stake barricade: four uneven stakes lashed to a crossbar between two heavier posts.",
+          "height": 0.45,
+          "footprint": 0.9,
+          "posts": {
+            "width": 0.11,
+            "thickness": 0.11
+          },
+          "stakes": {
+            "count": 4,
+            "width": 0.1,
+            "thickness": 0.07,
+            "topJitter": [
+              0.0,
+              -0.06,
+              -0.03,
+              -0.09
+            ]
+          },
+          "rail": {
+            "atFrac": 0.66,
+            "height": 0.07,
+            "thickness": 0.09
+          },
+          "palette": {
+            "wood": "#5a4632",
+            "woodDark": "#42301f"
+          }
+        },
+        {
+          "kind": "barricade",
+          "comment": "A denser, taller barricade \u2014 five stakes and a higher crossbar. A heavier stretch of the same fence line.",
+          "height": 0.45,
+          "footprint": 0.9,
+          "posts": {
+            "width": 0.12,
+            "thickness": 0.12
+          },
+          "stakes": {
+            "count": 5,
+            "width": 0.09,
+            "thickness": 0.07,
+            "topJitter": [
+              -0.02,
+              0.0,
+              -0.05,
+              -0.02,
+              -0.07
+            ]
+          },
+          "rail": {
+            "atFrac": 0.72,
+            "height": 0.08,
+            "thickness": 0.1
+          },
+          "palette": {
+            "wood": "#544031",
+            "woodDark": "#3c2c1d"
+          }
+        },
+        {
+          "kind": "block",
+          "comment": "A stone block / low altar: a broad base course with a narrower slab on top. Masonry cover between the wooden stretches.",
+          "height": 0.45,
+          "footprint": 0.86,
+          "baseHeight": 0.32,
+          "capInset": 0.14,
+          "palette": {
+            "stone": "#8a857b",
+            "cap": "#a49e93"
+          }
+        }
+      ]
     }
   }
 }

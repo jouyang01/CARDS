@@ -7120,3 +7120,49 @@ specified. The content symmetry guard now checks the facing flips too. Renderer 
 edge cover as a thin barricade slab shoved to its faced edge (full-block cover keeps
 its box); the prop-swap fallback and pixel baseline may want a refresh when props are
 re-screenshotted.
+## 2026-08-24 — Session 23 (Builder): prop variety and the low-angle fade (cohesion taken from parallel COVER-EDGE work)
+
+Two owner asks against the shipped props: they occlude the board at a low camera angle, and every
+tile is the identical mesh. Both are addressed; the second is addressed as far as it can be without
+another Blender run, and the deeper half is designed and staged.
+
+**The fade — pitch-based, and a true no-op where it must be.** At a low orbit a tall pillar stands
+between the camera and half the board, so props ghost toward a 0.18 opacity as the pitch drops below
+the isometric default, exactly as Atlas Reactor does. It is pitch-based rather than per-occluder
+because that is the whole of the ask ("when the camera is low, make them transparent") and it is one
+opacity on the shared prop materials — no per-object raycast, no surprise when the player looks
+straight down at a prop. The curve is a pure tested function; it applies from `applyCamera`, so it
+costs nothing on a still board, and it flips `transparent` only on the threshold crossing (that flag
+recompiles the shader; the opacity does not). A board with no props has no prop materials, so it is
+invisible to the props-off suite.
+
+**Variety — a role is a list now.** `data/props/<theme>.json` moved from one prop per role to a
+`variants` array, and the board picks one per tile by the same `(mapId, x, y)` hash the yaw uses (a
+decorrelated slice of it, so orientation and variant are independent). Proving Floor gained a broken
+column and a heavy column for walls, and a tall barricade and a stone block for cover — five new
+meshes, all from the proven builders plus one new box-composition (`block`), so the risk of building
+blind stayed low. The generator dry-run was extended to check every variant, and it passed all six
+on the invariants that matter (base at floor, top at height, inside a tile).
+
+**Cohesion — my inferred version was superseded by parallel work, and I took theirs.** I built a
+`runYaw` that orients a fence along its *inferred* neighbour run. While I did, the Proving Grounds
+rebuild (#157) plus COVER-EDGE (#158–#160) landed on main and solve the same problem better: a cover
+tile carries an *authored* per-tile `facing`, and the renderer sits the barricade on that edge, turns
+it along the boundary, and stretches it to crouch height. Authored beats inferred — it also does
+edge-placement and height, which inference cannot — so on the rebase I dropped my `runYaw`/
+`Neighbours` entirely and merged my **variant selection** into their facing placement: the map says
+which way a cover tile faces, the hash says which barricade it shows. What survives from my session is
+the two things their work did not do — **variety** (a role is a list of variants) and the **low-angle
+fade**. **v2 is still true autotiling** — end caps, corners, seamless segments — chosen by the same
+per-tile facing, and still a Blender build to see and iterate, not something to author blind.
+
+**Judgment call — the renderer reads both manifest formats.** The new generator writes a `variants`
+array; the currently-committed manifest is the old single-`file` format. Rather than leave the board
+on boxes until the owner re-runs Blender, the loader falls back to a single-variant read of a legacy
+entry, so the existing props keep rendering through the transition and the new variants light up the
+moment the rebuilt manifest lands. The generator also sweeps the old un-indexed `.glb` so the folder
+does not accrete orphans across the format change.
+
+**Handoff:** the owner re-runs `generate_prop.py -- proving-floor` on the Blender machine to produce
+the six variant `.glb` and the new manifest, commits them, and the variety + fence-alignment become
+visible. The fade needs no asset and is live now.
