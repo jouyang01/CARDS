@@ -968,10 +968,29 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
   const covered = (img: Image): number => brush.filter((p) => !isBrushGreen(pixelAt(img, p.x, p.y))).length;
   const aimed = (img: Image): number => brush.filter((p) => isAimOrange(pixelAt(img, p.x, p.y))).length;
 
-  // Candidates spread across both bands: only one of them is inside any given
-  // ability's range, and which one depends on where the seat's units spawned.
-  const step = Math.max(1, Math.floor(brush.length / 6));
-  const candidates = Array.from({ length: 6 }, (_, i) => brush[i * step]).filter((p) => p !== undefined);
+  // Candidates are the brush NEAREST THE CASTER, not a spread across the map.
+  //
+  // Spreading them evenly over every lit brush pixel was right when the camera
+  // framed the whole board and the map was 17 wide. On Iron Basin's 22x19 an
+  // even spread puts most samples a dozen squares from a seat that spawns at
+  // x=4, and no ability reaches any of them — the coarse half passed on the
+  // range wash while `bestAimed` stayed 0, which reads as "brush ate the
+  // overlay" and means "nothing was ever aimed at brush".
+  //
+  // Since CAMERA-CONTROLS the planning camera centres on the character being
+  // ordered, so distance from the frame centre IS distance from the caster.
+  // Sorting by it and keeping a spread-out handful is the same correction
+  // DASH-CAT-ROUTE needed, for the same reason.
+  const mid = { x: bare.width / 2, y: bare.height / 2 };
+  const near = [...brush].sort((a2, b2) =>
+    Math.hypot(a2.x - mid.x, a2.y - mid.y) - Math.hypot(b2.x - mid.x, b2.y - mid.y));
+  // …spread out, so six samples are six squares rather than six pixels of one.
+  const SPREAD_PX = 30;
+  const candidates: { x: number; y: number }[] = [];
+  for (const p of near) {
+    if (candidates.length >= 6) break;
+    if (candidates.every((c) => Math.hypot(c.x - p.x, c.y - p.y) > SPREAD_PX)) candidates.push(p);
+  }
 
   const abilities = page.locator('.hud-ability:not([disabled])');
   const count = await abilities.count();
