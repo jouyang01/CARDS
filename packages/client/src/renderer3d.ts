@@ -63,7 +63,7 @@ import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
 import { browserRenderOnDemand } from './render-flags.js';
 import { rimBreath } from './ambient-motion.js';
-import { placeProp } from './prop-placement.js';
+import { placeProp, propOpacity } from './prop-placement.js';
 import { easeCamera } from './camera-ease.js';
 import { clampCentre, panDelta } from './camera-pan.js';
 
@@ -1355,6 +1355,11 @@ export function createRenderer(
   const propGroup = new Group();
   propGroup.name = 'props';
   world.add(propGroup);
+  // PROP-FADE: the distinct materials the loaded props share, so a single
+  // opacity per material ghosts every pillar and barricade at a low camera
+  // angle (see `applyCamera`). Collected as templates load; empty until then,
+  // which is why the fade in `applyCamera` is a no-op on a board with no props.
+  const propMaterials = new Set<MeshStandardMaterial>();
 
   const loadProps = async (): Promise<void> => {
     try {
@@ -1384,7 +1389,15 @@ export function createRenderer(
           continue;
         }
         template.traverse((o) => {
-          if ((o as Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; }
+          const mesh = o as Mesh;
+          if (!mesh.isMesh) return;
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          // Clones share these materials, so setting opacity on them fades every
+          // instance at once — exactly the global pitch-fade we want.
+          for (const mat of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+            propMaterials.add(mat as MeshStandardMaterial);
+          }
         });
         for (const sq of squares) {
           const inst = template.clone(true);
@@ -1412,6 +1425,7 @@ export function createRenderer(
           if (box !== undefined) box.visible = false;
         }
       }
+      fadeProps();   // set the opacity for the pitch the camera is already at
       markDirty();
     } catch (err) {
       // The whole load failing is ordinary — an older build with no props, a
@@ -1810,7 +1824,29 @@ export function createRenderer(
     camera.up.set(0, 1, 0);
     camera.lookAt(target);
     camera.updateProjectionMatrix();
+    fadeProps();
   }
+
+  // PROP-FADE: ghost the props toward transparent as the orbit drops to a low
+  // angle, so a tall pillar never hides the unit behind it (Atlas Reactor does
+  // the same). Runs from `applyCamera`, i.e. on every camera change, so it costs
+  // nothing on a still board and needs no per-frame tick. `transparent` is
+  // flipped only when it actually changes — that flag forces a shader recompile,
+  // the opacity does not — and depth is written only while essentially opaque so
+  // a ghosted pillar does not occlude what is drawn behind it.
+  const fadeProps = (): void => {
+    if (propMaterials.size === 0) return;
+    const opacity = propOpacity(pitchDeg);
+    const ghost = opacity < 0.99;
+    for (const mat of propMaterials) {
+      mat.opacity = opacity;
+      if (mat.transparent !== ghost) {
+        mat.transparent = ghost;
+        mat.depthWrite = !ghost;
+        mat.needsUpdate = true;
+      }
+    }
+  };
 
   /**
    * UI-VIEWPORT — how much of the canvas is covered by chrome, in CSS pixels.
