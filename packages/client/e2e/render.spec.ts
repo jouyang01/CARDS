@@ -1091,9 +1091,23 @@ test('aiming Shift draws a yellow route to its landing square (DASH-CAT-ROUTE)',
   const before = countPixels(await pixels(page), isDashYellow);
 
   await page.locator('.hud-catalyst').nth(1).click(); // Shift
-  // Shift reaches 3, so sweep close to the unit rather than across the board.
+  // Shift reaches 3, and since CAMERA-CONTROLS the planning camera is centred
+  // on the character being ordered — so the caster is at the middle of the
+  // FRAME, and "within three squares" is a small ring around 0.5, not a fifth
+  // of the way across the board.
+  //
+  // The four hard-coded points this replaces were measured against a camera
+  // that framed the whole board, on a map that has since been rebuilt. Rather
+  // than re-measure them into the next reframing, sweep a ring: every offset
+  // that could be three squares at any zoom, in four directions, and stop at
+  // the first one that paints. Map-independent by construction, which is the
+  // property the old version lacked.
   let painted = before;
-  for (const [fx, fy] of [[0.30, 0.5], [0.26, 0.42], [0.34, 0.58], [0.30, 0.62]] as const) {
+  const OFFSETS = [0.03, 0.06, 0.09, 0.12, 0.16, 0.20];
+  const RING = OFFSETS.flatMap((d) => [
+    [0.5 - d, 0.5], [0.5 + d, 0.5], [0.5, 0.5 - d], [0.5, 0.5 + d],
+  ] as const);
+  for (const [fx, fy] of RING) {
     await pointAt(page, fx, fy);
     painted = Math.max(painted, countPixels(await pixels(page), isDashYellow));
     if (painted > before) break;
