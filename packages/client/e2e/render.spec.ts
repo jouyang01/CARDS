@@ -226,20 +226,39 @@ async function clickAt(page: Page, fx: number, fy: number): Promise<void> {
  */
 const blueBodies = (image: Image): { x: number; y: number }[] => {
   let rest = findPixels(image, isFriendly, 2);
-  const out: { x: number; y: number }[] = [];
-  // Two characters per seat, and a peel per body; the floor drops the route
-  // line and antialiased fringes, which are not units.
-  for (let i = 0; i < 4 && rest.length > 60; i++) {
+  const blobs: { x: number; y: number }[] = [];
+  // Up to EIGHT peels, not four: since FOF-UNITS a character is drawn as a body
+  // *and* a foot ring in the same colour, so one unit can yield two blobs.
+  for (let i = 0; i < 8 && rest.length > 60; i++) {
     const blob = largestCluster(rest, 6);
     if (blob.length < 60) break;
     const seen = new Set(blob.map((p) => `${p.x},${p.y}`));
     rest = rest.filter((p) => !seen.has(`${p.x},${p.y}`));
-    out.push({
+    blobs.push({
       x: Math.round(blob.reduce((s, p) => s + p.x, 0) / blob.length),
       y: Math.round(blob.reduce((s, p) => s + p.y, 0) / blob.length),
     });
   }
-  return out.sort((a, b) => a.y - b.y || a.x - b.x);
+  // …and then a body and the ring under it are folded back into one character.
+  //
+  // This is what FOF-UNITS broke here, and it broke a *drive* rather than an
+  // assertion, which is the expensive kind. BODY-CLICK takes `[1]` as "the
+  // seat's other character"; with rings peeled as separate blobs, `[1]` became
+  // the FIRST character's ring — so the drive clicked the tile the selected
+  // unit was already standing on, and "clicking a character produced no
+  // movement" was true and meant nothing.
+  //
+  // Concentric is the tell: a ring is centred on the body above it, and two
+  // real characters spawn two squares apart. `MERGE_PX` sits between those —
+  // comfortably wider than the body-to-ring offset the pitched camera opens up,
+  // and far narrower than the gap between two units.
+  const MERGE_PX = 48;
+  const merged: { x: number; y: number }[] = [];
+  for (const b of blobs) {
+    const near = merged.find((m) => Math.hypot(m.x - b.x, m.y - b.y) < MERGE_PX);
+    if (near === undefined) merged.push(b);
+  }
+  return merged.sort((a, b) => a.y - b.y || a.x - b.x);
 };
 
 /**
