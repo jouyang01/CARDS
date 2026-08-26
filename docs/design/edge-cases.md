@@ -1105,13 +1105,25 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   `visibleSquaresForTeam` gate. (If the owner later wants own-traps hidden even from their placer,
   that is a separate call; the directive says "the team … who can see it", so own-team-always is
   the reading.)
-- **PROPOSED — FOF-COLORS: friend/foe colour is VIEWER-RELATIVE, not absolute team number (owner Dev Note
-  2026-10-05; backlog FOF-UNITS + FOF-OVERLAYS; client).** The client colours units by **absolute team**
-  today — `unit.owner === 0 ? team0(blue) : team1(red)` (`renderer3d.ts:1645`) — so a player seated on
-  **team 1 sees themselves red and the enemy blue**, backwards from the Atlas-Reactor convention the owner
-  is asking for (and there is already a `renderer3d.ts:2306` comment admitting a colour is *"only right when
-  the viewer is team 0"*). **Ruling:** colour is decided from the **viewer's** seat, so the answer to
-  "friend or foe" never depends on which team *number* you drew — the mirror-matchup problem this fixes.
+- **RULED — FOF-COLORS: friend/foe colour is VIEWER-RELATIVE, not absolute team number (owner Dev Note
+  2026-10-05; SHIPPED PR #170/#173, refined by the same-day playtest; client).** The client used to colour
+  units by **absolute team** — `unit.owner === 0 ? team0(blue) : team1(red)` — so a player seated on **team 1
+  saw themselves red and the enemy blue**, backwards from the Atlas-Reactor convention. **Colour is now
+  decided from the viewer**, so "friend or foe" never depends on which team *number* you drew — the
+  mirror-matchup problem, fixed.
+  - **The unit of "self" is the PERSON, not the seat row (FOF-LOCAL, playtest 2026-10-05).** `seatUnitIds`
+    is the **seat's** units when networked and **the whole team** in hot-seat — because a 2v2 hot-seat splits
+    a team into two one-character seats that are one human passing the board to themselves, so the other
+    character is not an "ally" locally. **Self = the characters you are controlling; ally = the characters a
+    *different person* (across the wire) controls.** Hot-seat therefore shows the whole own team blue (no
+    green); green appears only in networked play. This *narrows* the ruling, it does not contradict it — the
+    networked case (seat == person) is the one the ruling was written for.
+  - **Two shipped-and-fixed playtest gotchas, recorded as shapes:** (a) locking in the last character runs
+    `seatIdx` past `seats`, and a viewer built from `seats[seatIdx] ?? team-0-with-empty-set` made every
+    own-team unit fall from self to ally — *"a wrong answer wearing a default's clothes"*; the fix falls back
+    to the last seat that was on the clock, so the committer watches resolution from their own side. (b) On a
+    self-illuminated edge bar, colour lives in **both** `color` and `emissive`; repainting one leaves the
+    constructed white — "setting one is always a bug" on a glowing material.
   - **Three unit colours, viewer-relative:** the units the **viewer's seat controls** = **self (blue)**;
     other units on the **viewer's team** = **ally (green)**; the **enemy team** = **foe (red)**. Applied to
     the model tint/outline, a **ring beneath each unit's feet**, and the **nameplate**. Consistent even in a
