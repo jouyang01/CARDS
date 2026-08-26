@@ -7550,3 +7550,34 @@ so their variety is silhouette, not height.
 **Regenerated in-container.** Blender 4.0.2 + `python3-numpy` installed in the session, so the six
 `.glb` were rebuilt here and verified in the browser rather than handed back for a manual run.
 Palette albedos stay under the value-budget ceiling (185).
+
+---
+
+## 2026-08-26 — MODEL-PRELOAD (owner playtest)
+
+**Owner playtest — *"Aegis does not render if he is on the opposing team, I only see a red block."***
+A rigged character that is never fetched draws the box fallback, and since FOF-UNITS the box wears
+the unit's FoF colour — so an unfetched enemy is, precisely, a red block. The fetch list came from
+`state.units`, and a **networked** client's state is team-filtered by the server: enemy units it
+cannot see are *absent from the array* rather than blanked (`packages/server/src/view.ts:69`). So
+the client asked only for its own characters, and when an enemy finally walked into vision there was
+nothing loaded to build it from — **permanently**, because `staleUnitGroups` swaps a box for a model
+only once that character IS loaded, and that one never would be. Now taken from `teams`, the lobby's
+picks for both sides.
+
+**Pre-existing, and FOF-UNITS is why it got reported.** Under absolute team colour the unfetched
+enemy was a blue *or* red block depending on which number they drew, which reads as "a unit"; under
+friend/foe it is reliably red, which reads as "the enemy is a block". The colour change did not
+cause it, it made it legible — worth recording because the instinct on a playtest report arriving
+right after a change is to assume the change caused it, and here the honest answer is that it only
+made an old bug visible.
+
+**Why `teams` is the honest source rather than a leak.** *Who* is in a match is public: you pick
+from a roster and see what the other side picked. Golden rule #5 hides **orders**; fog hides
+**positions**. Neither hides the cast list, so a model fetched before its owner is visible reveals
+nothing a player has not already read off the lobby.
+
+**It could only ever have been seen in a networked match**, because hot-seat holds the whole state
+and preloaded both sides. That is also why no test caught it: every model test drives hot-seat.
+`model-preload.test.ts` is written the other way round on purpose — it hands the controller a
+team-filtered opening, which is what a networked client actually receives.

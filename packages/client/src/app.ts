@@ -797,14 +797,33 @@ export function startHotSeat(
   // board was already up" is the supported path rather than a race.
   //
   // Only the characters actually in this match — four at most in 2v2, eight in
-  // 4v4. Preloading the roster would fetch megabytes of art for characters
-  // nobody picked.
+  // 4v4. Preloading the whole catalog would fetch megabytes of art for
+  // characters nobody picked.
+  //
+  // Taken from **`teams`, not from `state.units`**, and that is the fix for
+  // "Aegis does not render if he is on the opposing team — I only see a red
+  // block". A networked client's state is team-filtered by the server: enemy
+  // units it cannot see are *absent from the array* (`server/src/view.ts`),
+  // not blanked. So reading `state.units` here fetched only this client's own
+  // characters, and when an enemy finally walked into vision `models.instance`
+  // had nothing for it and drew the box fallback — permanently, because
+  // `staleUnitGroups` rebuilds a box only once its character IS loaded, and
+  // that one never would be.
+  //
+  // `teams` is the lobby's picks for both sides, which is why it is the honest
+  // source: **who** is in a match is public — you choose from a roster and see
+  // what the other side chose. Golden rule #5 hides *orders* and fog hides
+  // *positions*; neither hides the cast list, and a model fetched early reveals
+  // nothing a player has not already read off the lobby.
+  //
+  // Invisible in hot-seat, which is why it survived this long: there `state` is
+  // the whole match, so both sides preloaded and every model arrived.
   // MODEL-FREEZE: skipped when `?models=off`, which the browser suite sets. The
   // models render ~3x slower under SwiftShader and land at an arbitrary moment,
   // and that combination is what took the pixel suite from 3 failures to 14 —
   // all of them timeouts. See `render-flags.ts`.
   if (browserModels()) {
-    void renderer.preloadCharacters([...new Set(state.units.map((u) => u.characterId))]);
+    void renderer.preloadCharacters([...new Set(teams.flat().map((c) => c.id))]);
   }
 
   /**
