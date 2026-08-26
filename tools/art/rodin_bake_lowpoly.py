@@ -341,6 +341,13 @@ def main():
         tex.image = bpy.data.images.load(str(png))   # painted (or plain) texture
     low = token
 
+    # Emit the texture under the name build_glb.py looks for (<id>_atlas.png), so
+    # after Mixamo rigging `build_glb.py -- <id> <folder>` textures the rig with
+    # no manual copy. Same pixels as <id>_baked.png; both are written.
+    atlas = out_dir / f"{args.id}_atlas.png"
+    atlas.write_bytes(png.read_bytes())
+    print(f"wrote {atlas.relative_to(ROOT)} (for build_glb.py)")
+
     glb = out_dir / f"{args.id}_token.glb"
     bpy.ops.object.select_all(action="DESELECT")
     low.select_set(True)

@@ -63,6 +63,46 @@ def slug(name: str) -> str:
     return re.sub(r"_+", "_", s)
 
 
+def action_fcurves(action):
+    """Every F-curve of an action, across Blender's old and slotted layouts."""
+    fc = getattr(action, "fcurves", None)
+    if fc is not None and len(fc):
+        return list(fc)
+    out = []
+    for layer in getattr(action, "layers", []) or []:
+        for strip in getattr(layer, "strips", []) or []:
+            for bag in getattr(strip, "channelbags", []) or []:
+                out.extend(getattr(bag, "fcurves", []) or [])
+    return out
+
+
+def strip_root_motion(action):
+    """Pin the Hips horizontal translation to its first frame — an "In Place" pass.
+
+    The engine owns unit position, so a clip that also travels drifts the unit off
+    its square. Mixamo's In Place export does this, but the toggle is not offered
+    for every animation; this reproduces it for those. After the FBX import
+    (automatic_bone_orientation), the Mixamo Hips' local Y (index 1) points up the
+    spine — world-vertical — so it is KEPT (the fall in a death/knockback stays);
+    local X and Z (indices 0 and 2) are the horizontal plane and are flattened.
+    """
+    n = 0
+    for fc in action_fcurves(action):
+        dp = fc.data_path
+        if dp.endswith(".location") and "Hips" in dp and fc.array_index in (0, 2):
+            pts = fc.keyframe_points
+            if not len(pts):
+                continue
+            base = pts[0].co[1]
+            for kp in pts:
+                kp.co[1] = base
+                kp.handle_left[1] = base
+                kp.handle_right[1] = base
+            fc.update()
+            n += 1
+    return n
+
+
 def clear_scene():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
@@ -159,9 +199,11 @@ def read_glb_animations(path):
 
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    in_place = "--in-place" in argv
+    argv = [a for a in argv if a != "--in-place"]
     if len(argv) < 2:
         print("usage: blender --background --python tools/art/build_glb.py "
-              "-- <id> <mixamo-folder>")
+              "-- <id> <mixamo-folder> [--in-place]")
         sys.exit(2)
     cid, folder = argv[0], pathlib.Path(argv[1]).expanduser()
     if not folder.is_dir():
@@ -238,6 +280,8 @@ def main():
                 action.name = slug(path.stem)
                 action.use_fake_user = True      # survives the armature's deletion
                 clips.append(action.name)
+                if in_place:
+                    strip_root_motion(action)    # flatten Hips horizontal drift
                 n = curve_count(action)
                 travel = root_travel(arm, action)
                 flag = ""
