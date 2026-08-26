@@ -467,6 +467,32 @@ function nearCap(a: number, b: number, d2: number, range: number): boolean {
  * The principle CIRCLE-FIX and CONE-B share: **a number in `data/` is the
  * footprint you get.** The engine derives whatever internal region produces it,
  * never the reverse. Wall and out-of-bounds squares are excluded.
+ *
+ * **AOE-LoS — a wall shelters, and the blast reads from its CENTRE.** A tile
+ * inside the radius is in the disc only if the centre can *see* it
+ * (`hasLineOfSight`, walls-only, integer-exact). Dropping the wall tiles was
+ * never enough: the explosion still washed around the far side of a pillar and
+ * caught whoever had taken shelter behind it, which is the owner's report
+ * (2026-10-06) and the one place this differed from Atlas Reactor.
+ *
+ * It belongs **here**, not in `runBlast`, because "a disc reaches what its
+ * centre can reach" is one rule and this is the only function that builds a
+ * disc. Everything downstream inherits it for free and cannot disagree: the
+ * Blast hit-set, `innerSquares`' falloff ring, a dash `impact`, the trap a
+ * `perTile` cast buries, the `abilityFired` footprint the client animates, and
+ * — the reason preview parity is not a second implementation — the client's own
+ * `circleSquares` call in `targeting.ts`. A grenade preview cannot light a tile
+ * the wall will protect, because there is no second place for it to be computed.
+ *
+ * Deliberately **only** walls, and deliberately **only** the centre. Cover does
+ * not block (the blast washes over it — the COVER-EDGE reduction, measured from
+ * the centre, is `resolve.ts`'s half of the rule), and the *caster*'s line is
+ * not consulted at all: whether the caster may put the centre there is an
+ * aiming question, answered by `lobbed` in `aimIsLegal`. A grenade arcs over a
+ * wall and then explodes normally from where it lands.
+ *
+ * The centre is always in (a point sees itself), so a disc is never empty
+ * unless the centre is a wall or off the board — which callers already rely on.
  */
 export function circleSquares(board: Board, center: Vec2, radius: number): Vec2[] {
   const out: Vec2[] = [];
@@ -479,6 +505,7 @@ export function circleSquares(board: Board, center: Vec2, radius: number): Vec2[
       const p: Vec2 = { x, y };
       if (!inBounds(board, p)) continue;
       if (terrainAt(board, p) === 'wall') continue;
+      if (!hasLineOfSight(board, center, p)) continue; // AOE-LoS
       out.push(p);
     }
   }
@@ -621,6 +648,24 @@ export function expandShape(
       return out;
     }
   }
+}
+
+/**
+ * AOE-LoS — the square a hit's **cover** is measured from.
+ *
+ * For a `circle` it is the aimed centre: a barricade shelters you from the
+ * direction the explosion is in, and the thrower may be anywhere (owner:
+ * *"reduced but only if the centre of the aoe is in the direction of the
+ * cover"*). Every other shape is direct fire, whose cover is decided by where
+ * the shot came from — the caster, exactly as before.
+ *
+ * One function so the engine's resolution and the client's preview cannot
+ * disagree about it; a preview that halved a number the blast will not is the
+ * same class of lie as a footprint that lights a sheltered tile.
+ */
+export function coverOrigin(ability: AbilityDef, casterPos: Vec2, aim: readonly Vec2[]): Vec2 {
+  const centre = aim[0];
+  return ability.shape === 'circle' && centre !== undefined ? centre : casterPos;
 }
 
 /**

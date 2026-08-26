@@ -191,6 +191,30 @@ export interface AbilityDef {
   /** For shape 'circle': area radius around the aimed square. */
   radius?: number;
   /**
+   * AOE-LoS — for shape `circle`: the shot **arcs**, so aiming needs vision of
+   * the centre but no straight line to it.
+   *
+   * Two aim rules, one flag (owner directive 2026-10-06, AR parity):
+   *   • **`lobbed: true`** — legal iff the centre is in range **and the caster's
+   *     team can see that square** (`teamCanSeeSquare` over the turn's opening
+   *     vision). A grenade goes over the wall.
+   *   • **absent/false** — a direct burst: in range **and**
+   *     `hasLineOfSight(caster, centre)`. A wall between you and the square
+   *     refuses the cast.
+   *
+   * Neither lets you blind-fire into fog: the vision half is common to both,
+   * and it is the whole of the difference from the old rule, which asked only
+   * about range. What the blast then *does* is unaffected — the disc is built
+   * from the centre by `circleSquares` either way.
+   *
+   * A flag rather than a shape because the two are the same footprint aimed by
+   * different means, and because it is a **Designer** knob: only Vex's Frag
+   * Grenade is authored `lobbed` today, and the other circles are flagged for a
+   * deliberate pass rather than defaulted by guesswork. `validateAbility`
+   * refuses it off a `circle`, exactly as it refuses `wallLength` off a `wall`.
+   */
+  lobbed?: boolean;
+  /**
    * WARDING-WALL — for shape `wall`: how many tiles long the segment is.
    *
    * `range` says how far away the anchor may be put and this says how far the
@@ -680,6 +704,27 @@ export interface PendingDelayedAbility {
   phase: AbilityPhase;
   /** Squares locked at cast time. */
   area: Vec2[];
+  /**
+   * AOE-LoS — the square the blast was aimed at, kept because the detonation
+   * still needs an **origin**: the centre→victim line is what decides the
+   * COVER-EDGE reduction, and by then the caster may be dead, moved, or
+   * standing somewhere that would answer a different question entirely.
+   *
+   * Optional so a state serialized before AOE-LoS still detonates; without it
+   * the detonation simply has no cover origin, which is exactly what it had
+   * before.
+   */
+  centre?: Vec2;
+  /**
+   * AOE-LoS — the damage **stamped at cast**, scaled by the Might or Weaken the
+   * caster was carrying when they threw it, exactly as a trap's charge is
+   * stamped when it goes in the ground (`placeTraps`). A grenade in the air is
+   * not re-measured against how its thrower feels a turn later.
+   *
+   * Cover is the half that is *not* stamped: it is read at detonation, from the
+   * centre, against where everybody actually ended up.
+   */
+  damage?: number;
   turnsRemaining: number;
 }
 

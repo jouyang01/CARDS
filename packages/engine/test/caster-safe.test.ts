@@ -292,8 +292,17 @@ describe('RECOIL: cover is a thing between two units, not under your feet', () =
   // Seismic Rupture cannot show this on its own — `range: 0` means cover is
   // never checked for it at all — so the property gets a purpose-built ability:
   // a ranged blast whose victim IS behind cover while its caster is not.
+  //
+  // AOE-LoS re-specced the geometry, not the property. The shell used to be a
+  // `radius: 0` burst aimed **at the victim's own square**, and cover was
+  // measured from the *caster* — so the barricade the victim stood beside
+  // halved it. Cover is now measured from the blast's **centre**, and there is
+  // nothing between you and an explosion going off under your feet, so that
+  // aim now deals full damage. The correct shape for "the victim IS behind
+  // cover from this blast" is a disc whose centre sits on the far side of the
+  // barricade, which is what the cast below is.
   const shellShape: AbilityDef = {
-    id: 'shell', name: 'Shell', phase: 'blast', shape: 'circle', range: 6, radius: 0,
+    id: 'shell', name: 'Shell', phase: 'blast', shape: 'circle', range: 6, radius: 2,
     cooldown: 0, energyGain: 0, selfDamagePct: 50,
     effects: [{ kind: 'damage', amount: 40 }], description: 'test',
   };
@@ -311,12 +320,17 @@ describe('RECOIL: cover is a thing between two units, not under your feet', () =
     const state = createMatch(COVERED, '2v2', [[GUNNER, GUNNER], [VEX, VEX]]);
     const [me, mate] = state.units.filter((u) => u.owner === 0);
     const [them, other] = state.units.filter((u) => u.owner === 1);
-    me!.pos = { x: 10, y: 10 };
+    me!.pos = { x: 8, y: 10 };
     mate!.pos = { x: 24, y: 24 };
     them!.pos = { x: 14, y: 10 };
     other!.pos = { x: 24, y: 0 };
+    // Centre at (12,10): the cover at (13,10) is between it and the victim at
+    // (14,10), so the centre→victim line crosses the shared edge and the
+    // COVER-EDGE half applies. The caster stands four tiles back, outside its
+    // own disc — CASTER-SAFE would spare it anyway; the point is that the
+    // recoil below is the *only* thing that touches it.
     const after = resolveTurn(state, COVERED, [
-      { team: 0, units: [{ unitId: me!.unitId, ability: { abilityId: 'shell', target: [{ x: 14, y: 10 }] } }] },
+      { team: 0, units: [{ unitId: me!.unitId, ability: { abilityId: 'shell', target: [{ x: 12, y: 10 }] } }] },
       { team: 1, units: [] },
     ], gunRoster).state;
     expect(unit(after, them!.unitId).hp, 'cover halves the shell').toBe(VEX.maxHp - 20);

@@ -30,6 +30,7 @@
       "cooldown": 4,
       "energyGain": 10,
       "delayTurns": 1,
+      "lobbed": true,
       "selfHarm": true,
       "effects": [
         {

@@ -134,7 +134,12 @@ describe('a full scripted Vex-vs-Bastion match on the real arena', () => {
         t === 0
           ? { unitId: 'vex-0', sprint: true, movePath: [{ x: 1, y: 5 }, { x: 2, y: 5 }, { x: 3, y: 5 }] }
           : t % 3 === 1
-            ? { unitId: 'vex-0', ability: { abilityId: 'frag_grenade', target: [{ x: 7, y: 5 }] } }
+            // AOE-LoS: (7,5) sat behind the wall at (6,5), and a grenade may
+            // no longer be lobbed onto ground the thrower's team cannot see —
+            // in a 1v1 script there is no teammate to spot it, so the shot is
+            // simply refused. (7,4) is the same lane, one row up, with a clear
+            // sightline and still outside Vex's own 2-tile blast.
+            ? { unitId: 'vex-0', ability: { abilityId: 'frag_grenade', target: [{ x: 7, y: 4 }] } }
             : { unitId: 'vex-0', ability: { abilityId: 'overwatch_trap', target: [{ x: 3, y: 5 }] } },
       ],
     });
