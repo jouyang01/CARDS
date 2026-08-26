@@ -22,11 +22,16 @@ WHY THIS IS ITS OWN SCRIPT, not part of the character pipeline:
 
 WHAT IT GUARANTEES, and why each matters to the board:
 
-  1. Authored in TILES, placed 1:1. A pillar is exactly `height` tall (= the
-     map's WALL_HEIGHT) and a barricade exactly COVER_HEIGHT. The renderer does
-     NOT measure-and-scale a prop the way it does a character — so swapping a
-     terrain box for its prop cannot change how tall the square reads, i.e.
-     cannot change what it reads as (MAP_PIPELINE §5: "the read survives").
+  1. Authored in TILES, placed 1:1 — the renderer does NOT measure-and-scale a
+     wall prop the way it does a character; it stands it at its authored `height`
+     with its base on the floor. A wall is a full line-of-sight blocker whatever
+     it is DRAWN at (the engine blocks by tile type, not by pixels), so walls are
+     authored TALLER than a tile and varied in height (owner, session 25): a
+     taller, uneven colonnade reads *more* clearly as wall-not-cover, not less
+     (MAP_PIPELINE §5, "the read survives"). Cover is authored at COVER_HEIGHT
+     and the renderer normalises it to crouch height on the tile's faced edge
+     (COVER-EDGE), so a cover variant's `height` is nominal and its variety is in
+     the fence silhouette, not the height.
   2. Base at the floor. Built Z-up with the base at z=0, exported Y-up, so the
      prop sits ON the tile with no per-prop offset to get wrong.
   3. Neutral / dark colours only. Stone greys (r≈g≈b) and dark wood (every
