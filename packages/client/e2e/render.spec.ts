@@ -520,8 +520,14 @@ test('a resolved turn animates, logs both ends, and floats a readout', async ({ 
     if (!(await lock.isVisible())) break;
     const ability = page.locator('.hud-ability:not([disabled])');
     if (await ability.count() > 0) {
-      await ability.first().click();
+      // Pick the target BEFORE arming. `aimTarget` reads the seat's bodies from
+      // the frame, and arming the ability floods the reach envelope with the
+      // faint blue the FOF pass now uses, which `blueBodies` splits into false
+      // clusters — so a target taken from the armed frame lands on an envelope
+      // fragment off any unit, and the shot hits nobody and floats no readout.
+      // The clean pre-arm frame has only the two real bodies.
       const at = await aimTarget(page);
+      await ability.first().click();
       await pointAt(page, at.fx, at.fy);
       await clickAt(page, at.fx, at.fy);
     }
