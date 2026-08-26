@@ -2600,6 +2600,17 @@ export function startHotSeat(
       finish();
     });
 
+    // ONE FLASH PER HIT, FOR THE WHOLE TURN — not per phase.
+    //
+    // Owner: *"The flash for hit impact is happening twice. Once when the tracer
+    // hits the target and once when the blast phase is over."* This set used to
+    // be created inside `animatePhase`, so it reset at every phase boundary —
+    // while `newImpacts` scans the **whole** cue timeline and fires anything
+    // whose `t` has passed. A Blast impact therefore fired again the moment the
+    // Move phase started its clock, which is precisely "when the blast phase is
+    // over". Hoisted here, an impact is spent the first time it lands and stays
+    // spent, and the hitstop and camera shake it drives are single too.
+    const firedImpacts = new Set<string>();
     for (let step = player.advancePhase(); step !== undefined; step = player.advancePhase()) {
       ui.status.textContent = `Turn ${prev.turn} · resolving — ${step.phase.toUpperCase()}`;
       if (skipped) continue; // keep folding; just stop animating
@@ -2608,6 +2619,7 @@ export function startHotSeat(
         viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), viewCamo(player.view),
         pads(player.view),
         () => skipped,
+        firedImpacts,
       );
     }
     finish();
@@ -2639,6 +2651,12 @@ export function startHotSeat(
     camo: Vec2[],
     padList: PadView[],
     cancelled: () => boolean,
+    /**
+     * Impacts already spent THIS TURN. Owned by the caller and shared across
+     * every phase — see the note where it is created. A phase-local set is the
+     * bug it replaced.
+     */
+    fired: Set<string>,
   ): Promise<void> {
     const { start, end } = phaseWindow(cues, phase);
     syncViewer();
@@ -2662,7 +2680,6 @@ export function startHotSeat(
     // the phase still plays every beat, it just takes longer in real seconds.
     // Presentation only: `sampleFrame` is read at the paused `t`, so nothing
     // about where the board ends up can change. skip == watch holds.
-    const fired = new Set<string>();
     let heldMs = 0;
     let frozenUntil = 0;
     let lastWall = t0;

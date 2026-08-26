@@ -83,6 +83,61 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
       .not.toContain(attacker.unitId);
   }, 25000);
 
+  it('THE OWNER’S BUG: one flash per hit, not one per phase boundary', async () => {
+    // *"The flash for hit impact is happening twice. Once when the tracer hits
+    // the target and once when the blast phase is over."*
+    //
+    // `newImpacts` scans the WHOLE cue timeline and fires anything whose `t` has
+    // passed; the spent-set used to be created per phase. So a Blast impact
+    // fired again the instant the Move phase started its clock — which is what
+    // "when the blast phase is over" looks like from the sofa. The set is now
+    // owned by the turn.
+    //
+    // Asserted per victim rather than as a total, because a turn with two
+    // hits and one double would still total three and pass a loose count.
+    const b = duel();
+    const bash = AEGIS.abilities.find((a) => a.id === 'shield_bash')!;
+    armAbility(b.controls, bash.name);
+    aimAndCommit(b.board, { x: 9, y: 9 });
+    lockIn(b.controls);
+    lockIn(b.controls);
+
+    await vi.waitFor(() => {
+      expect(b.renderer.draw.flashes.length).toBeGreaterThan(0);
+    }, { timeout: 15000 });
+    // Let the remaining phases run their clocks out — the second flash lands
+    // AFTER Blast, so an assertion made the moment the first arrives cannot see
+    // it. This is the wait the bug hid behind.
+    await new Promise((r) => setTimeout(r, 1200));
+
+    const perVictim = new Map<string, number>();
+    for (const f of b.renderer.draw.flashes) {
+      perVictim.set(f.unitId, (perVictim.get(f.unitId) ?? 0) + 1);
+    }
+    for (const [unitId, n] of perVictim) {
+      expect(n, `${unitId} flashed ${n} times for one hit`).toBe(1);
+    }
+    expect(perVictim.size, 'somebody was hit at all').toBeGreaterThan(0);
+  }, 25000);
+
+  it('and the camera shake is single too — it rides the same spent-set', async () => {
+    // Same defect, same fix, different symptom: the board jolted a second time
+    // on the phase change. Worth its own assertion because a future edit could
+    // easily re-scope one and not the other.
+    const b = duel();
+    const bash = AEGIS.abilities.find((a) => a.id === 'shield_bash')!;
+    armAbility(b.controls, bash.name);
+    aimAndCommit(b.board, { x: 9, y: 9 });
+    lockIn(b.controls);
+    lockIn(b.controls);
+    await vi.waitFor(() => {
+      expect(b.renderer.draw.shakes.length).toBeGreaterThan(0);
+    }, { timeout: 15000 });
+    await new Promise((r) => setTimeout(r, 1200));
+    const seeds = b.renderer.draw.shakes.map((s) => s.seed);
+    expect(new Set(seeds).size, 'the same impact shook the camera twice').toBe(seeds.length);
+  }, 25000);
+
   it('shakes once per hit, with a seed', async () => {
     const b = duel();
     const bash = AEGIS.abilities.find((a) => a.id === 'shield_bash')!;
