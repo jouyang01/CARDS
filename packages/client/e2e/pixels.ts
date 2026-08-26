@@ -332,6 +332,30 @@ export const isRangeWash = (px: Rgb): boolean =>
  * terrain is grey-green, and every overlay is blue, orange, yellow or green — so
  * "red and blue both high, green well below both" identifies it on its own.
  */
+/**
+ * The FREE-action overlay (`app.ts` `FREE = 0x6fe3c0`) — a mint green.
+ *
+ * A free ability draws its aim into its own layer in its own colour, not into
+ * the `aim` layer's orange. STEALTH-CONFIRM needs it because Veil & Decoy is a
+ * free action, and since W1 it commits on a board click rather than on
+ * selection — so "did the click take" is a question about these pixels.
+ *
+ * Three neighbours have to be kept out, and the first draft of this kept none
+ * of them out — which made the check that used it answer "yes" before the click
+ * it was supposed to be measuring:
+ *
+ *   • the **nameplate HP bar** `#5ad17f` — always on screen, so a loose
+ *     predicate is simply always true. It is the greener of the two: green
+ *     leads blue by 82 against mint's 35;
+ *   • **ally green** `#7ad14f` — warm, blue *below* red;
+ *   • the **Energy pad** `#3fe8ff` — cyan, blue *above* green.
+ *
+ * So: cool (blue well above red) rules out the ally and the bar, and green
+ * still above blue rules out the pad.
+ */
+export const isFreeMint = (px: Rgb): boolean =>
+  px.g > 140 && px.g > px.b && px.b - px.r > 55 && px.g - px.b < 60;
+
 export const isDecoyPurple = (px: Rgb): boolean =>
   px.b > 60 && px.r > 40 && px.r - px.g > 20 && px.b - px.g > 30 && Math.abs(px.r - px.b) < 70;
 

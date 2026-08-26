@@ -83,7 +83,7 @@ describe('DASH-STATUS: the riders in the data actually ride', () => {
   });
 
   it('Tempest Run slows every unit it hits, not just the first', () => {
-    // `chargeHits: "all"` — the ult runs through a line of them, and the rider
+    // `hits: "all"` — the ult runs through a line of them, and the rider
     // has to reach the same set the damage does.
     const { state, me, enemies } = field(KESTREL, { x: 5, y: 10 }, [{ x: 7, y: 10 }, { x: 9, y: 10 }]);
     unit(state, me.unitId).energy = 100;

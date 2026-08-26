@@ -541,7 +541,10 @@ function planCatalyst(
   if (!aimIsLegal(board, unit, def, aim, aimStep, draft)) return undefined;
   return {
     def, aim, isUlt: false,
-    area: expandShape(board, def, unit.pos, aim, aimStep),
+    // BOLA-OVERLAY: a stopping line covers only as far as it reaches.
+    area: truncateAtImpact(
+      def, unit.owner, expandShape(board, def, unit.pos, aim, aimStep), draft?.units ?? [],
+    ),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
     inner: innerSquares(board, def, aim),
   };
@@ -658,7 +661,10 @@ function planAbility(
   if (ally === undefined && !aimIsLegal(board, unit, def, aim, aimStep, draft)) return undefined;
   return {
     def, aim, isUlt,
-    area: expandShape(board, def, unit.pos, aim, aimStep),
+    // BOLA-OVERLAY: a stopping line covers only as far as it reaches.
+    area: truncateAtImpact(
+      def, unit.owner, expandShape(board, def, unit.pos, aim, aimStep), draft?.units ?? [],
+    ),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
     inner: innerSquares(board, def, aim),
     ...(ally === undefined ? {} : { guardTargetId: ally.unitId }),
@@ -739,6 +745,29 @@ export function aimVisionAllows(
   return def.lobbed === true || hasLineOfSight(board, unit.pos, target);
 }
 
+/**
+ * DECOY-PLACEMENT — may this ability put what it places on `target`?
+ *
+ * A decoy does not block occupancy (R2), so dropping one *inside* a real unit is
+ * mechanically legal and reads as broken — and it self-defeats the deception,
+ * which is the whole ability. Ruled: **a decoy may not be placed on a square
+ * occupied by any unit, either team**, and the aim is **refused** rather than
+ * routed to the nearest free square (a decoy that slides somewhere else is a
+ * worse tell than a cast that does not happen).
+ *
+ * Phrased against the *effect* rather than against Wisp, so it is the placement
+ * rule and not a character's footnote — anything that later places a body at an
+ * aimed square inherits it. Aiming into fog stays legal (free-aim); this asks
+ * only about the square's occupants, which the caster's own team knows about
+ * for its own units and is allowed to be wrong about for the enemy's.
+ */
+export function placementIsFree(def: AbilityDef, target: Vec2, state: GameState | undefined): boolean {
+  if (state === undefined) return true;
+  const places = def.effects.some((e) => e.kind === 'decoy' && e.target === 'aimed');
+  if (!places) return true;
+  return !state.units.some((u) => u.alive && vecEq(u.pos, target));
+}
+
 /** Is an ability's aim geometrically legal for its shape and range? */
 function aimIsLegal(
   board: Board, unit: UnitState, def: AbilityDef, aim: readonly Vec2[], aimStep?: number,
@@ -758,7 +787,8 @@ function aimIsLegal(
     }
     case 'square': {
       const target = aim[0];
-      return target !== undefined && aimInRange(unit.pos, target, def.range);
+      if (target === undefined || !aimInRange(unit.pos, target, def.range)) return false;
+      return placementIsFree(def, target, state);
     }
     case 'wall': {
       // The one shape that needs **both** halves of an aim: a square inside the
@@ -1349,13 +1379,31 @@ function applyAreaBoons(
   events: TurnEvent[],
 ): void {
   const area = new Set(a.area.map(vecKey));
+  // W1: an effect that names its own target is routed by that name and takes no
+  // further part in the area rules below. Everything else — which is every
+  // effect in `data/` but two — behaves exactly as it did.
+  const directed = a.def.effects.filter((e) => e.target !== undefined);
+  const ambient = a.def.effects.filter((e) => e.target === undefined);
+  if (directed.length > 0) {
+    // `target: "self"` lands on the caster whatever the aim says. This is the
+    // deliberate exception to the area gate below: Veil & Decoy is aimed three
+    // tiles away and still has to vanish *Wisp*, so its stealth cannot be
+    // conditioned on her standing where the decoy goes.
+    const onCaster = casterSafe(directed.filter((e) => e.target === 'self'));
+    if (onCaster.length > 0) applySelfEffects(draft, caster, onCaster, source, events);
+    // `target: "aimed"` is placed at the aimed square rather than on anybody.
+    const placed = directed.filter((e) => e.target === 'aimed');
+    if (placed.length > 0) {
+      applySelfEffects(draft, caster, placed, source, events, a.aim[0] ?? caster.pos);
+    }
+  }
   // Non-beneficial effects on this path are the caster's own business (a `decoy`
   // spawns at its feet; a self-cast's statuses), so they are applied whenever
   // the caster is in its own area — which for a self-cast is always. Minus the
   // harmful ones: CASTER-SAFE means your own Weaken or Root never lands on you,
   // however faithfully the area covers your square.
-  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, casterSafe(a.def.effects), source, events);
-  const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
+  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, casterSafe(ambient), source, events);
+  const boons = ambient.filter((e) => BENEFICIAL_KINDS.has(e.kind));
   if (boons.length === 0) return;
   for (const ally of draft.units) {
     if (!ally.alive || ally.owner !== caster.owner || ally.unitId === caster.unitId) continue;
@@ -1370,7 +1418,16 @@ function applyAreaBoons(
  * the caster of the AoE that reached an ally. The recipient is `unit`, which is
  * why the two are separate arguments — a support ability's log line needs both.
  */
-function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly AbilityEffect[], source: Source, events: TurnEvent[]): void {
+function applySelfEffects(
+  draft: GameState, unit: UnitState, effects: readonly AbilityEffect[], source: Source,
+  events: TurnEvent[],
+  /**
+   * W1 — where a `target: "aimed"` effect puts what it places. Absent means the
+   * recipient's own square, which is what every caller but one passes and what
+   * a decoy did unconditionally before W1.
+   */
+  placeAt?: Vec2,
+): void {
   for (const e of effects) {
     if (e.kind === 'heal') {
       const healed = applyHeal(unit, e.amount ?? 0);
@@ -1379,7 +1436,10 @@ function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly A
       applyStatus(unit, 'shield', e.duration ?? 1, e.amount ?? 0);
       events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'shield', duration: e.duration ?? 1, amount: e.amount ?? 0, sourceUnitId: source.unitId, abilityId: source.abilityId });
     } else if (e.kind === 'decoy') {
-      spawnDecoy(draft, unit, events); // R2: a static fake at the caster's square
+      // R2 + W1: a static fake, at the aimed square if the effect names one and
+      // at the caster's feet otherwise. Only its LOCATION changed — it is still
+      // static, still dies to any damage, still blocks nothing.
+      spawnDecoy(draft, unit, e.target === 'aimed' ? placeAt ?? unit.pos : unit.pos, events);
     } else if (isStatusKind(e.kind)) {
       // DOT-HOT rides here too: the amount is per-turn rather than a shield
       // pool, and the author is carried so a tick that kills can credit a team.
@@ -1397,11 +1457,11 @@ function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly A
  * `state.units`; expires at the end of the *next* turn (`castTurn + 1`) unless
  * destroyed first. Deterministic id from caster + turn (one cast per unit/turn).
  */
-function spawnDecoy(draft: GameState, caster: UnitState, events: TurnEvent[]): void {
+function spawnDecoy(draft: GameState, caster: UnitState, at: Vec2, events: TurnEvent[]): void {
   const decoy: DecoyState = {
     id: `decoy-${caster.unitId}-t${draft.turn}`,
     teamId: caster.owner,
-    pos: { x: caster.pos.x, y: caster.pos.y },
+    pos: { x: at.x, y: at.y },
     expiresOnTurn: draft.turn + 1,
   };
   draft.decoys.push(decoy);
@@ -1766,7 +1826,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     const blasts = impactBlasts(board, a.def, origin, plan.unit.pos);
 
     // Damage. A charge hits the UNITS it crossed — the first only (R1a's shape,
-    // now "first unit" under FF1-charge) or every one (`chargeHits: "all"`, e.g.
+    // now "first unit" under FF1-charge) or every one (`hits: "all"`, e.g.
     // Tempest Run) — and those include allies, because a directly aimed attack
     // does not filter by team (FF1). An `impact` is an **area**, so FF1 polarity
     // does apply to it: harmful effects reach enemies only.
@@ -1791,7 +1851,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // then does nothing with, which is the class of bug this item is.
     if (dmg !== undefined || riders.length > 0) {
       // The shared derivation (RAM-LINE-PREVIEW-FIX): ALLY-SAFE trims, then
-      // `chargeHits` takes the first or all. The preview calls the same function,
+      // `hits` takes the first or all. The preview calls the same function,
       // so the number a player reads on a crossed enemy is the hit they get.
       const crossedVictims = chargeVictims(a.def, plan.unit.owner, crossed)
         .map((u) => ({ unit: u, from: origin }));
@@ -1929,7 +1989,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
  * square, so it rests on the furthest path square that is free (or holds if none
  * is). Walls/cover never appear in the path (validated). Returns every UNIT whose
  * square lies on the path, in path order — allies included (FF1-charge) — and the
- * caller applies `chargeHits` to take the first or all of them.
+ * caller applies `hits` to take the first or all of them.
  */
 export function chargedUnits(
   units: readonly UnitState[], casterId: string, path: readonly Vec2[],
@@ -1950,12 +2010,12 @@ export function chargedUnits(
  *
  * Exported, and this is the whole point of it being exported: the **preview** has
  * to answer the same question, and a client that worked it out for itself would
- * be a second implementation of `chargeHits` to drift from this one. Kestrel's
- * Skim is `path` with no `chargeHits` — first-enemy-only — and the preview was
+ * be a second implementation of `hits` to drift from this one. Kestrel's
+ * Skim is `path` with no `hits` — first-enemy-only — and the preview was
  * stamping a damage number on *every* enemy on the route, promising a hit that
  * never lands.
  *
- * ALLY-SAFE trims before `chargeHits` counts, so an ability that spares its team
+ * ALLY-SAFE trims before `hits` counts, so an ability that spares its team
  * does not spend its single hit on a teammate it was never going to damage.
  */
 export function chargeVictims(
@@ -1965,7 +2025,69 @@ export function chargeVictims(
   const run = def.noFriendlyFire === true
     ? crossed.filter((u) => u.owner !== casterOwner)
     : [...crossed];
-  return def.chargeHits === 'all' ? run : run.slice(0, 1);
+  return def.hits === 'all' ? run : run.slice(0, 1);
+}
+
+/**
+ * HITS — where a `hits: "first"` **line** stops: the square of the nearest enemy
+ * standing in the beam, or `undefined` if nothing stops it.
+ *
+ * *"Bola should slow and only hit the first enemy in the line."* The beam no
+ * longer pierces, so two questions need the same answer — **who is hit**
+ * (`runBlast`) and **how far the overlay is drawn** (BOLA-OVERLAY, client). One
+ * exported function so the drawn line and the resolved line cannot disagree; a
+ * client that worked the stop out for itself would be a second implementation to
+ * drift from this one, which is the bug RAM-LINE-PREVIEW-FIX already fixed once
+ * for charges.
+ *
+ * `area` is `lineSquares`' output, which walks `d = 1..range` outward, so "the
+ * first enemy" is the first hit in list order — deterministic, no new geometry,
+ * no distance arithmetic.
+ *
+ * **Allies never block or absorb** (edge-cases, RULED — HITS): a teammate in the
+ * beam is not a wall and does not spend the shot. `undefined` for any ability
+ * this rule does not apply to, so a caller can treat it as "nothing truncates
+ * this" without asking about the shape twice.
+ */
+/**
+ * BOLA-OVERLAY — a `hits: "first"` line's covered squares, cut off at the enemy
+ * it stops on.
+ *
+ * *"The drawn line overlay must TERMINATE AT THE IMPACT POINT, not extend to the
+ * full range 6 — otherwise the overlay promises reach the ability no longer
+ * has."* The beam genuinely does not go past the first enemy any more, so the
+ * squares behind them are not covered by anything, and the honest fix is to
+ * stop calling them covered — not to draw a shorter line over a longer area.
+ *
+ * Applied where `PlannedAbility.area` is built, so **one** truncation feeds the
+ * resolver, the `abilityFired` event the client animates, and the aim overlay a
+ * player is looking at. A client that shortened its own line would be a second
+ * implementation of the stop, which is the drift RAM-LINE-PREVIEW-FIX already
+ * paid for once.
+ *
+ * The area is inclusive of the impact square: that tile is hit. Anything this
+ * rule does not apply to comes back unchanged.
+ */
+export function truncateAtImpact(
+  def: AbilityDef, casterOwner: TeamId, area: readonly Vec2[], units: readonly UnitState[],
+): Vec2[] {
+  const stop = lineImpact(def, casterOwner, area, units);
+  if (stop === undefined) return [...area];
+  const end = area.findIndex((p) => vecEq(p, stop));
+  return end < 0 ? [...area] : area.slice(0, end + 1).map((p) => ({ x: p.x, y: p.y }));
+}
+
+export function lineImpact(
+  def: AbilityDef, casterOwner: TeamId, area: readonly Vec2[], units: readonly UnitState[],
+): Vec2 | undefined {
+  // Absent means "pierce" for a line — see `AbilityDef.hits`. Only an explicit
+  // `"first"` stops the beam, which is what keeps every shipped line unchanged.
+  if (def.shape !== 'line' || def.hits !== 'first') return undefined;
+  for (const square of area) {
+    const enemy = units.find((u) => u.alive && u.owner !== casterOwner && vecEq(u.pos, square));
+    if (enemy !== undefined) return { x: square.x, y: square.y };
+  }
+  return undefined;
 }
 
 function walkCharge(draft: GameState, board: Board, unit: UnitState, path: readonly Vec2[], events: TurnEvent[], trapHits: TrapHits): UnitState[] {
@@ -2199,12 +2321,23 @@ function runBlast(
     // a bullet's cover is decided by where the bullet came from, and for direct
     // fire that is still the shooter.
     const blastOrigin = coverOrigin(a.def, plan.unit.pos, a.aim);
+    // HITS: a `hits: "first"` line stops at the nearest enemy in the beam, so
+    // the area names where it *reached* and this names who it *reached*. Only
+    // that one unit is affected — allies neither block it nor take it, which is
+    // the ruled reading of "only hit the first enemy in the line".
+    const stopAt = lineImpact(a.def, plan.unit.owner, a.area, draft.units);
+    const stoppedOn = stopAt === undefined
+      ? undefined
+      : draft.units.find((u) => u.alive && u.owner !== plan.unit.owner && vecEq(u.pos, stopAt));
     let hitEnemy = false;
     // ALLY-SAFE (Dev Note #11): FF1's default is that an attack endangers
     // whoever is standing in it. An ability may opt out of the friendly half.
     const allySafe = a.def.noFriendlyFire === true;
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
+      // HITS: when the beam stops, everyone past the stop — and every ally it
+      // flew through on the way — is simply not in it.
+      if (stoppedOn !== undefined && target.unitId !== stoppedOn.unitId) continue;
       const enemy = target.owner !== plan.unit.owner;
       const self = target.unitId === plan.unit.unitId; // CASTER-SAFE
       const untargetable = isUntargetable(target); // UNTGT1

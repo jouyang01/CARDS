@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildBoard } from '../src/board.js';
+import { VISION_RANGE } from '../src/constants.js';
 import { resolveTurn, type Roster } from '../src/resolve.js';
 import { innerSquares } from '../src/shapes.js';
 import { validateAbility } from '../src/validate.js';
@@ -163,6 +164,18 @@ describe('BASIC-INNER: Cinder ships it', () => {
     // It was a line for 22. A player who lands the centre still gets 22; what
     // changed is that missing by one now costs 8 instead of everything.
     expect(bolt.innerAmount).toBe(22);
-    expect(bolt.range, 'the authored reach is not a balance lever here').toBe(7);
+  });
+
+  it('AIM-VISION-SHAPE: its reach is 6, so every tile in range is aimable', () => {
+    // Owner Dev Note (2026-10-07): *"Ember Bolt range to 6."* It was authored
+    // at 7, and AOE-LoS gates an area's aim on team vision — which is Manhattan
+    // 6 (MET1) while aiming range is Euclidean (AIM-METRIC). At 7 the seventh
+    // tile straight down a row was simply unaimable, and 43% of the disc with
+    // it: a basic attack that could not be fired as far as its tooltip said.
+    //
+    // Pinned to `VISION_RANGE` rather than to the literal 6, because the number
+    // that matters is the relationship. If vision is ever re-ruled, this says
+    // what Ember Bolt was supposed to be.
+    expect(bolt.range).toBe(VISION_RANGE);
   });
 });

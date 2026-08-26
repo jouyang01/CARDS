@@ -9,7 +9,7 @@ import type { AbilityDef, CharacterDef, GameState, MapDef } from '../src/types.j
  * BASTION-RAM-LINE — *"Bastion's Ram Charge should be a linear aoe dash that
  * affects all players in a line, not just the first enemy hit."*
  *
- * One data field. `chargeHits: "all"` has existed since FF1-charge, is
+ * One data field. `hits: "all"` has existed since FF1-charge, is
  * validated, and is read at the charge's own resolution site; Kestrel's Tempest
  * Run already uses it. Ram Charge simply never asked for it, so a charge through
  * three bodies stopped mattering after the first.
@@ -72,11 +72,11 @@ const charge = (state: GameState, meId: string) => resolveTurn(state, OPEN, [
 ], roster);
 
 describe('BASTION-RAM-LINE: the charge hits everyone in the line', () => {
-  it('the ability carries `chargeHits: "all"`', () => {
+  it('the ability carries `hits: "all"`', () => {
     // The item, as data. Asserted on the JSON because a test that only checked
     // the resolution would pass just as well if somebody special-cased Bastion
     // in the engine.
-    expect(RAM.chargeHits).toBe('all');
+    expect(RAM.hits).toBe('all');
     expect(RAM.shape, 'still a charge, not a teleport').toBe('path');
   });
 
@@ -120,7 +120,7 @@ describe('BASTION-RAM-LINE: the charge hits everyone in the line', () => {
   });
 
   it('a teammate standing in the lane is still run over — FF1 is unchanged', () => {
-    // `chargeHits` decides how many of the crossed units are hit, not whose.
+    // `hits` decides how many of the crossed units are hit, not whose.
     // Friendly fire stays on, which is the price of a charge that goes through
     // everything.
     const { state, me, foes } = queue();

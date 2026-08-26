@@ -98,7 +98,11 @@ describe('PREVIEW-AUDIT: the drawn footprint is the resolved footprint', () => {
   it.each(rows)('%s draws exactly what it hits', (_name, character, def) => {
     const { state, me } = field(character);
     const aim = aimFor(def.shape);
-    const drawn = abilityPreview(MAP, me, def, aim);
+    // `state` goes in: DECOY-PLACEMENT makes one preview depend on who is
+    // standing on the aimed square, and the sweep aims every square-shape at
+    // the FOE. Without it this row drew a decoy the engine refuses — which is
+    // exactly the divergence this audit exists to catch, found on itself.
+    const drawn = abilityPreview(MAP, me, def, aim, undefined, state);
     const order: UnitOrders = def.free === true
       ? { unitId: me.unitId, freeAbility: { abilityId: def.id, target: aim } }
       : { unitId: me.unitId, ability: { abilityId: def.id, target: aim } };

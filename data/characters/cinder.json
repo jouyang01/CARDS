@@ -9,7 +9,7 @@
       "name": "Ember Bolt",
       "phase": "blast",
       "shape": "circle",
-      "range": 7,
+      "range": 6,
       "radius": 1,
       "cooldown": 0,
       "energyGain": 8,

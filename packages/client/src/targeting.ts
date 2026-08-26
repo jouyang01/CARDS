@@ -18,6 +18,9 @@ import {
   buildBoard,
   chargeVictims,
   chargedUnits,
+  lineImpact,
+  placementIsFree,
+  truncateAtImpact,
   abilityProfile,
   circleSquares,
   direction8,
@@ -358,12 +361,29 @@ export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec
  * Squares an ability's current aim would affect — exactly what the engine will
  * hit (`expandShape`). Empty when the aim is not yet legal, so the UI shows a
  * preview only for a valid aim.
+ *
+ * `state` is optional and exists for DECOY-PLACEMENT: whether a decoy may go on
+ * a square depends on who is standing there, which is a question about the
+ * board rather than about geometry. Callers that have the state pass it and get
+ * an empty preview over an occupied square — the same refusal the engine will
+ * make. Callers that do not are unchanged, and PREVIEW-AUDIT is the test that
+ * noticed the difference: the preview drew a decoy the order pipeline dropped.
  */
-export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number): Vec2[] {
+export function abilityPreview(
+  map: MapDef, unit: UnitState, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number,
+  state?: GameState,
+): Vec2[] {
   if (!aimLegal(unit, ability, aim, aimStep)) return [];
+  const target = aim[0];
+  if (target !== undefined && !placementIsFree(ability, target, state)) return [];
   // Same call the engine makes, same step — so the preview is exactly the tile
   // set that will be hit, rotation included.
-  return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
+  const area = expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
+  // BOLA-OVERLAY: …and the same truncation, so a `hits: "first"` line is drawn
+  // to the enemy it stops on rather than promising the full range behind them.
+  // The engine's own function, on the engine's own area — there is no second
+  // opinion about where the beam ends.
+  return state === undefined ? area : truncateAtImpact(ability, unit.owner, area, state.units);
 }
 
 /**
@@ -939,6 +959,13 @@ export function commitAim(
   const directional = ability.shape === 'line' || ability.shape === 'cone';
   if (directional && vecEq(target, unit.pos)) return undefined;
 
+  // DECOY-PLACEMENT: a decoy may not be placed on an occupied square, and the
+  // aim is REFUSED rather than routed to the nearest free one — a decoy that
+  // slides elsewhere is a worse tell than a cast that does not happen. Refused
+  // at the click as well as at resolution so the board never offers a placement
+  // the engine will drop.
+  if (!placementIsFree(ability, target, state)) return undefined;
+
   // BLINK-ADJ removed the veto that used to sit here. A teleporting dash aimed
   // at an occupied square no longer fizzles at resolution — it lands on the
   // nearest legal square — so refusing the click would now block an order the
@@ -1011,25 +1038,55 @@ export function isBlockedDashLanding(
  * one case where the line should be suppressed.
  */
 /**
- * RAM-LINE-PREVIEW-FIX — the units a `path` charge would actually damage.
+ * The units an ability would actually damage, when standing in its footprint is
+ * **not** enough to be one of them.
  *
- * *"Bastion's Ram Charge is still not a linear dash/attack preview."*
+ * Two shapes reach *through* things and so have to answer "how many of you do I
+ * actually hit" (`AbilityDef.hits`), and both are answered here, by the engine:
  *
- * Both halves come from the engine: `chargedUnits` finds who is standing on the
- * route (the scan `walkCharge` does before it moves anybody) and `chargeVictims`
- * applies ALLY-SAFE and `chargeHits`. Neither is re-derived here, which is the
- * point — `chargeHits` is a rule with two values and the preview was silently
- * assuming one of them.
+ *   • **`path`** (RAM-LINE-PREVIEW-FIX, *"Bastion's Ram Charge is still not a
+ *     linear dash/attack preview"*) — `chargedUnits` finds who is standing on
+ *     the route (the scan `walkCharge` does before it moves anybody) and
+ *     `chargeVictims` applies ALLY-SAFE and `hits`.
+ *   • **`line`** (HITS/BOLA-HITS) — `lineImpact` finds the square a
+ *     `hits: "first"` beam stops on, and the enemy standing there is the whole
+ *     hit list. A piercing line (`"all"`, or absent) reaches everything in the
+ *     beam and needs no list at all.
  *
- * Empty for anything that is not a charge, so a caller can hand the result
- * straight to `previewNumbers` without asking what shape it has.
+ * Neither is re-derived here, which is the point: `hits` is a rule with two
+ * values and the preview was once silently assuming one of them.
+ *
+ * **`undefined` and `[]` are different answers, and conflating them costs a
+ * whole ability's preview.** `undefined` is *"this ability imposes no list —
+ * everyone in the footprint is hit"*, which is a cone, a circle, and a piercing
+ * line. `[]` is *"it does impose one, and nobody is on it"* — a charge down an
+ * empty lane. `previewNumbers` reads an empty list as "number nobody", so
+ * returning `[]` for a piercing line silently blanks every number Rail Shot
+ * ever wrote. It did, for about ten minutes.
  */
-export function chargeHitList(
-  state: GameState, unit: UnitState, ability: AbilityDef | undefined, aim: readonly Vec2[],
-): string[] {
-  if (ability === undefined || ability.shape !== 'path' || ability.phase !== 'dash') return [];
-  const crossed = chargedUnits(state.units, unit.unitId, aim);
-  return chargeVictims(ability, unit.owner, crossed).map((u) => u.unitId);
+export function abilityHitList(
+  map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef | undefined,
+  aim: readonly Vec2[], aimStep?: number,
+): string[] | undefined {
+  if (ability === undefined) return undefined;
+  if (ability.shape === 'path' && ability.phase === 'dash') {
+    const crossed = chargedUnits(state.units, unit.unitId, aim);
+    return chargeVictims(ability, unit.owner, crossed).map((u) => u.unitId);
+  }
+  if (ability.shape === 'line') {
+    // The same depth-ordered squares the resolver walks — `abilityPreview` is
+    // `expandShape`, so the beam the player is looking at IS the beam the stop
+    // is computed against.
+    const stop = lineImpact(
+      ability, unit.owner, abilityPreview(map, unit, ability, aim, aimStep), state.units,
+    );
+    // No stop at all: this line pierces, so it restricts nothing.
+    if (stop === undefined) return undefined;
+    return state.units
+      .filter((u) => u.alive && u.owner !== unit.owner && vecEq(u.pos, stop))
+      .map((u) => u.unitId);
+  }
+  return undefined;
 }
 
 export function dashRoute(unit: UnitState, ability: AbilityDef | undefined, aim: readonly Vec2[]): Vec2[] {

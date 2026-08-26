@@ -17,6 +17,7 @@ import { IDLE, arm, hoverBoard, previewAim, refusedAim, type Interaction } from 
 import vex from '../../../data/characters/vex.json';
 import wisp from '../../../data/characters/wisp.json';
 import aegis from '../../../data/characters/aegis.json';
+import bastion from '../../../data/characters/bastion.json';
 
 /**
  * AIM-RANGE — "Veil's Blink looks like you can use it where you want, it should
@@ -41,6 +42,7 @@ const POOL = buildCatalystPool(
 const VEX = vex as unknown as CharacterDef;
 const WISP = wisp as unknown as CharacterDef;
 const AEGIS = aegis as unknown as CharacterDef;
+const BASTION = bastion as unknown as CharacterDef;
 /** Big and empty: range, not terrain, is the only thing under test here. */
 const OPEN: MapDef = {
   id: 't', name: 't', width: 21, height: 21, walls: [], cover: [], brush: [],
@@ -109,9 +111,12 @@ describe('AIM-RANGE: an out-of-range click does not commit', () => {
   });
 
   it('a `self` ability ignores the click entirely', () => {
-    const s = match(WISP);
-    const u = actor(s, 'wisp');
-    expect(commitAim(OPEN, s, u, ability(WISP, 'veil_decoy'), { x: 0, y: 0 })?.aim).toEqual([u.pos]);
+    // Bastion's Bulwark, not Wisp's Veil & Decoy: W1 made the veil a `square`
+    // aimed up to 3 away, so it is no longer an example of a self-cast. Bulwark
+    // is `prep`/`self` and has nowhere else to point.
+    const s = match(BASTION);
+    const u = actor(s, 'bastion');
+    expect(commitAim(OPEN, s, u, ability(BASTION, 'bulwark'), { x: 0, y: 0 })?.aim).toEqual([u.pos]);
   });
 
   it('the refusal is exactly the engine rule, not a second copy of it', () => {
@@ -370,11 +375,29 @@ describe('DASH-OCCUPIED: a line or cone aimed at yourself is a no-op', () => {
   });
 
   it('but a `self` ability aimed at your own square still commits', () => {
-    // A self-cast has nowhere else to point; refusing it would make Veil & Decoy
+    // A self-cast has nowhere else to point; refusing it would make Bulwark
     // uncastable.
+    const s = match(BASTION);
+    const u = actor(s, 'bastion');
+    expect(commitAim(OPEN, s, u, ability(BASTION, 'bulwark'), { ...u.pos })).toBeDefined();
+  });
+
+  it('DECOY-PLACEMENT: a decoy click on an OCCUPIED square is refused', () => {
+    // Ruled: a decoy may not be placed on a square occupied by any unit, and the
+    // aim is refused rather than routed to the nearest free one — a decoy that
+    // slides elsewhere is a worse tell than a cast that does not happen.
+    // Refused at the click, so the board never offers what resolution will drop.
     const s = match(WISP);
     const u = actor(s, 'wisp');
-    expect(commitAim(OPEN, s, u, ability(WISP, 'veil_decoy'), { ...u.pos })).toBeDefined();
+    const veil = ability(WISP, 'veil_decoy');
+    // Any unit occupies a square for this rule, either team — so the 1v1
+    // opponent serves, moved into range.
+    const other = s.units.find((x) => x.unitId !== u.unitId)!;
+    other.pos = { x: u.pos.x + 2, y: u.pos.y }; // in range, and occupied
+    expect(commitAim(OPEN, s, u, veil, { ...other.pos }), 'on top of somebody').toBeUndefined();
+    expect(commitAim(OPEN, s, u, veil, { ...u.pos }), 'on top of yourself').toBeUndefined();
+    expect(commitAim(OPEN, s, u, veil, { x: u.pos.x + 1, y: u.pos.y }), 'on a free square')
+      .toBeDefined();
   });
 
   it('and a one-square-away click still gives a direction', () => {

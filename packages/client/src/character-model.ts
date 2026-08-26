@@ -9,7 +9,7 @@
  * suite runs without any, so an unavailable model must be ordinary, not an error.
  */
 
-import { AnimationMixer, Group, LoopOnce, LoopRepeat, Mesh, Object3D, type AnimationAction, type AnimationClip, type Bone, type Material } from 'three';
+import { AnimationMixer, Group, LoopOnce, LoopRepeat, Mesh, Object3D, Vector3, type AnimationAction, type AnimationClip, type Bone, type Material } from 'three';
 
 import type { ClipChoice, ClipSet } from './character-clips.js';
 
@@ -191,6 +191,87 @@ const findBone = (root: Object3D, name: string): Bone | undefined => {
   return hit;
 };
 
+// ── MODEL-ROOT-LOCK ─────────────────────────────────────────────────────────
+
+/**
+ * The root bone of a rig, and where the **bind pose** puts it.
+ *
+ * Captured once per instance, before anything animates, and used every frame to
+ * put the bone back (see `applyRootLock`).
+ */
+export interface RootLock {
+  bone: Object3D;
+  /** The bone's LOCAL translation in the bind pose. */
+  bind: Vector3;
+}
+
+/**
+ * Find the rig's root bone and record its bind translation.
+ *
+ * Mixamo names it `Hips`; anything else falls back to the topmost bone in the
+ * tree, so a rig from another pipeline still gets locked. `undefined` means
+ * there is no skeleton to lock, which is not an error — a static prop has none.
+ *
+ * **Must be called before any `mixer.update`**, because the bind pose is only
+ * on the bones until the first frame is evaluated.
+ */
+export function measureRootLock(root: Object3D): RootLock | undefined {
+  const bone = findBone(root, 'mixamorigHips') ?? topmostBone(root);
+  return bone === undefined ? undefined : { bone, bind: bone.position.clone() };
+}
+
+/** The first bone with no bone above it — the skeleton's root, whatever it is called. */
+const topmostBone = (root: Object3D): Bone | undefined => {
+  let hit: Bone | undefined;
+  root.traverse((o) => {
+    if (hit !== undefined || !(o as Bone).isBone) return;
+    if (!((o.parent as Bone | null)?.isBone === true)) hit = o as Bone;
+  });
+  return hit;
+};
+
+/**
+ * MODEL-ROOT-LOCK — put the root bone back where the bind pose had it.
+ *
+ * **The rule (edge-cases, RULED — MODEL-ROOT-LOCK):** the engine owns unit
+ * position and the renderer places — and during playback lerps — each unit's
+ * *group* on its board square, so a character clip supplies **in-place** motion
+ * only. It may never translate the rig's root off the tile. This is the
+ * guarantee that makes that true for every model, however its clips were baked.
+ *
+ * **Why the LOCAL translation and not a world-space axis test.** Restoring the
+ * bone's local translation restores its world offset from the model root
+ * exactly, on every axis, without ever asking which axis is up — and that
+ * question is what shipped the bug this closes. `build_glb.py --in-place`
+ * assumed local-Y was world-up; Wisp's `Armature` carries a +90° X rotation, so
+ * local **Z** is the vertical and local Y is a horizontal. Any correction
+ * phrased per-axis has to get that right on every asset. This one cannot get it
+ * wrong, because it does not look.
+ *
+ * **Why the whole translation and not the horizontal only.** Measured from the
+ * shipped assets rather than assumed:
+ *
+ *   • `wisp_idle`'s Hips track sits at local `(−0.40, 2.13, 22.52)` against a
+ *     bind of `(0.00, 0.14, −1.09)`. Through the Armature rotation that is
+ *     **22.5 units straight down** — vertical, not horizontal. Neutralising the
+ *     horizontal alone leaves Wisp under the floor and still invisible, which
+ *     is the reported bug unfixed.
+ *   • Her clips vary *only* in local Z (the vertical): X and Y are constant
+ *     within every one of the ten. So there is no authored horizontal travel in
+ *     that library to preserve — only per-clip garbage offsets of 0.4 to 20
+ *     units — and the vertical "motion" is a 13-unit idle bob, which is noise on
+ *     a broken baseline rather than a breath.
+ *
+ * Bone **rotations** are never touched, so every clip still plays in full: a
+ * death still collapses, a flurry still swings. Only the hips' translation —
+ * root motion, which this renderer does not use — is discarded.
+ *
+ * Allocation-free and deterministic; runs once per unit per frame.
+ */
+export function applyRootLock(lock: RootLock | undefined): void {
+  if (lock !== undefined) lock.bone.position.copy(lock.bind);
+}
+
 export interface ModelInstance {
   root: Group;
   /**
@@ -229,6 +310,30 @@ export class CharacterModels {
    * model.
    */
   private cloneFn: ((o: Object3D) => Object3D) | undefined;
+
+  /**
+   * Register an already-parsed model, bypassing the network.
+   *
+   * `load()` is the only other way in, and it needs a real HTTP fetch, a real
+   * `.glb` and the dynamic GLTFLoader import — so until this existed nothing
+   * could call `instance()` outside a browser, and the whole animation seam
+   * (the mixer, the posture re-apply, MODEL-ROOT-LOCK, the play-idle-on-load
+   * that triggered Wisp's invisibility) was reachable only by photographing the
+   * screen. That is the gap this closes: deleting the root lock from `update()`
+   * left the entire suite green.
+   *
+   * `clone` defaults to a structural copy, which is enough for a rig assembled
+   * in memory; `load()` still installs `SkeletonUtils.clone` for real assets,
+   * where sharing a skeleton would animate every unit in lockstep.
+   */
+  adopt(
+    id: string,
+    entry: { scene: Group; clips: AnimationClip[]; manifest: CharacterManifest },
+    clone?: (o: Object3D) => Object3D,
+  ): void {
+    this.cloneFn ??= clone ?? ((o) => o.clone(true));
+    this.loaded.set(id, { ...entry, props: new Map() });
+  }
 
   /**
    * Fetch models for these character ids. Never rejects: a character whose files
@@ -341,6 +446,10 @@ export class CharacterModels {
       props.push({ root: propRoot, spec, height: loadedProp.height, bone });
     }
 
+    // MODEL-ROOT-LOCK: read the bind translation NOW, while the clone is still
+    // in its bind pose. One `mixer.update` from here and it is gone.
+    const rootLock = measureRootLock(root);
+
     let current: AnimationAction | undefined;
     let currentName = '';
 
@@ -392,6 +501,10 @@ export class CharacterModels {
         // AFTER the mixer: it overwrites bone rotations wholesale each frame, so
         // posture applied before would be erased by the clip it is meant to sit on.
         for (const { bone, extra, base } of bones.values()) bone.rotation.x = base + extra;
+        // MODEL-ROOT-LOCK, for the same reason and at the same seam: the mixer
+        // has just written the clip's root translation over the bind pose, and
+        // a clip that translates the root drags the character off its tile.
+        applyRootLock(rootLock);
       },
       dispose() {
         mixer.stopAllAction();

@@ -60,7 +60,7 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     // list fails here rather than in someone's content.
     //
     // Four objects rather than one, because some keys are **shape-exclusive**:
-    // `chargeHits` is only valid on a `path`, `axisBonus`/`beamWidth` only on a
+    // `hits` is only valid on a `path`, `axisBonus`/`beamWidth` only on a
     // `cone`, and `innerRadius`/`innerAmount` only on a `circle` — each for the
     // same reason,
     // that a balance field the engine cannot read on that shape is a number
@@ -68,7 +68,7 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
     // exactly as strong as it was.
     const charge: AbilityDef = {
       id: 'x', name: 'X', phase: 'dash', shape: 'path', range: 4, radius: 1, cooldown: 2,
-      energyGain: 0, delayTurns: 1, chargeHits: 'all', free: false, melee: false, oncePerMatch: false,
+      energyGain: 0, delayTurns: 1, hits: 'all', free: false, melee: false, oncePerMatch: false,
       impact: { origin: 1, destination: 2 },
       effects: [{ kind: 'damage', amount: 10, duration: 2 }], description: 'test',
     };
@@ -103,6 +103,10 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
       energyGain: 8,
       effects: [
         { kind: 'trap', amount: 25, lifetime: 1, halt: true, perTile: true, triggers: ['move', 'displacement'] },
+        // W1: `target` is an effect-level key, so it needs a home in the union
+        // below. `"self"` rather than `"aimed"` because this ability is a
+        // `wall` and the pairing is checked for real in `decoy-target.test.ts`.
+        { kind: 'shield', target: 'self', amount: 10, duration: 1 },
       ],
       description: 'test',
     };

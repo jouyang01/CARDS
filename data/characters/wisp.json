@@ -40,22 +40,24 @@
       "id": "veil_decoy",
       "name": "Veil & Decoy",
       "phase": "prep",
-      "shape": "self",
-      "range": 0,
+      "shape": "square",
+      "range": 3,
       "cooldown": 5,
       "energyGain": 0,
       "free": true,
       "effects": [
         {
           "kind": "stealth",
+          "target": "self",
           "duration": 2
         },
         {
           "kind": "decoy",
+          "target": "aimed",
           "duration": 1
         }
       ],
-      "description": "FREE ACTION \u2014 costs no ability, so Wisp can vanish and still Sprint. Vanish for a turn and leave a decoy at your current square; the decoy shows the enemy team a Wisp that is not there, and dies to any damage."
+      "description": "FREE ACTION \u2014 costs no ability, so Wisp can vanish and still Sprint. Vanish for a turn and place a decoy on a square up to 3 away; the decoy shows the enemy team a Wisp that is not there, and dies to any damage. It cannot be placed on an occupied square."
     },
     {
       "id": "bola",
@@ -63,6 +65,7 @@
       "phase": "blast",
       "shape": "line",
       "range": 6,
+      "hits": "first",
       "cooldown": 3,
       "energyGain": 8,
       "effects": [
@@ -75,7 +78,7 @@
           "duration": 1
         }
       ],
-      "description": "Thrown bola: 24 damage and Slow for a turn. Wisp's tool for keeping Bastion off her and catching Vex mid-rotation."
+      "description": "Thrown bola: 24 damage and Slow for a turn to the FIRST enemy in the line. Wisp's tool for keeping Bastion off her and catching Vex mid-rotation."
     }
   ],
   "ultimate": {

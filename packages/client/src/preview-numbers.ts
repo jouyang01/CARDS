@@ -121,7 +121,7 @@ export interface AimedAction {
    * damages, from the engine's own `chargeVictims`.
    *
    * A charge is the one shape where standing in the area is **not** enough to be
-   * hit: `chargeHits` decides whether it is the first crossed unit or all of
+   * hit: `hits` decides whether it is the first crossed unit or all of
    * them, and the area is the whole route either way. Kestrel's Skim is
    * first-only, and the preview was numbering *every* enemy on the route for 12
    * — promising two hits where one lands.
@@ -255,7 +255,7 @@ export function previewNumbers(
 
       for (const target of state.units) {
         if (!target.alive || !area.has(key(target.pos))) continue;
-        // A charge's damage reaches only the units `chargeHits` selected — but
+        // A charge's damage reaches only the units `hits` selected — but
         // its beneficial half, and anything an `impact` disc covers, is an area
         // effect like any other, so the list gates the damage alone.
         if (hitList !== undefined && kind === 'damage' && !hitList.has(target.unitId)) continue;

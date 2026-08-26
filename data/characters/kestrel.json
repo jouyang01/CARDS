@@ -67,7 +67,7 @@
     "range": 8,
     "cooldown": 0,
     "energyGain": 0,
-    "chargeHits": "all",
+    "hits": "all",
     "effects": [
       { "kind": "damage", "amount": 35 },
       { "kind": "slow", "duration": 1 }

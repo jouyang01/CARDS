@@ -66,7 +66,7 @@ import {
 import {
   abilityOptions,
   abilityPreview,
-  chargeHitList,
+  abilityHitList,
   draftFromOrders,
   guardLandingFor,
   previewBandSets,
@@ -1530,7 +1530,13 @@ export function startHotSeat(
     // *reads* it — "where could this go" is a question you stop asking the
     // moment you have aimed, so the envelope steps back when an aim is live.
     const preview = previewAim(map, state, unit, chosen, draft, interaction);
-    const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
+    // `state` goes in for the two rules that depend on who is standing where:
+    // DECOY-PLACEMENT (an occupied square previews nothing, because the cast
+    // will be refused) and BOLA-OVERLAY (a stopping line is drawn only as far
+    // as it reaches). Both are the engine's own answers, not the client's.
+    const covered = chosen !== undefined
+      ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep, state)
+      : [];
 
     // ── Layer: the effective-range ENVELOPE (UI1 + AIM-RANGE) ────────────────
     // Where an action *could* go, which is a different question from what a
@@ -1763,7 +1769,13 @@ export function startHotSeat(
     const freeAim = previewFreeAim(map, state, unit, freeDef, draft, interaction);
     renderer.highlight(
       'free',
-      freeDef !== undefined && freeAim.length > 0 ? abilityPreview(map, unit, freeDef, freeAim) : [],
+      // `state` for the same two rules the normal slot passes it for
+      // (DECOY-PLACEMENT, BOLA-OVERLAY) — and it matters MOST here, because the
+      // ability those rules were written for, Veil & Decoy, is a free action and
+      // is previewed through this call and no other.
+      freeDef !== undefined && freeAim.length > 0
+        ? abilityPreview(map, unit, freeDef, freeAim, undefined, state)
+        : [],
       FREE,
       0.42,
     );
@@ -1776,7 +1788,7 @@ export function startHotSeat(
     renderer.highlight(
       'catalyst',
       catalystDef !== undefined && catalystAim.length > 0
-        ? abilityPreview(map, unit, catalystDef, catalystAim)
+        ? abilityPreview(map, unit, catalystDef, catalystAim, undefined, state)
         : [],
       CATALYST,
       0.42,
@@ -1795,6 +1807,9 @@ export function startHotSeat(
     // PREVIEW-MODIFIERS: the board goes in so the preview can ask the engine
     // about cover. Built here rather than cached because it is derived from
     // `map`, which never changes for a match — see the memo below it.
+    const hitList = chosen === undefined
+      ? undefined
+      : abilityHitList(map, state, unit, chosen, preview.aim, preview.aimStep);
     showPreviewNumbers(previewNumbers(state, previewBoard(), unit, [
       // PREVIEW-NUMBERS-AUDIT: the interior bands ride along with the footprint,
       // so a tile in Cinder's core is written 22 and one in her ring 14.
@@ -1807,18 +1822,21 @@ export function startHotSeat(
           // AOE-LoS: a circle's cover is measured from its centre.
           coverFrom: coverOrigin(chosen, unit.pos, preview.aim),
           // RAM-LINE-PREVIEW-FIX: a charge's route covers everybody standing on
-          // it, but `chargeHits` decides how many of them are actually hit.
+          // it, but `hits` decides how many of them are actually hit.
           // Empty for every other shape, and `previewNumbers` reads it as "the
           // area is the answer" then.
-          ...(chosen.shape === 'path'
-            ? { victims: chargeHitList(state, unit, chosen, preview.aim) }
-            : {}),
+          // HITS: a charge and a `hits: "first"` line both reach through
+          // things, so standing in the footprint is not enough to be numbered.
+          // `undefined` — every other shape, and a piercing line — means "the
+          // area is the answer" and the field is left off entirely; an empty
+          // ARRAY would mean "numbered nobody", which is a different claim.
+          ...(hitList === undefined ? {} : { victims: hitList }),
         }]
         : []),
       ...(freeDef !== undefined && freeAim.length > 0
         ? [{
           def: freeDef,
-          squares: abilityPreview(map, unit, freeDef, freeAim),
+          squares: abilityPreview(map, unit, freeDef, freeAim, undefined, state),
           ...previewBandSets(map, unit, freeDef, freeAim),
           coverFrom: coverOrigin(freeDef, unit.pos, freeAim),
         }]
@@ -1826,7 +1844,7 @@ export function startHotSeat(
       ...(catalystDef !== undefined && catalystAim.length > 0
         ? [{
           def: catalystDef,
-          squares: abilityPreview(map, unit, catalystDef, catalystAim),
+          squares: abilityPreview(map, unit, catalystDef, catalystAim, undefined, state),
           ...previewBandSets(map, unit, catalystDef, catalystAim),
           coverFrom: coverOrigin(catalystDef, unit.pos, catalystAim),
         }]
