@@ -64,8 +64,14 @@ def main():
     # The FBX carries the material but not the image, the same way the body's
     # does — re-point it at the atlas on disk so the export embeds real pixels
     # rather than a pink placeholder.
+    #
+    # A `"flat": true` weapon slot opts out: a neutral prop (Wisp's daggers) that
+    # samples a single tone does not need — and must not embed — the whole
+    # character atlas. A ~1 MB atlas baked into a 30-tri blade would blow the
+    # per-character asset budget (ART_PIPELINE §18). Such a prop keeps its own
+    # flat material from the FBX instead.
     atlas = ROOT / "build" / "art" / cid / f"{cid}_atlas.png"
-    if atlas.exists():
+    if atlas.exists() and not spec.get("flat"):
         img = bpy.data.images.load(str(atlas), check_existing=True)
         for m in bpy.data.materials:
             m.use_nodes = True

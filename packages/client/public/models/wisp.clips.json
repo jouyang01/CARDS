@@ -27,5 +27,41 @@
       "shadowstep_strike": "wisp_shadowstep"
     }
   },
-  "posture": {}
+  "posture": {},
+  "props": [
+    {
+      "slot": "mainHand",
+      "file": "wisp_dagger.glb",
+      "version": "44ebd9d0409e",
+      "bone": "mixamorigRightHand",
+      "heightTiles": 0.52,
+      "position": [
+        0,
+        0.02,
+        0.01
+      ],
+      "rotation": [
+        180,
+        0,
+        0
+      ]
+    },
+    {
+      "slot": "offHand",
+      "file": "wisp_dagger.glb",
+      "version": "44ebd9d0409e",
+      "bone": "mixamorigLeftHand",
+      "heightTiles": 0.52,
+      "position": [
+        0,
+        0.02,
+        -0.01
+      ],
+      "rotation": [
+        180,
+        0,
+        0
+      ]
+    }
+  ]
 }

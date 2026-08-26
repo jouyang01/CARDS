@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BURST_LIFT, DEFAULT_PARTICLES, NEUTRAL_DEBRIS, NO_PARTICLES, burstAt, particlesAt, particlesFor,
-  weightOf, type ParticleSpec,
+  BURST_LIFT, DEFAULT_PARTICLES, DRIFT_LIFT, NEUTRAL_DEBRIS, NO_PARTICLES,
+  burstAt, driftAt, particlesAt, particlesFor, weightOf, type ParticleSpec,
 } from '../src/particles.js';
 import { type VfxTable } from '../src/ability-vfx.js';
 import type { Cue } from '../src/choreograph.js';
@@ -108,6 +108,46 @@ describe('burstAt', () => {
   });
 });
 
+describe('driftAt (smoke)', () => {
+  const SMOKE: ParticleSpec = { count: 14, beats: 1.0, speedTiles: 1.4, size: 0.09, shade: 'core', style: 'drift' };
+
+  it('DRIFT-EXISTS: a drift effect puts smoke in the air', () => {
+    expect(driftAt(SMOKE, AT, SEED, 0.2, 1, 0xffffff).length).toBeGreaterThan(0);
+  });
+
+  it('DRIFT-WEIGHTLESS: no launch-and-fall — it hangs low and stays', () => {
+    // The whole point against debris: cold smoke has no buoyancy and no gravity,
+    // so the highest puff is bounded and the same at every age — never a parabola
+    // that peaks and drops (contrast BURST-ARCS).
+    let hi = 0;
+    for (let age = 0; age < SMOKE.beats; age += 0.05) {
+      for (const p of driftAt(SMOKE, AT, SEED, age, 1, 0xffffff)) hi = Math.max(hi, p.lift);
+    }
+    expect(hi).toBeLessThanOrEqual(DRIFT_LIFT * 1.5 + 1e-9);
+    const height = (age: number): number =>
+      Math.max(...driftAt(SMOKE, AT, SEED, age, 1, 0xffffff).map((p) => p.lift), 0);
+    expect(Math.abs(height(0.2) - height(0.7))).toBeLessThan(1e-9);
+  });
+
+  it('DRIFT-SETTLES: it eases outward and keeps spreading', () => {
+    const reach = (age: number): number =>
+      Math.max(...driftAt(SMOKE, AT, SEED, age, 1, 0xffffff).map((p) => Math.hypot(p.x - 6, p.y - 6)), 0);
+    expect(reach(0.6)).toBeGreaterThan(reach(0.1));
+  });
+
+  it('DRIFT-LINGERS: it fades to nothing by the end rather than popping', () => {
+    expect(driftAt(SMOKE, AT, SEED, 0.98, 1, 0xffffff).every((p) => p.opacity < 0.1)).toBe(true);
+  });
+
+  it('DRIFT-DETERMINISTIC: the same cast drifts identically every time', () => {
+    expect(driftAt(SMOKE, AT, SEED, 0.3, 1, 0xffffff)).toEqual(driftAt(SMOKE, AT, SEED, 0.3, 1, 0xffffff));
+  });
+
+  it('DRIFT-NONE-CONFIGURED: no count, no smoke', () => {
+    expect(driftAt(NO_PARTICLES, AT, SEED, 0.1, 1, 0xffffff)).toEqual([]);
+  });
+});
+
 describe('particlesFor', () => {
   it('PARTICLES-FROM-DATA: Shield Bash throws debris, and it is content', () => {
     expect(particlesFor(VFX, 'aegis', 'shield_bash').count).toBeGreaterThan(0);
@@ -191,5 +231,22 @@ describe('particlesAt', () => {
     for (const p of particlesAt([impact(0, 'v', 'a', 'shield_bash')], 0.2, VFX, asAegis, places)) {
       expect(tones).toContain(p.color);
     }
+  });
+
+  const cast = (t: number, unitId: string, abilityId: string): Cue =>
+    ({ kind: 'ability', t, dur: 1, phase: 'prep', unitId, abilityId, area: [] }) as Cue;
+
+  it('AT-CAST-SMOKE: a drift cast leaves smoke where the caster stood', () => {
+    // veil_decoy is a prep cast with no impact, styled drift — the signature a
+    // ring cannot carry. It must throw particles off the ability cue itself.
+    const asWisp = (): string => 'wisp';
+    const out = particlesAt([cast(0, 'w', 'veil_decoy')], 0.3, VFX, asWisp, at({ w: { x: 3, y: 4 } }));
+    expect(out.length).toBeGreaterThan(0);
+    expect(Math.min(...out.map((p) => Math.hypot(p.x - 3, p.y - 4)))).toBeLessThan(1.5);
+  });
+
+  it('AT-NO-DEBRIS-ON-CAST: a debris ability throws nothing on a cast — only on a hit', () => {
+    // Casting Shield Bash is not the hit; the debris is the door landing, later.
+    expect(particlesAt([cast(0, 'a', 'shield_bash')], 0.2, VFX, asAegis, places)).toEqual([]);
   });
 });
