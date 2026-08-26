@@ -30,15 +30,17 @@ import { pathToFileURL } from 'node:url';
 /**
  * Per-character ceiling, in bytes.
  *
- * **This is the cap that actually goes off.** Aegis, the first rig, weighs
- * ~1.16 MB (mesh + atlas + every clip), so the headroom here is about a quarter
- * — enough that a legitimately more detailed character passes, and not enough
- * that a doubled texture or an unbudgeted second prop slips through unnoticed.
- * Per character rather than only in total because the total is *expected* to
- * grow as the roster is rigged, and a guard that cannot tell "one more
- * character" from "one character got twice as heavy" is not a guard.
+ * **This is the cap that actually goes off.** Aegis, the first procedural rig,
+ * weighs ~1.16 MB (mesh + atlas + every clip). Wisp arrives from the Rodin
+ * import path carrying a baked photographic texture atlas, which is heavier —
+ * ~1.9 MB with a 1024 atlas — so the cap is 2 MB (owner's call, 2026-08-26): it
+ * fits an import-path character with room to spare, and still catches a doubled
+ * texture or an unbudgeted second prop. Per character rather than only in total
+ * because the total is *expected* to grow as the roster is rigged, and a guard
+ * that cannot tell "one more character" from "one character got twice as heavy"
+ * is not a guard.
  */
-const PER_CHARACTER = Math.round(1.5 * 1024 * 1024);
+const PER_CHARACTER = Math.round(2 * 1024 * 1024);
 
 /**
  * Whole-directory ceiling, in bytes: what a player's browser can be asked to
@@ -47,7 +49,7 @@ const PER_CHARACTER = Math.round(1.5 * 1024 * 1024);
  * Nine characters at today's weight is ~10.5 MB, which is the number
  * `ART_PIPELINE.md` §18 is a decision about — every character currently ships
  * its own copy of the four generic Mixamo clips. The cap sits above that and
- * **below** nine-at-the-per-character-cap (13.5 MB), so the roster fits as it
+ * **below** nine-at-the-per-character-cap (18 MB), so the roster fits as it
  * stands today but nine simultaneously heavier characters do not. If this trips,
  * the answer is §18's Option A (a shared clip `.glb`) or Option C (meshopt), not
  * a bigger number here.

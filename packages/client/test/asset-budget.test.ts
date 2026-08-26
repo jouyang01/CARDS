@@ -78,7 +78,7 @@ describe('ASSET-WEIGHT-BUDGET: it actually fails', () => {
     // total-only guard could not tell "one more character" from "one character
     // got twice as heavy".
     const { report } = await load();
-    const out = report(models({ 'aegis.glb': 1.9 }));
+    const out = report(models({ 'aegis.glb': 2.4 }));
     expect(out.errors).toHaveLength(1);
     expect(out.errors[0]).toContain('aegis');
     expect(out.errors[0], 'and points at where the fix lives').toContain('ART_PIPELINE.md §18');
@@ -92,7 +92,7 @@ describe('ASSET-WEIGHT-BUDGET: it actually fails', () => {
     const files: Record<string, number> = {};
     for (let i = 0; i < 14; i++) files[`char${i}.glb`] = 1.4;
     const out = report(models(files));
-    expect(out.characters.every((c) => c.bytes < 1.5 * 1024 * 1024), 'each one is legal').toBe(true);
+    expect(out.characters.every((c) => c.bytes < 2 * 1024 * 1024), 'each one is legal').toBe(true);
     expect(out.errors, 'and the total is not').toHaveLength(1);
     expect(out.errors[0]).toContain('public/models/');
   });
@@ -103,7 +103,7 @@ describe('ASSET-WEIGHT-BUDGET: it actually fails', () => {
     const { report } = await load();
     const out = report(new URL('../public/models/', import.meta.url).pathname);
     expect(out.errors, 'the checked-in art is inside both budgets').toEqual([]);
-    expect(out.characters.map((c) => c.id), 'one rigged character so far').toEqual(['aegis']);
+    expect(out.characters.map((c) => c.id), 'the rigged characters shipped so far').toEqual(['aegis', 'wisp']);
     expect(out.lines.join('\n')).toContain('budget');
   });
 
@@ -113,9 +113,9 @@ describe('ASSET-WEIGHT-BUDGET: it actually fails', () => {
     // still being bytes a player downloads, so they count toward the grand total.
     const { report } = await load();
     const out = report(new URL('../public/models/', import.meta.url).pathname);
-    expect(out.characters.map((c) => c.id), 'props are not in the character list').toEqual(['aegis']);
+    expect(out.characters.map((c) => c.id), 'props are not in the character list').toEqual(['aegis', 'wisp']);
     expect(out.props, 'the Proving Floor props are weighed').toBeGreaterThan(0);
-    expect(out.props, 'and are well under the per-character cap').toBeLessThan(1.5 * 1024 * 1024);
+    expect(out.props, 'and are well under the per-character cap').toBeLessThan(2 * 1024 * 1024);
     expect(out.total, 'the total includes them').toBeGreaterThan(
       out.characters.reduce((n, c) => n + c.bytes, 0));
     expect(out.lines.join('\n')).toContain('props total');
