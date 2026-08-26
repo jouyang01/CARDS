@@ -7668,6 +7668,13 @@ with the mutant in, passing with it out.
 **Incidental — the 90-frame capture is streamed now.** Holding ninety decoded frames is ~270MB and
 took the container down once during this diagnosis. Only the per-frame grids are kept.
 
+**The render suite is 37/37 green** — the first clean aggregate since the Proving Grounds rebuild
+took it to 7 red. The four reds carried into this session closed for four different reasons, which is
+worth recording because only one of them was a Builder fixing the thing that was filed: two by prior
+sessions' drives (the pad pair, FOG-ZORDER), one by session 17's ally-hue fix (BODY-CLICK, where the
+ally green was within a few counts of the nameplate HP bar), and one by a scene re-grade nobody
+connected to it (VFX-FLASH).
+
 **RENDER-SUITE-GREEN-4 — both halves were already implemented before this session started.** The pad
 pair now drives `?map=iron-basin&format=4v4`, and FOG-ZORDER now drives a unit onto the centre brush
 band over several turns ("Driven into range on purpose"). Both pass. **The pad half was implemented
