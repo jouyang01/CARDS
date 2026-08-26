@@ -7877,3 +7877,152 @@ VFX-FLASH-VERIFY shipped in `d754a8b` (merged, #177); RENDER-SUITE-GREEN-4's two
 already implemented and green; FOF-OUTLINE was skipped with reasons. They still read as UNBLOCKED in
 `docs/BACKLOG.md` because PR #179 only added AOE-LoS. Nothing was re-done this session — flagged so
 the next backlog pass can close them rather than re-issuing them.
+
+## 2026-10-07 — Builder session 20 (WISP-INVISIBLE-FIX, HITS-RENAME, BOLA-HITS, W1-DECOY-TARGET, BOLA-OVERLAY)
+
+Five items, three of which needed a call the item as written did not settle. Each
+is recorded below with the measurement that forced it, because in all three cases
+the spec and the evidence disagree and the next reader deserves the evidence.
+
+**1. WISP-INVISIBLE-FIX — the ruled mechanism does not fix the reported bug. The
+displacement is VERTICAL.** MODEL-ROOT-LOCK says to *"neutralise the root bone's
+**horizontal** translation … keeping the **vertical** component"*, in world space
+so it is *"robust to the model's authoring axis"*. I read the shipped `wisp.glb`
+before implementing, and the axis reasoning inverts:
+
+  | | bind (local) | `wisp_idle` frame 0 | world offset |
+  |---|---|---|---|
+  | Wisp | `(0.00, 0.14, −1.09)` | `(−0.40, 2.13, **22.52**)` | **22.5 units DOWN** |
+
+  The `Armature` carries a **+90° X** rotation, so local `(x, y, z)` maps to world
+  `(x, −z, y)`: local **Z is the world vertical**. Wisp's 22.5 is straight down,
+  not sideways. Neutralising the horizontal and keeping the vertical — in world
+  space, exactly as ruled — leaves her under the floor and still invisible. The
+  ruling's diagnosis ("flings the mesh ~22 units off the board, off-screen") is
+  right; its inference that this is horizontal is not.
+
+  **What shipped instead: the root bone's LOCAL translation is restored to bind,
+  all three components.** Restoring the local translation restores the world
+  offset from the model root exactly, on every axis, **without ever asking which
+  axis is up** — and that question is what shipped the bug (`build_glb.py
+  --in-place` assumed local-Y was world-up). It is strictly stronger than the
+  ruled world-space form and removes the assumption rather than getting it right.
+
+  Two supporting measurements. **Wisp's clips vary only in local Z** — X and Y are
+  constant within every one of the ten — so there is no authored horizontal travel
+  in that library to preserve, only per-clip garbage offsets of 0.4 to 20 units;
+  and the vertical "motion" is a 13-unit idle bob, which is noise on a broken
+  baseline rather than a breath. **Aegis's clips sit at bind** (idle deviates
+  0.03), so the lock is a no-op for the model the AC asks not to regress.
+
+  **The cost, stated plainly and not hidden:** Aegis's `sword_and_shield_death`
+  and `knocked_down` carry ~1 unit of genuine authored root translation (a death
+  slide, a knockdown sprawl) which the pin discards. Bone *rotations* are never
+  touched, so both clips still play in full — the body still collapses; it just
+  no longer slides half a body-length while doing it. Under the ruling's own
+  premise (*"a clip supplies **in-place** motion only"*) that translation is root
+  motion a clip should not have, and the renderer already carries travel by
+  lerping the unit group. I judged a visible-but-small flourish on two Aegis clips
+  a smaller loss than a CRITICAL character rendering under the floor. See OQ #1.
+
+**2. HITS-RENAME — the Spec Note's default contradicts the AC's, and the AC is
+right.** Spec Notes: *"keep `hits` defaulting to `"first"` … any un-annotated
+`line`/`path` keeps first-only behaviour."* AC: *"`hits: "all"` (or absent,
+**keeping the existing default**) hits every enemy on the line."* A line has never
+been first-only, so "keeps" cannot be true of it. Implemented **per-shape**:
+`path` absent = first (today's), `line` absent = pierce (today's). Both preserve
+existing behaviour, which is what a rename should do. Measured: the Spec Note's
+reading, applied as a mutant, fails 6+ tests including several with nothing to do
+with lines — every beam in the game would silently stop piercing — and it would
+make BOLA-HITS, which exists to *add* `"first"` to the bola, a no-op.
+
+**3. W1-DECOY-TARGET — `target` defaulting to `"self"` would regress
+MENDING-RANGE.** The AC says the field defaults to `"self"`. If `"self"` means
+"on the caster unconditionally", then making it the default reinstates exactly
+the bug MENDING-RANGE fixed (Lumen healed by his own aimed-away circle from
+anywhere on the board). If instead `"self"` means "today's area-gated routing",
+then Wisp's explicit `target: "self"` stealth is area-gated to the square the
+decoy goes on — three tiles from where she is standing — and the vanish does not
+land, so W1 fails. Neither reading satisfies both.
+
+  Implemented as three states: **absent** = today's routing, untouched (which is
+  what *"defaulting means no existing character data changes"* actually requires,
+  and a test asserts only Wisp's two effects carry the field at all); **`"self"`**
+  = on the caster whatever the aim says, an explicit opt-in override; **`"aimed"`**
+  = placed at the aimed square. This is the only reading under which W1 and
+  MENDING-RANGE both hold, and the MENDING-RANGE test that used Veil & Decoy as
+  its `self`-shape example is re-specced to pin exactly this.
+
+**Two bugs found by tests I was writing, worth recording because both were
+invisible to the whole suite.**
+
+  • **The wiring for MODEL-ROOT-LOCK had no test seam at all.** Deleting the
+    `applyRootLock` call from `ModelInstance.update` left all 1984 tests green:
+    `instance()` needs a real HTTP fetch and the dynamic GLTFLoader import, so the
+    animation seam was reachable only by photographing a browser. Added
+    `CharacterModels.adopt()` — a narrow registration path for an already-parsed
+    model — and four tests now drive a real `ModelInstance` through the
+    play-idle-on-load path that is where the bug actually lives.
+
+  • **`abilityHitList` returning `[]` for "no restriction" blanked every number a
+    piercing line writes.** `previewNumbers` reads an empty victim list as
+    "number nobody", so Rail Shot previewed zero damage on everything. `undefined`
+    and `[]` are genuinely different claims — *"this ability imposes no list"*
+    versus *"it does, and nobody is on it"* — and conflating them costs a whole
+    ability's preview. The client parity test caught it within minutes; nothing
+    else would have.
+
+**And one the existing suite found on itself:** PREVIEW-AUDIT aims every
+square-shape at the foe, so once the decoy became placeable the client was drawing
+a decoy on top of him that DECOY-PLACEMENT refuses. Fixed by sharing the engine's
+`placementIsFree` with `commitAim` and `abilityPreview` rather than by moving the
+audit's aim — the board must never offer a placement the order pipeline drops.
+
+**Measurement discipline.** Every new assertion was mutation-checked (13 mutants
+across the five items), and **three tests were rewritten because the check showed
+them passing for the wrong reason**: a decoy-scope test confounded by Veil &
+Decoy's `cooldown: 5` (the second cast was refused by the cooldown, not by the
+placement rule, so it would have been green whatever that rule said); a
+`generality` test failing on "exactly 4 abilities" rather than on `target`; and a
+three.js fixture whose `mixamorig:Hips` track bound to nothing at all, because
+`PropertyBinding` cannot parse a colon in a node name and `GLTFLoader` sanitises
+it — every clip in that fixture was a silent no-op and every assertion passed for
+free. That one is written into the fixture as a comment.
+
+## Open Questions for the Analyzer — 2026-10-07 (session 20)
+
+**1. MODEL-ROOT-LOCK needs re-ruling to match the physics, and it costs Aegis a
+flourish (WISP-INVISIBLE-FIX; `character-model.ts`, `edge-cases.md`).** The ruled
+"horizontal only, keep the vertical" does not fix Wisp — her displacement is
+vertical, measured above. What shipped pins all three components. **Two things to
+rule:** (a) amend the edge-case entry so the next reader is not working from the
+axis inference that shipped the bug; (b) accept or reject the Aegis cost — ~1 unit
+of authored root translation in `death`/`knocked_down`, discarded. If it is wanted
+back, the mechanism is WISP-GLB-REBAKE landing an honest asset and then relaxing
+the lock to a **re-base** (subtract the clip's own baseline) rather than a pin —
+which I did not build, because on Wisp's current clips re-basing leaves a 13-unit
+idle bob and fixes nothing.
+
+**2. Bola damage is 24, the owner's note says 12 (BOLA-HITS;
+`data/characters/wisp.json`).** Kept at 24 per the item's own instruction. Needs a
+one-word confirmation: is 24 right, or was the note a re-tune?
+
+**3. `hits` defaults per-shape, and `AbilityEffect.target` has three states, not
+two.** Both above, both departures from a Spec Note or AC as literally written,
+both forced by preserving existing behaviour. If either reading is wrong the fix
+is small, but it should be a ruling rather than my inference.
+
+**4. A `hits: "first"` line's AREA is now truncated, not just its victim list
+(BOLA-OVERLAY).** `PlannedAbility.area` — and therefore the `abilityFired` event
+the client animates — stops at the impact square. That is what makes the drawn
+overlay and the resolved beam one thing rather than two, and it is slightly more
+than the AC asked for (it says "the overlay"). Flagged because it changes an event
+payload the renderer reads.
+
+**5. WISP-GLB-REBAKE is still owed, and the client lock does not make it optional
+(ART).** The lock guarantees Wisp renders. It does not make her clips usable as
+root motion, and every future model down the Rodin path will arrive equally
+broken until `build_glb.py --in-place` re-bases to bind instead of pinning
+per-clip drift to a frame-0 that is itself 22 units off. The measurements in this
+entry are the acceptance criteria: after a rebake, `wisp_idle`'s Hips track should
+sit within a few centimetres of `(0.00, 0.14, −1.09)`, not at Z ≈ +22.
