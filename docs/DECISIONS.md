@@ -8087,3 +8087,180 @@ carries a bespoke measurement to get around it. Worth a small shared helper
 (measure the tile from two known-separated bodies once, cache per page) before
 the third test needs it; not filed as an item because the Analyzer may prefer a
 different approach, e.g. exposing a board→screen probe on the page for tests.
+
+---
+
+## 2026-10-08 — Session 21: eight owner Dev Notes, and the asset underneath four of them
+
+### FOLLOW-THROUGH — how long a cast is held, and what is deliberately not stretched
+
+Dev Note 2 was *"Wisp's Dagger flurry animation does not finish during blast
+phase if it doesn't hit anything."* The "if it doesn't hit anything" is the
+whole diagnosis: an `ability` cue is one beat, `selectClip` returns the caster to
+idle the instant it ends, and `wisp_flurry` is 3.1 s against a 0.76 s beat.
+Landing a hit added a second beat to the actor's slot — the impact's — so a
+connected swing had twice the room and read as finished. **The cast was borrowing
+its follow-through from its victim.**
+
+Three shapes of fix were available and the choice matters:
+
+  1. **Time-scale the clip to fit its beat.** Keeps pacing entirely in the
+     timeline, which `choreograph.ts`'s own doc argues for ("one tunable
+     constant; everything is a multiple of it"). Rejected: 3.1 s into 0.76 s is
+     4x, and a knife flurry at 4x is a different animation.
+  2. **Stretch the cast cue into its own impact.** The obvious one, and wrong:
+     the tracer's flight window is `[cast.t, impact.t)`, so every bola would have
+     become a four-second crawl. This is the one a naive implementation reaches
+     for, so `hold-casts.test.ts` asserts against it by name.
+  3. **What shipped.** Grow the cast's `dur` — which is all `selectClip` and
+     `phaseWindow` read — and shift what comes *after the actor's slot*. The
+     cast's start and the impacts bound to it do not move, so the hit lands when
+     it always did and the tracer flies at the speed it always flew.
+
+Scoped to **sequential phases only** (prep, blast). In Dash and Move step *k* of
+every mover shares a beat, so "shift everything after the cast" would open a hole
+in the middle of somebody else's run.
+
+Clip lengths reach `holdCasts` as an argument rather than being read inside it:
+`choreograph()` still knows nothing about a `.glb`, and a character with no model
+gets its timeline back byte-identical. The cost is a new `clipLength` on the
+`Renderer` interface, which is the first time animation *duration* has escaped
+`character-model.ts` — the alternative was writing durations into
+`data/art/<id>.json` by hand, a second copy of a number the `.glb` already
+carries and free to drift on the next re-export.
+
+**Known consequence, flagged rather than hidden:** a Blast phase with two casts
+now runs several seconds longer than it did. That is what "the animation
+finishes" costs, and it is a pacing change the owner has not seen yet.
+
+### DECOY-MODEL — the owner's decoy keeps its ring, and gains a body
+
+Dev Note 3 asked for the Wisp model on both sides. The enemy's half is
+unambiguous — a decoy that is a box on a board of rigged characters is a sign
+saying DECOY. The owner's half needed a call: the purple ground plate exists so
+the caster can tell which of the two Wisps is theirs, and the note calls it
+*"a random purple square"*.
+
+Ruling: **draw the model for both viewers, and keep the purple plate under the
+owner's as a foot ring.** A decoy's whole value is that it looks exactly like the
+caster, so the owner's tell has to sit *under* an identical body rather than
+replace it — replacing it means the decoy its owner sees is not the decoy the
+enemy sees, and a player cannot plan around a marker they cannot read as a Wisp.
+The plate's original rationale ("Veil & Decoy leaves the decoy on the caster's
+own square, so a purple box sat inside Wisp and was invisible") went stale at W1,
+which moved placement to an aimed square up to 3 away.
+
+The mechanical half of this is that the decoy's body moved into the keyed
+`unitObjects` map. The `decoy` layer is disposed and rebuilt on every `show()`,
+and a skinned mesh rebuilt every paint has its animation restarted every paint —
+so a decoy drawn there could never idle no matter what clip it was handed. That
+is why the note's two complaints ("a box" and "not idling") had one cause.
+
+### A Blender-free path from FBX to .glb, and why it had to exist
+
+`build_glb.py` needs Blender; this environment has none, and Dev Note 1 shipped
+three new FBX clips. `tools/art/build_glb_fbx2gltf.py` is the second path —
+same input folder, same clip naming, same manifest, via the `fbx2gltf` npm
+binary. It is **not** a replacement: `build_glb.py` also does the pipeline's
+decimation and material work, and this one takes the FBX as it is.
+
+Two normalisations it has to perform, both found by measurement and both the
+kind of thing that is invisible until it is catastrophic:
+
+  - fbx2gltf leaves the FBX's unit/axis conversion **on the mesh node** (scale
+    100, -90° X) where Blender bakes it into the vertices. Unbaked, `modelBounds`
+    — which deliberately reads *geometry* bounds so an `Armature` rotation cannot
+    poison the number — read Wisp's 0.008-unit local extent as her height and
+    scaled her up 245x.
+  - That same matrix is **also** in the inverse bind matrices, so folding it into
+    the vertices alone applies it twice. The first attempt drew her a hundred
+    times life size, off every edge of the frame, with only her dagger — a prop
+    parented to a bone, never skinned — left in view at the right size.
+
+Both halves verified against the shipped Blender-built file rather than reasoned
+about: after them, the rebuilt POSITION bounds and the Hips inverse bind matrix
+match it to the last printed digit.
+
+**ENGINE ASK / DOC ASK:** `docs/ART_PIPELINE.md` is the Designer's and it now
+describes only one of two build paths. It needs a section for this one — at
+minimum the two normalisations above and the `npx --yes fbx2gltf` bootstrap —
+or the next person to rebuild a character will hit both traps in order. Not
+edited here because the file is not the Builder's.
+
+### MODEL-ROOT-LOCK returns to the ruling as written
+
+The all-axis pin shipped in session 20 as an explicit, documented departure from
+`edge-cases.md`'s *"neutralise the horizontal, keep the vertical … measured in
+world space"*, on the strength of measurements from the corrupt `wisp.glb`: her
+Hips tracks ran 22 units out, mostly downward, so keeping the vertical would have
+left her under the floor. That reasoning was correct about that file and the file
+was broken.
+
+With the asset rebuilt the departure is **withdrawn** and the ruling holds
+unchanged — no edge-case edit is needed, which is the good outcome. Dev Note 8
+(Aegis floating on death) was the departure's cost, exactly as flagged at the
+time: his death drops the hips 0.65 and the pin discarded it.
+
+The implementation detail worth recording: which local axis is up is a property
+of the **exporter**, not of the format. Aegis carries Blender's `Armature` +90° X
+so his local -Z is the vertical; the rebuilt Wisp has no such node and hers is
+local +Y. `measureRootLock` accumulates the static chain between the root bone's
+parent and the model root once, in the bind pose, and the projection happens
+through that basis — so each asset's own matrices answer the question that has
+now bitten this pipeline twice. Model space rather than world space, because the
+lock runs before the renderer refreshes world matrices and a unit group only ever
+translates, turns about Y and scales uniformly.
+
+### MODEL-ROOT-MOTION — a standing guard on a committed build artifact
+
+`public/models/` is the one place in this repo where a build artifact is a
+committed source file: written on somebody's machine, pushed by hand,
+regenerated by nothing on CI. The corruption that caused Dev Notes 4, 5 and 8 was
+invisible to every existing check — the file loaded, the manifest matched, the
+clip list was right, and the root lock papered over it at runtime.
+
+`model-root-motion.test.ts` reads the committed bytes and fails any clip that
+moves the root bone more than **two model-heights** from its bind pose. Not a
+number in metres: Aegis's honest `knocked_down` travels 1.74 and Wisp's 2.51,
+while the corrupt file measured 102 against a 3.79 threshold — an order of
+magnitude of daylight, and the bound scales with the rig rather than with a
+convention.
+
+## Open Questions for the Analyzer — 2026-10-08
+
+### Open Question 7 — Blast pacing after FOLLOW-THROUGH has not been seen by the owner
+
+Holding a cast for the length of its clip is what Dev Note 2 asked for, and it
+makes a sequential Blast phase materially longer: Wisp's bola is 3.3 s and her
+flurry 3.1 s against a 0.76 s beat, so a two-actor Blast that ran ~3 s now runs
+closer to 8. Every alternative was worse (see the FOLLOW-THROUGH entry above),
+but this is a **feel** change nobody has playtested. If it reads as slow, the
+lever is the clip, not the code: the clips are 3 s of Mixamo with a long settle
+after the action, and trimming them at export costs nothing in the engine. Worth
+an item only if the owner confirms it.
+
+### Open Question 8 — `build_glb.py --in-place` is still the tool that produced the corrupt asset
+
+The rebuild replaced the *output*; nothing has been done to the Blender path that
+produced Hips tracks 102 units from bind on a 1.9-unit body. `edge-cases.md`
+already carries the fix as ruled ("re-base the Hips to bind rather than pin
+per-clip drift to a frame-0 that is itself 22 units off, and stop assuming local-Y
+is world-up"), and it is still unimplemented. `model-root-motion.test.ts` now
+catches the result, but only after someone has committed a 2 MB file. Nobody in
+this environment can test a Blender change, which is why it is a question rather
+than a commit.
+
+### Open Question 9 — the roster's other seven characters have no models, and two of the fixes above are model-shaped
+
+FOLLOW-THROUGH is a no-op for a character with no `.glb` (there is no clip length
+to hold), and DECOY-MODEL falls back to the same box a model-less unit draws. Both
+are the honest defaults, and both mean the two Dev Notes they answer will come
+back per character as art lands. Not a defect; worth knowing when reading a future
+"the decoy is a box" report — it will be about a *character*, not a regression.
+
+### Carried over, still open
+
+  - **Session 20 OQ #1** is now closed by the two entries above (the axis question
+    is answered by measurement, and the Aegis cost is paid).
+  - **Bola damage 24 vs the Dev Note's 12** (session 20) is still unresolved and
+    still a balance question, which is not the Builder's to answer.

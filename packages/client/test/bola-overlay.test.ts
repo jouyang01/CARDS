@@ -85,9 +85,11 @@ describe('BOLA-OVERLAY: the beam is drawn to the impact point', () => {
     expect(drawn).toEqual(['5,10', '6,10']);
   });
 
-  it('an ALLY does not stop it — the overlay runs past a teammate', () => {
-    // The drawn line has to agree with the ruling that allies never block or
-    // absorb, or the overlay would tell the player their own teammate is a wall.
+  it('an ALLY stops it too — the overlay ends on the teammate', () => {
+    // Owner Dev Note (2026-10-08): the bola does not go through allies. The
+    // overlay is the half a player sees while deciding, so it has to end on the
+    // teammate — a line drawn past them would promise a reach the shot no
+    // longer has, which is the whole point of BOLA-OVERLAY.
     const state = createMatch(MAP, '2v2', [[WISP, WISP], [BASTION, BASTION]]);
     const [me, mate] = state.units.filter((u) => u.owner === 0);
     const [foe] = state.units.filter((u) => u.owner === 1);
@@ -96,8 +98,7 @@ describe('BOLA-OVERLAY: the beam is drawn to the impact point', () => {
     foe!.pos = { x: 8, y: 10 };
     state.units.filter((u) => u.owner === 1)[1]!.pos = { x: 18, y: 18 };
     const drawn = abilityPreview(MAP, me!, BOLA, [EAST], undefined, state).map(K);
-    expect(drawn, 'through the ally, up to the enemy')
-      .toEqual(['5,10', '6,10', '7,10', '8,10']);
+    expect(drawn, 'up to the teammate, and no further').toEqual(['5,10', '6,10']);
   });
 });
 

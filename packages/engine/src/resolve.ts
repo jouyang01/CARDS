@@ -2077,15 +2077,44 @@ export function truncateAtImpact(
   return end < 0 ? [...area] : area.slice(0, end + 1).map((p) => ({ x: p.x, y: p.y }));
 }
 
+/**
+ * HITS — where a `hits: "first"` line stops: the square of the nearest
+ * **character** standing in the beam, either team, or `undefined` if nothing
+ * stops it.
+ *
+ * `area` is `lineSquares`' output, which walks `d = 1..range` outward, so "the
+ * first character" is the first hit in list order — deterministic, no new
+ * geometry, no distance arithmetic.
+ *
+ * **ANY body stops it, including a teammate.** Owner Dev Note (2026-10-08):
+ * *"Bola should have friendly fire, it should not go through allies. Stops at
+ * the first character hit."* This **supersedes** RULED — HITS's *"allies never
+ * block or absorb"* clause, which shipped one session earlier and which the
+ * owner has since played: a free line through your own team made the shot
+ * positionless, and eating your own bola is the cost that makes it a decision.
+ * FF1 has always meant your attacks endanger your own side; a stopping line is
+ * simply where it bites hardest. See DECISIONS 2026-10-08.
+ *
+ * The **caster** is still never its own victim, and that falls out of the
+ * geometry rather than a check: `lineSquares` walks from `d = 1`, so the square
+ * the caster is standing on is not in the beam at all. `casterOwner` is kept in
+ * the signature because `truncateAtImpact` and both client callers pass it and
+ * the polarity may well be wanted again; it deliberately no longer decides
+ * anything here.
+ *
+ * `undefined` for any ability this rule does not apply to, so a caller can treat
+ * it as "nothing truncates this" without asking about the shape twice.
+ */
 export function lineImpact(
   def: AbilityDef, casterOwner: TeamId, area: readonly Vec2[], units: readonly UnitState[],
 ): Vec2 | undefined {
   // Absent means "pierce" for a line — see `AbilityDef.hits`. Only an explicit
   // `"first"` stops the beam, which is what keeps every shipped line unchanged.
   if (def.shape !== 'line' || def.hits !== 'first') return undefined;
+  void casterOwner; // whose shot it is no longer changes who stops it
   for (const square of area) {
-    const enemy = units.find((u) => u.alive && u.owner !== casterOwner && vecEq(u.pos, square));
-    if (enemy !== undefined) return { x: square.x, y: square.y };
+    const body = units.find((u) => u.alive && vecEq(u.pos, square));
+    if (body !== undefined) return { x: square.x, y: square.y };
   }
   return undefined;
 }
@@ -2321,14 +2350,14 @@ function runBlast(
     // a bullet's cover is decided by where the bullet came from, and for direct
     // fire that is still the shooter.
     const blastOrigin = coverOrigin(a.def, plan.unit.pos, a.aim);
-    // HITS: a `hits: "first"` line stops at the nearest enemy in the beam, so
-    // the area names where it *reached* and this names who it *reached*. Only
-    // that one unit is affected — allies neither block it nor take it, which is
-    // the ruled reading of "only hit the first enemy in the line".
+    // HITS: a `hits: "first"` line stops at the nearest CHARACTER in the beam —
+    // either team — so the area names where it *reached* and this names who it
+    // *reached*. Exactly one unit is affected, and if that unit is a teammate
+    // the teammate takes it (owner Dev Note 2026-10-08).
     const stopAt = lineImpact(a.def, plan.unit.owner, a.area, draft.units);
     const stoppedOn = stopAt === undefined
       ? undefined
-      : draft.units.find((u) => u.alive && u.owner !== plan.unit.owner && vecEq(u.pos, stopAt));
+      : draft.units.find((u) => u.alive && vecEq(u.pos, stopAt));
     let hitEnemy = false;
     // ALLY-SAFE (Dev Note #11): FF1's default is that an attack endangers
     // whoever is standing in it. An ability may opt out of the friendly half.

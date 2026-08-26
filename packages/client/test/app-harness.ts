@@ -72,6 +72,14 @@ export interface DrawLog {
   particles: { x: number; y: number; lift: number; size: number; color: number; opacity: number }[];
   /** Every animation the app asked for, in order — Phase 8's assertable half. */
   clips: { unitId: string; clip: string; loop: boolean }[];
+  /**
+   * FOLLOW-THROUGH — every `clipLength` the controller asked for.
+   *
+   * The one observable end of that wire from outside: the hold itself is a
+   * property of the cue timeline the controller keeps to itself, so without this
+   * a spec could prove `holdCasts` works and still not know the app calls it.
+   */
+  clipQueries: { characterId: string | undefined; clip: string }[];
   /** Each `preloadCharacters` call, as the ids it was given. */
   preloads: string[][];
   /** The direction each unit was last told to look, by unit id. */
@@ -124,6 +132,17 @@ export interface StubRenderer extends Renderer {
    * assertable headlessly.
    */
   withClips(sets: Readonly<Record<string, ClipSet>>): void;
+  /**
+   * Pretend those clips are this many seconds long — `characterId` → clip name
+   * → seconds.
+   *
+   * The other half of `withClips`, and the half FOLLOW-THROUGH needs: a cast is
+   * held for as long as its animation runs, and with no lengths installed
+   * `clipLength` answers undefined for everything and nothing is held. That is
+   * the honest default (a character with no `.glb` has no clip to wait for), so
+   * a spec about the hold has to say how long the swing is.
+   */
+  withClipLengths(lengths: Readonly<Record<string, Readonly<Record<string, number>>>>): void;
 }
 
 /**
@@ -138,13 +157,14 @@ export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
     viewer: undefined,
     highlightColours: new Map(), shapeColours: new Map(), pathColours: new Map(),
-    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], particles: [], clips: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
+    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], particles: [], clips: [], clipQueries: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [], lookAts: [], fitBoards: 0,
     board: { units: [], decoys: [], traps: [] },
   };
   let orbit = false;
   let pan = false;
   let clipSets: Readonly<Record<string, ClipSet>> = {};
+  let clipLengths: Readonly<Record<string, Readonly<Record<string, number>>>> = {};
   return {
     draw,
     // AMBIENT-FREEZE: the stub holds still, like the browser suite does.
@@ -152,6 +172,7 @@ export function stubRenderer(): StubRenderer {
     // RENDER-ON-DEMAND: the stub never draws, so it has drawn nothing.
     frameCount: () => 0,
     withClips: (sets) => { clipSets = sets; },
+    withClipLengths: (lengths) => { clipLengths = lengths; },
     setViewer: (viewer) => {
       draw.viewer = { team: viewer.team, seatUnitIds: [...viewer.seatUnitIds].sort() };
     },
@@ -195,6 +216,10 @@ export function stubRenderer(): StubRenderer {
     // Undefined unless a spec installs a set: that is the box path, and it is
     // the one every character without art still takes.
     clipsFor: (characterId) => (characterId === undefined ? undefined : clipSets[characterId]),
+    clipLength: (characterId, clipName) => {
+      draw.clipQueries.push({ characterId, clip: clipName });
+      return characterId === undefined ? undefined : clipLengths[characterId]?.[clipName];
+    },
     setSpotlight: () => {},
     setOrbitEnabled: (on) => { orbit = on; pan = false; },
     orbitEnabled: () => orbit,

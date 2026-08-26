@@ -754,21 +754,30 @@ export function startHotSeat(
   let decoySnapshots = new Map<string, DecoySnapshot>();
 
   /**
-   * The plate for a decoy the viewer believes is a real unit.
+   * What a decoy is pretending to be: the caster it was copied from.
    *
-   * Only when it is being *impersonated*: to its owner a decoy is a purple
-   * ground marker, not a body, and a nameplate over a marker would be the tell
-   * in reverse.
+   * One lookup for both halves of the impersonation — the fake nameplate and,
+   * since DECOY-MODEL, the character whose model is drawn. They must agree: a
+   * body with Wisp's plate and somebody else's mesh is worse than either.
    */
-  const decoyPlate = (d: { id: string; owner: TeamId; asEnemy: boolean }) => {
-    if (!d.asEnemy) return undefined;
-    const snapshot = decoySnapshots.get(d.id)
+  const decoyOf = (d: { id: string; owner: TeamId }): DecoySnapshot | undefined =>
+    decoySnapshots.get(d.id)
       // A decoy already on the board when this client started drawing (the
       // scenario seeds, a reload) has no recorded cast. Falling back to the
       // caster as it stands is a small lie in the honest direction: it is what
       // the plate would have said a moment ago, and no plate at all is the one
       // answer that outs the decoy.
       ?? snapshotDecoy(state.units, roster, d.owner);
+
+  /**
+   * The plate for a decoy the viewer believes is a real unit.
+   *
+   * Only when it is being *impersonated*: to its owner a decoy wears its purple
+   * ground ring instead, and a nameplate over that would be the tell in reverse.
+   */
+  const decoyPlate = (d: { id: string; owner: TeamId; asEnemy: boolean }) => {
+    if (!d.asEnemy) return undefined;
+    const snapshot = decoyOf(d);
     return snapshot === undefined ? undefined : decoyNameplate(snapshot);
   };
 
@@ -1182,7 +1191,10 @@ export function startHotSeat(
     const viewer = currentSeat()?.team ?? 0;
     return [...view.decoys.values()].map((d) => {
       const shown = { id: d.id, pos: { ...d.pos }, owner: d.teamId, asEnemy: d.teamId !== viewer };
-      return { ...shown, nameplate: decoyPlate(shown) };
+      // DECOY-MODEL: the impersonated character reaches the renderer for BOTH
+      // viewers. The owner sees the same Wisp everyone else does, with the
+      // purple ring under her feet as the only thing that says which is which.
+      return { ...shown, characterId: decoyOf(shown)?.characterId, nameplate: decoyPlate(shown) };
     });
   };
 
@@ -2546,7 +2558,7 @@ export function startHotSeat(
     // agree by construction. Everything below only *decorates* that fold:
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
-    const player = createTurnPlayer(prev, result.events);
+    const player = createTurnPlayer(prev, result.events, castBeats(prev));
     // The turn stops being a plan the instant it resolves, so the plan-time
     // numbers go with the aim overlays rather than lingering over the playback.
     clearPreviewNumbers();
@@ -2600,6 +2612,17 @@ export function startHotSeat(
       finish();
     });
 
+    // ONE FLASH PER HIT, FOR THE WHOLE TURN — not per phase.
+    //
+    // Owner: *"The flash for hit impact is happening twice. Once when the tracer
+    // hits the target and once when the blast phase is over."* This set used to
+    // be created inside `animatePhase`, so it reset at every phase boundary —
+    // while `newImpacts` scans the **whole** cue timeline and fires anything
+    // whose `t` has passed. A Blast impact therefore fired again the moment the
+    // Move phase started its clock, which is precisely "when the blast phase is
+    // over". Hoisted here, an impact is spent the first time it lands and stays
+    // spent, and the hitstop and camera shake it drives are single too.
+    const firedImpacts = new Set<string>();
     for (let step = player.advancePhase(); step !== undefined; step = player.advancePhase()) {
       ui.status.textContent = `Turn ${prev.turn} · resolving — ${step.phase.toUpperCase()}`;
       if (skipped) continue; // keep folding; just stop animating
@@ -2608,6 +2631,7 @@ export function startHotSeat(
         viewUnits(player.view), viewDecoys(player.view), viewTraps(player.view), viewCamo(player.view),
         pads(player.view),
         () => skipped,
+        firedImpacts,
       );
     }
     finish();
@@ -2639,6 +2663,12 @@ export function startHotSeat(
     camo: Vec2[],
     padList: PadView[],
     cancelled: () => boolean,
+    /**
+     * Impacts already spent THIS TURN. Owned by the caller and shared across
+     * every phase — see the note where it is created. A phase-local set is the
+     * bug it replaced.
+     */
+    fired: Set<string>,
   ): Promise<void> {
     const { start, end } = phaseWindow(cues, phase);
     syncViewer();
@@ -2662,7 +2692,6 @@ export function startHotSeat(
     // the phase still plays every beat, it just takes longer in real seconds.
     // Presentation only: `sampleFrame` is read at the paused `t`, so nothing
     // about where the board ends up can change. skip == watch holds.
-    const fired = new Set<string>();
     let heldMs = 0;
     let frozenUntil = 0;
     let lastWall = t0;
@@ -2765,6 +2794,29 @@ export function startHotSeat(
         : { clip: clips.death, loop: false, since: CLIP_HOLD_LAST };
       renderer.setUnitClip(u.unitId, choice, MS_PER_BEAT / 1000);
     }
+  }
+
+  /**
+   * How many beats each cast animation actually needs — what `holdCasts` asks.
+   *
+   * Read off the loaded `.glb` through the renderer, and converted with
+   * `MS_PER_BEAT` rather than the phase's own rate: only Prep and Blast are held
+   * (see `holdCasts`), and both run at the rhythm rate. `MS_PER_MOVE_STEP` is a
+   * ground-speed measurement for locomotion and has nothing to say about a swing.
+   *
+   * `prev` is the pre-turn state, which is where a unit that dies this turn can
+   * still be found — a caster killed by a simultaneous Blast has already played
+   * its own cast (choreograph's "death defers"), so it needs its beats too.
+   */
+  function castBeats(prev: GameState): (unitId: string, abilityId: string) => number | undefined {
+    return (unitId, abilityId) => {
+      const characterId = prev.units.find((u) => u.unitId === unitId)?.characterId;
+      if (characterId === undefined) return undefined;
+      const clip = renderer.clipsFor(characterId)?.abilities[abilityId];
+      if (clip === undefined) return undefined;
+      const seconds = renderer.clipLength(characterId, clip);
+      return seconds === undefined ? undefined : seconds / (MS_PER_BEAT / 1000);
+    };
   }
 
   function applyClips(cues: readonly Cue[], t: number, units: RenderUnit[], beatSeconds: number): void {
