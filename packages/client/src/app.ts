@@ -261,8 +261,17 @@ export interface NetPlay {
  * same three numbers. Two sources would drift, and the drift would show up as
  * an ally's committed AoE being a slightly different blue from the ally
  * standing inside it.
+ *
+ * **The ally green is warm — blue below red — and that is a fix, not a taste.**
+ * The first choice (`0x5fd97a`) was within a few counts of the nameplate HP
+ * bar's `#5ad17f` on every channel: an ally's body and every unit's health bar
+ * were effectively the same colour. It read as a palette question and was a
+ * legibility one, and the browser suite found it the hard way — its
+ * body-finding drive started picking HP bars up as characters. A yellow-leaning
+ * green is unmistakable against a bar that leans blue, at a glance and to a
+ * predicate.
  */
-const FOF: FofPalette = { self: 0x4f8cff, ally: 0x5fd97a, foe: 0xff6b5e };
+const FOF: FofPalette = { self: 0x4f8cff, ally: 0x7ad14f, foe: 0xff6b5e };
 
 const paletteFor = (map: MapDef): BoardPalette => {
   const theme = themeFor(map);
@@ -520,12 +529,55 @@ export function startHotSeat(
    * `ownUnits` above is: the opening paint happens during construction, above
    * where `currentSeat` is declared.
    */
+  /**
+   * The last seat that was actually on the clock.
+   *
+   * Load-bearing during resolution. Locking in the final character runs
+   * `seatIdx += 1` past the end of `seats`, so for the whole of the playback
+   * `seats[seatIdx]` is undefined — and a viewer built from that is team 0 with
+   * an **empty** unit set, which is not "no seat", it is a seat that controls
+   * nothing. Every unit on the viewer's own team then resolves to `ally`, and
+   * the owner watched their side turn green the moment they locked in.
+   */
+  let lastSeat: Seat | undefined;
+
   function syncViewer(): void {
-    const seat = seats[seatIdx];
-    renderer.setViewer({
-      team: seat?.team ?? 0,
-      seatUnitIds: new Set(seat?.unitIds ?? []),
-    });
+    // The seat on the clock, or the one that just left it. Falling back to the
+    // last real seat is what keeps the colours still across the lock-in: the
+    // player who just committed watches the turn resolve from their own side,
+    // which is the only continuous answer in a hot-seat where "the viewer" has
+    // no other definition once nobody is on the clock.
+    const seat = seats[seatIdx] ?? lastSeat;
+    if (seats[seatIdx] !== undefined) lastSeat = seats[seatIdx];
+    const team = seat?.team ?? 0;
+    renderer.setViewer({ team, seatUnitIds: new Set(controlledHere(team, seat)) });
+  }
+
+  /**
+   * The units **the person at this keyboard** is ordering — which is not the
+   * same as the units of the seat on the clock.
+   *
+   * Owner playtest: *"East team has Wisp green when it's Vex's turn, and Vex
+   * green when it's Wisp's turn."* Both were right by the letter of the seat
+   * rule and wrong in the room. 2v2 defaults to `players = [2, 1]`, so a
+   * hot-seat splits one team into **two seats of one character each** — and a
+   * seat that owns one character makes the other an `ally`, so the green
+   * followed the selection around the player's own team.
+   *
+   * The rule the owner actually stated is *"blue is all of your characters that
+   * you are controlling, green is all characters your ALLY is controlling"* —
+   * and in a hot-seat there is no ally. The seats are one human passing the
+   * board to themselves; a teammate is only a different *person* across the
+   * wire. So `ally` is a networked identity, and locally the whole team is
+   * yours.
+   *
+   * That also keeps the mirror-matchup fix intact, which is what the colour is
+   * for: your side stays one colour and the enemy stays red, whichever seat is
+   * on the clock.
+   */
+  function controlledHere(team: TeamId, seat: Seat | undefined): readonly string[] {
+    if (net !== undefined) return seat?.unitIds ?? [];
+    return state.units.filter((u) => u.owner === team).map((u) => u.unitId);
   }
   /** SCORE1's running ledger, folded from each turn's event log as it plays. */
   let totals: MatchTotals = initTotals(state);
@@ -770,14 +822,33 @@ export function startHotSeat(
   // board was already up" is the supported path rather than a race.
   //
   // Only the characters actually in this match — four at most in 2v2, eight in
-  // 4v4. Preloading the roster would fetch megabytes of art for characters
-  // nobody picked.
+  // 4v4. Preloading the whole catalog would fetch megabytes of art for
+  // characters nobody picked.
+  //
+  // Taken from **`teams`, not from `state.units`**, and that is the fix for
+  // "Aegis does not render if he is on the opposing team — I only see a red
+  // block". A networked client's state is team-filtered by the server: enemy
+  // units it cannot see are *absent from the array* (`server/src/view.ts`),
+  // not blanked. So reading `state.units` here fetched only this client's own
+  // characters, and when an enemy finally walked into vision `models.instance`
+  // had nothing for it and drew the box fallback — permanently, because
+  // `staleUnitGroups` rebuilds a box only once its character IS loaded, and
+  // that one never would be.
+  //
+  // `teams` is the lobby's picks for both sides, which is why it is the honest
+  // source: **who** is in a match is public — you choose from a roster and see
+  // what the other side chose. Golden rule #5 hides *orders* and fog hides
+  // *positions*; neither hides the cast list, and a model fetched early reveals
+  // nothing a player has not already read off the lobby.
+  //
+  // Invisible in hot-seat, which is why it survived this long: there `state` is
+  // the whole match, so both sides preloaded and every model arrived.
   // MODEL-FREEZE: skipped when `?models=off`, which the browser suite sets. The
   // models render ~3x slower under SwiftShader and land at an arbitrary moment,
   // and that combination is what took the pixel suite from 3 failures to 14 —
   // all of them timeouts. See `render-flags.ts`.
   if (browserModels()) {
-    void renderer.preloadCharacters([...new Set(state.units.map((u) => u.characterId))]);
+    void renderer.preloadCharacters([...new Set(teams.flat().map((c) => c.id))]);
   }
 
   /**

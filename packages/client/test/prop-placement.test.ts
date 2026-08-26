@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { placeProp } from '../src/prop-placement.js';
+import { PROP_FADE, placeProp, propOpacity } from '../src/prop-placement.js';
 
 describe('placeProp', () => {
   it('is deterministic — same tile, same answer, forever', () => {
@@ -72,5 +72,39 @@ describe('placeProp', () => {
     }
     // 900 tiles / 4 ≈ 225 each; a uniform hash stays well inside a loose band.
     for (const n of counts) expect(n).toBeGreaterThan(150);
+  });
+});
+
+
+describe('propOpacity', () => {
+  it('is fully opaque at and above the isometric default', () => {
+    expect(propOpacity(35.264)).toBe(1);
+    expect(propOpacity(90)).toBe(1);
+    expect(propOpacity(PROP_FADE.hi)).toBe(1);
+  });
+
+  it('ghosts to the floor value at and below the low threshold', () => {
+    expect(propOpacity(PROP_FADE.lo)).toBe(PROP_FADE.min);
+    expect(propOpacity(8)).toBe(PROP_FADE.min);
+    expect(propOpacity(0)).toBe(PROP_FADE.min);
+  });
+
+  it('eases monotonically between the two thresholds', () => {
+    let prev = propOpacity(PROP_FADE.lo);
+    for (let p = PROP_FADE.lo; p <= PROP_FADE.hi; p += 1) {
+      const o = propOpacity(p);
+      expect(o).toBeGreaterThanOrEqual(prev - 1e-9);
+      expect(o).toBeGreaterThanOrEqual(PROP_FADE.min - 1e-9);
+      expect(o).toBeLessThanOrEqual(1 + 1e-9);
+      prev = o;
+    }
+  });
+
+  it('never fully disappears — a blocked tile still reads as blocked', () => {
+    for (let p = 0; p <= 90; p += 3) expect(propOpacity(p)).toBeGreaterThan(0.1);
+  });
+
+  it('treats a NaN pitch as opaque rather than invisible', () => {
+    expect(propOpacity(NaN)).toBe(1);
   });
 });

@@ -22,11 +22,16 @@ WHY THIS IS ITS OWN SCRIPT, not part of the character pipeline:
 
 WHAT IT GUARANTEES, and why each matters to the board:
 
-  1. Authored in TILES, placed 1:1. A pillar is exactly `height` tall (= the
-     map's WALL_HEIGHT) and a barricade exactly COVER_HEIGHT. The renderer does
-     NOT measure-and-scale a prop the way it does a character — so swapping a
-     terrain box for its prop cannot change how tall the square reads, i.e.
-     cannot change what it reads as (MAP_PIPELINE §5: "the read survives").
+  1. Authored in TILES, placed 1:1 — the renderer does NOT measure-and-scale a
+     wall prop the way it does a character; it stands it at its authored `height`
+     with its base on the floor. A wall is a full line-of-sight blocker whatever
+     it is DRAWN at (the engine blocks by tile type, not by pixels), so walls are
+     authored TALLER than a tile and varied in height (owner, session 25): a
+     taller, uneven colonnade reads *more* clearly as wall-not-cover, not less
+     (MAP_PIPELINE §5, "the read survives"). Cover is authored at COVER_HEIGHT
+     and the renderer normalises it to crouch height on the tile's faced edge
+     (COVER-EDGE), so a cover variant's `height` is nominal and its variety is in
+     the fence silhouette, not the height.
   2. Base at the floor. Built Z-up with the base at z=0, exported Y-up, so the
      prop sits ON the tile with no per-prop offset to get wrong.
   3. Neutral / dark colours only. Stone greys (r≈g≈b) and dark wood (every
@@ -126,14 +131,15 @@ def superellipse(n_points, exponent):
     return pts
 
 
-def column(bm, z0, z1, w0, w1, sides, exponent, mat_i, flutes=0, flute_depth=0.0):
+def column(bm, z0, z1, w0, w1, sides, exponent, mat_i, flutes=0, flute_depth=0.0, top_jag=0.0):
     """A vertical tapered column with a superellipse cross-section, from z0 to
     z1, half-width w0 at the base easing to w1 at the top. Optional `flutes`
-    press shallow vertical grooves around it. Ring vertices wrap; UVs are moot
+    press shallow vertical grooves around it; `top_jag` drops the top ring
+    unevenly (a snapped-off, ruined crown). Ring vertices wrap; UVs are moot
     (flat material), so this only bridges quads and caps the ends."""
     profile = superellipse(sides, exponent)
 
-    def ring_at(z, hw):
+    def ring_at(z, hw, jag=0.0):
         ring = []
         for k, (u, val) in enumerate(profile):
             r = 1.0
@@ -141,11 +147,14 @@ def column(bm, z0, z1, w0, w1, sides, exponent, mat_i, flutes=0, flute_depth=0.0
                 # A groove per lobe: pull the radius in on the troughs only, so
                 # the column stays convex and never pinches to a point.
                 r = 1.0 - flute_depth * (0.5 - 0.5 * math.cos(flutes * 2.0 * math.pi * k / sides))
-            ring.append(bm.verts.new((u * hw * r, val * hw * r, z)))
+            # A deterministic, seam-closing wobble on the break: two lobes down,
+            # phased so vertex 0 and vertex `sides` land on the same height.
+            zk = z - (jag * (0.5 - 0.5 * math.cos(2.0 * 2.0 * math.pi * k / sides)) if jag else 0.0)
+            ring.append(bm.verts.new((u * hw * r, val * hw * r, zk)))
         return ring
 
     bottom = ring_at(z0, w0)
-    top = ring_at(z1, w1)
+    top = ring_at(z1, w1, top_jag)
     for i in range(sides):
         j = (i + 1) % sides
         try:
@@ -201,11 +210,17 @@ def finish(obj, mesh, bm, palette, bevel=0.006, smooth_angle=34.0):
 # ── the two props ─────────────────────────────────────────────────────────────
 
 def build_pillar(spec):
+    """A colosseum column. `capital` is optional (a broken column has none), and
+    `broken` snaps the crown short and uneven and scatters a little rubble at the
+    base — the same builder, ruined."""
     p = Palette()
     obj, mesh, bm = new_mesh("pillar")
     h = spec["height"]
-    plinth, shaft, cap = spec["plinth"], spec["shaft"], spec["capital"]
-    ph, ch = plinth["height"], cap["height"]
+    plinth, shaft = spec["plinth"], spec["shaft"]
+    cap = spec.get("capital")
+    ph = plinth["height"]
+    ch = cap["height"] if cap else 0.0
+    broken = spec.get("broken")
 
     box(bm, (0, 0, ph / 2), (plinth["width"], plinth["width"], ph),
         p.index(spec["palette"]["plinth"]))
@@ -213,10 +228,37 @@ def build_pillar(spec):
            shaft["bottomWidth"] / 2, shaft["topWidth"] / 2,
            shaft.get("sides", 16), shaft.get("exponent", 4.0),
            p.index(spec["palette"]["shaft"]),
-           flutes=shaft.get("flutes", 0), flute_depth=shaft.get("fluteDepth", 0.0))
-    box(bm, (0, 0, h - ch / 2), (cap["width"], cap["width"], ch),
-        p.index(spec["palette"]["capital"]))
+           flutes=shaft.get("flutes", 0), flute_depth=shaft.get("fluteDepth", 0.0),
+           top_jag=(broken.get("jag", 0.0) if broken else 0.0))
+    if cap:
+        box(bm, (0, 0, h - ch / 2), (cap["width"], cap["width"], ch),
+            p.index(spec["palette"]["capital"]))
+    if broken:
+        # A few fallen chunks around the base, deterministically placed so the
+        # ruin is the same for both teams and every screenshot.
+        chunk = p.index(spec["palette"].get("rubble", spec["palette"]["plinth"]))
+        for i, (dx, dy, sz) in enumerate(broken.get("rubble", [])):
+            box(bm, (dx, dy, sz / 2), (sz, sz * 0.8, sz), chunk)
     return finish(obj, mesh, bm, p, bevel=0.008)
+
+
+def build_block(spec):
+    """A stone block / low altar for cover: a wide base course with a narrower
+    slab on top, so it reads as placed masonry rather than a plain cube."""
+    p = Palette()
+    obj, mesh, bm = new_mesh("block")
+    h = spec["height"]
+    foot = spec["footprint"]
+    base_h = spec.get("baseHeight", h * 0.7)
+    stone = p.index(spec["palette"]["stone"])
+    cap_hex = spec["palette"].get("cap", spec["palette"]["stone"])
+    box(bm, (0, 0, base_h / 2), (foot, foot, base_h), stone)
+    cap_h = h - base_h
+    if cap_h > 0:
+        inset = spec.get("capInset", 0.12)
+        box(bm, (0, 0, base_h + cap_h / 2), (foot - inset, foot - inset, cap_h),
+            p.index(cap_hex))
+    return finish(obj, mesh, bm, p, bevel=0.01)
 
 
 def build_barricade(spec):
@@ -247,7 +289,7 @@ def build_barricade(spec):
     return finish(obj, mesh, bm, p, bevel=0.005)
 
 
-BUILDERS = {"pillar": build_pillar, "barricade": build_barricade}
+BUILDERS = {"pillar": build_pillar, "barricade": build_barricade, "block": build_block}
 
 
 # ── export ────────────────────────────────────────────────────────────────────
@@ -293,33 +335,51 @@ def main():
 
     out_dir = ROOT / "packages" / "client" / "public" / "models" / "props"
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Clear this theme's old single-file props (`<theme>_<role>.glb`) so the
+    # variant files (`<theme>_<role>_<i>.glb`) do not leave orphans behind.
+    for stale in out_dir.glob(f"{theme}_*.glb"):
+        # keep the variant-numbered files this run is about to (re)write; drop a
+        # bare `<theme>_<role>.glb` with no trailing index.
+        tail = stale.stem[len(theme) + 1:]
+        if "_" not in tail or not tail.rsplit("_", 1)[1].isdigit():
+            stale.unlink()
     manifest_path = out_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"props": []}
 
     roles = [only] if only else list(spec["props"].keys())
     for role in roles:
-        prop = spec["props"].get(role)
-        if prop is None:
+        role_spec = spec["props"].get(role)
+        if role_spec is None:
             print(f"  ! {theme} declares no '{role}'")
             continue
-        builder = BUILDERS.get(prop["kind"])
-        if builder is None:
-            print(f"  ! unknown kind '{prop['kind']}' for {theme}.{role}")
+        # A role is a list of interchangeable variants — the board picks one per
+        # tile by hash. A single-object role (the old format) is read as a
+        # one-variant list so an older spec still builds.
+        variants = role_spec.get("variants", [role_spec])
+        yaw_steps = role_spec.get("yawSteps", variants[0].get("yawSteps", 1))
+        height = role_spec.get("height", variants[0].get("height"))
+
+        built = []
+        for i, prop in enumerate(variants):
+            builder = BUILDERS.get(prop["kind"])
+            if builder is None:
+                print(f"  ! unknown kind '{prop['kind']}' for {theme}.{role}[{i}]")
+                continue
+            clear_scene()
+            obj = builder(prop)
+            out = out_dir / f"{theme}_{role}_{i}.glb"
+            export_glb(obj, out)
+            version = hashlib.sha256(out.read_bytes()).hexdigest()[:12]
+            size = out.stat().st_size // 1024
+            print(f"  {theme}.{role}[{i}]  {prop['kind']:<9} {tri_count(obj):>5} tris  {size:>4} kB  -> {out.name}")
+            built.append({"file": f"props/{out.name}", "version": version, "kind": prop["kind"]})
+
+        if not built:
             continue
-
-        clear_scene()
-        obj = builder(prop)
-        out = out_dir / f"{theme}_{role}.glb"
-        export_glb(obj, out)
-        version = hashlib.sha256(out.read_bytes()).hexdigest()[:12]
-        size = out.stat().st_size // 1024
-        print(f"  {theme}.{role}  {prop['kind']:<9} {tri_count(obj):>5} tris  {size:>4} kB  -> {out.name}")
-
         entry = {
-            "theme": theme, "role": role, "kind": prop["kind"],
-            "file": f"props/{out.name}", "version": version,
-            "yawSteps": prop.get("yawSteps", 1),
-            "height": prop["height"],
+            "theme": theme, "role": role,
+            "yawSteps": yaw_steps, "height": height,
+            "variants": built,
         }
         manifest["props"] = [e for e in manifest.get("props", [])
                              if not (e["theme"] == theme and e["role"] == role)]
@@ -327,7 +387,8 @@ def main():
 
     manifest["props"] = sorted(manifest["props"], key=lambda e: (e["theme"], e["role"]))
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
-    print(f"  -> {manifest_path.relative_to(ROOT)}  ({len(manifest['props'])} props)")
+    total = sum(len(e.get("variants", [])) for e in manifest["props"])
+    print(f"  -> {manifest_path.relative_to(ROOT)}  ({len(manifest['props'])} roles, {total} meshes)")
 
 
 if __name__ == "__main__":

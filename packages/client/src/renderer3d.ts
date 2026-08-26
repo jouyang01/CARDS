@@ -57,6 +57,10 @@ import type { CharacterModels, ModelInstance } from './character-model.js';
 import { FLASH_SECONDS, shakeOffset } from './vfx.js';
 import { chamferFor, chamferedBox } from './chamfer.js';
 import { jitterFor } from './jitter.js';
+// NOTE the name collision with `rimBreath` below: that is the *arena rim*, a map
+// fixture (MAP_PIPELINE §5). This is the edge light on a unit. Unrelated things
+// that English gave the same word.
+import { RIM_COLOUR, RIM_POWER, RIM_STRENGTH } from './rim.js';
 import type { ClipChoice, ClipSet } from './character-clips.js';
 import { ULT_COST, type MapDef, type PowerupType, type Vec2 } from '@cards/engine';
 import { DEAD_ALPHA } from './animate.js';
@@ -70,7 +74,7 @@ import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
 import { browserRenderOnDemand } from './render-flags.js';
 import { rimBreath } from './ambient-motion.js';
-import { placeProp } from './prop-placement.js';
+import { placeProp, propOpacity } from './prop-placement.js';
 import { easeCamera } from './camera-ease.js';
 import { clampCentre, panDelta } from './camera-pan.js';
 
@@ -316,6 +320,19 @@ export const TERRAIN_HEIGHT = { brush: 0.02, cover: COVER_HEIGHT, wall: WALL_HEI
  * ground, so a box *top* and a box *side* differ in hue as well as in value
  * before the sun reaches either. One light, and the silhouette reads.
  *
+ * **The sun and the fill are tinted, and for a while they were not.** Both were
+ * `0xffffff`, which made the paragraph above only half true: the hemisphere's
+ * warm end is `#2b2118`, a very dark brown, so against a cool `#a8c4ec` sky it
+ * contributes almost nothing and the rig was cool-only. Measured off a real
+ * composite, lit surfaces came back at `R − B = −2` and shadowed ones at `−14` —
+ * no warm/cool separation anywhere, just neutral and slightly-cooler-neutral.
+ *
+ * A warm key against a cool fill is the oldest trick there is and it costs two
+ * constants. Both are kept close to white on purpose: this is meant to read as
+ * *daylight*, not as a colour grade, and the terrain has already given up its
+ * chroma so the UI can own saturated hues (see the theme note). A strongly
+ * tinted key would take that chroma straight back.
+ *
  * The `fill` is deliberately not a caster. It exists so the side facing away
  * from the sun keeps an edge instead of going to ambient flat, and a second
  * shadow map to buy that would be paying real per-frame cost for a detail
@@ -328,9 +345,31 @@ export const TERRAIN_HEIGHT = { brush: 0.02, cover: COVER_HEIGHT, wall: WALL_HEI
 export const LIGHTING = {
   ambient: { intensity: 0.35 },
   hemisphere: { sky: 0xa8c4ec, ground: 0x2b2118, intensity: 1.0 },
-  sun: { intensity: 2.2, position: [6, 11, 5] },
-  fill: { intensity: 0.45, position: [-7, 6, -6] },
+  sun: { colour: 0xfff1dc, intensity: 2.2, position: [6, 11, 5] },
+  fill: { colour: 0xc6d8ff, intensity: 0.45, position: [-7, 6, -6] },
 } as const;
+
+/**
+ * The RIM term, as GLSL, generated from the same constants `rimFactor` uses.
+ *
+ * Written out of `rim.ts`'s numbers rather than typed as literals so the shader
+ * and the Node-testable curve cannot drift apart: `rim.test.ts` pins
+ * `rimFactor`, and this string is the only other place the expression exists.
+ *
+ * `vViewPosition` is the fragment's position relative to the eye, so normalising
+ * it gives the direction *to* the viewer; `normal` is view-space and already
+ * normalised by `<normal_fragment_begin>`.
+ */
+export const RIM_GLSL = [
+  '{',
+  '  vec3 rimV = normalize( vViewPosition );',
+  '  float rimNdotV = clamp( dot( normal, rimV ), 0.0, 1.0 );',
+  `  float rimF = pow( 1.0 - rimNdotV, ${RIM_POWER.toFixed(4)} );`,
+  `  totalEmissiveRadiance += vec3( ${(((RIM_COLOUR >> 16) & 0xff) / 255).toFixed(4)}, `
+    + `${(((RIM_COLOUR >> 8) & 0xff) / 255).toFixed(4)}, `
+    + `${((RIM_COLOUR & 0xff) / 255).toFixed(4)} ) * ( rimF * ${RIM_STRENGTH.toFixed(4)} );`,
+  '}',
+].join('\n');
 
 /**
  * BOARD-LIT — how each surface answers the light.
@@ -394,6 +433,24 @@ export const shade = (hex: number, factor: number): number => {
     Math.max(0, Math.min(255, Math.round(((hex >> shift) & 0xff) * factor))) << shift;
   return channel(16) | channel(8) | channel(0);
 };
+
+/**
+ * Recolour a glowing edge bar — **both** of the properties that carry its hue.
+ *
+ * Exported and separate for the reason `paintFlash` is: the bug it fixes is
+ * invisible from the closure that had it. An edge bar is built glowing
+ * (`emissive: colour` at `spawnEmissive` intensity), so a repaint that set only
+ * `color` left the bar burning whatever it was constructed with — the owner saw
+ * two white bars and no sides at all, on a board where the colour was in fact
+ * being computed correctly and thrown away.
+ *
+ * The two properties are one colour on this material. Setting one is always a
+ * bug, and this is the only place that has to remember it.
+ */
+export function paintEdgeBar(material: MeshStandardMaterial, hex: number): void {
+  material.color.setHex(hex);
+  material.emissive.setHex(hex);
+}
 
 /** Seam ink: the floor colour, darkened. A grid is a shade of its floor. */
 export const gridInk = (open: number): number => shade(open, GRID_DARKEN);
@@ -559,8 +616,17 @@ const LAYER_INSET: Record<HighlightLayer, number> = {
  * selection at the same glance without the two competing.
  */
 export const FOF_RING_LIFT = LAYER_LIFT.chase - 0.0005;
-/** Radii as a fraction of a tile — a ring at the feet, not a puddle under them. */
-const FOF_RING_INNER = 0.30;
+/**
+ * Radii as a fraction of a tile — a **thin** ring at the feet, not a puddle
+ * under them.
+ *
+ * Owner playtest: *"the circles should be thinner lines, it's too big and bulky
+ * right now."* The first pair spanned 0.12 of a tile, which at this zoom is a
+ * band rather than an outline: on a crowded square it read as a coloured floor
+ * tile and competed with the selection ring it is supposed to sit under. Same
+ * outer radius — the ring still meets the feet — at a third of the weight.
+ */
+const FOF_RING_INNER = 0.38;
 const FOF_RING_OUTER = 0.42;
 
 /** A trap marker rides in the overlay band, just under the selection ring. */
@@ -1139,7 +1205,7 @@ export function createRenderer(
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = PCFSoftShadowMap;
 
-  const sun = new DirectionalLight(0xffffff, LIGHTING.sun.intensity);
+  const sun = new DirectionalLight(LIGHTING.sun.colour, LIGHTING.sun.intensity);
   sun.position.set(...LIGHTING.sun.position);
   sun.castShadow = true;
   sun.shadow.mapSize.set(SHADOW_MAP_PX, SHADOW_MAP_PX);
@@ -1157,7 +1223,7 @@ export function createRenderer(
   sun.shadow.camera.updateProjectionMatrix();
   scene.add(sun);
 
-  const fill = new DirectionalLight(0xffffff, LIGHTING.fill.intensity);
+  const fill = new DirectionalLight(LIGHTING.fill.colour, LIGHTING.fill.intensity);
   fill.position.set(...LIGHTING.fill.position);
   scene.add(fill);
 
@@ -1432,7 +1498,7 @@ export function createRenderer(
 
   function paintSides(): void {
     for (const [team, material] of sideMaterials) {
-      material.color.setHex(shade(sideColour(team, viewer, palette.fof), SCENERY.spawnShade));
+      paintEdgeBar(material, shade(sideColour(team, viewer, palette.fof), SCENERY.spawnShade));
     }
   }
 
@@ -1535,6 +1601,11 @@ export function createRenderer(
   const propGroup = new Group();
   propGroup.name = 'props';
   world.add(propGroup);
+  // PROP-FADE: the distinct materials the loaded props share, so a single
+  // opacity per material ghosts every pillar and barricade at a low camera
+  // angle (see `applyCamera`). Collected as templates load; empty until then,
+  // which is why the fade in `applyCamera` is a no-op on a board with no props.
+  const propMaterials = new Set<MeshStandardMaterial>();
 
   const loadProps = async (): Promise<void> => {
     try {
@@ -1542,40 +1613,67 @@ export function createRenderer(
       const res = await fetch(`${base}/props/manifest.json`, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`props manifest ${res.status}`);
       const manifest = (await res.json()) as {
-        props?: { theme: string; role: string; file: string; version?: string; yawSteps?: number; height?: number }[];
+        props?: {
+          theme: string; role: string; yawSteps?: number; height?: number;
+          // Several interchangeable variants per role; the board picks one per tile.
+          variants?: { file: string; version?: string }[];
+          // Legacy single-file format, read as a one-variant list so an older
+          // committed manifest still renders while a rebuild is pending.
+          file?: string; version?: string;
+        }[];
       };
       const mine = (manifest.props ?? []).filter((e) => e.theme === palette.themeId);
       if (mine.length === 0) return; // this theme has no props yet — boxes it is
       const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
       const loader = new GLTFLoader();
 
+      const url = (file: string, version?: string): string =>
+        version === undefined || version === '' ? `${base}/${file}` : `${base}/${file}?v=${encodeURIComponent(version)}`;
+
       for (const entry of mine) {
         const squares = entry.role === 'wall' ? map.walls : entry.role === 'cover' ? map.cover : [];
         if (squares.length === 0) continue;
-        let template: Group;
-        try {
-          const url = entry.version === undefined || entry.version === ''
-            ? `${base}/${entry.file}`
-            : `${base}/${entry.file}?v=${encodeURIComponent(entry.version)}`;
-          template = (await loader.loadAsync(url)).scene as Group;
-        } catch (err) {
-          // One role missing is not the others' problem — its tiles keep their box.
-          console.warn(`[cards] terrain prop "${entry.theme}/${entry.role}" did not load: ${String(err)}`);
-          continue;
+        const files = entry.variants ?? (entry.file !== undefined ? [{ file: entry.file, version: entry.version }] : []);
+        if (files.length === 0) continue;
+
+        // Load every variant mesh for the role, dropping any that fail — a role
+        // with even one usable variant still dresses its tiles.
+        const templates: Group[] = [];
+        for (const v of files) {
+          try {
+            templates.push((await loader.loadAsync(url(v.file, v.version))).scene as Group);
+          } catch (err) {
+            console.warn(`[cards] terrain prop "${entry.theme}/${entry.role}" variant ${v.file} did not load: ${String(err)}`);
+          }
         }
-        template.traverse((o) => {
-          if ((o as Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; }
-        });
+        if (templates.length === 0) continue;
+        for (const t of templates) {
+          t.traverse((o) => {
+            const mesh = o as Mesh;
+            if (!mesh.isMesh) return;
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            // Clones share these materials, so one opacity fades every instance —
+            // exactly the global pitch-fade we want.
+            for (const mat of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+              propMaterials.add(mat as MeshStandardMaterial);
+            }
+          });
+        }
+
         for (const sq of squares) {
-          const inst = template.clone(true);
+          // Pick which variant this tile shows (my hashed variety), then place it.
+          const choice = placeProp(map.id, sq.x, sq.y, { yawSteps: entry.yawSteps, variants: templates.length });
+          const inst = templates[choice.variant]!.clone(true);
           inst.position.copy(toWorld(map, sq)); // prop base sits at local y=0 = the floor
           const facing = entry.role === 'cover' ? (sq as { facing?: 'N' | 'S' | 'E' | 'W' }).facing : undefined;
           if (facing) {
-            // COVER-EDGE: the barricade is a half-wall on ONE edge. Sit it on that
-            // tile boundary and turn it to run ALONG the edge (its stakes are
-            // built spanning +x, so N/S keep yaw 0 and E/W turn a quarter), then
-            // stretch it to crouch-cover height. Not the hashed placeProp yaw —
-            // a directional fence's orientation is the facing, not a coin flip.
+            // COVER-EDGE: a faced cover tile is a half-wall on ONE edge. Sit the
+            // barricade on that tile boundary, turn it to run ALONG the edge
+            // (stakes span +x, so N/S keep yaw 0 and E/W turn a quarter), and
+            // stretch it to crouch-cover height. The map's authored facing is the
+            // orientation here — not the hashed yaw, which a directional fence has
+            // no use for.
             const off = TILE * 0.5;
             if (facing === 'E') { inst.position.x += off; inst.rotation.y = Math.PI / 2; }
             else if (facing === 'W') { inst.position.x -= off; inst.rotation.y = Math.PI / 2; }
@@ -1583,7 +1681,8 @@ export function createRenderer(
             else { inst.position.z -= off; inst.rotation.y = 0; } // N
             inst.scale.y = EDGE_COVER_HEIGHT / (entry.height ?? COVER_HEIGHT);
           } else {
-            inst.rotation.y = placeProp(map.id, sq.x, sq.y, { yawSteps: entry.yawSteps }).yawRadians;
+            // A full-block cover tile or a wall: hashed quarter-turn for variety.
+            inst.rotation.y = choice.yawRadians;
           }
           propGroup.add(inst);
           // Hide the box this prop now stands for. Kept (not removed) so a future
@@ -1592,6 +1691,7 @@ export function createRenderer(
           if (box !== undefined) box.visible = false;
         }
       }
+      fadeProps();   // set the opacity for the pitch the camera is already at
       markDirty();
     } catch (err) {
       // The whole load failing is ordinary — an older build with no props, a
@@ -1661,6 +1761,45 @@ export function createRenderer(
    * always happens.
    */
   const facingOf = new Map<string, { dx: number; dy: number }>();
+
+  /**
+   * Give every mesh under a unit the RIM edge term — see `rim.ts`.
+   *
+   * A shader patch rather than a light, because three tests a light's layers
+   * against the **camera** and not against each mesh, so there is no such thing
+   * as a light that only reaches units. The patch is injected after
+   * `<emissivemap_fragment>`, which is the first point in the standard fragment
+   * shader where `normal` exists (`<normal_fragment_begin>` runs just above it)
+   * and where `totalEmissiveRadiance` is still open to be added to.
+   *
+   * Adding to *emissive* is what makes the rim compose correctly with the two
+   * things already writing to these materials: the victim flash raises
+   * `emissive` and the rim rides on top of it rather than fighting it, and the
+   * deferred-death fade scales `opacity`, which emissive does not touch. Both
+   * are safe here only because `detachMaterials` has already given each unit its
+   * own copies (`character-model.ts`) — patching shared materials would put the
+   * rim on every unit of a character at once, which is the same bug that
+   * function exists to prevent.
+   */
+  const applyRim = (root: Object3D): void => {
+    root.traverse((o) => {
+      if (!(o instanceof Mesh)) return;
+      const list = Array.isArray(o.material) ? o.material : [o.material];
+      for (const material of list) {
+        material.onBeforeCompile = (shader: { fragmentShader: string }): void => {
+          shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <emissivemap_fragment>',
+            `#include <emissivemap_fragment>\n${RIM_GLSL}`,
+          );
+        };
+        // Patched and unpatched standard materials must not share a compiled
+        // program. Without a distinct key three reuses whichever was compiled
+        // first, and the rim either applies to nothing or to everything.
+        material.customProgramCacheKey = () => 'rim';
+        material.needsUpdate = true;
+      }
+    });
+  };
 
   /**
    * FOF-COLORS' ring beneath a unit's feet.
@@ -1739,6 +1878,9 @@ export function createRenderer(
       instance.attachProps(scale, TILE);
       instance.root.name = 'body';
       instances.set(unit.unitId, instance);
+      // RIM goes on the model only — never on the foot ring, which is a UI
+      // mark in MeshBasicMaterial with no emissive to add to.
+      applyRim(instance.root);
       // The ring matters MORE on the model path, not less: a rigged character
       // wears its own texture, so the body carries no team tint at all and the
       // ring is the whole friend/foe read at the unit itself.
@@ -1764,6 +1906,7 @@ export function createRenderer(
     body.name = 'body';
     body.castShadow = true;
     body.position.y = UNIT_HEIGHT / 2;
+    applyRim(body);
     g.add(body, buildBars(UNIT_HEIGHT), buildFootRing());
     world.add(g);
     return g;
@@ -2042,7 +2185,29 @@ export function createRenderer(
     camera.up.set(0, 1, 0);
     camera.lookAt(target);
     camera.updateProjectionMatrix();
+    fadeProps();
   }
+
+  // PROP-FADE: ghost the props toward transparent as the orbit drops to a low
+  // angle, so a tall pillar never hides the unit behind it (Atlas Reactor does
+  // the same). Runs from `applyCamera`, i.e. on every camera change, so it costs
+  // nothing on a still board and needs no per-frame tick. `transparent` is
+  // flipped only when it actually changes — that flag forces a shader recompile,
+  // the opacity does not — and depth is written only while essentially opaque so
+  // a ghosted pillar does not occlude what is drawn behind it.
+  const fadeProps = (): void => {
+    if (propMaterials.size === 0) return;
+    const opacity = propOpacity(pitchDeg);
+    const ghost = opacity < 0.99;
+    for (const mat of propMaterials) {
+      mat.opacity = opacity;
+      if (mat.transparent !== ghost) {
+        mat.transparent = ghost;
+        mat.depthWrite = !ghost;
+        mat.needsUpdate = true;
+      }
+    }
+  };
 
   /**
    * UI-VIEWPORT — how much of the canvas is covered by chrome, in CSS pixels.

@@ -1,27 +1,207 @@
 {
   "theme": "proving-floor",
-  "note": "Colosseum set dressing for the Proving Floor arena. Phase 0 art direction (owner): a ceremonial duelling platform ringed by spectators — standing stone pillars where the map has walls, rough wooden stake barricades where it has cover. Everything here is authored in TILES and placed 1:1 (a prop is NOT auto-scaled the way a character is): a pillar is exactly WALL_HEIGHT tall and a barricade exactly COVER_HEIGHT, so replacing a terrain box with its prop cannot change what the square reads as. Colours are deliberately neutral stone and dark wood — MAP_PIPELINE §4 forbids a permanent fixture landing in a saturated UI colour family (the amber AoE, the team hues), and a bleached-limestone grey (r≈g≈b) or a dark brown (every channel well under 130) sits clear of all of them. The stone matches the theme's own wall colour so a pillar and a plain wall tile read as the same material.",
+  "note": "Colosseum set dressing for the Proving Floor / Proving Grounds arena. Phase 0 art direction (owner): a ceremonial duelling platform ringed by spectators — standing stone where the map has walls, rough wooden cover where it has cover. Each role is a LIST of interchangeable variants; the board picks one per tile by a hash of the square, so a run is no longer the same mesh repeated. Walls are authored TALLER than a tile and VARIED in height (owner, session 25): a wall is a full line-of-sight blocker whatever its drawn height, so a taller, uneven colonnade reads more clearly as wall-not-cover and gives the arena presence — the renderer places a wall .glb at its own authored height (it does not scale walls), so height is a per-variant number here. Cover is authored at COVER_HEIGHT (0.45) and the renderer normalises it to crouch height on the tile's faced edge (COVER-EDGE); its VARIETY is the fence silhouette, since every cover variant ends up the same height. All cover is now thin WOODEN barricade — the wide masonry block was dropped (owner, session 25) because on a faced edge its full footprint swallowed the tile; a thin fence sits on the boundary and lets the board read through it. Colours are neutral stone and dark wood: MAP_PIPELINE §4 forbids a permanent fixture landing in a saturated UI colour family, and greys (r≈g≈b) and dark wood (every channel well under 130, luminance under 185) sit clear of the amber AoE and the team hues. ORIENTATION of cover is NOT set here: the map authors a per-tile `facing` (COVER-EDGE) and the renderer sits the barricade on that edge and turns it along the boundary. Walls have no facing and take a hashed quarter-turn per tile for variety.",
   "props": {
     "wall": {
-      "kind": "pillar",
-      "comment": "A standing colosseum column: square plinth, gently tapered fluted shaft, flared capital. Radially near-symmetric, so it may take any quarter-turn per tile.",
       "yawSteps": 4,
-      "height": 0.9,
-      "plinth": { "height": 0.11, "width": 0.84 },
-      "shaft": { "exponent": 4.0, "sides": 16, "bottomWidth": 0.62, "topWidth": 0.5, "flutes": 8, "fluteDepth": 0.012 },
-      "capital": { "height": 0.1, "width": 0.78 },
-      "palette": { "shaft": "#d8d5cd", "plinth": "#b7b3aa", "capital": "#cbc7bf" }
+      "height": 1.5,
+      "variants": [
+        {
+          "kind": "pillar",
+          "comment": "The standing fluted column: square plinth, tapered fluted shaft, flared capital. Tall and slender.",
+          "height": 1.5,
+          "plinth": {
+            "height": 0.14,
+            "width": 0.84
+          },
+          "shaft": {
+            "exponent": 4.0,
+            "sides": 16,
+            "bottomWidth": 0.62,
+            "topWidth": 0.5,
+            "flutes": 8,
+            "fluteDepth": 0.012
+          },
+          "capital": {
+            "height": 0.12,
+            "width": 0.78
+          },
+          "palette": {
+            "shaft": "#b8b6af",
+            "plinth": "#b7b3aa",
+            "capital": "#b9b6ae"
+          }
+        },
+        {
+          "kind": "pillar",
+          "comment": "A broken column: no capital, the shaft snapped short and uneven, fallen chunks at the base. The shortest of the three — a ruin — but still clearly taller than crouch cover.",
+          "height": 1.15,
+          "plinth": {
+            "height": 0.15,
+            "width": 0.82
+          },
+          "shaft": {
+            "exponent": 4.0,
+            "sides": 16,
+            "bottomWidth": 0.6,
+            "topWidth": 0.54,
+            "flutes": 8,
+            "fluteDepth": 0.012
+          },
+          "broken": {
+            "jag": 0.2,
+            "rubble": [
+              [
+                0.3,
+                0.18,
+                0.15
+              ],
+              [
+                -0.28,
+                -0.2,
+                0.12
+              ],
+              [
+                0.16,
+                -0.31,
+                0.1
+              ],
+              [
+                -0.22,
+                0.27,
+                0.09
+              ]
+            ]
+          },
+          "palette": {
+            "shaft": "#b6b2a9",
+            "plinth": "#b2aea5",
+            "rubble": "#a7a299"
+          }
+        },
+        {
+          "kind": "pillar",
+          "comment": "A heavy column — the tallest, with a thick shaft, deeper flutes, and a broad plinth and capital. Weight and height next to the slender fluted one.",
+          "height": 1.75,
+          "plinth": {
+            "height": 0.16,
+            "width": 0.9
+          },
+          "shaft": {
+            "exponent": 5.0,
+            "sides": 16,
+            "bottomWidth": 0.76,
+            "topWidth": 0.66,
+            "flutes": 6,
+            "fluteDepth": 0.018
+          },
+          "capital": {
+            "height": 0.15,
+            "width": 0.88
+          },
+          "palette": {
+            "shaft": "#b3afa6",
+            "plinth": "#a8a49b",
+            "capital": "#b0aca3"
+          }
+        }
+      ]
     },
     "cover": {
-      "kind": "barricade",
-      "comment": "A rough wooden stake barricade: four uneven vertical stakes lashed to a crossbar between two heavier end posts. Has a facing (it is a fence, not a column), so it only takes a half-turn — never a quarter — or it would stand edge-on and stop reading as a wall of stakes.",
       "yawSteps": 2,
       "height": 0.45,
-      "footprint": 0.9,
-      "posts": { "width": 0.11, "thickness": 0.11 },
-      "stakes": { "count": 4, "width": 0.1, "thickness": 0.07, "topJitter": [0.0, -0.06, -0.03, -0.09] },
-      "rail": { "atFrac": 0.66, "height": 0.07, "thickness": 0.09 },
-      "palette": { "wood": "#5a4632", "woodDark": "#42301f" }
+      "variants": [
+        {
+          "kind": "barricade",
+          "comment": "The rough wooden stake barricade: four uneven stakes lashed to a crossbar between two heavier posts. The lightest, thinnest fence.",
+          "height": 0.45,
+          "footprint": 0.9,
+          "posts": {
+            "width": 0.11,
+            "thickness": 0.1
+          },
+          "stakes": {
+            "count": 4,
+            "width": 0.1,
+            "thickness": 0.07,
+            "topJitter": [
+              0.0,
+              -0.06,
+              -0.03,
+              -0.09
+            ]
+          },
+          "rail": {
+            "atFrac": 0.66,
+            "height": 0.07,
+            "thickness": 0.09
+          },
+          "palette": {
+            "wood": "#5a4632",
+            "woodDark": "#42301f"
+          }
+        },
+        {
+          "kind": "barricade",
+          "comment": "A denser, taller-topped barricade — five stakes and a higher crossbar. A heavier stretch of the same fence line.",
+          "height": 0.45,
+          "footprint": 0.9,
+          "posts": {
+            "width": 0.12,
+            "thickness": 0.11
+          },
+          "stakes": {
+            "count": 5,
+            "width": 0.09,
+            "thickness": 0.07,
+            "topJitter": [
+              -0.02,
+              0.0,
+              -0.05,
+              -0.02,
+              -0.07
+            ]
+          },
+          "rail": {
+            "atFrac": 0.72,
+            "height": 0.08,
+            "thickness": 0.1
+          },
+          "palette": {
+            "wood": "#544031",
+            "woodDark": "#3c2c1d"
+          }
+        },
+        {
+          "kind": "barricade",
+          "comment": "A rough three-stake palisade — fewer, chunkier timbers with big gaps and a low lashed rail. The gappiest of the three, so a run of cover does not read as one solid fence.",
+          "height": 0.45,
+          "footprint": 0.9,
+          "posts": {
+            "width": 0.13,
+            "thickness": 0.12
+          },
+          "stakes": {
+            "count": 3,
+            "width": 0.13,
+            "thickness": 0.09,
+            "topJitter": [
+              -0.05,
+              0.02,
+              -0.08
+            ]
+          },
+          "rail": {
+            "atFrac": 0.5,
+            "height": 0.09,
+            "thickness": 0.11
+          },
+          "palette": {
+            "wood": "#4e3a2a",
+            "woodDark": "#362818"
+          }
+        }
+      ]
     }
   }
 }

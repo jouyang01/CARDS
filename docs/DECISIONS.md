@@ -7121,6 +7121,53 @@ edge cover as a thin barricade slab shoved to its faced edge (full-block cover k
 its box); the prop-swap fallback and pixel baseline may want a refresh when props are
 re-screenshotted.
 
+## 2026-08-24 — Session 23 (Builder): prop variety and the low-angle fade (cohesion taken from parallel COVER-EDGE work)
+
+Two owner asks against the shipped props: they occlude the board at a low camera angle, and every
+tile is the identical mesh. Both are addressed; the second is addressed as far as it can be without
+another Blender run, and the deeper half is designed and staged.
+
+**The fade — pitch-based, and a true no-op where it must be.** At a low orbit a tall pillar stands
+between the camera and half the board, so props ghost toward a 0.18 opacity as the pitch drops below
+the isometric default, exactly as Atlas Reactor does. It is pitch-based rather than per-occluder
+because that is the whole of the ask ("when the camera is low, make them transparent") and it is one
+opacity on the shared prop materials — no per-object raycast, no surprise when the player looks
+straight down at a prop. The curve is a pure tested function; it applies from `applyCamera`, so it
+costs nothing on a still board, and it flips `transparent` only on the threshold crossing (that flag
+recompiles the shader; the opacity does not). A board with no props has no prop materials, so it is
+invisible to the props-off suite.
+
+**Variety — a role is a list now.** `data/props/<theme>.json` moved from one prop per role to a
+`variants` array, and the board picks one per tile by the same `(mapId, x, y)` hash the yaw uses (a
+decorrelated slice of it, so orientation and variant are independent). Proving Floor gained a broken
+column and a heavy column for walls, and a tall barricade and a stone block for cover — five new
+meshes, all from the proven builders plus one new box-composition (`block`), so the risk of building
+blind stayed low. The generator dry-run was extended to check every variant, and it passed all six
+on the invariants that matter (base at floor, top at height, inside a tile).
+
+**Cohesion — my inferred version was superseded by parallel work, and I took theirs.** I built a
+`runYaw` that orients a fence along its *inferred* neighbour run. While I did, the Proving Grounds
+rebuild (#157) plus COVER-EDGE (#158–#160) landed on main and solve the same problem better: a cover
+tile carries an *authored* per-tile `facing`, and the renderer sits the barricade on that edge, turns
+it along the boundary, and stretches it to crouch height. Authored beats inferred — it also does
+edge-placement and height, which inference cannot — so on the rebase I dropped my `runYaw`/
+`Neighbours` entirely and merged my **variant selection** into their facing placement: the map says
+which way a cover tile faces, the hash says which barricade it shows. What survives from my session is
+the two things their work did not do — **variety** (a role is a list of variants) and the **low-angle
+fade**. **v2 is still true autotiling** — end caps, corners, seamless segments — chosen by the same
+per-tile facing, and still a Blender build to see and iterate, not something to author blind.
+
+**Judgment call — the renderer reads both manifest formats.** The new generator writes a `variants`
+array; the currently-committed manifest is the old single-`file` format. Rather than leave the board
+on boxes until the owner re-runs Blender, the loader falls back to a single-variant read of a legacy
+entry, so the existing props keep rendering through the transition and the new variants light up the
+moment the rebuilt manifest lands. The generator also sweeps the old un-indexed `.glb` so the folder
+does not accrete orphans across the format change.
+
+**Handoff:** the owner re-runs `generate_prop.py -- proving-floor` on the Blender machine to produce
+the six variant `.glb` and the new manifest, commits them, and the variety + fence-alignment become
+visible. The fade needs no asset and is live now.
+
 ---
 
 ## 2026-08-25 — Board material polish: chamfers, normal maps, contact shading, off-grid jitter
@@ -7185,6 +7232,40 @@ pair of Health pads with a single pad at (8,1). Two tests still boot `?map=duel-
 fractions or assert "a mirrored pair of Health pads" against the old layout. These are
 test-side fixes in the map lane's territory, deliberately left out of this change rather
 than widening it.
+
+---
+
+## 2026-08-25 — Session 24 (Builder): the render suite repaired for the Proving Grounds rebuild
+
+Picked up the seven render/vfx failures the two entries above both flag as the map lane's to
+own. They had left `render-verify` red on main since #157, so every PR since has shown a red
+render check and no one could tell a real regression from the standing baseline — reason enough
+to take them onto this branch rather than wait for a separate lane. All seven are the same shape:
+the rebuilt maps (and the HUD/camera work that rode with them) no longer put the board in the
+state the assertion assumes on the opening frame, so each fix **drives into that state** instead
+of hard-coding the old one.
+
+- **FOG-ZORDER** now Sprints a unit up beside the centre-seam brush before aiming — the aim
+  overlay only composites onto brush from adjacent range, and Proving Grounds keeps its brush out
+  of every seat's opening vision.
+- **PREVIEW-NUMBERS** moved to iron-basin: duel-arena is 2v2-only now (2 spawns/team), so
+  `format=4v4` was an "invalid setup" error, not a render bug.
+- **DASH-CAT-ROUTE** sweeps around mid-frame, where CAMERA-CONTROLS centres the dashing unit.
+- **pad markers** sample iron-basin (its Health pad sits a square off spawn, lit and unfogged)
+  and go top-down through the renderer directly — the HUD projection button's label is the
+  target projection, not the current one, so toggling by its text never switched.
+- **BODY-CLICK** picks the teammate as the clean pre-arm body farthest from the armed-frame's
+  blue-cluster centroid; arming Move wraps the *selected* unit in a range wash that `blueBodies`
+  otherwise mistakes for extra bodies on its own tile.
+- **VFX-FLASH** measures the flash over the whole board — playback re-frames the camera, so the
+  victim slides out of a crop anchored to the planning-time aim (77 in the crop, 1458 over the
+  board). The both-sided spike metric already rejects the camera-pull-back brightening.
+
+No engine or renderer change; test-side only. Full e2e suite green at 36/36, unit suites and
+typecheck unchanged. (Superseded in part when this branch later merged main's session-17 render
+changes — friend-or-foe colour and the RENDER-SUITE-GREEN-3 fixes below; the re-validation kept
+this session's drive-based FOG-ZORDER, which is the one that stays green against the material
+pass, over the iron-basin static version.)
 
 ---
 
@@ -7277,6 +7358,35 @@ redraws an *identical* frame forever holds its pixels and still burns a GPU fram
 after a quiet stretch with **no screenshot between them**: `page.screenshot` forces a composite, so
 the obvious way to measure this has the instrument answer its own question.
 
+**Owner playtest, same day — three bugs and a weight, all in this session's own FoF work.**
+
+*"When locking in, east side team turns green and west side turns red."* Locking in the last
+character runs `seatIdx` past the end of `seats`, so for the whole resolution `seats[seatIdx]` is
+undefined — and a viewer built from that is team 0 with an **empty** unit set. That is not "no seat",
+it is a seat that controls nothing, so every unit on the viewer's own team fell from `self` to
+`ally`. `syncViewer` now falls back to the last seat that was actually on the clock: the player who
+just committed watches the turn resolve from their own side, which is the only continuous answer
+once nobody is on the clock. **The general lesson is about the fallback, not the index** — `?? 0`
+with an empty set looked like a safe default and was a wrong answer wearing a default's clothes.
+
+*"The color bars are both white."* The colour was resolved correctly and thrown away: an edge bar is
+built glowing (`emissive: colour` at `spawnEmissive`), and the repaint set only `color`, so both
+bars kept burning the white they were constructed with. Extracted as `paintEdgeBar`, which sets
+both. Worth recording as a shape rather than an incident: on a self-illuminated material, colour
+lives in two properties and setting one is always a bug.
+
+*"The circles should be thinner."* The ring spanned 0.12 of a tile — a band, not an outline — and on
+a crowded square read as a coloured floor tile competing with the selection ring it sits under. Same
+outer radius, a third of the weight.
+
+*"Blue should be all of your characters… green all characters ally is controlling… red all
+enemies."* No change: that is what the resolver already decides. It read as wrong because the two
+bugs above were making it wrong on screen — an own team turning green on lock-in is exactly the
+green being reported, and with both bars white there was no side colour to anchor it against.
+
+**Both regression tests were verified against the unfixed code and fail there.** Recorded because
+the lock-in bug is the kind a test written after the fix accommodates without noticing.
+
 ## Open Questions for the Analyzer — 2026-08-25
 
 **1. FOF-UNITS' model outline is not shipped (FOF-UNITS AC bullet 3;
@@ -7290,14 +7400,51 @@ tension; `app.ts`).** Separated by weight, not hue, and untested on a real board
 committed plan under a live aim. Designer call, as the item said — flagging that it is now a live
 overlap rather than a hypothetical one.
 
-**3. The single-column pad tests need a re-spec, not a re-point (RENDER-SUITE-GREEN-3;
-`e2e/render.spec.ts` RENDER-COVERAGE).** "A pad marker survives the next turn boundary" reads 0 teal
-pixels after a boundary. On the old map a *mirrored pair* made it robust: one pad could be consumed
-and the other still armed. Proving Grounds has one Health pad at (8,1), and a consumed pad drops to
-0.14 opacity — deliberately below `isPadTeal`'s floor — so "still drawn" is no longer observable
-with that predicate. Either the assertion becomes "it re-arms on its `everyTurns` cycle", or this
-one test moves to Iron Basin for its pairs. Both are defensible and it is a spec choice, so it is
-left rather than guessed.
+**3. Both pad tests need a re-spec, not a re-point (RENDER-SUITE-GREEN-3; `e2e/render.spec.ts`
+RENDER-COVERAGE).** Both read **0** teal — not a low count, none at all — after driving five turns,
+so the Health pad never composites rather than merely fading. What is established:
+
+- Proving Grounds carries **one** Health pad, at **(8, 1)**, against the mirrored pair the test's
+  comment describes. `isPadTeal` is Health-specific, so no other pad can stand in.
+- The pad arms on turn 4 (`firstTurn: 4`) and the drive resolves five turns, so the schedule is not
+  the blocker; the drive completed and asserted rather than timing out.
+- **Best hypothesis, unconfirmed: the pad is off-frame.** (8, 1) is the board's north edge, and
+  since CAMERA-CONTROLS the planning camera centres on the *character being ordered* while
+  BOARD_ZOOM keeps the frame tighter than the board. From a seat at (1, 4) that is seven columns and
+  three rows away. `lookStraightDown` changes the pitch, not the centre, so the existing top-down
+  guard does not cover this.
+- A probe that fitted the board between turns to test that hypothesis **exhausted the 180 s budget**
+  driving six turns, which is its own finding: this drive is at the edge of what a browser test can
+  afford, and a fix that adds work per turn will time out rather than fail.
+
+So the choice is the Analyzer's: assert on a pad the camera actually frames, fit the board before
+sampling (and pay for it somewhere else), or move this pair to Iron Basin for its mirrored pads.
+Guessing between them would have been inventing scope.
+
+**3b. DASH-CAT-ROUTE is fixed, and its fix is the pattern the pads want.** Its four hard-coded
+fractions were measured against a camera that framed the whole board. It now sweeps a *ring* around
+the frame centre — where the character-centred camera puts the caster — at every offset that could
+be three squares at any zoom. Map-independent by construction, which is why it will not need
+re-measuring after the next reframing. The pad drive's `clickAt(0.28/0.72, 0.5)` is the same species
+of assumption and is the remaining instance of it.
+
+**3c. FOG-ZORDER needs a drive, not a coordinate — measured to the boundary.** Moving it to Iron
+Basin at 4v4 fixed the "invalid setup" crash and the coarse floor passes. Sampling the brush
+*nearest the caster* rather than spread across the map — the same correction DASH-CAT-ROUTE needed —
+moved `bestAimed` from **0 to 1**, against a floor of 20. That single pixel is the finding: the aim
+overlay now reaches brush, and only just, which says the nearest lit brush sits at the very edge of
+what a turn-1 ability can cover rather than outside it.
+
+So no choice of candidate fixes this, and the two obvious re-points are both blocked by measurement:
+Iron Basin at 4v4 has 2042 lit brush px but none of it comfortably in range from spawn, and Proving
+Grounds at 2v2 has brush in range but only **32** lit px — below the test's own precondition of 100,
+because most of its brush is fogged on the opening frame.
+
+What is left is a **drive**: walk a character a turn or two toward a brush band, then measure. That
+is a re-spec of the test rather than a re-point, and it lands in the same place as the pad pair —
+which is why both are here rather than guessed at. Worth noting the two are now the same shape: a
+suite written against a board that framed everything, asked to work on one where the camera and the
+map both moved.
 
 **4. VFX-FLASH-ON-SCREEN measures a spike that is not there (`e2e/vfx.spec.ts:71`).** Lit-pixel
 counts across the resolution are 6670 flat → 3544 flat → ~6600, with a best spike of 165 against a
@@ -7338,3 +7485,158 @@ or it rasterises sparsely.
 board mesh carries no sculpted features — the bored expression is the baked Rodin texture (and, for
 Deliverable A, the full-res render). `data/art/wisp.json` is still a stub; its palette should be
 written from the sampled dress plum and hair purple when the Designer fills it in.
+## 2026-08-25 — Value budget, a tinted rig, and a unit rim light
+
+The owner asked what else would make the board look better. Rather than answer from
+taste, I filmed the shipping build (models, props and ambient on, Aegis on the board) and
+measured it. The measurement said something specific: **the four material items from
+#164 were not what was holding the image back.** Chamfers, normal maps, contact shading
+and jitter had all already shipped in the frame I photographed.
+
+**What the histogram said.** p95 and p99 were the *same number* (193.8) — the top of the
+range was a flat plateau, 0.8% of the frame above 200, and 33% of it inside a single
+ten-wide bucket. Terrain owned that plateau (`wall` 213, `open` 172) while the things the
+player looks at sat underneath it: Aegis composited at 112, a team-blue box at 90. Units
+read as holes in a bright surface because they measurably were darker than the ground
+they stood on. Both directional lights were `0xffffff`, and lit surfaces came back at
+`R − B = 0` against shadows at `−11` — no warm/cool separation anywhere, despite a doc
+comment promising one.
+
+**Three changes, and two of them were wrong the first time.**
+
+*Value budget* (`value-budget.ts`). Terrain gets a luminance ceiling of 185 and everything
+above it is reserved. Only terrain is constrained: unit colour is about to become
+viewer-relative friend-or-foe (BACKLOG FOF-UNITS), and a rule pinning unit values would be
+this module deciding something that is not its to decide.
+
+My first pass scaled `wall` and `open` to 176/150 — and **narrowed the gap between them
+from 41 to 26**, which made the frame *more* uniform, not less (biggest bucket 33% → 39%).
+Lowering a ceiling is not the same operation as compressing a ramp. Corrected to 182/138,
+keeping a 44-point separation.
+
+Then the composite did not move at all: p95 and p99 stayed at **exactly** 185.4 across two
+passes while `wall` went 176 → 182. The plateau was never terrain. It was 19,508 pixels of
+one RGB from `data/props/proving-floor.json`, whose `shaft` was `#d8d5cd` — the *old* wall
+colour, copied when the props were authored and never re-derived. A budget that only knew
+about `terrain` would have been satisfied by a board that had not changed, so it walks
+arbitrary palettes now (`paletteViolations`) and the props were regenerated through
+Blender at the new values.
+
+*A tinted rig.* `sun` → `#fff1dc`, `fill` → `#c6d8ff`. Both stay close to white on purpose:
+the terrain has already given up its chroma so the UI can own saturated hues, and a
+strongly tinted key takes that straight back.
+
+*A rim light on units* (`rim.ts`). **Not a light.** Three tests a light's layers against
+the *camera*, not against each mesh (`WebGLRenderer.projectObject`), so a light restricted
+to units does not exist — it would climb over the terrain and swing across the map on
+every orbit. It is a Fresnel term injected after `<emissivemap_fragment>`, the first point
+where `normal` exists and `totalEmissiveRadiance` is still open. Unit-scoped by
+construction, and it rides on top of the victim flash rather than fighting it.
+
+**The rim is achromatic, and that is a constraint rather than a taste.** FOF-UNITS gives
+hue on a unit a job — self blue, ally green, foe red, on a foot ring, an outline and the
+nameplate — and the rim sits exactly where that outline will sit. A tinted rim would be a
+fourth colour competing for a channel that is about to mean *whose side are they on*.
+`rim.test.ts` asserts it so a later tuning pass cannot quietly reintroduce a tint.
+
+**What it actually bought, measured.** Unit-vs-floor deficit roughly halved: Ravok
+−74.5 → −37.4, Aegis −47.8 → −23.9. The plateau broke (p99 − p95: 0.0 → 6.1). Warm/cool
+split arrived (lit `R − B` 0.0 → +5.5 against shadows at −6.5). Props came down 191 → 155.
+
+**What it did not buy, stated plainly.** Units are still *darker* than the floor, just half
+as much, and the top ~90 of the range is now reserved and empty — nothing above 200 yet.
+Filling it needs bright VFX and a tone curve to roll them off, which is the next item and
+was deliberately not bundled here. Reserving the space and occupying it are two jobs; this
+is the first one.
+
+Rim verified by mutation: strength 0.34 against 0.0 differs by 10,746 pixels, max channel
+delta 120, bounded to x 411–553 / y 218–496 — exactly the two units, no terrain.
+
+---
+
+## 2026-08-26 — Map visuals: taller/varied wall pillars, and cover goes all-wooden (owner feedback)
+
+Owner feedback on the shipped Proving Floor props, addressed on the map-visual side.
+
+**Walls are taller and varied in height now, and that is not a violation of "the read survives".**
+The prop pipeline shipped with pillars pinned to exactly `WALL_HEIGHT` (0.9), on the reasoning
+that a prop must not change how tall a square reads. But a wall is a *full* line-of-sight blocker
+whatever it is drawn at — the engine blocks by tile type, not by pixels — so a taller pillar does
+not change what the square does, and a taller, uneven colonnade reads *more* clearly as
+wall-not-cover, not less. Heights are now per-variant: broken ruin 1.15, standing 1.5, heavy 1.75
+(the broken one deliberately the shortest, a stump). The renderer already places a wall `.glb` at
+its own authored height (it never scales walls), so this is a data change; the props-off box
+fallback the pixel tests use stays at 0.9, which is fine because it is never a player's view.
+
+**Cover is all thin wooden barricade now — the masonry block is gone.** The block variant read as a
+solid cube, and because COVER-EDGE sits a cover prop on the tile boundary with its own footprint,
+the block's full 0.86 footprint swallowed the tile and hid the board behind it — the owner's "these
+cover too much". A barricade is thin in depth (the renderer does not thin the footprint, only the
+`.glb` geometry does), so all three cover variants are now barricades — a light 4-stake fence, a
+dense 5-stake one, and a gappy 3-heavy-stake palisade — which sit on the edge as a thin fence line
+and let the board read through. Every cover variant still normalises to `EDGE_COVER_HEIGHT` (0.8),
+so their variety is silhouette, not height.
+
+**Regenerated in-container.** Blender 4.0.2 + `python3-numpy` installed in the session, so the six
+`.glb` were rebuilt here and verified in the browser rather than handed back for a manual run.
+Palette albedos stay under the value-budget ceiling (185).
+
+---
+
+## 2026-08-26 — MODEL-PRELOAD (owner playtest)
+
+**Owner playtest — *"Aegis does not render if he is on the opposing team, I only see a red block."***
+A rigged character that is never fetched draws the box fallback, and since FOF-UNITS the box wears
+the unit's FoF colour — so an unfetched enemy is, precisely, a red block. The fetch list came from
+`state.units`, and a **networked** client's state is team-filtered by the server: enemy units it
+cannot see are *absent from the array* rather than blanked (`packages/server/src/view.ts:69`). So
+the client asked only for its own characters, and when an enemy finally walked into vision there was
+nothing loaded to build it from — **permanently**, because `staleUnitGroups` swaps a box for a model
+only once that character IS loaded, and that one never would be. Now taken from `teams`, the lobby's
+picks for both sides.
+
+**Pre-existing, and FOF-UNITS is why it got reported.** Under absolute team colour the unfetched
+enemy was a blue *or* red block depending on which number they drew, which reads as "a unit"; under
+friend/foe it is reliably red, which reads as "the enemy is a block". The colour change did not
+cause it, it made it legible — worth recording because the instinct on a playtest report arriving
+right after a change is to assume the change caused it, and here the honest answer is that it only
+made an old bug visible.
+
+**Why `teams` is the honest source rather than a leak.** *Who* is in a match is public: you pick
+from a roster and see what the other side picked. Golden rule #5 hides **orders**; fog hides
+**positions**. Neither hides the cast list, so a model fetched before its owner is visible reveals
+nothing a player has not already read off the lobby.
+
+**It could only ever have been seen in a networked match**, because hot-seat holds the whole state
+and preloaded both sides. That is also why no test caught it: every model test drives hot-seat.
+`model-preload.test.ts` is written the other way round on purpose — it hands the controller a
+team-filtered opening, which is what a networked client actually receives.
+
+---
+
+## 2026-08-26 — FOF-LOCAL: `ally` is a networked identity (owner playtest)
+
+**Owner playtest — *"East team has Wisp green when it's Vex's turn, and Vex green when it's Wisp's
+turn."*** Both readings were right by the letter of the FOF-COLORS ruling and wrong in the room.
+`DEFAULT_PLAYERS['2v2']` is `[2, 1]`, so a hot-seat splits one team into **two seats of one
+character each** — and a seat that owns one character makes the other an `ally`, so the green
+followed the selection around the player's own team.
+
+**Ruling — in a hot-seat there is no ally, so `self` is the whole team.** The owner's own sentence
+is the spec: *"blue should be all of your characters that you are controlling, green should be all
+characters ally is controlling."* Locally the seats are one human passing the board to themselves;
+a teammate is only a different **person** across the wire. So the viewer's `seatUnitIds` is the
+seat's units when `net` is defined and the whole team when it is not, and green becomes a
+networked-only identity.
+
+**This narrows FOF-COLORS rather than contradicting it.** The ruling says `self` is "the units the
+viewer's **seat** controls", and what the playtest settled is what a seat *is*: the unit of control
+is the person, not the row in the seat table. In networked play the two coincide, which is the case
+the ruling was written against. The mirror-matchup fix is untouched — your side is one colour and
+the enemy is red, whichever seat is on the clock, which is more true after this than before.
+
+**The three regression tests were checked against the unfixed code and fail there.** Two existing
+tests had to be *restated* rather than added to, because they asserted the old rule directly
+(`seatUnitIds.size === 1` at `[2, 2]`, and "your teammate's character is an ally" in a hot-seat) —
+recorded because a test that encodes a behaviour the owner then calls a bug is not a test that was
+wrong to write, but it is one that has to change with the ruling rather than outvote it.

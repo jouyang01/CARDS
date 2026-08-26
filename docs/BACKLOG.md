@@ -14,174 +14,129 @@ ships with a Vitest test in the same commit** — bug fixes ship the regression 
 **A genuinely new mechanic gets a generic, reusable implementation** (golden rule #2). **DRIVE THE REAL UI
 WIRING IN TESTS.** **PR to `main` every session.**
 
-> ⚠️ **`main` is LIVE** — keep `npm test` green. **The Playwright e2e/render suite regressed to 7 red** from
-> the Proving Grounds map rebuild (coordinate/format-coupled tests) — RENDER-SUITE-GREEN-3 restores it.
+> ⚠️ **`main` is LIVE** — keep `npm test` green. The Playwright e2e/render suite is down to **~3 red**
+> (RENDER-SUITE-GREEN-3 closed the rest); RENDER-SUITE-GREEN-4 + VFX-FLASH-VERIFY finish it. Pre-merge
+> signal, not a release gate (Pages gates on CI, which is green).
 
-> 🎨 **Art / VFX / camera / colour reference (owner Dev Note 2026-08-21):** `docs/ART_PIPELINE.md`,
-> `docs/MAP_PIPELINE.md`. **No engine change** for art/render — an apparent one is an `ENGINE ASK`. Camera
-> and VFX are **pure view**. **Team/FoF colour is now viewer-relative** (edge-cases FOF-COLORS) — friend/foe
-> from the viewer's seat is the global identity, replacing absolute team0/team1.
+> 🎨 **Colour is viewer-relative friend/foe (edge-cases FOF-COLORS, RULED).** Self blue / ally green / foe
+> red on units; friendly blue on committed overlays; hot-seat's whole team is self (green is networked-only).
+> Art/VFX/camera are **pure view** — no engine change; an apparent one is an `ENGINE ASK`.
 
 ## ✅ COMPLETE
 
-- Everything through session 16 + the TTK package + INTERCEPT-GUARD + DEATH-HANG-3 + CAMERA-CONTROLS +
-  RENDER-SUITE-GREEN-2 + the VFX impact set.
-- **PRs #148–#164 (map/render/VFX):** **COVER-EDGE** (directional edge cover — the AR half-wall: walk-on,
-  can't cross the faced edge, 50% to the occupant across it, doesn't block LoS, melee ignores; one shared
-  `geometry.ts` for movement + combat; iron-basin's full-block untouched; integer-exact, tested), **Proving
-  Grounds** (duel-arena rebuilt 17×11, 2 spawns/side, 1v1/2v2, 180° rotational fairness), board material
-  polish (chamfers, normal maps, contact shading, hashed jitter), VFX (Intercept blink, auras, impact
-  particles/debris, the first ambient motion). Engine change was **COVER-EDGE only**, verified sound.
+- Everything through the map/COVER-EDGE cycle + the TTK package + INTERCEPT-GUARD + DEATH-HANG-3.
+- **PRs #167–#174 (session 17 + playtest):** **FOF-UNITS** + **FOF-OVERLAYS** (viewer-relative friend/foe;
+  ruled FOF-COLORS), hardened by a **same-day owner playtest** — the lock-in green flip, the white edge
+  bars, the bulky ring, and **FOF-LOCAL** (hot-seat identity: self is the person) all fixed with regression
+  tests proven against the unfixed code; **PAN-RELEASE-PLAYBACK**, **RENDER-IDLE-QUIET** +
+  **SETTLED-BOARD-INVARIANT**, **RENDER-SUITE-GREEN-3** (most of the map-rebuild regressions); MODEL-PRELOAD
+  (enemy models), a value-budget/rim-light render pass, prop variety, CHARACTER_PLAYBOOK. **Engine
+  untouched.**
 
-Current suite: **3219 unit tests** green, typecheck clean, purity clean. **Playwright render suite 7 red**
-(the map rebuild — RENDER-SUITE-GREEN-3).
+Current suite: **3292 unit tests** green, typecheck clean, purity clean. Playwright render suite **~3 red**
+(FOG-ZORDER aim, the single-pad test, VFX-FLASH — see below).
 
 ### Build order and dependencies
 
-**FOF-UNITS → FOF-OVERLAYS → RENDER-SUITE-GREEN-3 → PAN-RELEASE-PLAYBACK → RENDER-IDLE-QUIET →
-SETTLED-BOARD-INVARIANT.** FoF is the owner's ask and comes first; FOF-OVERLAYS reuses FOF-UNITS' viewer-
-relative colour resolver, so it follows it; **RENDER-SUITE-GREEN-3 follows the FoF items** because it must
-re-point the colour-family e2e predicates for the new FoF colours as well as the new map. The three camera/
-render items are carried unchanged from 2026-10-04 (no Builder session ran that cycle). All client/test —
-no engine work.
+**VFX-FLASH-VERIFY → RENDER-SUITE-GREEN-4 → FOF-OUTLINE.** VFX-FLASH-VERIFY leads (it may be a real hit-feel
+bug, not test drift); RENDER-SUITE-GREEN-4 closes the last render tests with the re-specs ruled below;
+FOF-OUTLINE completes the FoF ask if the playtest wants it. All client/test — no engine work. FOF-OVERLAY-HUE
+is a **Designer** flag, not a Builder item until the hue is chosen.
 
 ---
 
-## HIGH — friend-or-foe colour (the owner's ask; the mirror-matchup solver)
+## MED — a hit must read as a hit (possible real regression)
 
-### FOF-UNITS. Colour units by viewer-relative friend/foe, with a foot ring (CLIENT) — UNBLOCKED (first)
-**Addresses Dev Note: "We want to solve for the issue of mirror matchups and identifying if it's friend or
-foe. It should be similar to Atlas Reactor … 1. The Friend-or-Foe (FoF) Outline System … Your Team: … bright
-blue (yourself) or green ring (ally) beneath their feet, blue outline highlights, and blue player
-nameplates. The Enemy Team: … a bright red ring beneath their feet, red outline highlights, and red player
-nameplates. This red tint remained consistent even if they were playing the exact same character as you."**
-Ruled in edge-cases (FOF-COLORS). Today the client colours by **absolute team** (`team0=blue`, `team1=red`,
-`renderer3d.ts:1645`), so a **team-1 viewer sees themselves red and the enemy blue** — the exact bug (see
-also the `renderer3d.ts:2306` "only right when the viewer is team 0" comment).
+### VFX-FLASH-VERIFY. Confirm the victim flash lands on screen (CLIENT, reproduction-first) — UNBLOCKED (first)
+**Addresses Builder session-17 OQ #4.** `e2e/vfx.spec.ts:71` (VFX-FLASH-ON-SCREEN) measures no localised
+brightness spike when a hit lands — best spike 165 against a floor of 800, lit-pixel counts flat across the
+resolution (6670 → 3544 → ~6600, a step change in *scene* brightness, not one victim lighting and releasing).
+The flash's decision (`vfx.ts`), delivery (`vfx-wiring`), material (`detach-materials`) and paint
+(`paint-flash`) are each unit-tested; the *unoccluded-on-screen* inch is exactly what this catches, and it
+says nothing spiked. **This is NOT obviously test drift like its render-suite neighbours** — it may be a real
+regression. *AC:*
+- **Diagnose first, through the film harness** (which now aims like a player): does the victim flash actually
+  appear as a localised bright spike on the hit unit during resolution, or not?
+- **If it's a real bug** (the flash occluded, the paint not reaching the lit mesh, or a later render pass —
+  the value-budget/rim-light or ACES revert — clamping it away): fix it so a landed hit produces a visible,
+  localised flash, and make the e2e assert a **local** spike on the victim (not global scene brightness).
+- **If it's test drift** (the flash is visible but the assertion measures the wrong thing): fix the
+  assertion to sample the victim's own pixels for a spike, and say so.
 
-*AC:*
-- **A single viewer-relative colour resolver** decides, for any unit, one of three from the **viewer's
-  seat**: **self (blue)** = a unit the viewer's seat controls; **ally (green)** = another unit on the
-  viewer's team; **foe (red)** = the enemy team. Every place that currently reads `owner === 0 ? team0 :
-  team1` for a unit routes through it. In a mirror (both teams the same character), the enemy still reads
-  **red**.
-- **A ring beneath each unit's feet** in its FoF colour (self blue / ally green / foe red), distinct from
-  and beneath the existing selection ring and CHASE quarry ring (which keep their "this is the one you are
-  ordering / chasing" meaning).
-- **Model outline/tint and the nameplate** take the FoF colour (the nameplate's name/number band reads
-  friendly-blue / foe-red from the viewer).
-- **Fog and decoys compose unchanged:** a fogged enemy is not drawn; a decoy wears its impersonated unit's
-  FoF colour **from the viewer** (fix the team-1-assuming decoy path at `renderer3d.ts:2306`).
-
-**Spec Notes.** Files: `packages/client/src/renderer3d.ts` (the unit/decoy/trap tint at `:1645`/`:2272`/
-`:2306`, a new foot-ring layer, the outline), `packages/client/src/nameplates.ts` + its draw (viewer-
-relative band colour — `unitNameplate` already takes `viewer`), `packages/client/src/app.ts` (thread the
-viewer's team — `currentSeat()?.team` — to the resolver). **The viewer's team already exists** (fog is
-already viewer-relative); this reuses it, it does not invent a new source of truth. **Determinism guard:**
-colour is pure view — it must not read into or write game state, and two clients on opposite teams resolve
-the *same* board to mirrored colours without either being "wrong". **Test through the real wiring:** a unit
-owned by the viewer's team renders friendly, an enemy renders foe, **and flipping the viewer's team flips
-the colours** (the regression the bug is); the mirror case (same character both teams) still reads foe as
-red. Out of scope: the overlay colours (FOF-OVERLAYS); the e2e colour predicates (RENDER-SUITE-GREEN-3);
-changing the actual palette hues (blue/green/red already exist — team0/team1 are blue/red; green is the new
-ally hue).
-
-### FOF-OVERLAYS. Colour committed plans and AoE by friend/foe (CLIENT) — UNBLOCKED (after FOF-UNITS)
-**Addresses Dev Note: "2. Ability Target Lines and Prediction Markers … Directional Arrows: … Blue lines
-meant your ally was moving or aiming there; red lines tracked enemy placements and trajectories from the
-previous turn. Blast Phase Overlays: Area-of-effect (AoE) templates were heavily color-coded so you
-wouldn't confuse an ally's ultimate with an enemy mirror character's ultimate."** *AC:*
-- **A committed teammate's plan reads friendly (blue)** — the ability line/area, move arrow and guard link
-  that TEAMMATE-PLAN-VISIBLE already draws take the friendly FoF colour, and its **move arrow** reads as a
-  friendly directional arrow.
-- **Enemy telegraphs read foe (red)** — where the client shows what the enemy did last turn (their
-  resolved placements/trajectories, already public), draw them in foe-red. **Confirm first what enemy
-  last-turn info the client currently surfaces** — if none, scope this to what is cheaply available (e.g. a
-  faded red trail of the enemy's last resolved move) and flag anything net-new rather than inventing a
-  telegraph system; golden rule #5 keeps *this-turn* enemy plans hidden until resolution.
-- **Blast/AoE templates for committed/telegraphed actions are FoF-coloured** so an ally's ult and an enemy
-  mirror's ult are distinguishable at a glance.
-- **The viewer's own in-progress aim is unchanged** — it keeps the meaning-coded palette (amber aim, blue
-  range, etc.); only **committed** plans and **enemy** telegraphs take FoF colour.
-- **A test through the real wiring:** a committed ally AoE renders friendly, an enemy telegraph/AoE renders
-  foe; the viewer's own live aim is unchanged.
-
-**Spec Notes.** Files: `packages/client/src/app.ts` (the teammate-plan draw — reuse FOF-UNITS' resolver for
-the line/area/arrow colour; the AoE overlay colour for committed vs enemy), `renderer3d.ts` (the path/shape
-layers). **Reuse FOF-UNITS' colour resolver** — one source of truth for friend/foe. **Designer-flagged
-tension:** FoF overlay colours (blue/red) overlap the meaning-coded overlay vocabulary (AOE-CLASH /
-OVERLAY-BY-THEME reserved amber=aim/AoE, blue=range, etc.). Keeping the viewer's *own live aim*
-meaning-coded and only FoF-colouring **committed/telegraphed** overlays is the reconciliation this item
-takes; if it still clashes on a real board, the exact hues/weights are a **Designer** call — flag, don't
-guess a new palette. Out of scope: a full enemy-prediction/telegraph system (scope to what's already
-public); the unit colours (FOF-UNITS).
+**Spec Notes.** Files: `packages/client/src/vfx.ts`/`renderer3d.ts` (only if the flash is genuinely not
+landing), `packages/client/e2e/vfx.spec.ts` (the measurement). **Suspect the recent render passes first** —
+the value-budget, the tinted rig/rim light, and the ACES-tone-mapping revert all moved scene luminance and
+any could have swallowed a per-unit emissive spike. Do not "fix" the test into passing over a flash that
+isn't there — the whole point of the impact work is that a hit reads as a hit. Out of scope: the other VFX
+steps; the flash's unit-tested internals (correct).
 
 ---
 
-## HIGH — restore the render signal (regressed by the map rebuild)
+## MED — close the render suite
 
-### RENDER-SUITE-GREEN-3. Re-point the coordinate/colour-coupled render tests (TEST INFRA) — UNBLOCKED (after the FoF items)
-**Addresses the Proving Grounds regression.** The Playwright suite is 7 red, all reproducing on a clean
-control: two boot `?map=duel-arena&format=4v4` (a setup error now — Proving Grounds has 2 spawns/side), the
-rest hard-code screen fractions or assert "a mirrored pair of Health pads" against the old 18×15 layout.
-*AC:* the render suite is green again; the fixes are **test-side** (re-point coordinates/formats to Proving
-Grounds; the pad assertions to its single-column pads), not production changes to satisfy stale assertions.
-**Also update the colour-family predicates** (`isTeamBlue`/`isTeamRed`, `e2e/pixels.ts`) to the **viewer-
-relative** FoF semantics FOF-UNITS/FOF-OVERLAYS introduce (`isFriendly`/`isFoe`), which is why this follows
-them. **Spec Notes.** Files: `packages/client/e2e/*`. Keep production behaviour fixed. Out of scope: new
-visual assertions; the retired UI-VIEWPORT framing check (correctly gone). This is a pre-merge signal, not a
-release gate (Pages gates on CI, which is green) — but a green baseline is the point.
+### RENDER-SUITE-GREEN-4. The last render tests, re-specced to the moved board (TEST INFRA) — UNBLOCKED
+**Addresses Builder session-17 OQ #3 + the FOG-ZORDER finding.** Two tests are "a suite written against a
+board that framed everything, asked to work on one where the camera and the map both moved" — they need
+re-specs, not re-points, and the Analyzer's choices are ruled here:
+- **The single-pad test (RENDER-COVERAGE, "a pad marker survives the next turn boundary"):** Proving Grounds
+  has one Health pad at (8,1) and a consumed pad drops to 0.14 opacity, below `isPadTeal`'s floor, so "still
+  drawn" is unobservable. **Re-spec the assertion to "the pad re-arms on its `everyTurns` cycle"** — the
+  actual pad behaviour, map-agnostic. (Not moving it to Iron Basin for its pad pairs — that couples the test
+  to one map's layout.)
+- **FOG-ZORDER's aimed half:** `bestAimed` sits at 1 (floor 20) because the nearest lit brush is at the very
+  edge of a turn-1 reach and most brush is fogged on the opening frame — no candidate choice fixes it.
+  **Re-spec to DRIVE a character toward a brush band over a turn or two, then measure** the aim overlay's
+  z-order against brush from range. (The coarse-floor half already passes on Iron Basin at 4v4.)
+
+*AC:* both tests pass on `main` by asserting the real behaviour on the current maps; the render suite is
+green (VFX-FLASH is its own item above). **Spec Notes.** Files: `packages/client/e2e/render.spec.ts`.
+Test-side only — production behaviour is correct. Out of scope: VFX-FLASH (VFX-FLASH-VERIFY); new visual
+assertions.
 
 ---
 
-## Carried from 2026-10-04 — camera/render polish (no Builder session ran that cycle)
+## MED — complete the FoF read (the owner asked for outlines)
 
-### PAN-RELEASE-PLAYBACK. Resolution playback follows the action; a planning pan releases (CLIENT) — UNBLOCKED
-**Addresses Builder session-16 OQ #1.** Resolution playback follows the action (a planning-time **pan**
-releases so `focusOn` drives the centre through each actor/impact; orbit rotation and zoom persist);
-planning resumes auto-centred on the active character. Test: pan during planning, resolve, assert the centre
-follows the resolution's focus, orbit/zoom unchanged. **Spec Notes.** `app.ts` (release the pan on the
-planning→resolution transition, before the first playback `focusOn`). Playtest can reverse it if a released
-camera reads as lost control. Full rationale in `docs/reviews/2026-10-04.md`.
-
-### RENDER-IDLE-QUIET. An idle board stops re-issuing render commands (CLIENT) — UNBLOCKED
-**Addresses the RENDER-ON-DEMAND finding.** On-demand is the default, but the **app** re-issues ~49 camera
-marks + 15 highlights over 5 idle seconds, so the loop can't quiet the board. *AC:* over a settled idle
-board, the app issues no render marks and the loop draws no new frames. **Spec Notes.** The counts point at
-the camera ease first (confirm it terminates and un-marks); guard `highlight`/`focusOn` re-issued with
-unchanged inputs. **Pure queries must not mark** (`screenPosition` runs per frame). The app-side half
-RENDER-ON-DEMAND shipped as a prerequisite for — not new scope.
-
-### SETTLED-BOARD-INVARIANT. A named test that an idle board is byte-stable (TEST, LOW) — UNBLOCKED (after RENDER-IDLE-QUIET)
-**Addresses Builder session-16 OQ #4.** Three `same()` callers (the ambient guard + two motion assertions)
-depend on an idle board being byte-identical; write it down as a named test so a missed `markDirty()` fails
-clearly. Depends on RENDER-IDLE-QUIET (the property must hold first).
-
-## 🎮 PLAYTEST — the standing validation loop (owner + humans)
-
-Confirm DEATH-HANG-3 in a live networked game; feel-read the character-centred camera + VFX impact; and now
-the **new Proving Grounds map and COVER-EDGE** — do directional half-walls read (you can see over but not
-shoot/walk across the faced edge), does the tighter 17×11 board play better than the old stadium, and does
-FoF colour actually make a mirror legible. Standing balance watch-list continues (TTK burst, 20-turn pacing,
-Skim/Chain Hook/Lumen, RAVOK-RECOIL, clock-vs-kills). Output: felt problems → Dev Notes.
+### FOF-OUTLINE. The character body/rim takes its friend/foe colour (CLIENT) — UNBLOCKED (after the render items)
+**Addresses Builder session-17 OQ #1 and the FoF Dev Note's "blue/red **outline highlights**."** FOF-UNITS
+shipped the foot ring + nameplate but **not** the model outline — `emissive` is the victim flash's, and an
+inverted-hull outline is per-mesh geometry on an already-slow render path. *AC:* a unit's **body reads its
+FoF colour** (self blue / ally green / foe red) as an outline/tint, without conflicting with the victim
+flash or adding per-mesh geometry. **Spec Notes.** The clean technique is to **tint the achromatic rim light**
+shipped in `5e022a8` by the unit's FoF colour — the rim already outlines the silhouette, costs no new
+geometry, and does not touch `emissive`. Reuse FOF-UNITS' viewer-relative colour resolver (one source of
+truth). **Confirm in the playtest first** whether ring + nameplate already read clearly enough — if so, this
+can wait; if the owner wants the fuller AR outline, the rim tint is it. Out of scope: `emissive`-based
+outlines (reserved for the flash); a second inverted-hull pass. **Determinism guard:** pure view, no path
+into state.
 
 ## Routed to Designer / Owner / flags
 
-- **FoF overlay colours vs the meaning-coded palette (Designer, from FOF-OVERLAYS).** If FoF blue/red on
-  committed overlays clashes with the reserved overlay vocabulary on a real board, the hues/weights are the
-  Designer's to settle — flagged, not guessed.
-- **The map lane crossed into `packages/engine` for COVER-EDGE.** It shipped clean and tested, so no action
-  — noting that a genuine engine mechanic came through the map session rather than a Builder/ENGINE-ASK path.
-- **Camera-follow-on-select** (one-line lever if the playtest wants it); **zoom beyond wheel**; **intent
-  badge name vs digit**; **ASSET-BUDGET caps + CLIP-DEDUP (§18)**; **300 kB JS budget headroom**;
-  **CHASE-SECOND-CLOCK; NET-E2E-EXPAND-2; DO-E2E; RAVOK-RECOIL; Warding Wall power; Skim/Chain Hook;
-  FRAG-SELF zoning; WALL-BLINK-ONTO; INTERCEPT shield lever; Aegis beam distinctness; self-lethal recoil
-  warning; burn/regen pip glyphs; Warding Halo dead `weaken`; trap count cap; inspect chips hoverable; Solar
-  Flare DoT ceiling; Thorn mine carpet** — unchanged flags.
+- **FOF-OVERLAY-HUE (Designer, from OQ #2).** The friendly committed-overlay blue is the same hue as the
+  `REACH` range envelope, separated only by weight. If an ally's committed plan under a live aim reads
+  ambiguous on a real board, the Designer picks a distinct friendly hue (a teal or a different blue). Playtest
+  question first; not a Builder item until the hue is chosen.
+- **The map lane owns e2e render tests it moves.** Proving Grounds broke the render suite and it took two
+  Analyzer cycles to close — note for the map lane: a map reshape should re-point its own coordinate/format-
+  coupled render tests in the same change, as COVER-EDGE shipped its engine tests.
+- **Camera-follow-on-select; zoom beyond wheel; intent badge name vs digit; ASSET-BUDGET caps + CLIP-DEDUP
+  (§18); 300 kB JS budget headroom; CHASE-SECOND-CLOCK; NET-E2E-EXPAND-2; DO-E2E; RAVOK-RECOIL; Warding Wall
+  power; Skim/Chain Hook; FRAG-SELF zoning; WALL-BLINK-ONTO; INTERCEPT shield lever; Aegis beam distinctness;
+  self-lethal recoil warning; burn/regen pip glyphs; Warding Halo dead `weaken`; trap count cap; inspect
+  chips hoverable; Solar Flare DoT ceiling; Thorn mine carpet** — unchanged flags.
+
+## 🎮 PLAYTEST — the standing validation loop (owner + humans)
+
+The FoF work has already had one round; a second confirms **FoF reads cleanly in a real mirror** (and
+whether ring+nameplate suffices without FOF-OUTLINE, and whether friendly-blue vs range-blue is legible —
+FOF-OVERLAY-HUE). Also still owed a live look: **DEATH-HANG-3** in a networked game, the **Proving Grounds
+map + COVER-EDGE** (do half-walls read), the character-centred camera + VFX impact, and the balance
+watch-list (TTK burst, 20-turn pacing, Skim/Chain Hook/Lumen, RAVOK-RECOIL, clock-vs-kills). Output: felt
+problems → Dev Notes.
 
 ## Flagged future (not scheduled)
 
 - **The rest of the VFX pipeline** (projectiles/casts/status VFX; more ambient motion). **The other eight
-  characters' art** (gated on CLIP-DEDUP). **A second COVER-EDGE consumer** (iron-basin could adopt
-  directional cover if the owner wants — not scheduled). **M3-REMATCH, IDLE-KICK, LOBBY-TEAM-CHOICE**;
-  **same-turn-buff preview**; **route-around-bodies dash impact preview**.
+  characters' art** (CHARACTER_PLAYBOOK now records what building Aegis taught; gated on CLIP-DEDUP).
+  **M3-REMATCH, IDLE-KICK, LOBBY-TEAM-CHOICE**; **same-turn-buff preview**; **route-around-bodies dash impact
+  preview**.
