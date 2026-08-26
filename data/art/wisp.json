@@ -23,12 +23,12 @@
       "flat": true,
       "bladeTiles": 0.40,
       "gripReversed": true,
-      "heightTiles": 0.52,
+      "heightTiles": 0.38,
       "attach": {
-        "_comment": "Right hand, reversed grip: blade points DOWN past the fist. position in TILES (bone-local), rotation XYZ degrees. INITIAL — tune after the render fix.",
+        "_comment": "Right hand, reversed (icepick) grip. The hand bone's local +Y runs toward the fingers, so position moves ~half a hand-length along it INTO THE PALM (not the wrist); local +Z is world-DOWN and the blade is authored +Z, so rotation [0,0,0] points the blade straight down — a reverse grip. (The old [180,0,0] pointed it UP.) Bone-local, position in TILES, rotation degrees. Tuned against a faithful bone-frame preview; fine-tune once the model renders in the client.",
         "bone": "mixamorigRightHand",
-        "position": [0, 0.02, 0.01],
-        "rotation": [180, 0, 0]
+        "position": [0, 0.055, 0],
+        "rotation": [0, 0, 0]
       }
     },
     "offHand": {
@@ -36,12 +36,12 @@
       "flat": true,
       "bladeTiles": 0.40,
       "gripReversed": true,
-      "heightTiles": 0.52,
+      "heightTiles": 0.38,
       "attach": {
-        "_comment": "Left hand, mirrored. INITIAL — tune after the render fix.",
+        "_comment": "Left hand, mirrored — the bone's own local frame mirrors it, so the SAME bone-local position/rotation reverse-grips this hand too. Fine-tune once the model renders in the client.",
         "bone": "mixamorigLeftHand",
-        "position": [0, 0.02, -0.01],
-        "rotation": [180, 0, 0]
+        "position": [0, 0.055, 0],
+        "rotation": [0, 0, 0]
       }
     }
   },

@@ -34,14 +34,14 @@
       "file": "wisp_dagger.glb",
       "version": "44ebd9d0409e",
       "bone": "mixamorigRightHand",
-      "heightTiles": 0.52,
+      "heightTiles": 0.38,
       "position": [
         0,
-        0.02,
-        0.01
+        0.055,
+        0
       ],
       "rotation": [
-        180,
+        0,
         0,
         0
       ]
@@ -51,14 +51,14 @@
       "file": "wisp_dagger.glb",
       "version": "44ebd9d0409e",
       "bone": "mixamorigLeftHand",
-      "heightTiles": 0.52,
+      "heightTiles": 0.38,
       "position": [
         0,
-        0.02,
-        -0.01
+        0.055,
+        0
       ],
       "rotation": [
-        180,
+        0,
         0,
         0
       ]
