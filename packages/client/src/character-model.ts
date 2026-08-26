@@ -9,7 +9,7 @@
  * suite runs without any, so an unavailable model must be ordinary, not an error.
  */
 
-import { AnimationMixer, Group, LoopOnce, LoopRepeat, Mesh, Object3D, Vector3, type AnimationAction, type AnimationClip, type Bone, type Material } from 'three';
+import { AnimationMixer, Group, LoopOnce, LoopRepeat, Matrix3, Matrix4, Mesh, Object3D, Vector3, type AnimationAction, type AnimationClip, type Bone, type Material } from 'three';
 
 import type { ClipChoice, ClipSet } from './character-clips.js';
 
@@ -203,6 +203,16 @@ export interface RootLock {
   bone: Object3D;
   /** The bone's LOCAL translation in the bind pose. */
   bind: Vector3;
+  /**
+   * Maps a displacement in the bone's PARENT space into model space, and back.
+   *
+   * This is how the lock knows which way is up without being told. The
+   * ancestors between the root bone and the model root are static — an
+   * `Armature` node's Z-up-to-Y-up rotation, or nothing at all — so the basis
+   * is measured once, in the bind pose, and never needs a live world matrix.
+   */
+  toModel: Matrix3;
+  fromModel: Matrix3;
 }
 
 /**
@@ -217,7 +227,25 @@ export interface RootLock {
  */
 export function measureRootLock(root: Object3D): RootLock | undefined {
   const bone = findBone(root, 'mixamorigHips') ?? topmostBone(root);
-  return bone === undefined ? undefined : { bone, bind: bone.position.clone() };
+  if (bone === undefined) return undefined;
+  // The static chain between the bone's parent and the model root, accumulated
+  // from LOCAL matrices. Not `matrixWorld`: the lock runs inside `update()`,
+  // before the renderer refreshes world matrices, and the unit group above it
+  // is moved and turned every frame. Model space is enough — the renderer only
+  // ever places a unit with a translation, a Y rotation and a uniform scale,
+  // none of which can change which direction is up.
+  const chain = new Matrix4();
+  for (let o = bone.parent; o !== null && o !== root; o = o.parent) {
+    o.updateMatrix();
+    chain.premultiply(o.matrix);
+  }
+  const toModel = new Matrix3().setFromMatrix4(chain);
+  return {
+    bone,
+    bind: bone.position.clone(),
+    toModel,
+    fromModel: toModel.clone().invert(),
+  };
 }
 
 /** The first bone with no bone above it — the skeleton's root, whatever it is called. */
@@ -231,7 +259,7 @@ const topmostBone = (root: Object3D): Bone | undefined => {
 };
 
 /**
- * MODEL-ROOT-LOCK — put the root bone back where the bind pose had it.
+ * MODEL-ROOT-LOCK — hold the root bone over its tile, and let it go up and down.
  *
  * **The rule (edge-cases, RULED — MODEL-ROOT-LOCK):** the engine owns unit
  * position and the renderer places — and during playback lerps — each unit's
@@ -239,37 +267,38 @@ const topmostBone = (root: Object3D): Bone | undefined => {
  * only. It may never translate the rig's root off the tile. This is the
  * guarantee that makes that true for every model, however its clips were baked.
  *
- * **Why the LOCAL translation and not a world-space axis test.** Restoring the
- * bone's local translation restores its world offset from the model root
- * exactly, on every axis, without ever asking which axis is up — and that
- * question is what shipped the bug this closes. `build_glb.py --in-place`
- * assumed local-Y was world-up; Wisp's `Armature` carries a +90° X rotation, so
- * local **Z** is the vertical and local Y is a horizontal. Any correction
- * phrased per-axis has to get that right on every asset. This one cannot get it
- * wrong, because it does not look.
+ * **Horizontal is cancelled; vertical is kept.** The displacement from the bind
+ * pose is taken into model space, its horizontal part thrown away, and what is
+ * left put back — so a clip may raise and drop the hips as far as it likes and
+ * may not walk them anywhere. That is the rule as ruled, and it is the whole of
+ * Dev Note 8: *"Aegis's dying animation makes him float above the board."* His
+ * `sword_and_shield_death` drops the hips 0.65 units as he collapses and
+ * travels 1.1 sideways as he falls; the version of this that pinned **every**
+ * axis discarded both, so the body folded up underneath a pelvis still standing
+ * at full height.
  *
- * **Why the whole translation and not the horizontal only.** Measured from the
- * shipped assets rather than assumed:
- *
- *   • `wisp_idle`'s Hips track sits at local `(−0.40, 2.13, 22.52)` against a
- *     bind of `(0.00, 0.14, −1.09)`. Through the Armature rotation that is
- *     **22.5 units straight down** — vertical, not horizontal. Neutralising the
- *     horizontal alone leaves Wisp under the floor and still invisible, which
- *     is the reported bug unfixed.
- *   • Her clips vary *only* in local Z (the vertical): X and Y are constant
- *     within every one of the ten. So there is no authored horizontal travel in
- *     that library to preserve — only per-clip garbage offsets of 0.4 to 20
- *     units — and the vertical "motion" is a 13-unit idle bob, which is noise on
- *     a broken baseline rather than a breath.
+ * **Why the basis and not an axis test.** Which local axis is "up" is a
+ * property of the exporter, not of the format: Blender's Mixamo path puts a
+ * +90° X rotation on the `Armature`, so the root bone's local **Z** is the
+ * vertical and its local Y is a horizontal; fbx2gltf's output has no such node
+ * and local Y is up. `build_glb.py --in-place` assumed the second and shipped
+ * the first, which is the bug that made "pin everything" look like the safe
+ * answer. Measuring the bone's parent-to-model basis once, in the bind pose,
+ * removes the question: the projection happens where up is up, and each asset's
+ * own matrices say how to get there and back.
  *
  * Bone **rotations** are never touched, so every clip still plays in full: a
- * death still collapses, a flurry still swings. Only the hips' translation —
- * root motion, which this renderer does not use — is discarded.
+ * death still collapses, a flurry still swings.
  *
  * Allocation-free and deterministic; runs once per unit per frame.
  */
+const rootDelta = new Vector3();
+
 export function applyRootLock(lock: RootLock | undefined): void {
-  if (lock !== undefined) lock.bone.position.copy(lock.bind);
+  if (lock === undefined) return;
+  rootDelta.copy(lock.bone.position).sub(lock.bind).applyMatrix3(lock.toModel);
+  rootDelta.set(0, rootDelta.y, 0).applyMatrix3(lock.fromModel);
+  lock.bone.position.copy(lock.bind).add(rootDelta);
 }
 
 export interface ModelInstance {
