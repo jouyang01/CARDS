@@ -976,6 +976,13 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
       && band.some((p) => bodies.some((b) => Math.hypot(p.x - b.x, p.y - b.y) < 135));
   };
   const sprintTowardBand = async (): Promise<void> => {
+    // Read the unit positions from a CLEAN frame, BEFORE arming the move —
+    // arming floods the reach envelope with faint-blue tiles that `blueBodies`
+    // splits into a scatter of false clusters across the board, which would drag
+    // the "which body is nearest the band" pick off the real unit. The brush band
+    // (green) is unaffected by the blue wash, so it can be read either side.
+    const preImg = await pixels(page);
+    const bodies = blueBodies(preImg);
     const sprint = page.locator('.hud-move', { hasText: /^Sprint/ });
     const move = page.locator('.hud-move', { hasText: /^Move/ });
     const ctl = (await sprint.isVisible()) && !(await sprint.isDisabled()) ? sprint : move;
@@ -983,10 +990,14 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
     await ctl.click();
     const img = await pixels(page);
     const band = brushBand(img);
-    const bodies = blueBodies(img);
     const clip = await boardClip(page);
     const s = { x: clip.width / img.width, y: clip.height / img.height };
-    if (band.length > 0 && bodies.length > 0) {
+    // A real band (not a few stray green pixels) to steer by: on the opening
+    // frames the centre brush is still fogged, so `brushBand` is noise, and
+    // aiming a Sprint at noise lands on no legal tile and moves nobody. Until the
+    // band is genuinely lit, drive on the fixed fraction toward mid-board (which
+    // always reaches a legal square) to un-fog it; once it is lit, steer onto it.
+    if (band.length >= 40 && bodies.length > 0) {
       const bc = { x: band.reduce((a, p) => a + p.x, 0) / band.length, y: band.reduce((a, p) => a + p.y, 0) / band.length };
       const body = bodies.reduce((n, b) => (Math.hypot(b.x - bc.x, b.y - bc.y) < Math.hypot(n.x - bc.x, n.y - bc.y) ? b : n));
       const tx = body.x + (bc.x - body.x) * 0.55;
@@ -1671,32 +1682,25 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     await page.locator('.hud-move', { hasText: /^Move/ }).click();
     await page.waitForTimeout(150);
 
-    // The teammate is whichever body is not the selected one. Arming Move wraps
-    // the *selected* character in a blue range wash that `blueBodies` then splits
-    // into several false clusters around it — and CAMERA-CONTROLS has already
-    // centred the board on that same character — so the target cannot be "the
-    // second body in the armed frame" (that is a wash fragment of the selected
-    // one's own tile, and clicking your own tile moves nobody). Take the teammate
-    // from the *clean* pre-arm frame as the body farthest from board centre (the
-    // selected character is the centred one), then snap to the nearest real body
-    // in the armed frame so a few pixels of camera drift cannot miss it.
+    // The teammate is the seat's *other* character — read from the CLEAN pre-arm
+    // frame, never the armed one. Arming Move floods the reach envelope with
+    // faint-blue tiles that `blueBodies` splits into a scatter of false clusters
+    // right across the board (measured: two clean bodies become eight), so the
+    // armed frame cannot be indexed for a body at all. In the clean frame there
+    // are exactly the two units, top-to-bottom: `before[0]` is the character on
+    // the clock (turn 1 selects the first seat, whose spawn is the topmost), so
+    // the teammate is the last clean body. Snap to the nearest real body in the
+    // armed frame only for click precision against a few pixels of camera drift.
     const clip = await boardClip(page);
     const image = await pixels(page);
     const scale = { x: clip.width / image.width, y: clip.height / image.height };
     const dist = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
       Math.hypot(a.x - b.x, a.y - b.y);
-    // The selected character is the one the wash surrounds, so the centroid of
-    // the armed frame's blue clusters is pulled toward it (its own body plus the
-    // wash fragments); the teammate is the clean pre-arm body farthest from that
-    // centroid. Board centre is no use here — the HUD fills the lower frame, so
-    // the *image* centre sits below the board and mislabels the lower body.
+    const teammate = before[before.length - 1]!;
     const armed = blueBodies(image);
-    const centroid = {
-      x: armed.reduce((s, a) => s + a.x, 0) / armed.length,
-      y: armed.reduce((s, a) => s + a.y, 0) / armed.length,
-    };
-    const teammate = before.reduce((far, b) => (dist(b, centroid) > dist(far, centroid) ? b : far));
-    const mate = armed.reduce((best, a) => (dist(a, teammate) < dist(best, teammate) ? a : best));
+    const mate = armed.length
+      ? armed.reduce((best, a) => (dist(a, teammate) < dist(best, teammate) ? a : best))
+      : teammate;
     await page.mouse.click(clip.x + mate.x * scale.x, clip.y + mate.y * scale.y);
     await page.waitForTimeout(250);
 
