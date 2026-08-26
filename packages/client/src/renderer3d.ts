@@ -885,6 +885,14 @@ export interface Renderer {
   setUnitFacing(unitId: string, dx: number, dy: number): void;
   /** This character's clip names, or undefined if it has no model loaded. */
   clipsFor(characterId: string | undefined): ClipSet | undefined;
+  /**
+   * How long one of this character's clips runs, in seconds — undefined for a
+   * character with no model, or a clip the `.glb` does not contain.
+   *
+   * Read by `holdCasts`, so a cast stays on screen for as long as the animation
+   * actually plays rather than for the one beat the cue reserves.
+   */
+  clipLength(characterId: string | undefined, clipName: string): number | undefined;
   /** Light a unit up for a moment — the victim flash on a hit (VFX step 1). */
   flashUnit(unitId: string, seconds: number): void;
   /**
@@ -2844,6 +2852,10 @@ export function createRenderer(
 
     clipsFor(characterId) {
       return characterId === undefined ? undefined : models?.manifest(characterId)?.map;
+    },
+
+    clipLength(characterId, clipName) {
+      return characterId === undefined ? undefined : models?.clipSeconds(characterId, clipName);
     },
 
     setSpotlight(unitIds) {

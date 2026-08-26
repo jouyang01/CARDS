@@ -406,6 +406,20 @@ export class CharacterModels {
     return this.loaded.get(characterId)?.manifest;
   }
 
+  /**
+   * How long a clip runs, in seconds, or `undefined` if this character has no
+   * model or no such clip.
+   *
+   * The only place the length of an animation escapes this file. `holdCasts`
+   * needs it to keep a cast on screen for as long as it actually plays, and the
+   * alternative — writing durations into `data/art/<id>.json` by hand — would
+   * be a second copy of a number the `.glb` already carries, free to drift the
+   * first time a clip is re-exported.
+   */
+  clipSeconds(characterId: string, clipName: string): number | undefined {
+    return this.loaded.get(characterId)?.clips.find((c) => c.name === clipName)?.duration;
+  }
+
   /** A fresh, independently-animatable copy, or undefined if there is no model. */
   instance(characterId: string): ModelInstance | undefined {
     const entry = this.loaded.get(characterId);

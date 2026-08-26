@@ -17,7 +17,7 @@
 
 import { PHASES, type GameState, type Phase, type TurnEvent } from '@cards/engine';
 import { applyEvent, initView, segmentByPhase, type ViewState } from './playback.js';
-import { choreograph, type Cue } from './choreograph.js';
+import { choreograph, holdCasts, type Cue } from './choreograph.js';
 
 export interface TurnPlayer {
   /** The live view — mutated in place as phases are applied. */
@@ -46,9 +46,21 @@ export function cuesOfPhase(cues: readonly Cue[], phase: Phase): Cue[] {
  * Build a player for one resolved turn. `prev` is the pre-turn state the log
  * applies to; nothing here mutates it (`initView` snapshots it).
  */
-export function createTurnPlayer(prev: GameState, events: readonly TurnEvent[]): TurnPlayer {
+export function createTurnPlayer(
+  prev: GameState,
+  events: readonly TurnEvent[],
+  /**
+   * How many beats a unit's cast animation actually runs for, or `undefined`
+   * when nobody knows — see `holdCasts`. Optional because clip lengths come out
+   * of a loaded `.glb`, and everything else here works without one; a player
+   * built with no resolver gets the timeline `choreograph()` produced, unchanged.
+   */
+  castBeats?: (unitId: string, abilityId: string) => number | undefined,
+): TurnPlayer {
   const view = initView(prev);
-  const cues = choreograph(events);
+  const cues = castBeats === undefined
+    ? choreograph(events)
+    : holdCasts(choreograph(events), castBeats);
   const segments = segmentByPhase(events);
   let next = 0;
 

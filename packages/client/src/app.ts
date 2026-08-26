@@ -2546,7 +2546,7 @@ export function startHotSeat(
     // agree by construction. Everything below only *decorates* that fold:
     // fractional positions, alpha, which squares glow. Drop every frame of it
     // and the board still lands in the same place.
-    const player = createTurnPlayer(prev, result.events);
+    const player = createTurnPlayer(prev, result.events, castBeats(prev));
     // The turn stops being a plan the instant it resolves, so the plan-time
     // numbers go with the aim overlays rather than lingering over the playback.
     clearPreviewNumbers();
@@ -2782,6 +2782,29 @@ export function startHotSeat(
         : { clip: clips.death, loop: false, since: CLIP_HOLD_LAST };
       renderer.setUnitClip(u.unitId, choice, MS_PER_BEAT / 1000);
     }
+  }
+
+  /**
+   * How many beats each cast animation actually needs — what `holdCasts` asks.
+   *
+   * Read off the loaded `.glb` through the renderer, and converted with
+   * `MS_PER_BEAT` rather than the phase's own rate: only Prep and Blast are held
+   * (see `holdCasts`), and both run at the rhythm rate. `MS_PER_MOVE_STEP` is a
+   * ground-speed measurement for locomotion and has nothing to say about a swing.
+   *
+   * `prev` is the pre-turn state, which is where a unit that dies this turn can
+   * still be found — a caster killed by a simultaneous Blast has already played
+   * its own cast (choreograph's "death defers"), so it needs its beats too.
+   */
+  function castBeats(prev: GameState): (unitId: string, abilityId: string) => number | undefined {
+    return (unitId, abilityId) => {
+      const characterId = prev.units.find((u) => u.unitId === unitId)?.characterId;
+      if (characterId === undefined) return undefined;
+      const clip = renderer.clipsFor(characterId)?.abilities[abilityId];
+      if (clip === undefined) return undefined;
+      const seconds = renderer.clipLength(characterId, clip);
+      return seconds === undefined ? undefined : seconds / (MS_PER_BEAT / 1000);
+    };
   }
 
   function applyClips(cues: readonly Cue[], t: number, units: RenderUnit[], beatSeconds: number): void {

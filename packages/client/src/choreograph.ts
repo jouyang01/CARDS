@@ -226,6 +226,70 @@ function cueDecoys(events: readonly TurnEvent[], cues: Cue[], start: number): vo
   }
 }
 
+/**
+ * FOLLOW-THROUGH — give a cast the room its own animation needs.
+ *
+ * Owner (2026-10-08): *"Wisp's Dagger flurry animation does not finish during
+ * blast phase if it doesn't hit anything."*
+ *
+ * An `ability` cue is one beat long, and `selectClip` drops the caster back to
+ * idle the instant that beat is over — so a 3.1 s flurry was crossfaded away
+ * after 0.76 s. **Landing a hit hid it**: the impact it caused adds a second
+ * beat to the actor's slot, so a connected swing had twice the room and read as
+ * finished. A whiff had one beat and read as cut off. The bug was never about
+ * hitting; it was about the cast borrowing its follow-through from its victim.
+ *
+ * `beatsFor` is the caller's, because clip lengths are art, not choreography —
+ * `choreograph()` itself still knows nothing about a `.glb`. A character with no
+ * model answers `undefined` and its timeline comes back byte-identical.
+ *
+ * What moves and what does not:
+ *
+ * - The cast's **`dur`** grows to the clip's length, which is all `selectClip`
+ *   and `phaseWindow` read. That alone keeps the swing on screen and the phase
+ *   open for it.
+ * - The cast's **`t`** does not move, and neither do the impacts it caused —
+ *   they sit at the end of the *original* beat. So the hit lands when it always
+ *   did, and the tracer, whose flight window is `[cast.t, impact.t)`, flies at
+ *   the speed it always flew. Stretching the cast into its own impact would have
+ *   turned every bola into a four-second crawl.
+ * - Everything at or after the actor's slot end shifts by the difference: the
+ *   next actor waits, and so do the phase's deaths and every later phase.
+ *
+ * **Sequential phases only** (prep, blast), where actors already own disjoint
+ * ranges and "the next one waits" is the existing rule. In Dash and Move
+ * everyone goes at once and step *k* of every mover shares a beat; shifting the
+ * cues after a cast would put a hole in the middle of somebody else's run.
+ */
+export function holdCasts(
+  cues: readonly Cue[],
+  beatsFor: (unitId: string, abilityId: string) => number | undefined,
+): Cue[] {
+  const out: Cue[] = cues.map((c) => ({ ...c }));
+  const casts = out
+    .filter((c): c is Extract<Cue, { kind: 'ability' }> => c.kind === 'ability' && SEQUENTIAL.has(c.phase))
+    .sort((a, b) => a.t - b.t);
+
+  for (const cast of casts) {
+    const need = beatsFor(cast.unitId, cast.abilityId);
+    if (need === undefined || !(need > cast.dur)) continue;
+    // The actor's own slot: the cast plus the landings bound to it (A0 again —
+    // by `sourceUnitId`, never by log adjacency). These must not move, or the
+    // hit would drift away from the swing that caused it.
+    const slotEnd = out.reduce(
+      (m, c) => ((c.kind === 'impact' || c.kind === 'benefit')
+        && c.sourceUnitId === cast.unitId && c.t >= cast.t ? Math.max(m, end(c)) : m),
+      end(cast),
+    );
+    const delta = cast.t + need - slotEnd;
+    cast.dur = need;
+    if (delta <= 0) continue; // the landings already cover the swing
+    for (const c of out) if (c !== cast && c.t >= slotEnd) c.t += delta;
+  }
+
+  return out.sort((a, b) => a.t - b.t);
+}
+
 /** Total length of a timeline in beats (0 for an empty one). */
 export function timelineLength(cues: readonly Cue[]): number {
   return cues.reduce((m, c) => Math.max(m, c.t + c.dur), 0);
