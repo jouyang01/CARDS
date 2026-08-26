@@ -41,6 +41,7 @@ import {
   grantEnergy,
   isBehindCover,
   outgoingDamagePct,
+  reduceForCover,
   scaleDamage,
 } from './combat.js';
 import {
@@ -54,11 +55,11 @@ import {
 import { getFormat } from './formats.js';
 import { isPassable, movementBudget, occupiedByOthers, pathWithinBudget, reachableSquares, reconstructPath, stepCost, validateMovePath } from './movement.js';
 import { POWERUP_EFFECTS, powerupSourceId } from './powerups.js';
-import { aimInRange, axisSquares, circleSquares, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
+import { aimInRange, axisSquares, circleSquares, coverOrigin, direction8, expandShape, innerSquares, isAimStep } from './shapes.js';
 import { BENEFICIAL_KINDS, HARMFUL_KINDS, NEUTRAL_KINDS } from './polarity.js';
 import { DEFAULT_TRAP_ENTRIES } from './types.js';
 import { OVER_TIME_KINDS, applyStatus, hasStatus, isImmuneTo, isStatusKind, removeStatus, tickStatuses } from './status.js';
-import { buildVision, teamCanSee, teamHasSightline, type Vision } from './vision.js';
+import { buildVision, hasLineOfSight, teamCanSee, teamCanSeeSquare, teamHasSightline, type Vision } from './vision.js';
 import type { CatalystPool } from './catalysts.js';
 import type {
   AbilityDef,
@@ -375,7 +376,7 @@ function planUnit(
   // resolves before a dash ability the same unit declared" only means anything
   // if that ability can be aimed from where the Shift puts you. Prep is the
   // exception: it has already happened by then.
-  const catalyst = planCatalyst(board, unit, catalysts, order.catalyst);
+  const catalyst = planCatalyst(board, unit, catalysts, order.catalyst, draft);
   const shiftTo = teleportDestination(catalyst);
   const after = shiftTo === undefined ? unit : { ...unit, pos: shiftTo };
 
@@ -521,6 +522,8 @@ function planCatalyst(
   unit: UnitState,
   catalysts: CatalystPool,
   order: AbilityOrder | undefined,
+  /** AOE-LoS: the turn's opening state, for a `circle` catalyst's vision gate. */
+  draft?: GameState,
 ): PlannedAbility | undefined {
   if (order === undefined) return undefined;
   if (!unit.catalysts.includes(order.abilityId)) return undefined;
@@ -535,7 +538,7 @@ function planCatalyst(
     : [];
   const aimStep = order.aimStep;
   if (aimStep !== undefined && !isAimStep(aimStep)) return undefined;
-  if (!aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
+  if (!aimIsLegal(board, unit, def, aim, aimStep, draft)) return undefined;
   return {
     def, aim, isUlt: false,
     area: expandShape(board, def, unit.pos, aim, aimStep),
@@ -652,7 +655,7 @@ function planAbility(
   // bounded by his ALLY's range instead (the square beside them may sit one
   // further out). `allyAimIsLegal` has already checked that geometry, so
   // re-checking it here would refuse legal landings at the edge of the reach.
-  if (ally === undefined && !aimIsLegal(board, unit, def, aim, aimStep)) return undefined;
+  if (ally === undefined && !aimIsLegal(board, unit, def, aim, aimStep, draft)) return undefined;
   return {
     def, aim, isUlt,
     area: expandShape(board, def, unit.pos, aim, aimStep),
@@ -705,13 +708,55 @@ function allyAimIsLegal(
     u.alive && u.owner === unit.owner && u.unitId !== unit.unitId);
 }
 
+/**
+ * AOE-LoS — may `unit` put an area's centre on `target`?
+ *
+ * Range was the whole of the old rule, which let a player drop a grenade on a
+ * square nobody on their team could see and through a wall nobody could throw
+ * past. Two gates replace it, and the **vision** one is common to both branches:
+ * you may not blind-fire into the fog, arcing or not.
+ *
+ * `lobbed` picks the second gate. An arcing shot needs only that the team can
+ * see the ground (`teamCanSeeSquare` — the square question, so a thicket over
+ * the tile does not protect it); a direct burst needs the caster's own clear
+ * line as well, because it travels flat.
+ *
+ * **The vision snapshot is the turn's opening board.** `state` here is the
+ * draft as it stood when `resolveTurn` validated the orders — before Prep, so
+ * before anything has moved. That is deliberate and load-bearing: the fog a
+ * player planned against is the fog their aim is judged by, and re-asking after
+ * Dash would refuse aims that were legal when they were made, non-deterministic
+ * from the client's point of view and infuriating from the player's.
+ */
+export function aimVisionAllows(
+  board: Board, state: GameState | undefined, unit: UnitState, def: AbilityDef, target: Vec2,
+): boolean {
+  // Without a state there is no team to ask (a legality probe with no board
+  // context). Fall back to the caster's own line, which is the stricter half of
+  // the rule and never invents vision the team does not have.
+  if (state === undefined) return hasLineOfSight(board, unit.pos, target);
+  if (!teamCanSeeSquare(buildVision(board), state, unit.owner, target)) return false;
+  return def.lobbed === true || hasLineOfSight(board, unit.pos, target);
+}
+
 /** Is an ability's aim geometrically legal for its shape and range? */
-function aimIsLegal(board: Board, unit: UnitState, def: AbilityDef, aim: readonly Vec2[], aimStep?: number): boolean {
+function aimIsLegal(
+  board: Board, unit: UnitState, def: AbilityDef, aim: readonly Vec2[], aimStep?: number,
+  /** AOE-LoS: the turn's opening state, for the `circle` vision gate. */
+  state?: GameState,
+): boolean {
   switch (def.shape) {
     case 'self':
       return true;
-    case 'square':
     case 'circle': {
+      // AOE-LoS: an area is aimed at ground you can see. A `range: 0` circle is
+      // centred on the caster's own square, which its own team always sees and
+      // always has a line to, so self-centred bursts are untouched.
+      const target = aim[0];
+      if (target === undefined || !aimInRange(unit.pos, target, def.range)) return false;
+      return aimVisionAllows(board, state, unit, def, target);
+    }
+    case 'square': {
       const target = aim[0];
       return target !== undefined && aimInRange(unit.pos, target, def.range);
     }
@@ -2039,8 +2084,25 @@ interface Hit {
   abilityId: string;
   raw: number;
   range: number;
-  /** Pre-computed damage, bypassing Might/Weaken and cover (delayed detonations). */
+  /** Already-final damage, bypassing Might/Weaken **and** cover (RECOIL). */
   fixedDamage?: number;
+  /**
+   * AOE-LoS — damage stamped at cast (the caster's Might/Weaken *then*), which
+   * still takes the cover reduction measured at detonation. A delayed blast's
+   * number; distinct from `fixedDamage`, which skips cover as well.
+   */
+  stamped?: number;
+  /**
+   * AOE-LoS — where the cover reduction is measured **from**, when that is not
+   * the attacker's own square.
+   *
+   * For a `circle` it is the aimed centre: cover shelters you from the
+   * direction the explosion is in, not from wherever the thrower happens to be
+   * standing (owner: *"reduced but only if the centre of the aoe is in the
+   * direction of the cover"*). Absent for direct fire, which is measured from
+   * the attacker as it always was.
+   */
+  coverFrom?: Vec2;
   /** Delayed detonations do not reveal or break the caster's Stealth. */
   delayed?: boolean;
   /** MELEE-COVER: skip the cover reduction for this hit. */
@@ -2072,7 +2134,7 @@ function runBlast(
 
   // Grenades and other delayed blasts locked on an earlier turn detonate now, at
   // their locked squares, folded into this turn's simultaneous damage.
-  detonateDelayedBlasts(draft, roster, hits, debuffs, benefits, events);
+  detonateDelayedBlasts(draft, board, roster, hits, debuffs, benefits, events);
 
   // TRAP-CENTRE + PHASE-STATUS-FIRST: mines armed by this phase's abilities,
   // buried after the status batch so the charge carries the Might that landed
@@ -2095,11 +2157,21 @@ function runBlast(
     // A delayed ability (e.g. a grenade) is armed now and detonates on a later
     // turn at these locked squares (GAME_SPEC §2); no immediate effect.
     if (a.def.delayTurns !== undefined && a.def.delayTurns > 0) {
+      // AOE-LoS: the amount and the origin are stamped **now**, the way a trap's
+      // charge is stamped when it is buried (`placeTraps`). What is deliberately
+      // NOT stamped is who it catches and whether they are behind cover — those
+      // are read at detonation, against the board it goes off on.
+      const delayedDamage = a.def.effects.find((e) => e.kind === 'damage');
+      const centre = a.def.shape === 'circle' ? a.aim[0] : undefined;
       draft.delayed.push({
         casterUnitId: plan.unit.unitId,
         abilityId: a.def.id,
         phase: 'blast',
         area: a.area.map((p) => ({ x: p.x, y: p.y })),
+        ...(centre === undefined ? {} : { centre: { x: centre.x, y: centre.y } }),
+        ...(delayedDamage === undefined ? {} : {
+          damage: scaleDamage(delayedDamage.amount ?? 0, outgoingDamagePct(plan.unit)),
+        }),
         turnsRemaining: a.def.delayTurns,
       });
       continue;
@@ -2122,6 +2194,11 @@ function runBlast(
     // cover: it is which blow landed, not a second one.
     const inner = new Set(a.inner.map(vecKey));
     const innerAmount = a.def.innerAmount;
+    // AOE-LoS: a `circle`'s cover reduction is measured from the aimed centre,
+    // not from the caster. Everything else keeps the attacker as its origin —
+    // a bullet's cover is decided by where the bullet came from, and for direct
+    // fire that is still the shooter.
+    const blastOrigin = coverOrigin(a.def, plan.unit.pos, a.aim);
     let hitEnemy = false;
     // ALLY-SAFE (Dev Note #11): FF1's default is that an attack endangers
     // whoever is standing in it. An ability may opt out of the friendly half.
@@ -2145,7 +2222,12 @@ function runBlast(
             const key = vecKey(target.pos);
             const base = innerAmount !== undefined && inner.has(key) ? innerAmount : (e.amount ?? 0);
             const raw = base + (axis.has(key) ? axisBonus : 0);
-            hits.push({ attacker: plan.unit, victim: target, abilityId: a.def.id, raw, range: a.def.range, melee: a.def.melee === true });
+            hits.push({
+              attacker: plan.unit, victim: target, abilityId: a.def.id, raw,
+              range: a.def.range, melee: a.def.melee === true,
+              // AOE-LoS: an explosion shelters you from *its* direction.
+              coverFrom: blastOrigin,
+            });
           }
           else if (e.kind === 'knockback' || e.kind === 'pull') displacers.push({ effects: [e], victim: target, source: plan.unit.pos, attackerId: plan.unit.unitId });
           else debuffs.push({ victim: target, effect: e, source: sourceOf(plan.unit, a.def.id) }); // weaken/slow/root/reveal
@@ -2239,12 +2321,17 @@ function runBlast(
   const dealtDamage = new Map<string, string>();
   for (const hit of hits) {
     if (!hit.victim.alive) continue;
-    const final =
-      hit.fixedDamage ?? computeDamage(
-        hit.raw,
-        hit.attacker,
-        hit.melee === true ? false : isBehindCover(board, hit.attacker.pos, hit.victim.pos, hit.range),
-      );
+    const behindCover = hit.melee === true
+      ? false
+      // AOE-LoS: `coverFrom` is the blast's centre when there is one; without
+      // it this is the attacker's own square, exactly as before.
+      : isBehindCover(board, hit.coverFrom ?? hit.attacker.pos, hit.victim.pos, hit.range);
+    const final = hit.fixedDamage
+      // AOE-LoS: a stamped amount has already taken the caster's Might/Weaken
+      // (at cast) and still owes cover (read now, from the centre).
+      ?? (hit.stamped !== undefined
+        ? reduceForCover(hit.stamped, behindCover)
+        : computeDamage(hit.raw, hit.attacker, behindCover));
     // INTERCEPT-GUARD — the thesis case. The enemy locked this at the ally's
     // square during Decision; Aegis interposed in Dash, which resolves first;
     // the hit finds him standing there. `final` is already what would have
@@ -2307,6 +2394,7 @@ function runBlast(
  */
 function detonateDelayedBlasts(
   draft: GameState,
+  board: Board,
   roster: Roster,
   hits: Hit[],
   debuffs: { victim: UnitState; effect: AbilityEffect; source: Source }[],
@@ -2331,6 +2419,13 @@ function detonateDelayedBlasts(
     let hitEnemy = false;
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
+      // AOE-LoS — the shelter is re-read **now**, against where everybody
+      // actually ended up. `d.area` was already centre-visible when it was
+      // stamped (`circleSquares`) and walls do not move, so on live content
+      // this can only agree with it; it is asserted here anyway because the
+      // rule the owner stated is about detonation time, and a state that
+      // crossed the wire from an older build carries an unfiltered area.
+      if (d.centre !== undefined && !hasLineOfSight(board, d.centre, target.pos)) continue;
       const enemy = target.owner !== caster.owner;
       const untargetable = isUntargetable(target); // UNTGT1
       for (const e of def.effects) {
@@ -2343,7 +2438,17 @@ function detonateDelayedBlasts(
           if (def.noFriendlyFire === true && !enemy) continue; // ALLY-SAFE
           if (untargetable) continue;
           if (enemy) hitEnemy = true; // energy stays enemy-only
-          if (e.kind === 'damage') hits.push({ attacker: caster, victim: target, abilityId: def.id, raw: e.amount ?? 0, range: def.range, fixedDamage: e.amount ?? 0, delayed: true });
+          if (e.kind === 'damage') {
+            // AOE-LoS: the amount is the one stamped at cast (or the authored
+            // number, for a grenade thrown before this rule existed) and the
+            // cover reduction is measured from the centre, here, now.
+            hits.push({
+              attacker: caster, victim: target, abilityId: def.id,
+              raw: e.amount ?? 0, range: def.range, delayed: true,
+              stamped: d.damage ?? e.amount ?? 0,
+              ...(d.centre === undefined ? {} : { coverFrom: d.centre }),
+            });
+          }
           else if (isStatusKind(e.kind)) debuffs.push({ victim: target, effect: e, source: sourceOf(caster, def.id) });
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
           if (!enemy) benefits.push({ target, effect: e, source: sourceOf(caster, def.id) });

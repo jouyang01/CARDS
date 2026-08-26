@@ -143,6 +143,19 @@ export interface AimedAction {
    */
   axis?: readonly Vec2[];
   inner?: readonly Vec2[];
+  /**
+   * AOE-LoS — the square this action's **cover** is measured from, when it is
+   * not the caster's own: for a `circle`, the aimed centre.
+   *
+   * Passed in rather than derived because `squares` is the *expanded* area and a
+   * disc clipped by a wall has no recoverable centre. Callers get it from the
+   * engine's `coverOrigin`, which is the same function `runBlast` uses, so the
+   * previewed number and the resolved one cannot disagree about which side of a
+   * barricade the explosion was on.
+   *
+   * Absent means "the caster", which is right for every direct-fire shape.
+   */
+  coverFrom?: Vec2;
 }
 
 /** Beneficial kinds are own-team only; `damage` is the one that crosses teams. */
@@ -193,7 +206,7 @@ export function previewNumbers(
 ): PreviewNumber[] {
   const totals = new Map<string, number>(); // `${targetId}:${kind}` → amount
   const key = (p: Vec2): string => `${p.x},${p.y}`;
-  for (const { def, squares, axis, inner, victims } of actions) {
+  for (const { def, squares, axis, inner, victims, coverFrom } of actions) {
     if (squares.length === 0) continue;
     // RAM-LINE-PREVIEW-FIX: a charge names its victims; every other shape lets
     // the area name them.
@@ -233,9 +246,11 @@ export function previewNumbers(
         // MELEE-COVER: a melee strike is not reduced by cover, so the preview
         // must not reduce it either — the whole point of routing through the
         // engine is that the two cannot disagree.
+        // AOE-LoS: a blast's cover is measured from its centre, not from the
+        // thrower — `coverFrom` carries that, and its absence means the caster.
         return computeDamage(raw, caster, def.melee === true
           ? false
-          : isBehindCover(board, caster.pos, at, def.range));
+          : isBehindCover(board, coverFrom ?? caster.pos, at, def.range));
       };
 
       for (const target of state.units) {

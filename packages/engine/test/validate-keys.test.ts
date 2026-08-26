@@ -83,6 +83,8 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
       // FRAG-SELF lives here rather than on `wedge`: it is refused alongside
       // `selfDamagePct`, which `wedge` carries.
       selfHarm: true,
+      // AOE-LoS: `lobbed` is circle-only, so this is the object that carries it.
+      lobbed: true,
       effects: [{ kind: 'damage', amount: 10 }], description: 'test',
     };
     // BASIC-MODES is a fourth object for the same reason: a mode may change the

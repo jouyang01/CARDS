@@ -38,7 +38,7 @@ const COVER_FACINGS: readonly CoverFacing[] = ['N', 'S', 'E', 'W'];
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
   'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
-  'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire', 'selfHarm', 'wallLength',
+  'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire', 'selfHarm', 'wallLength', 'lobbed',
   'allyTarget',
   'effects', 'description',
 ] as const;
@@ -119,6 +119,12 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   }
   if (a.wallLength !== undefined && a.shape !== 'wall') {
     errs.push(`${path}: wallLength is only meaningful on a wall (shape is "${a.shape}")`);
+  }
+  // AOE-LoS: `lobbed` picks between two *circle* aim rules, so on any other
+  // shape it is a field the engine never reads — the same silent-no-op this
+  // whitelist exists to catch. A `line` is not made to arc by asserting it.
+  if (a.lobbed !== undefined && a.shape !== 'circle') {
+    errs.push(`${path}: lobbed is only meaningful on a circle (shape is "${a.shape}")`);
   }
   // BASIC-AXIS: a cone-only knob. On any other shape there is no axis to be on,
   // and a silently-ignored field is a balance number nobody can find.

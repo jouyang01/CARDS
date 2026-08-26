@@ -293,6 +293,39 @@ export function teamCanSee(vision: Vision, state: GameState, team: TeamId, targe
 }
 
 /**
+ * AOE-LoS — can any living member of `team` see the **square** `at`?
+ *
+ * `teamCanSee` answers the question for a *unit*, and a unit is more than the
+ * tile it stands on: brush and Stealth conceal the occupant without dimming the
+ * floor. A square has nothing to hide behind, so this is the same shared-vision
+ * rule with the concealment gate removed — range and walls only.
+ *
+ * It exists because **aiming an area is a question about ground, not about
+ * people** (AOE-LoS): a grenade is thrown at a square the team can see, whether
+ * or not anybody is standing there and whether or not whoever is has ducked
+ * into a thicket. Asking `teamCanSee` of a phantom unit would have imported
+ * concealment into that answer and made a lobbed shot refuse the exact tile a
+ * hidden enemy is standing on — which is the tile you most want to hit.
+ *
+ * By construction this is membership of `visibleSquaresForTeam`, which builds
+ * the same union eagerly for the fog renderer; `vision.test.ts` pins the two
+ * against each other so the aim gate and the fog a player looked at can never
+ * drift apart.
+ */
+export function teamCanSeeSquare(
+  vision: Vision,
+  state: GameState,
+  team: TeamId,
+  at: Vec2,
+  range: number = VISION_RANGE,
+): boolean {
+  if (!inBounds(vision.board, at)) return false;
+  return state.units.some((u) => u.alive && u.owner === team
+    && distance(u.pos, at) <= range
+    && hasLineOfSight(vision.board, u.pos, at));
+}
+
+/**
  * CHASE-LOS — can any living member of `team` draw a **sightline** to `target`,
  * ignoring how far away it is?
  *

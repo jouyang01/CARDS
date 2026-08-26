@@ -7747,3 +7747,133 @@ is required, so nothing strips silently.
 **Atlas naming bridge.** The import path bakes `<id>_baked.png`; `build_glb.py` looks for
 `<id>_atlas.png`. `rodin_bake_lowpoly.py` now writes both, so a rig build textures with no manual
 copy.
+
+## 2026-08-26 — Builder session 19 (AOE-LoS)
+
+**The whole item, and the one decision inside it that was mine.** The ruling (edge-cases,
+**RULED — AOE-LoS**) is unusually complete: walls shelter, cover is directional from the centre,
+aiming needs team vision, `lobbed` picks between two aim rules, delayed detonations stamp the
+amount and resolve the shelter late. All of that is implemented as written. The judgment call was
+**where** the shelter lives.
+
+**The centre-LoS filter went into `circleSquares`, not into `runBlast`.** The spec names both
+(`circleSquares` + `runBlast:585`) and either would have satisfied the AC. Putting it in the shape
+means "a disc reaches what its centre can reach" is one rule in the one function that builds a
+disc, and everything downstream inherits it and *cannot* disagree: the Blast hit-set, the falloff
+ring, a dash `impact`, the trap a `perTile` cast buries, the `abilityFired` footprint the client
+animates, and — the reason preview parity is not a second implementation — the client's own
+`circleSquares` call in `targeting.ts`. The alternative would have made the AC's "a grenade preview
+must never light a tile the wall will protect" a *second* filter in a *second* language, kept in
+step by discipline. Golden rule #2's "a generic, reusable implementation" points the same way.
+
+The visible consequence of that choice, worth stating because it is broader than the item: **every
+circle in the game now shelters, not only Blast-phase attacks.** A dash impact, Thorn's `perTile`
+mine carpet and Verdant Veil's hazard all stop at a wall. That reads as correct — a hazard laid
+across a doorway already covered the floor and not the masonry — but nobody asked for it by name.
+Flagged rather than carved out: a carve-out would be exactly the "the rule, except…" footnote the
+next reader would rediscover as a bug.
+
+**`teamCanSeeSquare` is new, and is deliberately not `teamCanSee`.** The spec says to gate aiming on
+`teamCanSee`, which answers the question for a **unit** — and a unit is more than its tile: brush
+and Stealth conceal the occupant without dimming the floor. Asking the unit question of a square
+would have meant a lobbed grenade refusing the exact tile a hidden enemy stands on, which is the
+tile you most want to hit. So the square question gets its own predicate: shared team vision, range
+and walls, no concealment. It is membership of `visibleSquaresForTeam` by construction, and a test
+pins the two against each other over a whole board so the aim gate and the fog a player looked at
+cannot drift.
+
+**Delayed detonations: the amount is stamped, the cover is not.** The AC says the delayed path
+"keeps stamping the damage amount at cast (Might/Weaken then)". It did not — it read the authored
+number at detonation and bypassed Might, Weaken **and** cover via `fixedDamage`. Read as intent
+rather than as description, and implemented like a trap's charge: `PendingDelayedAbility` now
+carries `damage` (scaled by the caster's `outgoingDamagePct` at cast) and `centre` (the cover
+origin), both optional so a state serialized before this still detonates the old way. `Hit` grew
+`stamped` beside `fixedDamage` because the two are different: `fixedDamage` skips cover as well
+(RECOIL — there is nothing between you and the ground under your feet), `stamped` still owes it.
+
+**Two aiming consequences that are real and were not asked for by name.**
+
+1. **Aiming range is EUCLIDEAN (AIM-METRIC) and vision is MANHATTAN (MET1)**, so an area's aimable
+   set is now the *intersection* — a diamond clipped out of a disc. A range-6 circle's far diagonal
+   is Euclidean 5.7 and Manhattan 8: inside the disc, outside sight. Frag Grenade's effective reach
+   on the diagonal is therefore shorter than its `range` suggests. That falls straight out of the
+   two existing metrics plus the ruled vision gate, so it is implemented rather than special-cased,
+   and pinned in a test both engine-side and client-side. If it plays badly the fix is a rule
+   (vision-range for aiming, or a Euclidean vision radius), not a patch here.
+2. **A circle centred on a wall tile is still legal** — `hasLineOfSight`'s endpoints never block, so
+   the team "sees" a wall in range and the disc splashes around it. Unchanged from before this item
+   (only range was ever checked), and it reads as a grenade bouncing off a pillar. Noted so it is
+   not rediscovered as a leak.
+
+**Four existing fixtures were re-specced, each because the new rule genuinely changes the answer,
+and each annotated where it changed rather than in a list.** `basic-inner` aimed from (0,0) at a
+centre ten Manhattan steps away — out of vision, so every cast was silently refused and every
+victim took nothing. `real-characters` lobbed at a square behind a wall with no teammate to spot it
+in a 1v1 script. `caster-safe`'s RECOIL cover case centred a `radius: 0` burst **on its victim's own
+square**, which under centre-origin cover is no longer reduced (there is nothing between you and an
+explosion at your feet) — re-specced to a disc whose centre sits on the far side of the barricade,
+which is what "the victim IS behind cover from this blast" actually looks like now. `validate-keys`
+needed the new key.
+
+**Measurement discipline.** Every new assertion was mutation-checked — the LoS filter deleted, the
+cover origin forced back to the caster, the vision gate opened, `lobbed` ignored, the delayed path
+reverted to `fixedDamage` — and **two tests were rewritten because the check showed them passing
+for the wrong reason.** The engine fixture's sheltered unit was at d² = 9 from a radius-2 centre, so
+its "takes 0" was "was never in the blast"; the pillar moved one row so the sheltered tile is d² = 4,
+the same distance as the exposed control. The client's envelope test parked the caster far enough
+away that the sheltered square was out of *range*, so deleting the vision gate changed nothing.
+Both are annotated in place with the measurement that makes them non-vacuous, because that number is
+the thing a future edit will silently break.
+
+## Open Questions for the Analyzer — 2026-08-26 (session 19)
+
+**1. `lobbed` on the rest of the roster is a Designer pass, and the backlog's list of who needs one
+is wrong (AOE-LoS; `data/characters/*.json`).** Only `vex.frag_grenade` was flagged by the item, and
+only it was changed; every other circle now defaults to **direct**, meaning it refuses a cast
+through a wall where before it did not. The item names *"the other nine"* and singles out
+*"Ravok's Shockwave `radius: 2`, Cinder's Flare Burst"*. Swept `data/` rather than trusting it, and
+the shape is different:
+
+  | | |
+  |---|---|
+  | **Cannot notice — `range: 0`, centred on the caster** | `ravok.cleave`, `ravok.shockwave`, `ravok.seismic_rupture`, `aegis.warding_halo` |
+  | **Can notice — `range > 0`** | `cinder.ember_bolt` (7), `cinder.flare_burst` (6), `cinder.solar_flare` (6), `cinder.stoke_the_flame` (4), `thorn.barbed_sling` (5), `thorn.verdant_veil` (5), `thorn.overgrowth` (5), `lumen.mending_light` (5), `lumen.sanctuary` (5), `aegis.barrier_pulse` (4) |
+
+  So **Ravok's Shockwave cannot want a `lobbed` call** — it is `range: 0` and its centre is always
+  its caster's own square. And **four circles the item does not mention are affected**:
+  `cinder.solar_flare` (the ultimate), `thorn.overgrowth`, `lumen.sanctuary`, `aegis.warding_halo`
+  (the last only nominally, being `range: 0`).
+
+  **The sharpest case is `cinder.ember_bolt` at `range: 7`,** which is *longer than `VISION_RANGE`
+  (6)*. Measured on an empty board with one Cinder and no spotter: **149 tiles in range, 85 of them
+  aimable**, and the furthest aimable tile is at Euclidean **6.00 of an authored 7** — the seventh
+  tile straight down a row is refused. So the gate removes 43% of the ability's aimable area and a
+  full tile of its axial reach, on a basic attack whose tooltip still says 7.
+
+  That is a balance consequence, so it is flagged and not touched (the brief forbids rebalancing).
+  It is also not fixable with `lobbed` — the vision half is common to both aim rules, by the ruling.
+  The lever is either the number (`range: 6`) or the rule in Q2.
+
+**2. An area's aimable reach is now a diamond clipped out of a disc, and nothing tells the player
+that (AOE-LoS; `targeting.ts` `rangeEnvelope`).** See the decision above: Euclidean aiming meets
+Manhattan vision, so a range-6 grenade reaches 6 down a row and about 4 on the diagonal. The
+envelope draws the truth, so it is not a lie — but it is a shape a player has no name for, and it
+will read as a bug before it reads as a rule. Worth a Designer look at whether aiming should be
+vision-capped explicitly (state the rule) or whether vision should be Euclidean (remove the
+mismatch).
+
+**3. AOE-LoS shelters every circle in the game, including hazards and dash impacts.** Recorded in
+the decision above. If the intent was Blast-phase attacks only, this needs a ruling — but the
+carve-out is the more surprising rule, and it is not what the edge-case entry says.
+
+**4. Session 18's two open questions are unchanged, because the cycle that ran (PR #179) spec'd this
+item and nothing else.** FOF-OUTLINE is still blocked on both of its gates — no playtest signal that
+ring + nameplate are insufficient, and `RIM-ACHROMATIC` still forbids the ruled technique by name.
+RENDER-SUITE-GREEN-4's pad test is still in Iron Basin, which the ruling ruled against and which
+passes. Neither is a Builder call; both are still waiting on the same one-line rulings.
+
+**5. Every remaining unblocked backlog item was already delivered in session 18.**
+VFX-FLASH-VERIFY shipped in `d754a8b` (merged, #177); RENDER-SUITE-GREEN-4's two halves were found
+already implemented and green; FOF-OUTLINE was skipped with reasons. They still read as UNBLOCKED in
+`docs/BACKLOG.md` because PR #179 only added AOE-LoS. Nothing was re-done this session — flagged so
+the next backlog pass can close them rather than re-issuing them.

@@ -43,9 +43,18 @@ const CHAR: CharacterDef = {
 };
 const roster: Roster = { 'test-char': CHAR };
 
-/** One attacker well out of the blast, and victims wherever the case wants them. */
+/**
+ * One attacker well out of the blast, and victims wherever the case wants them.
+ *
+ * AOE-LoS moved the attacker from (0,0) to (5,1). An area is now aimed at ground
+ * the caster's **team can see**, and (0,0) is ten Manhattan steps from the
+ * centre — outside the 6-tile vision radius, so every cast below was silently
+ * refused and every victim took nothing. Four rows up is inside vision, has a
+ * clear line on this empty map, and is still two tiles clear of the radius-2
+ * disc, which is all "well out of the blast" ever meant.
+ */
 const board = (victims: { id: string; x: number; y: number }[]): GameState => makeState([
-  makeUnit('a', 0, { x: 0, y: 0 }, { characterId: 'test-char' }),
+  makeUnit('a', 0, { x: 5, y: 1 }, { characterId: 'test-char' }),
   ...victims.map((v) => makeUnit(v.id, 1, { x: v.x, y: v.y }, { characterId: 'test-char' })),
 ]);
 const fire = (s: GameState, abilityId: string): GameState =>

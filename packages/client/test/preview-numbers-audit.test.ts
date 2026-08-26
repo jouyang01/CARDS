@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  buildBoard, buildRoster, createMatch, resolveTurn,
+  buildBoard, buildRoster, coverOrigin, createMatch, resolveTurn,
   type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster,
   type UnitOrders, type Vec2,
 } from '@cards/engine';
@@ -107,6 +107,11 @@ const previewed = (state: GameState, casterId: string, def: AbilityDef, aim: Vec
     def,
     squares: previewedSquares(state, me, def, aim),
     ...previewBandSets(MAP, me, def, aim),
+    // AOE-LoS: `app.ts` passes this on every action, so the sweep must too —
+    // otherwise this audit would be checking a preview nobody is shown. `MAP`
+    // has no cover, so it changes no number here; it keeps the audit honest
+    // against the day one grows some.
+    coverFrom: coverOrigin(def, me.pos, aim),
   }], new Set(state.units.map((u) => u.unitId)));
   return numbers.filter((n) => n.targetId === targetId && n.kind === 'damage')
     .reduce((sum, n) => sum + n.amount, 0);

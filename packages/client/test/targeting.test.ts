@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AIM_STEPS, aimInRange, buildBoard, createMatch, distance, expandShape, reachableSquares, reconstructPath, vectorToStep, type CharacterDef, type MapDef } from '@cards/engine';
+import { AIM_STEPS, aimInRange, aimVisionAllows, buildBoard, createMatch, distance, expandShape, reachableSquares, reconstructPath, vectorToStep, type AbilityDef, type CharacterDef, type MapDef } from '@cards/engine';
 import {
   abilityOptions,
   abilityPreview,
@@ -336,17 +336,63 @@ describe('BRUSH1: the client offers brush squares as move and dash destinations'
  * derivable from the ability alone, with no aim yet chosen.
  */
 describe('UI1: rangeEnvelope is where an ability COULD go', () => {
-  it('a circle/square envelope is the engine’s own Manhattan diamond', () => {
+  it('a circle envelope is the range disc INTERSECTED with what the team can see', () => {
+    // AOE-LoS. The envelope used to be the bare `aimInRange` disc, and that is
+    // no longer what the engine will accept: an area is aimed at ground the
+    // caster's team can see. Asserted as the exact intersection, both ways —
+    // every offered square legal, every legal square offered — because a
+    // preview that is merely a *subset* of legality is a button that quietly
+    // refuses to be pressed, and one that is a superset is a lie.
     const s = state();
     const u = vexUnit(s);
-    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!; // circle range 6
-    const env = rangeEnvelope(OPEN, s, u, grenade);
-    // Every square in the envelope is legal to aim at, and every legal square is
-    // in the envelope — the two must agree or the preview is lying.
-    for (const p of env) expect(aimInRange(u.pos, p, grenade.range), `${p.x},${p.y}`).toBe(true);
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!; // circle range 6, lobbed
+    const board = buildBoard(OPEN);
+    const env = new Set(rangeEnvelope(OPEN, s, u, grenade).map((p) => `${p.x},${p.y}`));
     let legal = 0;
     for (let y = 0; y < OPEN.height; y++) {
-      for (let x = 0; x < OPEN.width; x++) if (aimInRange(u.pos, { x, y }, grenade.range)) legal++;
+      for (let x = 0; x < OPEN.width; x++) {
+        const p = { x, y };
+        const ok = aimInRange(u.pos, p, grenade.range)
+          && aimVisionAllows(board, s, u, grenade, p);
+        expect(env.has(`${x},${y}`), `${x},${y}`).toBe(ok);
+        if (ok) legal++;
+      }
+    }
+    expect(env.size).toBe(legal);
+  });
+
+  it('and that intersection is strictly smaller than the raw disc', () => {
+    // The measurement that keeps the test above from passing vacuously: aiming
+    // range is EUCLIDEAN (AIM-METRIC) and vision is MANHATTAN (MET1), so a
+    // range-6 circle's far diagonal — Euclidean 5.7, Manhattan 8 — is inside
+    // the disc and outside the team's sight. On an empty map with no wall in
+    // the way, that corner is the whole of the difference, and it is real.
+    const s = state();
+    const u = vexUnit(s);
+    const grenade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
+    const env = rangeEnvelope(OPEN, s, u, grenade).length;
+    let disc = 0;
+    for (let y = 0; y < OPEN.height; y++) {
+      for (let x = 0; x < OPEN.width; x++) if (aimInRange(u.pos, { x, y }, grenade.range)) disc++;
+    }
+    expect(env, 'the vision gate actually removed squares').toBeLessThan(disc);
+  });
+
+  it('a square envelope is still the engine’s own bare disc — only areas are gated', () => {
+    // AOE-LoS is scoped to `circle`. A `square` shape places one tile and is
+    // untouched, which is what stops this from having quietly become a
+    // vision rule for every aimed ability in the game.
+    const s = state();
+    const u = vexUnit(s);
+    const zone: AbilityDef = {
+      id: 'zone', name: 'Zone', phase: 'blast', shape: 'square', range: 6,
+      cooldown: 0, energyGain: 0, effects: [{ kind: 'damage', amount: 1 }], description: 't',
+    };
+    const env = rangeEnvelope(OPEN, s, u, zone);
+    for (const p of env) expect(aimInRange(u.pos, p, zone.range), `${p.x},${p.y}`).toBe(true);
+    let legal = 0;
+    for (let y = 0; y < OPEN.height; y++) {
+      for (let x = 0; x < OPEN.width; x++) if (aimInRange(u.pos, { x, y }, zone.range)) legal++;
     }
     expect(env).toHaveLength(legal);
   });

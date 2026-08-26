@@ -12,6 +12,7 @@
 import {
   ULT_COST,
   aimInRange,
+  coverOrigin,
   buildBoard,
   type Board,
   createMatch,
@@ -1803,6 +1804,8 @@ export function startHotSeat(
           squares: [...covered, ...impact.origin, ...impact.destination],
           axis: bands.axis,
           inner: bands.inner,
+          // AOE-LoS: a circle's cover is measured from its centre.
+          coverFrom: coverOrigin(chosen, unit.pos, preview.aim),
           // RAM-LINE-PREVIEW-FIX: a charge's route covers everybody standing on
           // it, but `chargeHits` decides how many of them are actually hit.
           // Empty for every other shape, and `previewNumbers` reads it as "the
@@ -1817,6 +1820,7 @@ export function startHotSeat(
           def: freeDef,
           squares: abilityPreview(map, unit, freeDef, freeAim),
           ...previewBandSets(map, unit, freeDef, freeAim),
+          coverFrom: coverOrigin(freeDef, unit.pos, freeAim),
         }]
         : []),
       ...(catalystDef !== undefined && catalystAim.length > 0
@@ -1824,6 +1828,7 @@ export function startHotSeat(
           def: catalystDef,
           squares: abilityPreview(map, unit, catalystDef, catalystAim),
           ...previewBandSets(map, unit, catalystDef, catalystAim),
+          coverFrom: coverOrigin(catalystDef, unit.pos, catalystAim),
         }]
         : []),
       // PREVIEW-DECOY: the fogged, per-viewer decoy list the board is already

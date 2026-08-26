@@ -47,9 +47,20 @@ export function scaleDamage(raw: number, pct: number): number {
  * attacker-side then defender-side.
  */
 export function computeDamage(raw: number, attacker: UnitState, behindCover: boolean): number {
-  const scaled = scaleDamage(raw, outgoingDamagePct(attacker));
-  if (!behindCover) return scaled;
-  return scaleDamage(scaled, 100 - COVER_REDUCTION_PCT);
+  return reduceForCover(scaleDamage(raw, outgoingDamagePct(attacker)), behindCover);
+}
+
+/**
+ * The **defender-side** half of `computeDamage`, on its own: halve (round down)
+ * if the defender is behind cover, otherwise pass the number through.
+ *
+ * Split out for AOE-LoS's delayed detonations, which stamp their amount at cast
+ * (so the attacker-side scaling has already happened, a turn ago) but resolve
+ * cover at detonation, from the blast's centre. Named rather than inlined so
+ * there is still exactly one place that knows cover halves.
+ */
+export function reduceForCover(amount: number, behindCover: boolean): number {
+  return behindCover ? scaleDamage(amount, 100 - COVER_REDUCTION_PCT) : amount;
 }
 
 // ── Applying damage / heals ─────────────────────────────────────────────────
