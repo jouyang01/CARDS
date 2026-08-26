@@ -124,16 +124,27 @@ describe('HITS: a stopping line previews one number, and it is the right one', (
   });
 });
 
-describe('HITS: an ally in the beam is not numbered and does not stop it', () => {
-  it('the shot flies past a teammate to the first enemy', () => {
+describe('HITS: an ally in the beam is numbered, and stops it', () => {
+  it('THE NOTE: the teammate in the way carries the number, not the enemy', () => {
+    // Owner Dev Note (2026-10-08): the bola does not go through allies. The
+    // preview is where that has to be legible *before* the turn — a player who
+    // cannot see they are about to hit their own partner will keep doing it.
     const { state, me, near } = field();
     // Put the thrower's partner directly in front of the near enemy.
     state.units.filter((u) => u.owner === 0 && u.unitId !== me.unitId)[0]!.pos = { x: 6, y: 10 };
     const mate = state.units.find((u) => u.owner === 0 && u.unitId !== me.unitId)!;
-    expect(previewed(state, me, BOLA, mate.unitId), 'no number over the ally').toBe(0);
-    expect(previewed(state, me, BOLA, near.unitId), 'the enemy behind them is numbered')
-      .toBeGreaterThan(0);
-    expect(previewed(state, me, BOLA, near.unitId)).toBe(resolved(state, me, BOLA, near.unitId));
+    expect(previewed(state, me, BOLA, mate.unitId), 'the ally is numbered').toBeGreaterThan(0);
+    expect(previewed(state, me, BOLA, near.unitId), 'the enemy behind them is not').toBe(0);
+  });
+
+  it('and both numbers match what the turn actually deals', () => {
+    const { state, me, near } = field();
+    state.units.filter((u) => u.owner === 0 && u.unitId !== me.unitId)[0]!.pos = { x: 6, y: 10 };
+    const mate = state.units.find((u) => u.owner === 0 && u.unitId !== me.unitId)!;
+    for (const target of [mate, near]) {
+      expect(previewed(state, me, BOLA, target.unitId), target.unitId)
+        .toBe(resolved(state, me, BOLA, target.unitId));
+    }
   });
 });
 

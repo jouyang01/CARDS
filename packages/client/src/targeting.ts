@@ -1082,8 +1082,10 @@ export function abilityHitList(
     );
     // No stop at all: this line pierces, so it restricts nothing.
     if (stop === undefined) return undefined;
+    // Any character, either team — a teammate in the way eats the bola, and the
+    // preview has to say so or the number appears over the wrong body.
     return state.units
-      .filter((u) => u.alive && u.owner !== unit.owner && vecEq(u.pos, stop))
+      .filter((u) => u.alive && vecEq(u.pos, stop))
       .map((u) => u.unitId);
   }
   return undefined;

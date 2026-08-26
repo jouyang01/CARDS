@@ -126,28 +126,50 @@ describe('HITS: a line that stops at the first enemy', () => {
   });
 });
 
-describe('HITS: allies never block or absorb a line', () => {
-  it('THE RULING: an ally standing in front does not spend the shot', () => {
-    // Ruled in edge-cases and consistent with "units never block": a teammate
-    // in the beam is not a wall. The bola flies past them to the first enemy.
+describe('HITS: a teammate in the beam stops it, and eats it', () => {
+  /**
+   * Owner Dev Note (2026-10-08): *"Bola should have friendly fire, it should not
+   * go through allies. Stops at the first character hit."*
+   *
+   * This **supersedes** RULED — HITS's *"allies never block or absorb"*, which
+   * shipped one session earlier and which these two tests used to assert the
+   * other way round. The owner played it: a line that walks through your own
+   * team is positionless, and eating your own bola is what makes firing it a
+   * decision. The engine has always said friendly fire endangers your side
+   * (FF1); this is where it bites hardest.
+   */
+  it('THE NOTE: an ally standing in front takes the bola', () => {
     const s = fire(makeState([
       makeUnit('c', 0, CASTER, { characterId: 'test-char' }),
       at('mate', 0, 2, 4),
       at('foe', 1, 4, 4),
     ]), 'bola');
-    expect(lost(s, 'foe'), 'the enemy behind the ally still takes it').toBe(20);
+    expect(lost(s, 'mate'), 'the teammate in the way eats it').toBe(20);
+    expect(slowed(s, 'mate'), 'rider included').toBe(true);
   });
 
-  it('and the ally takes nothing — the shot was never aimed at them', () => {
-    // The other half. FF1 endangers allies standing in an *area*; a stopping
-    // line selects one enemy, so there is no splash for a teammate to catch.
+  it('and the enemy behind them takes NOTHING — the beam stopped', () => {
+    // The half that makes it a block rather than merely friendly fire: the
+    // shot is spent on the teammate and never reaches the target.
     const s = fire(makeState([
       makeUnit('c', 0, CASTER, { characterId: 'test-char' }),
       at('mate', 0, 2, 4),
       at('foe', 1, 4, 4),
     ]), 'bola');
-    expect(lost(s, 'mate')).toBe(0);
-    expect(slowed(s, 'mate')).toBe(false);
+    expect(lost(s, 'foe')).toBe(0);
+    expect(slowed(s, 'foe')).toBe(false);
+  });
+
+  it('THE CASTER is never their own victim — the beam starts one square out', () => {
+    // Falls out of the geometry rather than a check: `lineSquares` walks from
+    // d = 1, so the square the caster stands on is not in the beam. Pinned
+    // because "any character stops it" read literally would include them.
+    const s = fire(makeState([
+      makeUnit('c', 0, CASTER, { characterId: 'test-char' }),
+      at('foe', 1, 2, 4),
+    ]), 'bola');
+    expect(lost(s, 'c')).toBe(0);
+    expect(lost(s, 'foe'), 'and the shot still lands on the enemy').toBe(20);
   });
 
   it('but a PIERCING line still friendly-fires, exactly as it did (FF1)', () => {
