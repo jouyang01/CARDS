@@ -2044,6 +2044,53 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
   fallback or is removed — Builder's call). Ships with a test: a `melee` ability into a
   cover-protected target deals full damage; a non-melee one is still reduced; neither hits through a
   wall.
+- **RULED — AOE-LoS: walls shelter from explosions; the blast reads from its CENTRE (owner directive
+  2026-10-06, AR parity; backlog AOE-LoS — engine + client).** Today a `circle` AoE is aimed at any square
+  within Euclidean range with **no vision check** (`aimIsLegal` → `aimInRange`) and hits every non-wall tile
+  in radius with **no line-of-sight check from the centre** (`circleSquares` drops wall *tiles* only;
+  `runBlast` hits any unit whose tile is in the set) — so **the blast leaks around walls**, and cover
+  reduction is measured from the *caster* (`resolve.ts:2246`, `isBehindCover(board, attacker.pos, …)`), not
+  the blast. This brings it to Atlas-Reactor parity. Direct fire (`line`/`cone`) already occludes on the
+  first wall (`lineSquares`) and is unchanged.
+  - **A wall shelters: LoS from the centre decides who is hit.** A unit inside the radius is hit **iff
+    `hasLineOfSight(centre, unitTile)`** — the walls-only, integer-exact, deterministic primitive already
+    used for vision. A unit behind a wall (the centre→unit segment crosses a wall tile) takes **0**; a unit
+    in the open takes full. No new geometry, N-safe, pure.
+  - **Cover washes over, directionally, from the centre.** `hasLineOfSight` is walls-only, so cover never
+    blocks the blast — the AoE reaches a unit behind cover, but the existing COVER-EDGE 50% reduction
+    applies **iff the centre→unit line crosses that unit's faced cover edge** (owner: *"reduced but only if
+    the centre of the aoe is in the direction of the cover"*). The reduction origin must therefore be the
+    **centre**, not the caster: for a `circle` AoE, `isBehindCover` is called with the **aimed centre** as
+    `attackerPos`. This reproduces AR's "washes over cover, mitigated by cover" exactly, on top of
+    COVER-EDGE, with no new rule.
+  - **Aiming requires TEAM VISION of the centre (AR parity), and the lobbing model is a flag.** A new
+    ability field **`lobbed`** picks the aim rule:
+    - **`lobbed: true`** (Frag Grenade / the arcing grenade) — the shot arcs over walls, so aim is legal iff
+      the centre is within range **and the caster's team can SEE the centre** (`teamCanSee` over the
+      **start-of-turn** team vision — the same fog the client planned against). No caster→centre straight
+      line is required.
+    - **`lobbed` absent/false** (a direct burst) — aim is legal iff the centre is within range **and the
+      caster has a clear line to it** (`hasLineOfSight(caster, centre)`, walls block) — you cannot fire a
+      direct burst through a wall even onto a square a teammate can see.
+    Either way you cannot blind-fire into the fog. **The vision snapshot is the turn's opening team vision**
+    (deterministic, matches the client), not the post-Dash board — flagged as the load-bearing gotcha.
+  - **Delayed detonations evaluate LoS + cover at DETONATION, amount stamped at cast.** Frag Grenade is
+    `delayTurns: 1`; today its delayed hit is pre-computed and **bypasses cover** (`resolve.ts:2042`). Under
+    AOE-LoS the delayed path keeps stamping the **damage amount** at cast (the caster's Might/Weaken then,
+    like a trap's charge) but resolves **who is hit (centre→unit LoS) and the cover reduction at detonation
+    time**, against the board and unit positions when it goes off. Walls are static, so the shelter is the
+    same either way; positions are read live.
+  - **CASTER-SAFE / FRAG-SELF compose.** The caster is caught by its own `selfHarm` AoE only if it stands
+    in the radius **and** the centre has LoS to it, and is reduced by cover from the centre like anyone
+    else — one rule for every unit in the blast.
+  - **Preview parity is mandatory (AIM-PREVIEW-TRUE).** The client's aimable set is *visible* squares in
+    range (per `lobbed`), and the previewed hit-set + damage numbers apply the same centre→unit LoS filter
+    and centre-origin cover reduction — a grenade preview must never light a tile the wall will protect.
+  - **Ships with tests** (per the owner): unit behind a wall in-radius → 0; unit behind cover in-radius →
+    reduced **iff** the centre is on the cover's faced side (and full if the centre is on the open side);
+    unit in the open → full; a `lobbed` grenade can be aimed over a wall onto a team-visible square but not
+    into fog; a direct burst is refused through a wall; the caster is caught only with centre-LoS; the
+    delayed detonation shelters at detonation-time positions.
 - **RULED — Energy on multi-hit.** `energyGain` is granted once per ability use if it
   hits ≥1 enemy (not per enemy hit) in v1.
 - **PROPOSED — Cover uses a corner-*inclusive* line/edge test (flag, review 2026-08-14).**
