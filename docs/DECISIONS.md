@@ -8026,3 +8026,64 @@ broken until `build_glb.py --in-place` re-bases to bind instead of pinning
 per-clip drift to a frame-0 that is itself 22 units off. The measurements in this
 entry are the acceptance criteria: after a rebake, `wisp_idle`'s Hips track should
 sit within a few centimetres of `(0.00, 0.14, −1.09)`, not at Z ≈ +22.
+
+## 2026-10-07 — Session 20 addendum: the e2e Veil & Decoy drive, and a gap it exposed
+
+**The browser drive had to be re-driven, and it took four attempts — the failed
+three are recorded because each was a plausible idea that is quietly wrong.**
+STEALTH-CONFIRM cast the veil by pressing the hotbar button and nothing else, on
+the strength of a comment W1 made false: *"a `self` free action commits on
+selection — no board click to make."*
+
+  1. **Interpolating from a `blueBodies` blob toward mid-board.** The suite's own
+     steering idiom, and it lands on an unpredictable tile; every candidate it
+     produced was out of range or occupied.
+  2. **Checking the commit by the aim overlay's colour.** Wrong twice over: a
+     FREE action draws its aim in its own mint (`FREE = 0x6fe3c0`), not the
+     `aim` layer's orange — and a predicate loose enough to catch that mint under
+     Lambert shading also catches the **nameplate HP bar**, which is always on
+     screen, so the check answered "committed" before any click happened.
+  3. **Checking it by the range envelope collapsing.** `isRangeWash` matches most
+     of the board: measured **20196 sampled pixels before the click and 20196
+     after**. Not a signal at all.
+  4. **What works: measure the tile from the board.** Team 0's two spawns on
+     `duel-arena` are exactly two tiles apart, so half the vertical gap between
+     the seat's two drawn bodies is one tile on screen. One tile east of a body
+     is (2,4) or (2,6) — open floor, unoccupied, and within Euclidean range 3 of
+     *both* spawns, which matters because nothing in the drive knows which of the
+     seat's two characters Wisp is. **`(x + 0.5) / width` does not work**: the
+     board does not fill its clip, so a map-derived fraction lands on the wrong
+     square. That is the reusable finding for any future drive that needs to
+     click a *named square* rather than a drawn thing.
+
+**The gap it exposed, which was a real hole in the same session's work.**
+`abilityPreview` gained a `state` parameter for DECOY-PLACEMENT and
+BOLA-OVERLAY, and I passed it only at the **normal ability slot's** call site.
+Veil & Decoy is a **free** action and is previewed through a different call — so
+the one ability those two rules exist for was drawing its preview without either
+of them. Fixed at all four call sites (normal, free, catalyst ×2). Worth stating
+as a pattern: adding an argument to a shared helper is not done until every
+caller has been looked at, and "the call site I was thinking about" is not the
+same set as "the call sites that matter".
+
+**And the coverage that should have existed already.** Until W1, every free
+action in the roster was a `self` shape, so `selectFreeAbility` filled the aim in
+from the caster's square and the **board-click path for the free slot had no
+shipped user and no test**. W1 puts it on the critical path of a whole
+character's kit. `free-aim-commit.test.ts` now drives it through `startHotSeat`
+— six tests, milliseconds, deterministic. The browser suite keeps its pixel
+assertion (the purple decoy) because that is the part only pixels can answer;
+everything about *whether the click commits* belongs in the harness, where
+diagnosing it took one run instead of four.
+
+### Open Question 6 for the Analyzer — 2026-10-07
+
+**A drive that needs to click a NAMED SQUARE has no helper, and every test that
+wants one re-derives it wrong (`e2e/render.spec.ts`).** The suite can click a
+*drawn thing* (a body, a blob centroid) and can click a *fraction of the clip*,
+but "click board square (3,5)" is not expressible — and the obvious arithmetic
+is wrong because the board is letterboxed inside its clip. STEALTH-CONFIRM now
+carries a bespoke measurement to get around it. Worth a small shared helper
+(measure the tile from two known-separated bodies once, cache per page) before
+the third test needs it; not filed as an item because the Analyzer may prefer a
+different approach, e.g. exposing a board→screen probe on the page for tests.
