@@ -549,10 +549,35 @@ export function startHotSeat(
     // no other definition once nobody is on the clock.
     const seat = seats[seatIdx] ?? lastSeat;
     if (seats[seatIdx] !== undefined) lastSeat = seats[seatIdx];
-    renderer.setViewer({
-      team: seat?.team ?? 0,
-      seatUnitIds: new Set(seat?.unitIds ?? []),
-    });
+    const team = seat?.team ?? 0;
+    renderer.setViewer({ team, seatUnitIds: new Set(controlledHere(team, seat)) });
+  }
+
+  /**
+   * The units **the person at this keyboard** is ordering — which is not the
+   * same as the units of the seat on the clock.
+   *
+   * Owner playtest: *"East team has Wisp green when it's Vex's turn, and Vex
+   * green when it's Wisp's turn."* Both were right by the letter of the seat
+   * rule and wrong in the room. 2v2 defaults to `players = [2, 1]`, so a
+   * hot-seat splits one team into **two seats of one character each** — and a
+   * seat that owns one character makes the other an `ally`, so the green
+   * followed the selection around the player's own team.
+   *
+   * The rule the owner actually stated is *"blue is all of your characters that
+   * you are controlling, green is all characters your ALLY is controlling"* —
+   * and in a hot-seat there is no ally. The seats are one human passing the
+   * board to themselves; a teammate is only a different *person* across the
+   * wire. So `ally` is a networked identity, and locally the whole team is
+   * yours.
+   *
+   * That also keeps the mirror-matchup fix intact, which is what the colour is
+   * for: your side stays one colour and the enemy stays red, whichever seat is
+   * on the clock.
+   */
+  function controlledHere(team: TeamId, seat: Seat | undefined): readonly string[] {
+    if (net !== undefined) return seat?.unitIds ?? [];
+    return state.units.filter((u) => u.owner === team).map((u) => u.unitId);
   }
   /** SCORE1's running ledger, folded from each turn's event log as it plays. */
   let totals: MatchTotals = initTotals(state);

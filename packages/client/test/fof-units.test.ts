@@ -89,11 +89,16 @@ describe('FOF-UNITS: the controller tells the renderer who is looking', () => {
     expect(b.renderer.draw.viewer?.team).toBe(0);
   });
 
-  it('and the seat’s own characters are named, not just its team', () => {
-    // `self` is seat-relative. A viewer carrying only a team number could not
-    // tell "mine" from "my teammate's" and the ally colour would never appear.
+  it('and it names the characters, not just the team', () => {
+    // The viewer carries unit ids because `self` and `ally` cannot be told
+    // apart from a team number alone. *Which* ids is the question the playtest
+    // settled: locally it is the whole team, because one human drives every
+    // seat on this keyboard. Across the wire it narrows to the seat.
     const b = match([2, 2]);
-    expect(viewerOf(b).seatUnitIds.size, 'one character per seat at [2, 2]').toBe(1);
+    const viewer = viewerOf(b);
+    const own = b.opening.units.filter((u) => u.owner === viewer.team);
+    expect(viewer.seatUnitIds.size, 'a hot-seat player drives their whole team')
+      .toBe(own.length);
   });
 });
 
@@ -149,19 +154,37 @@ describe('FOF-UNITS: a real board, resolved from the seat', () => {
     }
   });
 
-  it('with two players a side, your teammate’s character is an ally', () => {
-    // The third colour earns its place here: at [2, 2] one of the two units on
-    // the viewer's own team is theirs to order and the other is not, and a
-    // two-colour scheme cannot say which.
+  it('THE PLAYTEST BUG: two hot-seat seats a side is still ONE player, so no green', () => {
+    // *"East team has Wisp green when it's Vex's turn, and Vex green when it's
+    // Wisp's turn."* 2v2 defaults to `players = [2, 1]`, so a hot-seat splits a
+    // team into two seats of one character each — and a seat that owns one
+    // character made the other an `ally`, so the green followed the selection
+    // around the player's own team.
+    //
+    // The seats are one human passing the board to themselves. `ally` means a
+    // different *person*, which locally there is not.
     const b = match([2, 2]);
     const viewer = viewerOf(b);
-    const own = b.opening.units.filter((u) => u.owner === 0);
-    const mine = own.filter((u) => viewer.seatUnitIds.has(u.unitId));
-    const theirs = own.filter((u) => !viewer.seatUnitIds.has(u.unitId));
-    expect(mine.length, 'the seat drives one of the two').toBe(1);
-    expect(theirs.length).toBe(1);
-    for (const u of mine) expect(fofFor(u, viewer)).toBe('self');
-    for (const u of theirs) expect(fofFor(u, viewer)).toBe('ally');
+    const own = b.opening.units.filter((u) => u.owner === viewer.team);
+    expect(own.length, 'two characters a side').toBe(2);
+    for (const u of own) {
+      expect(fofFor(u, viewer), `${u.unitId} is this player's to order`).toBe('self');
+    }
+  });
+
+  it('and the green does not follow the selection around your own team', () => {
+    // The shape of the report, stated directly: order one character, hand the
+    // board on, and the two must not have swapped colours between them.
+    const b = match([2, 2]);
+    const before = drawnFof(b);
+    lockIn(b.controls);
+    const after = drawnFof(b);
+    for (const id of Object.keys(before)) {
+      if (after[id] === undefined) continue; // fog moved it out of the drawn set
+      expect(after[id], `${id} kept its identity across the hand-over`).toBe(before[id]);
+    }
+    expect(Object.values(after), 'and nothing on your own side went green')
+      .not.toContain('ally');
   });
 
   it('and one player driving both sees both as self, with no ally', () => {

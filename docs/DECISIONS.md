@@ -7581,3 +7581,32 @@ nothing a player has not already read off the lobby.
 and preloaded both sides. That is also why no test caught it: every model test drives hot-seat.
 `model-preload.test.ts` is written the other way round on purpose — it hands the controller a
 team-filtered opening, which is what a networked client actually receives.
+
+---
+
+## 2026-08-26 — FOF-LOCAL: `ally` is a networked identity (owner playtest)
+
+**Owner playtest — *"East team has Wisp green when it's Vex's turn, and Vex green when it's Wisp's
+turn."*** Both readings were right by the letter of the FOF-COLORS ruling and wrong in the room.
+`DEFAULT_PLAYERS['2v2']` is `[2, 1]`, so a hot-seat splits one team into **two seats of one
+character each** — and a seat that owns one character makes the other an `ally`, so the green
+followed the selection around the player's own team.
+
+**Ruling — in a hot-seat there is no ally, so `self` is the whole team.** The owner's own sentence
+is the spec: *"blue should be all of your characters that you are controlling, green should be all
+characters ally is controlling."* Locally the seats are one human passing the board to themselves;
+a teammate is only a different **person** across the wire. So the viewer's `seatUnitIds` is the
+seat's units when `net` is defined and the whole team when it is not, and green becomes a
+networked-only identity.
+
+**This narrows FOF-COLORS rather than contradicting it.** The ruling says `self` is "the units the
+viewer's **seat** controls", and what the playtest settled is what a seat *is*: the unit of control
+is the person, not the row in the seat table. In networked play the two coincide, which is the case
+the ruling was written against. The mirror-matchup fix is untouched — your side is one colour and
+the enemy is red, whichever seat is on the clock, which is more true after this than before.
+
+**The three regression tests were checked against the unfixed code and fail there.** Two existing
+tests had to be *restated* rather than added to, because they asserted the old rule directly
+(`seatUnitIds.size === 1` at `[2, 2]`, and "your teammate's character is an ally" in a hot-seat) —
+recorded because a test that encodes a behaviour the owner then calls a bug is not a test that was
+wrong to write, but it is one that has to change with the ruling rather than outvote it.
