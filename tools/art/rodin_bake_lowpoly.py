@@ -170,6 +170,23 @@ def paint_blindfold(low, png_path, band, color_hex, front_thresh=0.20, dilate=3)
     col = np.array([int(color_hex.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)], np.uint8)
     mask = np.zeros((H, W), bool)
 
+    # Back-of-skull cutoff (‑Y is front): the band must wrap the head but STOP at
+    # the back of the skull, never continuing onto the ponytail behind it. The
+    # ponytail skews a Y-range estimate, so size the skull from its X-width (which
+    # the ponytail barely affects at eye height) and cut off one head-depth back.
+    def _pct(a, p):
+        a = sorted(a)
+        return a[min(len(a) - 1, max(0, int(p * len(a))))]
+    band_vs = [v for v in vs if lo_nz <= (v.z - mnz) / h <= hi_nz]
+    if band_vs:
+        bxs = [v.x for v in band_vs]
+        bys = [v.y for v in band_vs]
+        rx = (_pct(bxs, 0.80) - _pct(bxs, 0.20)) / 2      # skull half-width
+        y_front = _pct(bys, 0.03)                          # frontmost (face)
+        back_cutoff = y_front + 2.4 * rx                   # ~one head-depth back
+    else:
+        back_cutoff = float("inf")
+
     def tris(poly):
         idx = list(poly.loop_indices)
         for i in range(1, len(idx) - 1):
@@ -186,6 +203,8 @@ def paint_blindfold(low, png_path, band, color_hex, front_thresh=0.20, dilate=3)
             wp = [M @ me.vertices[me.loops[l].vertex_index].co for l in (a, b, c)]
             zs = [p.z for p in wp]
             if (min(zs) - mnz) / h > hi_nz or (max(zs) - mnz) / h < lo_nz:
+                continue
+            if sum(p.y for p in wp) / 3 > back_cutoff:     # behind the skull -> ponytail
                 continue
             P = [(uv[l].uv[0] * W, (1 - uv[l].uv[1]) * H) for l in (a, b, c)]
             (x0, y0), (x1, y1), (x2, y2) = P
