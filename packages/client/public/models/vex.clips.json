@@ -1,0 +1,31 @@
+{
+  "id": "vex",
+  "version": "c84578847e74",
+  "clips": [
+    "knocked_down",
+    "rifle_death",
+    "rifle_hit",
+    "rifle_run",
+    "vex_grenade",
+    "vex_idle",
+    "vex_railshot",
+    "vex_roll",
+    "vex_trap",
+    "vex_ult"
+  ],
+  "map": {
+    "idle": "vex_idle",
+    "run": "rifle_run",
+    "hit": "rifle_hit",
+    "death": "rifle_death",
+    "knockback": "knocked_down",
+    "abilities": {
+      "rail_shot": "vex_railshot",
+      "frag_grenade": "vex_grenade",
+      "combat_roll": "vex_roll",
+      "overwatch_trap": "vex_trap",
+      "lance_of_dawn": "vex_ult"
+    }
+  },
+  "posture": {}
+}
