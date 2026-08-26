@@ -13,6 +13,7 @@
 import {
   ULT_COST,
   aimInRange,
+  aimVisionAllows,
   axisSquares,
   buildBoard,
   chargeVictims,
@@ -565,6 +566,12 @@ export function impactPreview(
  *   lets you aim at one (a circle centred on a wall still catches its
  *   neighbours), and an envelope that quietly disagreed with legality would be
  *   a lie. It reads the engine's predicate, so the disc arrives for free.
+ * - **`circle` (AOE-LoS)** — the disc, further trimmed to squares the engine
+ *   will actually accept: the caster's team must **see** the square, and a
+ *   direct (non-`lobbed`) burst needs the caster's own clear line to it as
+ *   well. Same predicate the engine gates the order with (`aimVisionAllows`),
+ *   for the same reason as above: an envelope that offered a square the order
+ *   pipeline silently drops is a button that does nothing.
  * - `self` — the caster's own square, which is exactly where it lands.
  */
 export function rangeEnvelope(map: MapDef, state: GameState, unit: UnitState, ability: AbilityDef): Vec2[] {
@@ -583,10 +590,16 @@ export function rangeEnvelope(map: MapDef, state: GameState, unit: UnitState, ab
     return reachableSquares(board, state, unit, ability.range).map((s) => ({ ...s.pos }));
   }
   const out: Vec2[] = [];
+  // AOE-LoS: built once, outside the scan — the vision gate is asked per square
+  // and re-deriving the board for each of them would be the whole map's worth of
+  // work per frame.
+  const board = ability.shape === 'circle' ? buildBoard(map) : undefined;
   for (let y = 0; y < map.height; y++) {
     for (let x = 0; x < map.width; x++) {
       const p = { x, y };
-      if (aimInRange(unit.pos, p, ability.range)) out.push(p);
+      if (!aimInRange(unit.pos, p, ability.range)) continue;
+      if (board !== undefined && !aimVisionAllows(board, state, unit, ability, p)) continue;
+      out.push(p);
     }
   }
   return out;
