@@ -134,20 +134,31 @@ describe('MENDING-RANGE: every self-buff that was meant to land still lands', ()
   const AEGIS = load('aegis');
   const WISP = load('wisp');
 
-  it('a `self` shape reaches its caster — its area IS the caster\'s square', () => {
-    // Wisp's Veil & Decoy is `prep`/`self`, and `expandShape` returns the
-    // caster's own square for a `self` shape. So the new gate is satisfied by
-    // construction and there is no special case to remember.
+  it('W1: an effect marked `target: "self"` reaches its caster from any aim', () => {
+    // Veil & Decoy used to be a `self` shape, so MENDING-RANGE's area gate was
+    // satisfied by construction — the area WAS Wisp's square. W1 aims it up to
+    // three tiles away, which takes that for granted no longer: the area is now
+    // the square the decoy goes on, and Wisp is not standing there.
+    //
+    // `target: "self"` is the mechanism that keeps the stealth on her, and this
+    // is the test that says so. Without it the vanish would be silently gated
+    // off by the same rule that stopped Lumen healing from across the board —
+    // correct for a heal aimed away, wrong for a vanish.
     const veil = WISP.abilities.find((a) => a.id === 'veil_decoy')!;
-    expect(veil.shape).toBe('self');
+    expect(veil.shape, 'aimed, not self').toBe('square');
+    expect(veil.effects.find((e) => e.kind === 'stealth')?.target).toBe('self');
+    expect(veil.effects.find((e) => e.kind === 'decoy')?.target).toBe('aimed');
+
     const state = createMatch(OPEN, '1v1', [[WISP], [VEX]]);
     const wisp = state.units[0]!;
+    const away = { x: wisp.pos.x, y: wisp.pos.y + 2 }; // in range, and not her square
     const after = resolveTurn(state, OPEN, [
-      { team: 0, units: [{ unitId: wisp.unitId, ability: { abilityId: 'veil_decoy', target: [] } }] },
+      { team: 0, units: [{ unitId: wisp.unitId, ability: { abilityId: 'veil_decoy', target: [away] } }] },
       { team: 1, units: [] },
     ], { wisp: WISP, vex: VEX }).state;
     expect(after.units[0]!.statuses.some((st) => st.kind === 'stealth'), 'the self-buff landed').toBe(true);
-    expect(after.decoys, 'and so did the non-beneficial half').toHaveLength(1);
+    expect(after.decoys, 'and the placed half landed too').toHaveLength(1);
+    expect(after.decoys[0]!.pos, 'at the aim, not at the caster').toEqual(away);
   });
 
   it('a dash still buffs its dasher — it ends on its own landing square', () => {

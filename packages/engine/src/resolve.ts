@@ -739,6 +739,29 @@ export function aimVisionAllows(
   return def.lobbed === true || hasLineOfSight(board, unit.pos, target);
 }
 
+/**
+ * DECOY-PLACEMENT — may this ability put what it places on `target`?
+ *
+ * A decoy does not block occupancy (R2), so dropping one *inside* a real unit is
+ * mechanically legal and reads as broken — and it self-defeats the deception,
+ * which is the whole ability. Ruled: **a decoy may not be placed on a square
+ * occupied by any unit, either team**, and the aim is **refused** rather than
+ * routed to the nearest free square (a decoy that slides somewhere else is a
+ * worse tell than a cast that does not happen).
+ *
+ * Phrased against the *effect* rather than against Wisp, so it is the placement
+ * rule and not a character's footnote — anything that later places a body at an
+ * aimed square inherits it. Aiming into fog stays legal (free-aim); this asks
+ * only about the square's occupants, which the caster's own team knows about
+ * for its own units and is allowed to be wrong about for the enemy's.
+ */
+export function placementIsFree(def: AbilityDef, target: Vec2, state: GameState | undefined): boolean {
+  if (state === undefined) return true;
+  const places = def.effects.some((e) => e.kind === 'decoy' && e.target === 'aimed');
+  if (!places) return true;
+  return !state.units.some((u) => u.alive && vecEq(u.pos, target));
+}
+
 /** Is an ability's aim geometrically legal for its shape and range? */
 function aimIsLegal(
   board: Board, unit: UnitState, def: AbilityDef, aim: readonly Vec2[], aimStep?: number,
@@ -758,7 +781,8 @@ function aimIsLegal(
     }
     case 'square': {
       const target = aim[0];
-      return target !== undefined && aimInRange(unit.pos, target, def.range);
+      if (target === undefined || !aimInRange(unit.pos, target, def.range)) return false;
+      return placementIsFree(def, target, state);
     }
     case 'wall': {
       // The one shape that needs **both** halves of an aim: a square inside the
@@ -1349,13 +1373,31 @@ function applyAreaBoons(
   events: TurnEvent[],
 ): void {
   const area = new Set(a.area.map(vecKey));
+  // W1: an effect that names its own target is routed by that name and takes no
+  // further part in the area rules below. Everything else — which is every
+  // effect in `data/` but two — behaves exactly as it did.
+  const directed = a.def.effects.filter((e) => e.target !== undefined);
+  const ambient = a.def.effects.filter((e) => e.target === undefined);
+  if (directed.length > 0) {
+    // `target: "self"` lands on the caster whatever the aim says. This is the
+    // deliberate exception to the area gate below: Veil & Decoy is aimed three
+    // tiles away and still has to vanish *Wisp*, so its stealth cannot be
+    // conditioned on her standing where the decoy goes.
+    const onCaster = casterSafe(directed.filter((e) => e.target === 'self'));
+    if (onCaster.length > 0) applySelfEffects(draft, caster, onCaster, source, events);
+    // `target: "aimed"` is placed at the aimed square rather than on anybody.
+    const placed = directed.filter((e) => e.target === 'aimed');
+    if (placed.length > 0) {
+      applySelfEffects(draft, caster, placed, source, events, a.aim[0] ?? caster.pos);
+    }
+  }
   // Non-beneficial effects on this path are the caster's own business (a `decoy`
   // spawns at its feet; a self-cast's statuses), so they are applied whenever
   // the caster is in its own area — which for a self-cast is always. Minus the
   // harmful ones: CASTER-SAFE means your own Weaken or Root never lands on you,
   // however faithfully the area covers your square.
-  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, casterSafe(a.def.effects), source, events);
-  const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
+  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, casterSafe(ambient), source, events);
+  const boons = ambient.filter((e) => BENEFICIAL_KINDS.has(e.kind));
   if (boons.length === 0) return;
   for (const ally of draft.units) {
     if (!ally.alive || ally.owner !== caster.owner || ally.unitId === caster.unitId) continue;
@@ -1370,7 +1412,16 @@ function applyAreaBoons(
  * the caster of the AoE that reached an ally. The recipient is `unit`, which is
  * why the two are separate arguments — a support ability's log line needs both.
  */
-function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly AbilityEffect[], source: Source, events: TurnEvent[]): void {
+function applySelfEffects(
+  draft: GameState, unit: UnitState, effects: readonly AbilityEffect[], source: Source,
+  events: TurnEvent[],
+  /**
+   * W1 — where a `target: "aimed"` effect puts what it places. Absent means the
+   * recipient's own square, which is what every caller but one passes and what
+   * a decoy did unconditionally before W1.
+   */
+  placeAt?: Vec2,
+): void {
   for (const e of effects) {
     if (e.kind === 'heal') {
       const healed = applyHeal(unit, e.amount ?? 0);
@@ -1379,7 +1430,10 @@ function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly A
       applyStatus(unit, 'shield', e.duration ?? 1, e.amount ?? 0);
       events.push({ type: 'statusApplied', unitId: unit.unitId, status: 'shield', duration: e.duration ?? 1, amount: e.amount ?? 0, sourceUnitId: source.unitId, abilityId: source.abilityId });
     } else if (e.kind === 'decoy') {
-      spawnDecoy(draft, unit, events); // R2: a static fake at the caster's square
+      // R2 + W1: a static fake, at the aimed square if the effect names one and
+      // at the caster's feet otherwise. Only its LOCATION changed — it is still
+      // static, still dies to any damage, still blocks nothing.
+      spawnDecoy(draft, unit, e.target === 'aimed' ? placeAt ?? unit.pos : unit.pos, events);
     } else if (isStatusKind(e.kind)) {
       // DOT-HOT rides here too: the amount is per-turn rather than a shield
       // pool, and the author is carried so a tick that kills can credit a team.
@@ -1397,11 +1451,11 @@ function applySelfEffects(draft: GameState, unit: UnitState, effects: readonly A
  * `state.units`; expires at the end of the *next* turn (`castTurn + 1`) unless
  * destroyed first. Deterministic id from caster + turn (one cast per unit/turn).
  */
-function spawnDecoy(draft: GameState, caster: UnitState, events: TurnEvent[]): void {
+function spawnDecoy(draft: GameState, caster: UnitState, at: Vec2, events: TurnEvent[]): void {
   const decoy: DecoyState = {
     id: `decoy-${caster.unitId}-t${draft.turn}`,
     teamId: caster.owner,
-    pos: { x: caster.pos.x, y: caster.pos.y },
+    pos: { x: at.x, y: at.y },
     expiresOnTurn: draft.turn + 1,
   };
   draft.decoys.push(decoy);

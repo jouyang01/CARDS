@@ -103,6 +103,10 @@ describe('VALIDATE-KEYS: an unknown key is an error', () => {
       energyGain: 8,
       effects: [
         { kind: 'trap', amount: 25, lifetime: 1, halt: true, perTile: true, triggers: ['move', 'displacement'] },
+        // W1: `target` is an effect-level key, so it needs a home in the union
+        // below. `"self"` rather than `"aimed"` because this ability is a
+        // `wall` and the pairing is checked for real in `decoy-target.test.ts`.
+        { kind: 'shield', target: 'self', amount: 10, duration: 1 },
       ],
       description: 'test',
     };

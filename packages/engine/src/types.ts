@@ -132,8 +132,34 @@ export const EFFECT_KINDS = [
 ] as const;
 export type EffectKind = (typeof EFFECT_KINDS)[number];
 
+/**
+ * W1 — where one of an ability's effects lands, when that is not where the rest
+ * of them land.
+ *
+ * Almost every ability points all of its effects at one place, so this is
+ * absent almost everywhere and absent means **exactly today's routing**: the
+ * caster receives the effect if they stand in the ability's own area
+ * (MENDING-RANGE), and allies in the area receive its beneficial half.
+ *
+ *   • **`"self"`** — on the **caster**, whatever the aim says. An explicit
+ *     override of the area gate above, for the ability that does two things at
+ *     once: Wisp's Veil & Decoy vanishes *her* while placing a decoy three
+ *     tiles away, so the stealth cannot be area-gated to a square she is not
+ *     standing on.
+ *   • **`"aimed"`** — placed at the **aimed square**. For the effects that put
+ *     something on the board rather than on a unit.
+ *
+ * Generic rather than a decoy special case (golden rule #2): any future ability
+ * that buffs its caster while placing something at range gets this for free,
+ * with no engine change. `validate.ts` refuses `"aimed"` on a `self` shape,
+ * where there is no aim to place anything at.
+ */
+export type EffectTarget = 'self' | 'aimed';
+
 export interface AbilityEffect {
   kind: EffectKind;
+  /** W1 — see {@link EffectTarget}. Absent is today's routing, unchanged. */
+  target?: EffectTarget;
   /** Damage/heal/shield amount, or knockback/pull distance in squares. */
   amount?: number;
   /** Status duration in turns. */

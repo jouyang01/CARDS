@@ -100,12 +100,26 @@ describe('the render path honours Stealth exactly as specified', () => {
 });
 
 describe('and the shipped Veil & Decoy now survives to be seen', () => {
-  const castVeil = (s: GameState) => resolveTurn(
-    s, OPEN,
-    [{ team: 0, units: [{ unitId: wispId(s), freeAbility: { abilityId: 'veil_decoy', target: [] } }] },
-      { team: 1, units: [] }],
-    roster,
-  );
+  /**
+   * W1 carries an aim now: the decoy goes on a square up to 3 away rather than
+   * under Wisp's feet, so the cast names one. Two tiles north of wherever she
+   * is standing — in range, and never her own square, which DECOY-PLACEMENT
+   * refuses.
+   */
+  const castVeil = (s: GameState) => {
+    const wisp = s.units.find((u) => u.unitId === wispId(s))!;
+    return resolveTurn(
+      s, OPEN,
+      [{
+        team: 0,
+        units: [{
+          unitId: wispId(s),
+          freeAbility: { abilityId: 'veil_decoy', target: [{ x: wisp.pos.x, y: wisp.pos.y - 2 }] },
+        }],
+      }, { team: 1, units: [] }],
+      roster,
+    );
+  };
 
   it('the Stealth lands during the turn', () => {
     const { events } = castVeil(facing());

@@ -49,7 +49,7 @@ export const PROFILE_KEYS = [
 ] as const;
 
 /** Every key an `AbilityEffect` may carry — the same argument, one level down. */
-export const EFFECT_KEYS = ['kind', 'amount', 'duration', 'lifetime', 'halt', 'triggers', 'perTile'] as const;
+export const EFFECT_KEYS = ['kind', 'target', 'amount', 'duration', 'lifetime', 'halt', 'triggers', 'perTile'] as const;
 
 /** Every key a `PowerupPad` may carry (PADS1) — same argument again. */
 export const POWERUP_PAD_KEYS = ['x', 'y', 'type', 'firstTurn', 'everyTurns'] as const;
@@ -320,6 +320,16 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
       }
       if (!EFFECT_KINDS.includes(e.kind)) {
         errs.push(`${path}.effects[${i}]: unknown effect kind "${e.kind}"`);
+      }
+      // W1: `target` says where ONE effect lands when that differs from the
+      // rest. `"aimed"` needs an aim to land at, so a `self` shape cannot carry
+      // it — the same argument as `wallLength` off a wall.
+      if (e.target !== undefined) {
+        if (e.target !== 'self' && e.target !== 'aimed') {
+          errs.push(`${path}.effects[${i}]: target must be "self" or "aimed" when present`);
+        } else if (e.target === 'aimed' && a.shape === 'self') {
+          errs.push(`${path}.effects[${i}]: target "aimed" needs an aimed square — shape is "self"`);
+        }
       }
       if (e.amount !== undefined && !isInt(e.amount)) {
         errs.push(`${path}.effects[${i}]: amount must be an integer`);

@@ -19,6 +19,7 @@ import {
   chargeVictims,
   chargedUnits,
   lineImpact,
+  placementIsFree,
   abilityProfile,
   circleSquares,
   direction8,
@@ -359,9 +360,21 @@ export function aimLegal(unit: UnitState, ability: AbilityDef, aim: readonly Vec
  * Squares an ability's current aim would affect — exactly what the engine will
  * hit (`expandShape`). Empty when the aim is not yet legal, so the UI shows a
  * preview only for a valid aim.
+ *
+ * `state` is optional and exists for DECOY-PLACEMENT: whether a decoy may go on
+ * a square depends on who is standing there, which is a question about the
+ * board rather than about geometry. Callers that have the state pass it and get
+ * an empty preview over an occupied square — the same refusal the engine will
+ * make. Callers that do not are unchanged, and PREVIEW-AUDIT is the test that
+ * noticed the difference: the preview drew a decoy the order pipeline dropped.
  */
-export function abilityPreview(map: MapDef, unit: UnitState, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number): Vec2[] {
+export function abilityPreview(
+  map: MapDef, unit: UnitState, ability: AbilityDef, aim: readonly Vec2[], aimStep?: number,
+  state?: GameState,
+): Vec2[] {
   if (!aimLegal(unit, ability, aim, aimStep)) return [];
+  const target = aim[0];
+  if (target !== undefined && !placementIsFree(ability, target, state)) return [];
   // Same call the engine makes, same step — so the preview is exactly the tile
   // set that will be hit, rotation included.
   return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
@@ -939,6 +952,13 @@ export function commitAim(
   // asked for. There is no direction in a zero-length drag; refuse it.
   const directional = ability.shape === 'line' || ability.shape === 'cone';
   if (directional && vecEq(target, unit.pos)) return undefined;
+
+  // DECOY-PLACEMENT: a decoy may not be placed on an occupied square, and the
+  // aim is REFUSED rather than routed to the nearest free one — a decoy that
+  // slides elsewhere is a worse tell than a cast that does not happen. Refused
+  // at the click as well as at resolution so the board never offers a placement
+  // the engine will drop.
+  if (!placementIsFree(ability, target, state)) return undefined;
 
   // BLINK-ADJ removed the veto that used to sit here. A teleporting dash aimed
   // at an occupied square no longer fizzles at resolution — it lands on the
