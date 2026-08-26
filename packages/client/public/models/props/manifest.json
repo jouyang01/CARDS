@@ -3,20 +3,48 @@
     {
       "theme": "proving-floor",
       "role": "cover",
-      "kind": "barricade",
-      "file": "props/proving-floor_cover.glb",
-      "version": "53c8fc4c6886",
       "yawSteps": 2,
-      "height": 0.45
+      "height": 0.45,
+      "variants": [
+        {
+          "file": "props/proving-floor_cover_0.glb",
+          "version": "38013d09f240",
+          "kind": "barricade"
+        },
+        {
+          "file": "props/proving-floor_cover_1.glb",
+          "version": "5e50d855ab8c",
+          "kind": "barricade"
+        },
+        {
+          "file": "props/proving-floor_cover_2.glb",
+          "version": "1bbeeecb4dc7",
+          "kind": "block"
+        }
+      ]
     },
     {
       "theme": "proving-floor",
       "role": "wall",
-      "kind": "pillar",
-      "file": "props/proving-floor_wall.glb",
-      "version": "0583585f0ad4",
       "yawSteps": 4,
-      "height": 0.9
+      "height": 0.9,
+      "variants": [
+        {
+          "file": "props/proving-floor_wall_0.glb",
+          "version": "cbc36c3ae578",
+          "kind": "pillar"
+        },
+        {
+          "file": "props/proving-floor_wall_1.glb",
+          "version": "1c0c00c35068",
+          "kind": "pillar"
+        },
+        {
+          "file": "props/proving-floor_wall_2.glb",
+          "version": "5eec8c007609",
+          "kind": "pillar"
+        }
+      ]
     }
   ]
 }
