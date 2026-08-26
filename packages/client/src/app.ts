@@ -1769,7 +1769,13 @@ export function startHotSeat(
     const freeAim = previewFreeAim(map, state, unit, freeDef, draft, interaction);
     renderer.highlight(
       'free',
-      freeDef !== undefined && freeAim.length > 0 ? abilityPreview(map, unit, freeDef, freeAim) : [],
+      // `state` for the same two rules the normal slot passes it for
+      // (DECOY-PLACEMENT, BOLA-OVERLAY) — and it matters MOST here, because the
+      // ability those rules were written for, Veil & Decoy, is a free action and
+      // is previewed through this call and no other.
+      freeDef !== undefined && freeAim.length > 0
+        ? abilityPreview(map, unit, freeDef, freeAim, undefined, state)
+        : [],
       FREE,
       0.42,
     );
@@ -1782,7 +1788,7 @@ export function startHotSeat(
     renderer.highlight(
       'catalyst',
       catalystDef !== undefined && catalystAim.length > 0
-        ? abilityPreview(map, unit, catalystDef, catalystAim)
+        ? abilityPreview(map, unit, catalystDef, catalystAim, undefined, state)
         : [],
       CATALYST,
       0.42,
@@ -1830,7 +1836,7 @@ export function startHotSeat(
       ...(freeDef !== undefined && freeAim.length > 0
         ? [{
           def: freeDef,
-          squares: abilityPreview(map, unit, freeDef, freeAim),
+          squares: abilityPreview(map, unit, freeDef, freeAim, undefined, state),
           ...previewBandSets(map, unit, freeDef, freeAim),
           coverFrom: coverOrigin(freeDef, unit.pos, freeAim),
         }]
@@ -1838,7 +1844,7 @@ export function startHotSeat(
       ...(catalystDef !== undefined && catalystAim.length > 0
         ? [{
           def: catalystDef,
-          squares: abilityPreview(map, unit, catalystDef, catalystAim),
+          squares: abilityPreview(map, unit, catalystDef, catalystAim, undefined, state),
           ...previewBandSets(map, unit, catalystDef, catalystAim),
           coverFrom: coverOrigin(catalystDef, unit.pos, catalystAim),
         }]

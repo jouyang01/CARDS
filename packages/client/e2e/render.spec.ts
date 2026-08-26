@@ -1257,14 +1257,40 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
       const veil = page.locator('.hud-ability.free').first();
       await expect(veil).toBeVisible();
       await veil.click();
-      // A `self` free action commits on selection — no board click to make.
       await expect(veil).toHaveClass(/sel/);
+      // W1: Veil & Decoy is no longer a `self` cast that commits on selection.
+      // It places the decoy on an aimed square up to 3 away, so the drive has
+      // to click one — and DECOY-PLACEMENT refuses an occupied square, so it
+      // cannot be Wisp's own tile either.
+      //
+      // The tile size is MEASURED rather than derived from the map: team 0's
+      // two spawns on `duel-arena` are (1,4) and (1,6), exactly two tiles
+      // apart, so half the vertical gap between the seat's two bodies is one
+      // tile on screen. That sidesteps the camera entirely — the board does not
+      // fill its clip, so `(x + 0.5) / width` lands on the wrong square, which
+      // is what three earlier attempts at this all got wrong in different ways.
+      //
+      // One tile EAST of a body is (2,4) or (2,6): open floor on this map,
+      // nobody standing on it, and within Euclidean range 3 of both spawns —
+      // which matters, because nothing here knows which of the two Wisp is. So
+      // both clicks are legal aims and whichever belongs to Wisp commits.
+      const armedImage = await pixels(page);
+      const clip2 = await boardClip(page);
+      const sc2 = { x: clip2.width / armedImage.width, y: clip2.height / armedImage.height };
+      const rows = blueBodies(armedImage).sort((a, b) => a.y - b.y);
+      expect(rows.length, 'the seat drew no bodies to measure a tile from').toBeGreaterThan(1);
+      const tile = Math.abs(rows[rows.length - 1]!.y - rows[0]!.y) / 2;
+      for (const body of rows) {
+        await page.mouse.click(clip2.x + (body.x + tile) * sc2.x, clip2.y + body.y * sc2.y);
+        await page.waitForTimeout(200);
+      }
       cast = true;
     }
     await lock.click();
     await page.waitForTimeout(200);
   }
   expect(cast, "never reached Wisp's seat to cast Veil & Decoy").toBe(true);
+
 
   // Lock the remaining seats so the turn resolves, then let playback finish.
   for (let i = 0; i < 4; i++) {
