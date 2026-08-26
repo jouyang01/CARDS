@@ -7521,3 +7521,32 @@ is the first one.
 
 Rim verified by mutation: strength 0.34 against 0.0 differs by 10,746 pixels, max channel
 delta 120, bounded to x 411–553 / y 218–496 — exactly the two units, no terrain.
+
+---
+
+## 2026-08-26 — Map visuals: taller/varied wall pillars, and cover goes all-wooden (owner feedback)
+
+Owner feedback on the shipped Proving Floor props, addressed on the map-visual side.
+
+**Walls are taller and varied in height now, and that is not a violation of "the read survives".**
+The prop pipeline shipped with pillars pinned to exactly `WALL_HEIGHT` (0.9), on the reasoning
+that a prop must not change how tall a square reads. But a wall is a *full* line-of-sight blocker
+whatever it is drawn at — the engine blocks by tile type, not by pixels — so a taller pillar does
+not change what the square does, and a taller, uneven colonnade reads *more* clearly as
+wall-not-cover, not less. Heights are now per-variant: broken ruin 1.15, standing 1.5, heavy 1.75
+(the broken one deliberately the shortest, a stump). The renderer already places a wall `.glb` at
+its own authored height (it never scales walls), so this is a data change; the props-off box
+fallback the pixel tests use stays at 0.9, which is fine because it is never a player's view.
+
+**Cover is all thin wooden barricade now — the masonry block is gone.** The block variant read as a
+solid cube, and because COVER-EDGE sits a cover prop on the tile boundary with its own footprint,
+the block's full 0.86 footprint swallowed the tile and hid the board behind it — the owner's "these
+cover too much". A barricade is thin in depth (the renderer does not thin the footprint, only the
+`.glb` geometry does), so all three cover variants are now barricades — a light 4-stake fence, a
+dense 5-stake one, and a gappy 3-heavy-stake palisade — which sit on the edge as a thin fence line
+and let the board read through. Every cover variant still normalises to `EDGE_COVER_HEIGHT` (0.8),
+so their variety is silhouette, not height.
+
+**Regenerated in-container.** Blender 4.0.2 + `python3-numpy` installed in the session, so the six
+`.glb` were rebuilt here and verified in the browser rather than handed back for a manual run.
+Palette albedos stay under the value-budget ceiling (185).
