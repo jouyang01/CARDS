@@ -45,6 +45,18 @@ export interface ParticleSpec {
   speedTiles: number;
   size: number;
   shade: Shade;
+  /**
+   * How the particles MOVE, and where they are allowed to fire.
+   *
+   * `debris` (the default) is the ballistic hit-spray: it launches, falls under
+   * gravity, and only an `impact` throws it — the language of damage.
+   *
+   * `drift` is cold weightless smoke (brief §5): no launch, no gravity, a slow
+   * ease outward that settles and lingers. It also fires on a CAST, not only an
+   * impact, so a vanish or a blink can leave smoke where the caster WAS — the
+   * signature a ring cannot draw. Wisp's whole kit is drift.
+   */
+  style?: 'debris' | 'drift';
 }
 
 /**
@@ -54,7 +66,7 @@ export interface ParticleSpec {
  * named value because "this one deals damage and deliberately shows no debris"
  * is a real design position, and it should be sayable.
  */
-export const NO_PARTICLES: ParticleSpec = { count: 0, beats: 0, speedTiles: 0, size: 0, shade: 'core' };
+export const NO_PARTICLES: ParticleSpec = { count: 0, beats: 0, speedTiles: 0, size: 0, shade: 'core', style: 'debris' };
 
 /**
  * What every landed hit throws when the table says nothing.
@@ -73,7 +85,7 @@ export const NO_PARTICLES: ParticleSpec = { count: 0, beats: 0, speedTiles: 0, s
  * a neutral one. The table's job is to override this, not to enable it.
  */
 export const DEFAULT_PARTICLES: ParticleSpec = {
-  count: 11, beats: 0.7, speedTiles: 1.7, size: 0.08, shade: 'core',
+  count: 11, beats: 0.7, speedTiles: 1.7, size: 0.08, shade: 'core', style: 'debris',
 };
 
 /**
@@ -160,7 +172,47 @@ const spec = (raw: Partial<ParticleSpec> | undefined): ParticleSpec =>
     speedTiles: raw.speedTiles ?? DEFAULT_PARTICLES.speedTiles,
     size: raw.size ?? DEFAULT_PARTICLES.size,
     shade: raw.shade ?? DEFAULT_PARTICLES.shade,
+    style: raw.style ?? DEFAULT_PARTICLES.style,
   };
+
+/** How high drifting smoke hovers, in tiles — low and weightless, not chest-high. */
+export const DRIFT_LIFT = 0.32;
+
+/**
+ * A slow, weightless drift of smoke — the `drift` counterpart to `burstAt`.
+ *
+ * The opposite motion to debris: no launch and no gravity, so nothing rises and
+ * falls. Each puff eases OUTWARD and settles (fast then slowing), swells soft as
+ * it thins, and lingers rather than popping — cold weightless smoke (brief §5).
+ * Deterministic from the same seed, so a replay drifts identically on every
+ * machine, exactly like the burst it stands in for.
+ */
+export function driftAt(
+  spec: ParticleSpec, at: Vec2, seed: number, age: number, weight: number, color: number,
+): Particle[] {
+  if (spec.count <= 0 || !(spec.beats > 0)) return [];
+  if (age < 0 || age >= spec.beats) return [];
+  const p = age / spec.beats;
+  const count = Math.max(1, Math.round(spec.count * (0.5 + 0.5 * weight)));
+  const eased = 1 - (1 - p) * (1 - p);          // ease-out: quick, then settling
+  const opacity = Math.min(1, p * 6) * (1 - p) * 0.8;   // appears fast, long soft fade
+  const out: Particle[] = [];
+  for (let i = 0; i < count; i++) {
+    const angle = unitRandom(seed, i * 3) * Math.PI * 2;
+    const reach = spec.speedTiles * spec.beats * (0.25 + 0.35 * unitRandom(seed, i * 3 + 1));
+    out.push({
+      x: at.x + Math.cos(angle) * reach * eased,
+      y: at.y + Math.sin(angle) * reach * eased,
+      // No buoyancy: it hovers low, each puff at a slightly different height, and
+      // stays there — never the launch-and-fall arc a burst draws.
+      lift: DRIFT_LIFT * (0.5 + unitRandom(seed, i * 3 + 2)),
+      size: spec.size * (0.9 + 1.1 * p),        // swells as it dissipates
+      color,
+      opacity,
+    });
+  }
+  return out;
+}
 
 /**
  * This character's particle spec for an ability.
@@ -178,9 +230,14 @@ export function particlesFor(table: VfxTable, characterId: string, abilityId: st
 /**
  * Every fragment in the air at `t`.
  *
- * Hangs off `impact` cues only. A heal or a shield landing is not an impact —
- * nothing was broken — and the ring the aura throws is the right vocabulary for
- * it. Debris is specifically the language of damage.
+ * DEBRIS hangs off `impact` cues only. A heal or a shield landing is not an
+ * impact — nothing was broken — and the ring the aura throws is the right
+ * vocabulary for it. Debris is specifically the language of damage.
+ *
+ * DRIFT (`style: 'drift'`) also fires on an `ability` CAST, not only an impact:
+ * a vanish or a blink leaves smoke where the caster WAS, which no ring can draw.
+ * The cast is keyed and tinted by its caster (`unitId`) at full weight; an impact
+ * is tinted by its caster (`sourceUnitId`) and scaled by the damage, as before.
  */
 export function particlesAt(
   cues: readonly Cue[],
@@ -191,21 +248,34 @@ export function particlesAt(
 ): Particle[] {
   const out: Particle[] = [];
   for (const cue of cues) {
-    if (cue.kind !== 'impact') continue;
-    // The CASTER's character decides the tint, but not whether there is any:
-    // a hit from a unit nothing is known about still broke something.
-    const characterId = characterOf(cue.sourceUnitId);
+    let characterId: string | undefined;
+    let at: Vec2 | undefined;
+    let weight: number;
+    if (cue.kind === 'impact') {
+      // The CASTER decides the tint, but not whether there is any: a hit from a
+      // unit nothing is known about still broke something.
+      characterId = characterOf(cue.sourceUnitId);
+      at = positionOf(cue.unitId);
+      weight = weightOf(cue.amount);
+    } else if (cue.kind === 'ability') {
+      characterId = characterOf(cue.unitId);
+      at = positionOf(cue.unitId);
+      weight = 1;
+    } else {
+      continue;
+    }
     const s = characterId === undefined
       ? DEFAULT_PARTICLES
       : particlesFor(table, characterId, cue.abilityId);
     if (s.count <= 0) continue;
-    const at = positionOf(cue.unitId);
+    const drift = s.style === 'drift';
+    // Debris never fires on a cast — only smoke drifts from a vanish.
+    if (cue.kind === 'ability' && !drift) continue;
     if (at === undefined) continue;
     const shade = characterId === undefined ? undefined : table[characterId]?.palette[s.shade];
     const color = shade === undefined ? NEUTRAL_DEBRIS : hexColour(shade);
-    out.push(...burstAt(
-      s, at, seedOf(`${cue.unitId}@${cue.t}`), t - cue.t, weightOf(cue.amount), color,
-    ));
+    const emit = drift ? driftAt : burstAt;
+    out.push(...emit(s, at, seedOf(`${cue.unitId}@${cue.t}`), t - cue.t, weight, color));
   }
   return out;
 }
