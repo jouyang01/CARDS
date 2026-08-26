@@ -7610,3 +7610,84 @@ tests had to be *restated* rather than added to, because they asserted the old r
 (`seatUnitIds.size === 1` at `[2, 2]`, and "your teammate's character is an ally" in a hot-seat) —
 recorded because a test that encodes a behaviour the owner then calls a bug is not a test that was
 wrong to write, but it is one that has to change with the ruling rather than outvote it.
+
+---
+
+## 2026-08-26 — Builder session 18 (VFX-FLASH-VERIFY, RENDER-SUITE-GREEN-4, FOF-OUTLINE)
+
+**VFX-FLASH-VERIFY — the flash lands, and the regression was real but is already fixed.** Diagnosed
+before touching anything, as the item required. Filmed a Blast on the frozen clock and measured each
+frame as a **grid** rather than a total: at impact one 48px cell goes `0 → 1985 → 0` while the whole
+board goes `553 → 7953 → 468`. The victim flash reaches the screen, unoccluded and unclamped.
+
+It *was* a real regression, and the baseline says why. Session 17 measured lit pixels at **~6670**;
+they now sit at **~400**. Something re-graded the scene in between — the value budget, the tinted
+rig, the ACES revert, all named as suspects — and against a 6670 baseline a flash worth ~1400 was a
+20% wobble on a number that was already moving. Another session's work fixed the cause; nothing here
+had to.
+
+**Judgment call — the assertion goes local even though the global one now passes.** Both branches of
+the AC end in the same place ("assert a **local** spike"), and the reason survives the diagnosis: a
+flash is *one unit lighting up*, so measuring it locally is immune to whatever the rest of the frame
+does. The global count never had that property and could not be given it — it will break again the
+next time somebody re-grades the scene, and it will break as a false accusation rather than a
+finding. Calibrated against the mutant like its predecessor: **1985** with the flash, **280** with
+`paintFlash` stubbed, floor at 800 (2.5× under the signal, 2.9× over the noise). Verified failing
+with the mutant in, passing with it out.
+
+**Incidental — the 90-frame capture is streamed now.** Holding ninety decoded frames is ~270MB and
+took the container down once during this diagnosis. Only the per-frame grids are kept.
+
+**RENDER-SUITE-GREEN-4 — both halves were already implemented before this session started.** The pad
+pair now drives `?map=iron-basin&format=4v4`, and FOG-ZORDER now drives a unit onto the centre brush
+band over several turns ("Driven into range on purpose"). Both pass. **The pad half was implemented
+the way the Analyzer ruled against** — the ruling says *"Not moving it to Iron Basin for its pad
+pairs — that couples the test to one map's layout"*, and Iron Basin is exactly where it went. Left
+alone rather than re-specced, and flagged: the ruling's stated premise (a consumed pad is
+unobservable, so "still drawn" cannot be asserted) is contradicted by the test now observing it, and
+rewriting a passing test to a weaker guarantee at a longer runtime on a premise the evidence no
+longer supports is not a Builder call. See Open Questions.
+
+**FOF-OUTLINE — not built. Two independent gates, neither of which is mine to open.** Recorded in
+full because "skipped" on its own is useless to whoever picks it up.
+
+1. **The item is conditional and the condition is unmet.** *"Confirm in the playtest first whether
+   ring + nameplate already read clearly enough — if so, this can wait."* No such confirmation
+   exists. The owner's playtest notes since FOF-UNITS have been bug reports — the lock-in green
+   flip, the white side bars, the ring weight, an enemy rendering as a red block — not "I still
+   cannot tell friend from foe".
+2. **The ruled technique is forbidden by name in shipped code.** The Spec Note says to tint the
+   achromatic rim light. `rim.ts`'s header calls achromaticity *"a hard constraint rather than a
+   taste"* and reserves the silhouette **for** the FoF outline; `rim.test.ts`'s `RIM-ACHROMATIC`
+   asserts it and lists the three FoF hues as the thing it is guarding against.
+
+   Worth saying plainly for whoever rules: **the two documents agree on intent and differ on
+   letter.** The rim's objection is that a tint would be *"a fourth colour competing for a channel
+   that now means whose side are they on"* — and if the rim *is* the FoF colour there is no fourth
+   colour, it is the same channel doing the same job. So this is a one-line ruling, not a redesign.
+   But it overturns a shipped constraint with a test behind it, on an item whose own precondition is
+   unmet, which is two reasons not to guess at it.
+
+## Open Questions for the Analyzer — 2026-08-26
+
+**1. FOF-OUTLINE is blocked on a playtest signal, and its technique needs a ruling (FOF-OUTLINE;
+`packages/client/src/rim.ts`, `packages/client/test/rim.test.ts`).** Does the owner want more than
+ring + nameplate? And if so: `RIM-ACHROMATIC` forbids the ruled technique by name. Suggested
+resolution above — the rim becomes the FoF outline rather than competing with one, which satisfies
+the rim doc's *intent* while replacing its letter. Needs the constraint re-spec'd, not just the item
+scheduled, or the next Builder hits the same wall.
+
+**2. The pad test went to Iron Basin, which RENDER-SUITE-GREEN-4 ruled against (RENDER-SUITE-GREEN-4;
+`e2e/render.spec.ts` RENDER-COVERAGE).** It passes there. The ruling's premise — that a consumed pad
+is unobservable — no longer holds. Either the ruling stands and the test owes a re-spec to "re-arms
+on its `everyTurns` cycle" (which needs a drive that actually steps a unit onto a pad, and is slower
+than what is there), or the Iron Basin version is accepted and the ruling retired. Not re-specced
+this session because both readings are defensible and the current one is green.
+
+**3. The victim-flash regression was fixed by a session that was not looking for it.** Scene
+luminance moved by ~16× between session 17 and now, and the only thing that noticed was a test
+failing for what looked like an unrelated reason. Worth asking whether the render passes that move
+grading should carry a luminance guard of their own, so the next re-grade reports itself rather than
+surfacing as a broken VFX assertion. Not proposed as an item — flagged as a gap.
+
+**4. No engine work this session, as instructed.** Every change is in `packages/client`.
