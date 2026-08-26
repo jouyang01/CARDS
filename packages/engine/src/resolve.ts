@@ -1766,7 +1766,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     const blasts = impactBlasts(board, a.def, origin, plan.unit.pos);
 
     // Damage. A charge hits the UNITS it crossed — the first only (R1a's shape,
-    // now "first unit" under FF1-charge) or every one (`chargeHits: "all"`, e.g.
+    // now "first unit" under FF1-charge) or every one (`hits: "all"`, e.g.
     // Tempest Run) — and those include allies, because a directly aimed attack
     // does not filter by team (FF1). An `impact` is an **area**, so FF1 polarity
     // does apply to it: harmful effects reach enemies only.
@@ -1791,7 +1791,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // then does nothing with, which is the class of bug this item is.
     if (dmg !== undefined || riders.length > 0) {
       // The shared derivation (RAM-LINE-PREVIEW-FIX): ALLY-SAFE trims, then
-      // `chargeHits` takes the first or all. The preview calls the same function,
+      // `hits` takes the first or all. The preview calls the same function,
       // so the number a player reads on a crossed enemy is the hit they get.
       const crossedVictims = chargeVictims(a.def, plan.unit.owner, crossed)
         .map((u) => ({ unit: u, from: origin }));
@@ -1929,7 +1929,7 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
  * square, so it rests on the furthest path square that is free (or holds if none
  * is). Walls/cover never appear in the path (validated). Returns every UNIT whose
  * square lies on the path, in path order — allies included (FF1-charge) — and the
- * caller applies `chargeHits` to take the first or all of them.
+ * caller applies `hits` to take the first or all of them.
  */
 export function chargedUnits(
   units: readonly UnitState[], casterId: string, path: readonly Vec2[],
@@ -1950,12 +1950,12 @@ export function chargedUnits(
  *
  * Exported, and this is the whole point of it being exported: the **preview** has
  * to answer the same question, and a client that worked it out for itself would
- * be a second implementation of `chargeHits` to drift from this one. Kestrel's
- * Skim is `path` with no `chargeHits` — first-enemy-only — and the preview was
+ * be a second implementation of `hits` to drift from this one. Kestrel's
+ * Skim is `path` with no `hits` — first-enemy-only — and the preview was
  * stamping a damage number on *every* enemy on the route, promising a hit that
  * never lands.
  *
- * ALLY-SAFE trims before `chargeHits` counts, so an ability that spares its team
+ * ALLY-SAFE trims before `hits` counts, so an ability that spares its team
  * does not spend its single hit on a teammate it was never going to damage.
  */
 export function chargeVictims(
@@ -1965,7 +1965,41 @@ export function chargeVictims(
   const run = def.noFriendlyFire === true
     ? crossed.filter((u) => u.owner !== casterOwner)
     : [...crossed];
-  return def.chargeHits === 'all' ? run : run.slice(0, 1);
+  return def.hits === 'all' ? run : run.slice(0, 1);
+}
+
+/**
+ * HITS — where a `hits: "first"` **line** stops: the square of the nearest enemy
+ * standing in the beam, or `undefined` if nothing stops it.
+ *
+ * *"Bola should slow and only hit the first enemy in the line."* The beam no
+ * longer pierces, so two questions need the same answer — **who is hit**
+ * (`runBlast`) and **how far the overlay is drawn** (BOLA-OVERLAY, client). One
+ * exported function so the drawn line and the resolved line cannot disagree; a
+ * client that worked the stop out for itself would be a second implementation to
+ * drift from this one, which is the bug RAM-LINE-PREVIEW-FIX already fixed once
+ * for charges.
+ *
+ * `area` is `lineSquares`' output, which walks `d = 1..range` outward, so "the
+ * first enemy" is the first hit in list order — deterministic, no new geometry,
+ * no distance arithmetic.
+ *
+ * **Allies never block or absorb** (edge-cases, RULED — HITS): a teammate in the
+ * beam is not a wall and does not spend the shot. `undefined` for any ability
+ * this rule does not apply to, so a caller can treat it as "nothing truncates
+ * this" without asking about the shape twice.
+ */
+export function lineImpact(
+  def: AbilityDef, casterOwner: TeamId, area: readonly Vec2[], units: readonly UnitState[],
+): Vec2 | undefined {
+  // Absent means "pierce" for a line — see `AbilityDef.hits`. Only an explicit
+  // `"first"` stops the beam, which is what keeps every shipped line unchanged.
+  if (def.shape !== 'line' || def.hits !== 'first') return undefined;
+  for (const square of area) {
+    const enemy = units.find((u) => u.alive && u.owner !== casterOwner && vecEq(u.pos, square));
+    if (enemy !== undefined) return { x: square.x, y: square.y };
+  }
+  return undefined;
 }
 
 function walkCharge(draft: GameState, board: Board, unit: UnitState, path: readonly Vec2[], events: TurnEvent[], trapHits: TrapHits): UnitState[] {
@@ -2199,12 +2233,23 @@ function runBlast(
     // a bullet's cover is decided by where the bullet came from, and for direct
     // fire that is still the shooter.
     const blastOrigin = coverOrigin(a.def, plan.unit.pos, a.aim);
+    // HITS: a `hits: "first"` line stops at the nearest enemy in the beam, so
+    // the area names where it *reached* and this names who it *reached*. Only
+    // that one unit is affected — allies neither block it nor take it, which is
+    // the ruled reading of "only hit the first enemy in the line".
+    const stopAt = lineImpact(a.def, plan.unit.owner, a.area, draft.units);
+    const stoppedOn = stopAt === undefined
+      ? undefined
+      : draft.units.find((u) => u.alive && u.owner !== plan.unit.owner && vecEq(u.pos, stopAt));
     let hitEnemy = false;
     // ALLY-SAFE (Dev Note #11): FF1's default is that an attack endangers
     // whoever is standing in it. An ability may opt out of the friendly half.
     const allySafe = a.def.noFriendlyFire === true;
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
+      // HITS: when the beam stops, everyone past the stop — and every ally it
+      // flew through on the way — is simply not in it.
+      if (stoppedOn !== undefined && target.unitId !== stoppedOn.unitId) continue;
       const enemy = target.owner !== plan.unit.owner;
       const self = target.unitId === plan.unit.unitId; // CASTER-SAFE
       const untargetable = isUntargetable(target); // UNTGT1

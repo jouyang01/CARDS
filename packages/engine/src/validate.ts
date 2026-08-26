@@ -37,7 +37,7 @@ const COVER_FACINGS: readonly CoverFacing[] = ['N', 'S', 'E', 'W'];
  */
 export const ABILITY_KEYS = [
   'id', 'name', 'phase', 'shape', 'range', 'radius', 'cooldown', 'energyGain',
-  'delayTurns', 'chargeHits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
+  'delayTurns', 'hits', 'free', 'melee', 'axisBonus', 'beamWidth', 'innerRadius', 'innerAmount',
   'oncePerMatch', 'impact', 'modes', 'selfDamagePct', 'noFriendlyFire', 'selfHarm', 'wallLength', 'lobbed',
   'allyTarget',
   'effects', 'description',
@@ -242,11 +242,17 @@ export function validateAbility(a: AbilityDef, path: string, isUltimate = false)
   if (a.delayTurns !== undefined && (!isInt(a.delayTurns) || a.delayTurns < 1)) {
     errs.push(`${path}: delayTurns must be an integer >= 1 when present`);
   }
-  if (a.chargeHits !== undefined) {
-    if (a.chargeHits !== 'first' && a.chargeHits !== 'all') {
-      errs.push(`${path}: chargeHits must be "first" or "all" when present`);
+  // HITS: how many of the units a directly-aimed shape reaches it actually
+  // affects. Valid on the two shapes that reach *through* things — a `path`
+  // charge and a `line` — and meaningless on the rest, where the footprint
+  // already says who is in it.
+  if (a.hits !== undefined) {
+    if (a.hits !== 'first' && a.hits !== 'all') {
+      errs.push(`${path}: hits must be "first" or "all" when present`);
     }
-    if (a.shape !== 'path') errs.push(`${path}: chargeHits is only valid on a "path" (charge) ability`);
+    if (a.shape !== 'path' && a.shape !== 'line') {
+      errs.push(`${path}: hits is only valid on a "line" or a "path" (charge) ability`);
+    }
   }
   // FREE1: `free` is only ever safe under both of these. A free Dash/Blast
   // would be a repeatable extra attack (that job belongs to catalysts, which are

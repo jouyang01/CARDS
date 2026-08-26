@@ -305,12 +305,38 @@ export interface AbilityDef {
   /** Resolves this many turns later, at the originally aimed squares. */
   delayTurns?: number;
   /**
-   * For a damaging `path` dash only: which crossed enemies its effects hit.
-   * `"first"` (default/absent) = the first enemy whose square it crosses (R1a);
-   * `"all"` = every enemy crossed (R1b, e.g. Kestrel's Tempest Run). Rejected on
-   * any non-`path` shape (validate.ts).
+   * HITS — for the two shapes that reach *through* things, how many of the units
+   * they reach the effects actually apply to.
+   *
+   * Named `hits` rather than `chargeHits` because it is not about charges: a
+   * `line` asks the same question a `path` does, and one field answering it for
+   * both is the reusable version (golden rule #2). Rejected on every other shape
+   * — a `cone` or a `circle` covers an area, and its footprint already says who
+   * is in it.
+   *
+   *   • **`path`** (a charge) — `"first"` (**the default when absent**) is the
+   *     first unit whose square it crosses (R1a); `"all"` is every one (R1b,
+   *     Kestrel's Tempest Run, Bastion's Ram Charge). Allies count, because
+   *     FF1-charge makes a charge a directly aimed attack that hits whoever is
+   *     standing in it — unless the ability is `noFriendlyFire`.
+   *   • **`line`** — `"first"` applies the effects to the first **enemy**
+   *     encountered walking the line outward (Wisp's Bola). `"all"` — **and
+   *     absent, which is what every shipped line is** — pierces and reaches
+   *     everything in the beam, exactly as before HITS existed.
+   *
+   * **The default is per-shape on purpose, and both halves preserve today's
+   * behaviour.** A `path` has always been first-only when un-annotated; a `line`
+   * has always pierced. Defaulting `line` to `"first"` would silently rewrite
+   * every beam in the game — Rail Shot, Radiant Lash, Warding Wall — which is a
+   * roster-wide balance change nobody asked for, and it would make BOLA-HITS
+   * (which exists to *add* `"first"` to the bola) a no-op.
+   *
+   * **Allies never block or absorb a `line`.** `"first"` selects the first
+   * *enemy*; a teammate standing in the beam is not a wall and does not spend
+   * the shot. Consistent with "units never block" and with no-friendly-fire —
+   * no new ruling (edge-cases, RULED — HITS).
    */
-  chargeHits?: 'first' | 'all';
+  hits?: 'first' | 'all';
   /**
    * A **free action** (FREE1): may be declared *in addition to* a normal
    * ability, and never reduces the move budget or blocks Sprint. Absent/false is

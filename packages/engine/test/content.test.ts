@@ -386,17 +386,34 @@ describe('validators catch bad content', () => {
     expect(validateMap(m).some((e) => e.includes('out of bounds'))).toBe(true);
   });
 
-  it('rejects a chargeHits value other than "first"/"all" (R1b)', () => {
+  it('rejects a hits value other than "first"/"all" (R1b)', () => {
     const c = structuredClone(kestrel) as unknown as CharacterDef;
-    (c.ultimate as { chargeHits?: string }).chargeHits = 'some';
-    expect(validateCharacter(c).some((e) => e.includes('chargeHits must be'))).toBe(true);
+    (c.ultimate as { hits?: string }).hits = 'some';
+    expect(validateCharacter(c).some((e) => e.includes('hits must be'))).toBe(true);
   });
 
-  it('rejects chargeHits on a non-path ability (R1b)', () => {
+  it('accepts hits on a LINE now, not only on a path (HITS)', () => {
+    // HITS widened the field: a `line` asks the same question a charge does —
+    // does the beam stop at the first thing it meets, or pierce — so Wisp's
+    // bola can be `hits: "first"` in data with no engine special case.
     const c = structuredClone(vex) as unknown as CharacterDef;
     const line = c.abilities.find((a) => a.shape === 'line')!;
-    (line as { chargeHits?: string }).chargeHits = 'all';
-    expect(validateCharacter(c).some((e) => e.includes('only valid on a "path"'))).toBe(true);
+    (line as { hits?: string }).hits = 'first';
+    expect(validateCharacter(c).filter((e) => e.includes('hits'))).toEqual([]);
+  });
+
+  it('but still rejects hits on a shape that covers an AREA (HITS)', () => {
+    // A cone or a circle already says who is in it by its footprint, so `hits`
+    // there is a field the engine never reads — the silent-no-op class this
+    // whole validator exists to catch.
+    for (const shape of ['cone', 'circle', 'square', 'self', 'wall'] as const) {
+      const c = structuredClone(vex) as unknown as CharacterDef;
+      const target = c.abilities.find((a) => a.shape === shape)
+        ?? Object.assign(c.abilities[0]!, { shape, ...(shape === 'wall' ? { wallLength: 2 } : {}) });
+      (target as { hits?: string }).hits = 'all';
+      expect(validateCharacter(c).some((e) => e.includes('only valid on a "line" or a "path"')), shape)
+        .toBe(true);
+    }
   });
 
   it('VALIDATE-GUARD-IMPACT: rejects a guard and an impact on one ability', () => {

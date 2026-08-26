@@ -5,7 +5,7 @@ import {
   type CatalystData, type CharacterDef, type GameState, type Roster, type UnitOrders, type Vec2,
 } from '@cards/engine';
 import { startHotSeat } from '../src/app.js';
-import { chargeHitList } from '../src/targeting.js';
+import { abilityHitList } from '../src/targeting.js';
 import { OPEN_MAP, aimAt, armAbility, layer, mountUI } from './app-harness.js';
 import catalystData from '../../../data/catalysts.json';
 import bastion from '../../../data/characters/bastion.json';
@@ -28,13 +28,13 @@ import vex from '../../../data/characters/vex.json';
  * shape layer** — the first two tests below are the old outline assertions
  * turned around, and they fail before the revert.
  *
- * **Kept — the `chargeHits` numbers.** The route covers everybody standing on
- * it; `chargeHits` decides how many are hit — `"all"` for Ram Charge and Tempest
+ * **Kept — the `hits` numbers.** The route covers everybody standing on
+ * it; `hits` decides how many are hit — `"all"` for Ram Charge and Tempest
  * Run, first-only by omission for everything else. Kestrel's Skim was stamping
  * its damage on *every* enemy on the route and hitting one. That is not part of
  * "how it was before" worth restoring: it is a preview that lies, of the class
  * PREVIEW-NUMBERS-AUDIT exists to prevent, and it is invisible to Ram Charge
- * anyway (`chargeHits:"all"` hits everyone the numbers name). The rest of this
+ * anyway (`hits:"all"` hits everyone the numbers name). The rest of this
  * file is that half, unchanged.
  */
 
@@ -114,7 +114,7 @@ describe('RAM-PREVIEW-REVERT: the charge draws no outline again', () => {
     expect(layer(b.renderer, 'impact').map(key)).toEqual(['12,10']);
   });
 
-  it('and a chargeHits:"all" charge still numbers EVERY crossed enemy', () => {
+  it('and a hits:"all" charge still numbers EVERY crossed enemy', () => {
     // The third thing "before" had and keeps. Pinned here so a revert that
     // reached one function too far would be caught.
     const b = queued(BASTION);
@@ -126,14 +126,14 @@ describe('RAM-PREVIEW-REVERT: the charge draws no outline again', () => {
 
 describe('RAM-PREVIEW-REVERT keeps the fix: a first-only charge previews one hit', () => {
   it('Kestrel\'s Skim numbers the FIRST enemy on the route and no other', () => {
-    // The half that is NOT going back. Skim is `path` with no `chargeHits`, so
+    // The half that is NOT going back. Skim is `path` with no `hits`, so
     // the engine hits one — and the preview stamped its damage on both. Nothing
     // in the roster sweep could see it: one enemy at a fixed aim reads the same
     // under either rule.
     const b = queued(KESTREL);
     armAbility(b.controls, SKIM.name);
     aimAt(b.board, { x: 12, y: 10 }, 'mousemove');
-    expect(SKIM.chargeHits, 'first-only, by omission').toBeUndefined();
+    expect(SKIM.hits, 'first-only, by omission').toBeUndefined();
     expect(readouts(), 'one number, not two').toEqual([String(SKIM_DAMAGE)]);
   });
 
@@ -142,7 +142,7 @@ describe('RAM-PREVIEW-REVERT keeps the fix: a first-only charge previews one hit
     // which is the property PREVIEW-NUMBERS-AUDIT holds for every other shape.
     const b = queued(KESTREL);
     const aim = [{ x: 9, y: 10 }, { x: 10, y: 10 }, { x: 11, y: 10 }, { x: 12, y: 10 }];
-    const previewed = chargeHitList(b.state, b.me, SKIM, aim);
+    const previewed = abilityHitList(OPEN_MAP, b.state, b.me, SKIM, aim);
     expect(previewed).toHaveLength(1);
 
     const roster: Roster = buildRoster([KESTREL, VEX]);
@@ -160,18 +160,20 @@ describe('RAM-PREVIEW-REVERT keeps the fix: a first-only charge previews one hit
     // abilities, two different answers.
     const ram = queued(BASTION);
     const aim = [{ x: 9, y: 10 }, { x: 10, y: 10 }];
-    expect(chargeHitList(ram.state, ram.me, RAM, aim), 'all').toHaveLength(2);
+    expect(abilityHitList(OPEN_MAP, ram.state, ram.me, RAM, aim), 'all').toHaveLength(2);
     document.body.replaceChildren();
     const skim = queued(KESTREL);
-    expect(chargeHitList(skim.state, skim.me, SKIM, aim), 'first').toHaveLength(1);
+    expect(abilityHitList(OPEN_MAP, skim.state, skim.me, SKIM, aim), 'first').toHaveLength(1);
   });
 
   it('a non-charge shape is not gated at all', () => {
-    // The scope line: `chargeHitList` is empty for anything that is not a `path`
+    // The scope line: `abilityHitList` is empty for a shape whose footprint
+    // already names everyone in it — a cone covers an area, it does not reach
+    // *through* things the way a charge or a line does.
     // dash, and `previewNumbers` reads empty as "the area is the answer".
     const b = queued(BASTION);
     const slam = BASTION.abilities.find((a) => a.id === 'crushing_slam')!;
-    expect(chargeHitList(b.state, b.me, slam, [{ x: 10, y: 10 }])).toEqual([]);
-    expect(chargeHitList(b.state, b.me, undefined, [{ x: 10, y: 10 }])).toEqual([]);
+    expect(abilityHitList(OPEN_MAP, b.state, b.me, slam, [{ x: 10, y: 10 }])).toBeUndefined();
+    expect(abilityHitList(OPEN_MAP, b.state, b.me, undefined, [{ x: 10, y: 10 }])).toBeUndefined();
   });
 });

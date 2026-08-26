@@ -24,7 +24,7 @@ const char: CharacterDef = {
     ability({ id: 'blink', shape: 'square', range: 4, energyGain: 4, effects: [{ kind: 'teleport' }] }),
     ability({ id: 'charge', shape: 'path', range: 4, energyGain: 8, effects: [{ kind: 'damage', amount: 15 }, { kind: 'knockback', amount: 1 }] }),
     ability({ id: 'ram', shape: 'path', range: 3, energyGain: 8, effects: [{ kind: 'damage', amount: 15 }, { kind: 'knockback', amount: 2 }] }),
-    ability({ id: 'sweep', shape: 'path', range: 4, energyGain: 8, chargeHits: 'all', effects: [{ kind: 'damage', amount: 15 }] }),
+    ability({ id: 'sweep', shape: 'path', range: 4, energyGain: 8, hits: 'all', effects: [{ kind: 'damage', amount: 15 }] }),
     ability({ id: 'shoot', phase: 'blast', shape: 'line', range: 8, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }] }),
     ability({ id: 'roll', shape: 'path', range: 3, energyGain: 4, effects: [{ kind: 'teleport' }] }),
   ],
@@ -213,7 +213,7 @@ describe('R4: shape decides wall-crossing — a "path" dash is walked, never tel
   });
 });
 
-describe('R1b: chargeHits "all" sweeps every crossed enemy', () => {
+describe('R1b: hits "all" sweeps every crossed enemy', () => {
   it('an "all" charge damages two lined-up enemies; "first" only the first', () => {
     const line = () => [makeUnit('u', 0, { x: 0, y: 0 }), makeUnit('e1', 1, { x: 2, y: 0 }), makeUnit('e2', 1, { x: 3, y: 0 })];
     const target = [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }];
@@ -306,7 +306,7 @@ describe('FF1-charge: a charge strikes the first UNIT crossed, ally or enemy', (
     expect(unit(hitAlly.state, 'u').energy).toBe(5); // passive only
   });
 
-  it('chargeHits "all" sweeps allies and enemies alike, energy once for the enemy', () => {
+  it('hits "all" sweeps allies and enemies alike, energy once for the enemy', () => {
     const u = makeUnit('u', 0, { x: 0, y: 0 });
     const ally = makeUnit('ally', 0, { x: 2, y: 0 });
     const enemy = makeUnit('e', 1, { x: 3, y: 0 });

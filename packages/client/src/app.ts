@@ -66,7 +66,7 @@ import {
 import {
   abilityOptions,
   abilityPreview,
-  chargeHitList,
+  abilityHitList,
   draftFromOrders,
   guardLandingFor,
   previewBandSets,
@@ -1795,6 +1795,9 @@ export function startHotSeat(
     // PREVIEW-MODIFIERS: the board goes in so the preview can ask the engine
     // about cover. Built here rather than cached because it is derived from
     // `map`, which never changes for a match — see the memo below it.
+    const hitList = chosen === undefined
+      ? undefined
+      : abilityHitList(map, state, unit, chosen, preview.aim, preview.aimStep);
     showPreviewNumbers(previewNumbers(state, previewBoard(), unit, [
       // PREVIEW-NUMBERS-AUDIT: the interior bands ride along with the footprint,
       // so a tile in Cinder's core is written 22 and one in her ring 14.
@@ -1807,12 +1810,15 @@ export function startHotSeat(
           // AOE-LoS: a circle's cover is measured from its centre.
           coverFrom: coverOrigin(chosen, unit.pos, preview.aim),
           // RAM-LINE-PREVIEW-FIX: a charge's route covers everybody standing on
-          // it, but `chargeHits` decides how many of them are actually hit.
+          // it, but `hits` decides how many of them are actually hit.
           // Empty for every other shape, and `previewNumbers` reads it as "the
           // area is the answer" then.
-          ...(chosen.shape === 'path'
-            ? { victims: chargeHitList(state, unit, chosen, preview.aim) }
-            : {}),
+          // HITS: a charge and a `hits: "first"` line both reach through
+          // things, so standing in the footprint is not enough to be numbered.
+          // `undefined` — every other shape, and a piercing line — means "the
+          // area is the answer" and the field is left off entirely; an empty
+          // ARRAY would mean "numbered nobody", which is a different claim.
+          ...(hitList === undefined ? {} : { victims: hitList }),
         }]
         : []),
       ...(freeDef !== undefined && freeAim.length > 0

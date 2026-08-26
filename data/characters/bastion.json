@@ -45,7 +45,7 @@
       "phase": "dash",
       "shape": "path",
       "range": 4,
-      "chargeHits": "all",
+      "hits": "all",
       "cooldown": 4,
       "energyGain": 8,
       "effects": [
