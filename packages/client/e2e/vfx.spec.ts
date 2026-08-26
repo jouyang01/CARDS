@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { expect, test } from './fixtures.js';
-import { countPixels, decodePng, type Rgb } from './pixels.js';
+import { countPixels, decodePng, type Image, type Rgb } from './pixels.js';
 import type { Page } from '@playwright/test';
 
 /**
@@ -44,23 +44,44 @@ const step = async (page: Page, ms = STEP_MS): Promise<void> => {
 const isLit = (px: Rgb): boolean => px.r > 185 && px.g > 185 && px.b > 185;
 
 /**
- * How far above its neighbours a frame must rise to count as a flash.
+ * How far above its neighbours one PATCH OF BOARD must rise to count as a flash.
  *
- * Measured, and with the mutant to calibrate against. Stepping the same scripted
- * turn on a frozen clock is deterministic to the pixel — the two runs below
- * differ at exactly one frame and are byte-identical everywhere else:
+ * **Local, not global, and that is the whole of VFX-FLASH-VERIFY.** The first
+ * version counted lit pixels over the entire board clip. That works only while
+ * the scene's own brightness holds still, and it did not: the value budget, the
+ * tinted rig and the ACES revert each moved scene luminance, and at one point
+ * the baseline sat at ~6670 lit pixels — so a flash worth ~1400 was a 20%
+ * wobble on a number that was already moving, and the test read a best spike of
+ * 165 against a floor of 800 and called a working flash missing.
  *
- * |                     | flash on | `paintFlash` stubbed out |
- * |---------------------|---------:|-------------------------:|
- * | impact frame        |     4595 |                     3215 |
- * | its two neighbours  | 3137/2835 |               3137/2835 |
- * | rise above both     | **1458** |                   **78** |
+ * A flash is one unit lighting up. It is *local* by nature, and measuring it
+ * locally is immune to whatever the rest of the frame is doing — which is the
+ * property the global version never had and could not be given.
  *
- * 800 sits between them with 1.8x headroom under the real signal and 10x over
- * the noise floor, so this fails if the flash stops reaching the screen and does
- * not fail because a shadow moved.
+ * Measured on the current build, with the mutant to calibrate against:
+ *
+ * |                          | flash on | `paintFlash` stubbed out |
+ * |--------------------------|---------:|-------------------------:|
+ * | best single-cell spike   | **1985** |                  **280** |
+ * | that cell, two neighbours |    0 / 0 |                      n/a |
+ *
+ * The signal cell is *empty* on both sides — the flash arrives and leaves
+ * inside one frame, in one place. 800 sits at 2.5x under the real signal and
+ * 2.9x over the noise floor, and unlike the global figure neither end of that
+ * margin moves when somebody re-grades the scene.
  */
 const FLASH_SPIKE_MIN = 800;
+
+/**
+ * The board is diced into cells this big before counting.
+ *
+ * 48px is about a unit at this framing: small enough that a flashed body fills
+ * a cell rather than dusting a dozen, large enough that one antialiased edge
+ * cannot make one. The exact number is not delicate — the mutant separation
+ * above is 7x — but the *scale* is: cells much larger than a unit re-create the
+ * global problem at a smaller size.
+ */
+const CELL_PX = 48;
 
 test.describe('the victim flash reaches the screen', () => {
   // The clock is ours, but asset loading is not: the .glb fetches and the first
@@ -124,29 +145,33 @@ test.describe('the victim flash reaches the screen', () => {
     }
     expect(reached, 'never reached the Blast phase').toBe(true);
 
-    // Walk the phase a frame at a time, counting lit pixels. The flash is 0.18s
-    // — about 6 frames at 30fps — inside a Blast of a few seconds, so this is
-    // looking for a spike, not a level.
+    // Walk the phase a frame at a time, measuring each frame as a GRID of lit
+    // counts rather than one total. The flash is 0.18s — about 6 frames at
+    // 30fps — inside a Blast of a few seconds, so this is looking for a spike,
+    // not a level; and it is looking for it in one *place*.
     //
     // The whole board, not a crop on the aim point. This used to clip 320px
     // around where the ability was aimed, on the assumption the victim stays
     // under that point through resolution — but CAMERA-CONTROLS re-frames the
-    // board for playback (it leans the camera toward the action), so between the
-    // planning aim and the Blast the victim slides clean out of a planning-time
-    // crop and the flash lands entirely outside it (measured: 77 in the crop,
-    // 1458 over the board — the flash-on figure exactly). The `isLit` probe and
-    // the both-sided spike below are what make the wide frame safe: near-white is
-    // rare on a resting board with the overlays hidden, and a single-frame rise
-    // above BOTH neighbours rejects the sustained brightening a camera pull-back
-    // or a phase change adds — so the flash reads as the one transient it is,
-    // wherever on the board the camera has put the victim.
+    // board for playback, so between the planning aim and the Blast the victim
+    // slides clean out of a planning-time crop. Dicing the whole frame keeps
+    // the locality that made a crop attractive without having to predict where
+    // the camera will put the victim: whichever cell he lands in is the cell
+    // that spikes.
+    //
+    // The grid is computed per frame and the image is DROPPED. Holding ninety
+    // decoded frames is ~270MB and was enough to take the container down while
+    // this was being diagnosed; only the grids are kept, which are ~500 numbers
+    // each.
     const clip = await boardClip(page, box);
+    const grids: number[][] = [];
     const lit: number[] = [];
     for (let i = 0; i < 90; i++) {
-      lit.push(countPixels(decodePng(await page.screenshot({ clip })), isLit, 1));
+      const frame = decodePng(await page.screenshot({ clip }));
+      grids.push(litCells(frame));
+      lit.push(countPixels(frame, isLit, 1));
       await step(page);
     }
-
 
     // A SPIKE, not a peak, and the difference is the whole test.
     //
@@ -155,23 +180,56 @@ test.describe('the victim flash reaches the screen', () => {
     // anything, because the phase ends with the board brightening as the camera
     // pulls back — so "the brightest frame is brighter than average" was true of
     // a build with no flash in it at all. What is specific to a flash is that a
-    // frame is brighter than the frames on BOTH sides of it: it arrives and
-    // leaves inside the window, which a camera move and a phase change do not.
-    const spikes = lit.map((n, i) =>
-      i === 0 || i === lit.length - 1 ? 0 : Math.min(n - lit[i - 1]!, n - lit[i + 1]!));
-    const spike = Math.max(...spikes);
-    const at = spikes.indexOf(spike);
+    // patch is brighter than the same patch on BOTH sides of it: it arrives and
+    // leaves inside the window, in one place, which a camera move and a phase
+    // change do not.
+    let best = { spike: 0, frame: -1, cell: -1 };
+    for (let f = 1; f < grids.length - 1; f += 1) {
+      const now = grids[f]!, prev = grids[f - 1]!, next = grids[f + 1]!;
+      for (let c = 0; c < now.length; c += 1) {
+        const spike = Math.min(now[c]! - prev[c]!, now[c]! - next[c]!);
+        if (spike > best.spike) best = { spike, frame: f, cell: c };
+      }
+    }
 
     expect(
-      spike,
-      `no frame lit up and went dark again (lit pixels per frame: ${summarise(lit)})`,
+      best.spike,
+      `no patch of board lit up and went dark again (lit pixels per frame: ${summarise(lit)})`,
     ).toBeGreaterThan(FLASH_SPIKE_MIN);
 
-    // And it releases: the material goes back to where it started rather than
-    // staying lit, which is what `paintFlash(body, 0)` is for.
-    expect(lit[at + 1]!, 'the flash never released').toBeLessThan(lit[at]! - FLASH_SPIKE_MIN);
+    // And it releases: that patch goes back to where it started rather than
+    // staying lit, which is what `paintFlash(body, 0)` is for. Implied by the
+    // both-sided spike above and asserted anyway, because "it never went out"
+    // is a different bug from "it never came on" and deserves its own message.
+    const cell = best.cell;
+    expect(
+      grids[best.frame + 1]![cell]!,
+      'the flash never released',
+    ).toBeLessThan(grids[best.frame]![cell]! - FLASH_SPIKE_MIN);
   });
 });
+
+/**
+ * One frame, diced into `CELL_PX` squares, each holding its count of lit pixels.
+ *
+ * Written out longhand rather than as `CELL_PX` calls to `countPixels` over
+ * sub-clips: this walks the buffer once for the whole grid, and the frame is
+ * 1280x600 with ninety of them to get through.
+ */
+function litCells(img: Image): number[] {
+  const cols = Math.ceil(img.width / CELL_PX);
+  const cells = new Array<number>(cols * Math.ceil(img.height / CELL_PX)).fill(0);
+  for (let y = 0; y < img.height; y += 1) {
+    const row = Math.floor(y / CELL_PX) * cols;
+    for (let x = 0; x < img.width; x += 1) {
+      const at = (y * img.width + x) * img.channels;
+      if (isLit({ r: img.data[at]!, g: img.data[at + 1]!, b: img.data[at + 2]! })) {
+        cells[row + Math.floor(x / CELL_PX)]! += 1;
+      }
+    }
+  }
+  return cells;
+}
 
 /** A compact per-frame trace, so a failure says what the board actually did. */
 function summarise(xs: readonly number[]): string {
