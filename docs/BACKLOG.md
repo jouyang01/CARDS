@@ -38,10 +38,78 @@ Current suite: **3292 unit tests** green, typecheck clean, purity clean. Playwri
 
 ### Build order and dependencies
 
-**VFX-FLASH-VERIFY → RENDER-SUITE-GREEN-4 → FOF-OUTLINE.** VFX-FLASH-VERIFY leads (it may be a real hit-feel
-bug, not test drift); RENDER-SUITE-GREEN-4 closes the last render tests with the re-specs ruled below;
-FOF-OUTLINE completes the FoF ask if the playtest wants it. All client/test — no engine work. FOF-OVERLAY-HUE
-is a **Designer** flag, not a Builder item until the hue is chosen.
+**AOE-LoS → VFX-FLASH-VERIFY → RENDER-SUITE-GREEN-4 → FOF-OUTLINE.** **AOE-LoS is the owner's directed
+feature and the one real engine change** (walls shelter from explosions — AR parity), so it leads.
+VFX-FLASH-VERIFY may be a real hit-feel bug; RENDER-SUITE-GREEN-4 closes the last render tests; FOF-OUTLINE
+completes the FoF ask if the playtest wants it. FOF-OVERLAY-HUE is a **Designer** flag.
+*(Note: `main` has advanced past my 2026-10-06 review — PRs #176–#178 are not yet verified; a full review of
+them is the next cycle. This session adds only the owner's AOE-LoS spec.)*
+
+---
+
+## HIGH — walls shelter from explosions (owner directive; the one engine change)
+
+### AOE-LoS. An AoE reads line-of-sight from its centre; aiming needs vision; grenades are lobbed (ENGINE + client) — UNBLOCKED (first)
+**Addresses the owner directive (2026-10-06), building the AR-parity model from the in-session audit — a
+`circle` AoE (Vex's Frag Grenade the driver) must be blocked by walls, wash over cover, be aimed only at
+what you can see, and arc if `lobbed`.** Ruled in edge-cases (**AOE-LoS**) — read it; this item is the build
+contract. Today a circle AoE aims at any in-range square with **no vision** (`aimIsLegal` → `aimInRange`) and
+hits every non-wall tile in radius with **no centre line-of-sight** (`circleSquares` + `runBlast:585`), so
+the blast **leaks around walls**, and cover reduction is measured from the **caster** (`resolve.ts:2246`),
+not the blast. Direct fire (`line`/`cone`) already occludes at the first wall — unchanged.
+
+*AC — resolution (engine):*
+- **A wall shelters.** A unit inside a circle AoE's radius is hit **iff `hasLineOfSight(centre, unitTile)`**
+  (the walls-only, integer-exact, deterministic primitive from `vision.ts`). Behind a wall → **0**; open →
+  full.
+- **Cover washes over, from the centre.** `hasLineOfSight` is walls-only, so cover never blocks the blast;
+  the existing COVER-EDGE 50% reduction applies **iff the centre→unit line crosses the unit's faced cover
+  edge**. For a `circle` AoE, call `isBehindCover` with the **aimed centre** as `attackerPos`, not the
+  caster (this is the change at/around `resolve.ts:2246`/`:1775`).
+- **CASTER-SAFE / FRAG-SELF compose:** the caster's own `selfHarm` catches it only if it stands in the
+  radius **and** the centre has LoS to it, reduced by cover from the centre like any other unit.
+
+*AC — aiming (engine + client), a new `lobbed` flag:*
+- **`lobbed: true`** (Frag Grenade) — aim legal iff the centre is in range **and the caster's team can SEE
+  the centre** (`teamCanSee` over the **turn's opening team vision**); the shot arcs, so **no** caster→centre
+  straight line is required (over walls onto a team-visible square is legal; into fog is not).
+- **`lobbed` absent/false** (direct burst) — aim legal iff the centre is in range **and
+  `hasLineOfSight(caster, centre)`** (walls block); still cannot aim into fog.
+- **`data/characters/vex.json` `frag_grenade` gains `lobbed: true`.** The other nine circle abilities
+  (`cinder.ember_bolt`/`flare_burst`/`stoke_the_flame`, `ravok.cleave`/`shockwave`, `thorn.barbed_sling`/
+  `verdant_veil`, `lumen.mending_light`, `aegis.barrier_pulse`) default to **direct** — **flag their
+  `lobbed` to the Designer** (many are self/ally-centred `radius: 1` supports that will rarely notice, but a
+  couple — Ravok's Shockwave `radius: 2`, Cinder's Flare Burst — are enemy-facing and want a deliberate
+  call). `validateAbility` refuses `lobbed` on a non-circle shape (like `wallLength` off a wall).
+
+*AC — delayed detonation:* Frag Grenade (`delayTurns: 1`) keeps **stamping the damage amount at cast**
+(Might/Weaken then), but resolves **who is hit (centre→unit LoS) and cover at detonation time**, against the
+board and positions when it goes off (`detonateDelayedBlasts` — currently pre-computes and bypasses cover,
+`resolve.ts:2042`).
+
+*AC — preview parity (client, AIM-PREVIEW-TRUE):* the aimable set is **visible** squares in range (per
+`lobbed`); the previewed hit-set and damage numbers apply the same centre→unit LoS filter and centre-origin
+cover reduction — **a grenade preview must never light a tile the wall will protect.** Drive it through the
+real controller.
+
+*Tests (per the owner, engine + client):* unit behind a wall in-radius → 0; unit behind cover in-radius →
+reduced **iff** the centre is on the cover's faced side, full if on the open side; unit in the open → full; a
+`lobbed` grenade aims over a wall onto a team-visible square but **not** into fog; a direct burst is refused
+through a wall; the caster is caught only with centre-LoS; a delayed grenade shelters against
+detonation-time positions.
+
+**Spec Notes.** Files: `packages/engine/src/resolve.ts` (the centre-LoS filter in `runBlast` **and**
+`detonateDelayedBlasts`; the centre-as-`attackerPos` cover origin for circles; the `aimIsLegal` vision/LoS
+gate for `circle`), `packages/engine/src/vision.ts` (`hasLineOfSight`/`teamCanSee` are already there — reuse,
+don't reinvent), `packages/engine/src/types.ts` + `validate.ts` (`lobbed?: boolean`, refused off non-circle),
+`data/characters/vex.json` (`lobbed: true`), the client (`targeting.ts`/`app.ts` — the aimable set + preview
+filter). **Determinism/purity:** all of it reuses the existing integer-exact `hasLineOfSight`/vision — **no
+floats, no new geometry, N-safe.** **The load-bearing gotcha:** the aim-vision check must use the **turn's
+opening team vision** (the fog the player planned against), not the live post-Dash board — pin it in a test,
+because a resolution-time vision snapshot would refuse aims the player legitimately made. **Out of scope:**
+`line`/`cone` occlusion (already correct); changing which abilities are `lobbed` beyond Frag Grenade (that's
+the Designer's data pass — flagged); a range/vision change to direct fire. **Owner decisions already made:**
+vision-gated aiming (yes), a `lobbed` flag (yes), walls shelter (yes), cover directional-from-centre (yes).
 
 ---
 
