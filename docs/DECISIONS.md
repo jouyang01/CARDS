@@ -7827,15 +7827,28 @@ the thing a future edit will silently break.
 
 ## Open Questions for the Analyzer — 2026-08-26 (session 19)
 
-**1. `lobbed` on the other nine circles is a Designer pass, and two of them are enemy-facing
-(AOE-LoS; `data/characters/*.json`).** Only `vex.frag_grenade` was flagged by the item, and only it
-was changed. The other nine (`cinder.ember_bolt`/`flare_burst`/`stoke_the_flame`,
-`ravok.cleave`/`shockwave`, `thorn.barbed_sling`/`verdant_veil`, `lumen.mending_light`,
-`aegis.barrier_pulse`) now default to **direct** — meaning they refuse a cast through a wall, where
-before they did not. Most are self- or ally-centred `radius: 1` supports at `range: 0`, which cannot
-notice. **Ravok's Shockwave (`radius: 2`) and Cinder's Flare Burst are enemy-facing and want a
-deliberate call** before the next playtest, or a player will find a support cast refusing for
-reasons they cannot see.
+**1. `lobbed` on the rest of the roster is a Designer pass, and the backlog's list of who needs one
+is wrong (AOE-LoS; `data/characters/*.json`).** Only `vex.frag_grenade` was flagged by the item, and
+only it was changed; every other circle now defaults to **direct**, meaning it refuses a cast
+through a wall where before it did not. The item names *"the other nine"* and singles out
+*"Ravok's Shockwave `radius: 2`, Cinder's Flare Burst"*. Swept `data/` rather than trusting it, and
+the shape is different:
+
+  | | |
+  |---|---|
+  | **Cannot notice — `range: 0`, centred on the caster** | `ravok.cleave`, `ravok.shockwave`, `ravok.seismic_rupture`, `aegis.warding_halo` |
+  | **Can notice — `range > 0`** | `cinder.ember_bolt` (7), `cinder.flare_burst` (6), `cinder.solar_flare` (6), `cinder.stoke_the_flame` (4), `thorn.barbed_sling` (5), `thorn.verdant_veil` (5), `thorn.overgrowth` (5), `lumen.mending_light` (5), `lumen.sanctuary` (5), `aegis.barrier_pulse` (4) |
+
+  So **Ravok's Shockwave cannot want a `lobbed` call** — it is `range: 0` and its centre is always
+  its caster's own square. And **four circles the item does not mention are affected**:
+  `cinder.solar_flare` (the ultimate), `thorn.overgrowth`, `lumen.sanctuary`, `aegis.warding_halo`
+  (the last only nominally, being `range: 0`).
+
+  **The sharpest case is `cinder.ember_bolt` at `range: 7`,** which is *longer than `VISION_RANGE`
+  (6)*. Its authored reach is now unaimable at full extension in any direction — a basic attack that
+  cannot be fired as far as its tooltip says. That is a balance consequence of the ruled vision gate
+  meeting a number nobody re-checked against it, and it wants either a `lobbed`/range decision or
+  the aiming-vs-vision ruling in Q2.
 
 **2. An area's aimable reach is now a diamond clipped out of a disc, and nothing tells the player
 that (AOE-LoS; `targeting.ts` `rangeEnvelope`).** See the decision above: Euclidean aiming meets
