@@ -7845,10 +7845,14 @@ the shape is different:
   (the last only nominally, being `range: 0`).
 
   **The sharpest case is `cinder.ember_bolt` at `range: 7`,** which is *longer than `VISION_RANGE`
-  (6)*. Its authored reach is now unaimable at full extension in any direction — a basic attack that
-  cannot be fired as far as its tooltip says. That is a balance consequence of the ruled vision gate
-  meeting a number nobody re-checked against it, and it wants either a `lobbed`/range decision or
-  the aiming-vs-vision ruling in Q2.
+  (6)*. Measured on an empty board with one Cinder and no spotter: **149 tiles in range, 85 of them
+  aimable**, and the furthest aimable tile is at Euclidean **6.00 of an authored 7** — the seventh
+  tile straight down a row is refused. So the gate removes 43% of the ability's aimable area and a
+  full tile of its axial reach, on a basic attack whose tooltip still says 7.
+
+  That is a balance consequence, so it is flagged and not touched (the brief forbids rebalancing).
+  It is also not fixable with `lobbed` — the vision half is common to both aim rules, by the ruling.
+  The lever is either the number (`range: 6`) or the rule in Q2.
 
 **2. An area's aimable reach is now a diamond clipped out of a disc, and nothing tells the player
 that (AOE-LoS; `targeting.ts` `rangeEnvelope`).** See the decision above: Euclidean aiming meets
