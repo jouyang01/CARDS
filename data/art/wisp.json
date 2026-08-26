@@ -9,6 +9,42 @@
     "hairPurple": "#8a6d9c",
     "skin": "#c9b4a6"
   },
+  "magic": {
+    "_comment": "Her smoke language (ART_PIPELINE.md §9): one cold plum material at different intensities, reused across veil, decoy, blink and teleport. Never warm, never fire; slow and weightless. Duplicated into data/vfx.json (ability-vfx.test.ts asserts they agree).",
+    "core": "#cbbcd8",
+    "edge": "#9d84b3",
+    "deep": "#5e4a70",
+    "warmthForbidden": true
+  },
+  "weapon": {
+    "_comment": "Twin daggers held REVERSED (icepick grip), low and loose (WHO SHE IS / COSTUME brief). Two slots — mainHand + offHand — share one 'dagger' geometry, mounted on each hand bone with mirrored rotation. Build: generate_dagger.py -> build/art/wisp/wisp_dagger.fbx, then `build_prop.py -- wisp mainHand` and `-- wisp offHand`. The attach offsets are INITIAL: they can only be tuned by eye once the rigged model renders correctly (that render is being fixed separately). Aegis's door offsets were iterated the same way (see aegis.json weapon.attach).",
+    "mainHand": {
+      "kind": "dagger",
+      "flat": true,
+      "bladeTiles": 0.40,
+      "gripReversed": true,
+      "heightTiles": 0.52,
+      "attach": {
+        "_comment": "Right hand, reversed grip: blade points DOWN past the fist. position in TILES (bone-local), rotation XYZ degrees. INITIAL — tune after the render fix.",
+        "bone": "mixamorigRightHand",
+        "position": [0, 0.02, 0.01],
+        "rotation": [180, 0, 0]
+      }
+    },
+    "offHand": {
+      "kind": "dagger",
+      "flat": true,
+      "bladeTiles": 0.40,
+      "gripReversed": true,
+      "heightTiles": 0.52,
+      "attach": {
+        "_comment": "Left hand, mirrored. INITIAL — tune after the render fix.",
+        "bone": "mixamorigLeftHand",
+        "position": [0, 0.02, -0.01],
+        "rotation": [180, 0, 0]
+      }
+    }
+  },
   "clips": {
     "_comment": "Clip names as they appear in build/.../wisp.glb, normalised by build_glb.py from the Mixamo FBX filenames (lowercase + underscores: 'Wisp Idle.fbx' -> 'wisp_idle'). Ability keys are the ability ids from data/characters/wisp.json; a missing id falls back to idle (character-clips.ts:100). Download each Without Skin, one clip per file, rename to the value here, then run build_glb.py. Mapping is a Designer call (2026-08-26, owner to confirm final clips). Recommended Mixamo source per clip in _source.",
     "_source": {
