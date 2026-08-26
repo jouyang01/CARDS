@@ -1,6 +1,16 @@
 {
   "id": "vex",
-  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
   "weaponClass": "rifle",
-  "_weaponClassNote": "Shouldered rifle. Two-handed, one hand always on the foregrip."
+  "_weaponClassNote": "Shouldered rifle. Combat grip is two-handed, one hand always on the foregrip. Her IDLE carry is the one-handed low slouch (muzzle down) — that is a pose/posture read, not the weaponClass.",
+  "thesis": "Vex doesn't shoot you — she shoots where you're going to be. A slender futuristic sharpshooter carrying a rifle far too big for her, one-handed and completely relaxed, because she did the maths three turns ago and is waiting for you to catch up. Loud, delighted, insufferably right; the humour lives in pose, expression and idle, never in the costume. She reads LIGHT against a dark board and is the exact mirror of Wisp: Wisp is dark and dissolving and removes information; Vex is light and amber-armed and adds it. The oversized rifle is the whole silhouette and carries her identity from every angle, because half her board presence (the aerial mines) is invisible to the enemy. VFX primitive: the hovering amber armed mote/mine, one ordnance language repeated across beam, grenade, trap and ult, every hovering element casting a ground shadow.",
+  "_artNote": "Board model to be built via the Rodin import path (tools/art/rodin_bake_lowpoly.py), the same as Wisp — not the procedural generator. Text-to-image generation summary that feeds Rodin: docs/design/vex-text-to-image.md. Full parameter block (build/posture/garment/face/weapon/vfxLanguage) still to be written once the sculpt lands.",
+  "palette": {
+    "_comment": "PROPOSED targets for the text-to-image reference (propose-and-confirm, ART_PIPELINE.md §7) — owner to confirm. These are NOT yet sampled: like Wisp's, the shipped palette should be re-sampled from the baked Rodin texture and this block replaced. Test against the real board (#12141a bg, cool slate terrain), never white. Body must read LIGHT (opposition to Wisp's dark plum #64404d); amber is sparse on her and emissive only.",
+    "bodyBone": "#e6e0d2",
+    "bodyPaleGrey": "#c2c6cc",
+    "suitShadow": "#8f9299",
+    "amberArmed": "#f2a23c",
+    "amberHotCore": "#ffd486",
+    "rifleBody": "#3a3d44"
+  }
 }
