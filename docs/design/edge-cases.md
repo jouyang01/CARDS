@@ -869,6 +869,20 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     sets its cooldown to **4** (enemy-facing), which composes with this unchanged. Addresses session-7
     OQ #3 for this ability: a line charge that hits everyone has no "stopped short by the first body"
     ambiguity, so its preview is the whole line.
+- **RULED — HITS renames and widens `chargeHits` to `line` (W2; owner design session 2026-08-26; backlog
+  HITS-RENAME — engine + data + client).** *"Bola should slow and only hit the first enemy in the line."* The
+  shipped charge-breadth field `chargeHits: "first" | "all"` (R1b, above) is **renamed to the shape-agnostic
+  `hits`** and **permitted on `line` as well as `path`** (still rejected on cone/circle/square/self). On a
+  `line`, `hits: "first"` applies the ability's effects to the **first enemy encountered walking the line
+  outward** — `lineSquares` already walks `d = 1..range` in depth order, so the ordering is deterministic
+  with no new machinery; `hits: "all"` hits every enemy on the line. **Allies never block or absorb**
+  (consistent with no-friendly-fire and "units never block"; no new ruling — state it in Spec Notes). Note
+  the owner's framing "R1b is UNBUILT" is **stale**: `chargeHits` already shipped, so this is a
+  **rename-in-place of a live field** — one atomic change across `types.ts`, `validate.ts`, `resolve.ts`,
+  the engine tests that name it (`content`, `dash`, `dash-status`, `bastion-ram-line`, `validate-keys`), the
+  client (`targeting.ts`, `preview-numbers.ts`), and **both** data files that carry it (`kestrel.json`,
+  `bastion.json`); `chargeHits` must not survive anywhere. Wisp's bola then becomes **data-only** (BOLA-HITS:
+  add `"hits": "first"`). The R1b / BASTION-RAM-LINE rulings above read `hits` once this lands.
 - **PROPOSED — WARDING-WALL: a Prep line-hazard replacing Aegis's Grounding Strike; a new reusable
   mechanic (owner Dev Note 2026-09-24 #2; backlog WARDING-WALL — engine + data; ENGINE ASK).** *"Change
   Aegis's Grounding Strike to be a prep phase, 4 cool down skill named Warding Wall which puts down a 4
@@ -2091,6 +2105,76 @@ The Analyzer grows this file every review; the Builder must not invent unlisted 
     unit in the open → full; a `lobbed` grenade can be aimed over a wall onto a team-visible square but not
     into fog; a direct burst is refused through a wall; the caster is caught only with centre-LoS; the
     delayed detonation shelters at detonation-time positions.
+  - **RULED — AOE-LoS-SCOPE: the centre-LoS shelter applies to EVERY circle, uniformly (closes Builder
+    session-19 OQ #3).** The shelter lives in `circleSquares` (golden rule #2 — one rule in the one function
+    that builds a disc), so every consumer inherits it without exception: Blast-phase damage, a dash
+    `impact` circle, a `perTile` trap/mine carpet (Thorn), and a placed hazard zone (Verdant Veil) all stop
+    at a wall from the centre. This is **intended, not a Blast-only rule** — a hazard sprayed from a burst
+    point is shadowed by a wall exactly as damage is, and wall tiles were already dropped from every
+    footprint. **No carve-out:** "circles shelter, except when placing a hazard" is precisely the exception
+    the next reader rediscovers as a bug. The one arguable consequence — a placed hazard cannot round a
+    corner (the far side of a pillar from the centre stays clear) — is accepted; revisit only if a Designer
+    explicitly wants corner-filling hazards, and then as a new opt-in flag, never a silent exception.
+  - **RULED — AOE-LoS-SELF-BURST: a `range: 0` self-centred circle already requires LoS and needs no
+    `lobbed` (closes Builder session-19 OQ #1 for the self-circles; routes owner Dev Note "Ravok Shockwave
+    is not an Aoe, should require LoS").** Ravok's Shockwave (`shape: circle, range: 0, radius: 2`), Cleave
+    (`radius: 1`), Seismic Rupture (`radius: 3`) and Aegis's Warding Halo are centred on the caster's own
+    square. Under AOE-LoS their hit-set is `hasLineOfSight(casterSquare, unitTile)`, so **a unit behind a
+    wall from the caster already takes 0** — which IS "requires line of sight," read from the burst's centre.
+    The owner directive is therefore **satisfied by AOE-LoS as shipped, with no new work**: Shockwave stops
+    splashing through walls the moment AOE-LoS lands. These abilities take **no `lobbed` flag** — the centre
+    is always the caster, so the caster→centre LoS a direct burst checks is trivially true; the shelter is
+    entirely on the target side, which is the whole ask.
+  - **RULED — AIM-VISION-SHAPE: an area's aimable set is a Manhattan-vision diamond clipped from a
+    Euclidean-range disc, intended-with-a-flag (closes Builder session-19 OQ #2).** Aiming range is Euclidean
+    (AIM-METRIC), vision is Manhattan (MET1), and AOE-LoS gates aim on team vision of the centre, so the
+    aimable set is the **intersection** — a diamond clipped out of a disc (a range-6 circle reaches 6 down a
+    row but ~4 on the diagonal). It falls straight out of two existing metrics plus the ruled vision gate, so
+    it is implemented rather than special-cased, and the range envelope **draws the truth**
+    (AIM-BOUNDARY-CONGRUENCE holds — it is not a lie). Ruled **as intended for now**, **flagged to the
+    owner**: it is a shape players have no name for and will read as a bug before a rule; if a playtest says
+    so, the fix is a **rule** (state "aiming is vision-capped" explicitly, or make vision Euclidean), not a
+    patch. The concrete casualty is a **balance** flag, not a bug: `cinder.ember_bolt` at `range: 7` exceeds
+    `VISION_RANGE` (6), so on an empty board 43% of its aimable area and a full tile of axial reach are gated
+    off (measured: 149 in range, 85 aimable, furthest aimable 6.00 of 7). The lever is the number
+    (`range: 6`) or the AIM-VISION-SHAPE rule change — **owner/Designer call, untouched** (the brief forbids
+    rebalancing).
+- **RULED — MODEL-ROOT-LOCK: an animation clip never moves a unit off its square; the renderer neutralises
+  root-bone horizontal translation (backs backlog WISP-INVISIBLE-FIX; routes owner Dev Note "Wisp shipped in
+  PR 180, she is completely invisible on the screen. Fix this").** The engine owns unit position and the
+  renderer places — and in playback lerps — each unit **group** on its board square, so a character model's
+  clip supplies **in-place** motion only: it may never translate the unit's root (the Mixamo `Hips` bone)
+  off the tile. **Root cause of Wisp's invisibility** (diagnosed from the shipped `wisp.glb`): she is the
+  first model built via the Rodin import path, and every one of her ten clips carries a large Hips
+  *translation* baked in a space unrelated to the bind skeleton (bind `Hips` sits at Z ≈ −1.09; the
+  `wisp_idle` track sits at Z ≈ +22, other clips range to Z ≈ +101). `instance()` plays `idle` immediately
+  on load, so the mixer overwrites the Hips translation with the ~22-unit track value and — through the
+  `Armature` +90° X convention — flings the mesh ~22 units off the board, off-screen. `modelBounds` measures
+  her **correctly** (Y-extent 1.897, feet at 0), so she is not mis-scaled and not the box fallback; she is
+  animated *away*. Ruling: after `mixer.update`, the renderer **locks the root's horizontal translation to
+  its bind value each frame**, keeping only the vertical component (a death fall / crouch is preserved),
+  measured in **world space** so it is robust to any authoring axis — the fragile part that bit the pipeline.
+  This makes **every** imported model immune however its clips were baked; the build-time `--in-place` strip
+  is a fallible second line, not the guarantee. The paired source fix (rebuild `wisp.glb` so the asset is
+  honest, and correct `build_glb.py --in-place` to **re-base** the Hips to bind rather than pin per-clip
+  drift to a frame-0 that is itself 22 units off, and to stop assuming local-Y is world-up — veil/bola carry
+  large Y offsets too) is an ART item, tracked separately (WISP-GLB-REBAKE).
+- **RULED — DECOY-PLACEMENT: a decoy may not be placed on an occupied square (W1; owner design session
+  2026-08-26; resolves the "DESIGNER RULING REQUIRED" the owner flagged).** With W1 the decoy is placed at
+  an aimed square (range 3) rather than the caster's tile. R2 says a decoy does not block occupancy, so
+  placing one *inside* a real unit is mechanically legal but reads as broken and self-defeats the deception.
+  Ruling — **the decoy may not be placed on a square occupied by any unit (either team) at Prep time**
+  (adopting the owner's recommended option); an aim at an occupied square is **refused** like any other
+  illegal aim — route-to-nearest is **not** applied (a decoy that slides elsewhere is a worse tell than a
+  refused cast). Everything else in R2 stands unchanged (static, dies to any damage, blocks nothing, grants
+  no energy, may be aimed into fog per the free-aim ruling — only the SPAWN LOCATION changes). This makes W1
+  fileable as Builder work.
+- **RULED — RIM-ACHROMATIC stands; FOF-OUTLINE is parked (closes Builder session-18 OQ #1 / session-19 OQ
+  #4).** The rim light stays achromatic — it is **not** tinted by friend/foe colour. The owner's
+  mirror-matchup ask is already met by FOF-UNITS' viewer-relative foot ring + nameplate, and no playtest has
+  signalled that the body still reads ambiguous. **FOF-OUTLINE is therefore parked** (removed from the
+  Builder queue), not scheduled, until a playtest says ring + nameplate are insufficient — at which point the
+  technique question (tint the rim vs a second pass) reopens with RIM-ACHROMATIC as the thing to amend.
 - **RULED — Energy on multi-hit.** `energyGain` is granted once per ability use if it
   hits ≥1 enemy (not per enemy hit) in v1.
 - **PROPOSED — Cover uses a corner-*inclusive* line/edge test (flag, review 2026-08-14).**

@@ -14,9 +14,9 @@ ships with a Vitest test in the same commit** — bug fixes ship the regression 
 **A genuinely new mechanic gets a generic, reusable implementation** (golden rule #2). **DRIVE THE REAL UI
 WIRING IN TESTS.** **PR to `main` every session.**
 
-> ⚠️ **`main` is LIVE** — keep `npm test` green. The Playwright e2e/render suite is down to **~3 red**
-> (RENDER-SUITE-GREEN-3 closed the rest); RENDER-SUITE-GREEN-4 + VFX-FLASH-VERIFY finish it. Pre-merge
-> signal, not a release gate (Pages gates on CI, which is green).
+> ⚠️ **`main` is LIVE** — keep `npm test` green (**3338** unit tests as of 2026-10-07). The Playwright
+> e2e/render suite is **37/37 green** (VFX-FLASH-VERIFY + RENDER-SUITE-GREEN-4 closed the last of it).
+> Pre-merge signal, not a release gate (Pages gates on CI, which is green).
 
 > 🎨 **Colour is viewer-relative friend/foe (edge-cases FOF-COLORS, RULED).** Self blue / ally green / foe
 > red on units; friendly blue on committed overlays; hot-seat's whole team is self (green is networked-only).
@@ -24,187 +24,247 @@ WIRING IN TESTS.** **PR to `main` every session.**
 
 ## ✅ COMPLETE
 
-- Everything through the map/COVER-EDGE cycle + the TTK package + INTERCEPT-GUARD + DEATH-HANG-3.
-- **PRs #167–#174 (session 17 + playtest):** **FOF-UNITS** + **FOF-OVERLAYS** (viewer-relative friend/foe;
-  ruled FOF-COLORS), hardened by a **same-day owner playtest** — the lock-in green flip, the white edge
-  bars, the bulky ring, and **FOF-LOCAL** (hot-seat identity: self is the person) all fixed with regression
-  tests proven against the unfixed code; **PAN-RELEASE-PLAYBACK**, **RENDER-IDLE-QUIET** +
-  **SETTLED-BOARD-INVARIANT**, **RENDER-SUITE-GREEN-3** (most of the map-rebuild regressions); MODEL-PRELOAD
-  (enemy models), a value-budget/rim-light render pass, prop variety, CHARACTER_PLAYBOOK. **Engine
-  untouched.**
+- Everything through the map/COVER-EDGE cycle + the TTK package + INTERCEPT-GUARD + DEATH-HANG-3 + the FoF
+  cycle (PRs #167–#174).
+- **AOE-LoS (PR #181, session-19 Builder).** Walls shelter from explosions, the blast reads LoS + cover from
+  its **centre**, aiming needs team vision of the centre, `lobbed` picks the aim rule, delayed detonations
+  stamp the amount at cast and resolve shelter/cover at detonation. Built exactly to the #179 spec; the
+  centre-LoS filter lives in `circleSquares` so every circle inherits it. Verified 2026-10-07 — matches
+  spec, purity/determinism intact, phase order + dash immunity untouched, ships with `aoe-los.test.ts` +
+  four mutation-checked re-specced fixtures. Scope clarified by three rulings (AOE-LoS-SCOPE,
+  AOE-LoS-SELF-BURST, AIM-VISION-SHAPE).
+- **VFX-FLASH-VERIFY (PR #177).** The victim flash lands; the e2e now measures a **local** spike so it stays
+  measurable.
+- **RENDER-SUITE-GREEN-4.** Both halves found already implemented and green; the pad test is **accepted on
+  Iron Basin** and the "re-spec to `everyTurns`" ruling is **retired** (it is green and observes real pad
+  behaviour). Render suite is 37/37.
+- **W4 — dagger_flurry +8-vs-no-cover ENGINE ASK: already removed.** `wisp.json` `dagger_flurry` is a single
+  clean `damage: 22` + `melee: true`, no bonus text anywhere. No Builder work — verified 2026-10-07.
 
-Current suite: **3292 unit tests** green, typecheck clean, purity clean. Playwright render suite **~3 red**
-(FOG-ZORDER aim, the single-pad test, VFX-FLASH — see below).
+Current suite: **3338 unit tests** green (engine 1063 + client 1973 + server 302), typecheck clean, purity
+clean. Playwright render suite **37/37**.
 
 ### Build order and dependencies
 
-**AOE-LoS → VFX-FLASH-VERIFY → RENDER-SUITE-GREEN-4 → FOF-OUTLINE.** **AOE-LoS is the owner's directed
-feature and the one real engine change** (walls shelter from explosions — AR parity), so it leads.
-VFX-FLASH-VERIFY may be a real hit-feel bug; RENDER-SUITE-GREEN-4 closes the last render tests; FOF-OUTLINE
-completes the FoF ask if the playtest wants it. FOF-OVERLAY-HUE is a **Designer** flag.
-*(Note: `main` has advanced past my 2026-10-06 review — PRs #176–#178 are not yet verified; a full review of
-them is the next cycle. This session adds only the owner's AOE-LoS spec.)*
+**WISP-INVISIBLE-FIX (CRITICAL) → HITS-RENAME → BOLA-HITS → W1-DECOY-TARGET → BOLA-OVERLAY.**
+WISP-INVISIBLE-FIX and HITS-RENAME are independent (different files) — take the CRITICAL visible bug first if
+you prefer. BOLA-HITS depends on HITS-RENAME; BOLA-OVERLAY depends on BOLA-HITS' impact-point semantics.
+W1-DECOY-TARGET is unblocked (its DECOY-PLACEMENT ruling is made). **W3 records an invariant, no build.**
+W5 / LOBBED-SWEEP / AIM-VISION-SHAPE / WISP-GLB-REBAKE / P1 are Designer/Owner/ART — flagged, not Builder
+work.
 
 ---
 
-## HIGH — walls shelter from explosions (owner directive; the one engine change)
+## CRITICAL — Wisp is invisible; a clip must never move a unit off its square
 
-### AOE-LoS. An AoE reads line-of-sight from its centre; aiming needs vision; grenades are lobbed (ENGINE + client) — UNBLOCKED (first)
-**Addresses the owner directive (2026-10-06), building the AR-parity model from the in-session audit — a
-`circle` AoE (Vex's Frag Grenade the driver) must be blocked by walls, wash over cover, be aimed only at
-what you can see, and arc if `lobbed`.** Ruled in edge-cases (**AOE-LoS**) — read it; this item is the build
-contract. Today a circle AoE aims at any in-range square with **no vision** (`aimIsLegal` → `aimInRange`) and
-hits every non-wall tile in radius with **no centre line-of-sight** (`circleSquares` + `runBlast:585`), so
-the blast **leaks around walls**, and cover reduction is measured from the **caster** (`resolve.ts:2246`),
-not the blast. Direct fire (`line`/`cone`) already occludes at the first wall — unchanged.
+### WISP-INVISIBLE-FIX. Lock the model root to its tile (CLIENT) — UNBLOCKED (CRITICAL, first)
+**Addresses Dev Note: _"BUG IMPORTANT: Wisp shipped in PR 180, she is completely invisible on the screen.
+Fix this."_** Ruled **MODEL-ROOT-LOCK** in edge-cases — read it; this is the build contract.
 
-*AC — resolution (engine):*
-- **A wall shelters.** A unit inside a circle AoE's radius is hit **iff `hasLineOfSight(centre, unitTile)`**
-  (the walls-only, integer-exact, deterministic primitive from `vision.ts`). Behind a wall → **0**; open →
-  full.
-- **Cover washes over, from the centre.** `hasLineOfSight` is walls-only, so cover never blocks the blast;
-  the existing COVER-EDGE 50% reduction applies **iff the centre→unit line crosses the unit's faced cover
-  edge**. For a `circle` AoE, call `isBehindCover` with the **aimed centre** as `attackerPos`, not the
-  caster (this is the change at/around `resolve.ts:2246`/`:1775`).
-- **CASTER-SAFE / FRAG-SELF compose:** the caster's own `selfHarm` catches it only if it stands in the
-  radius **and** the centre has LoS to it, reduced by cover from the centre like any other unit.
+**Root cause (diagnosed from the shipped `wisp.glb`, 2026-10-07).** Wisp loads as a model (she has
+`wisp_idle`, so she is **not** the box fallback) and `modelBounds` measures her **correctly** (geometry
+Y-extent 1.897, feet at `minY ≈ 0`) — she is not mis-scaled and her material is clean. She is **animated
+off the board**: she is the first Rodin-import-path model, and **every one of her ten clips carries a large
+`Hips` translation** in a space unrelated to the bind skeleton (bind `Hips` `Z ≈ −1.09`; `wisp_idle` track
+`Z ≈ +22`; others to `Z ≈ +101`). `instance()` plays `idle` immediately on load (`character-model.ts:410`),
+so the mixer overwrites the Hips translation with the ~22-unit value and — through the `Armature` +90° X
+convention — flings the mesh ~22 units off-screen. `build_glb.py --in-place` does not save it: it pins
+per-clip *drift* to frame-0 (itself 22u off) and assumes local-Y is world-up (false — veil/bola carry large
+Y offsets).
 
-*AC — aiming (engine + client), a new `lobbed` flag:*
-- **`lobbed: true`** (Frag Grenade) — aim legal iff the centre is in range **and the caster's team can SEE
-  the centre** (`teamCanSee` over the **turn's opening team vision**); the shot arcs, so **no** caster→centre
-  straight line is required (over walls onto a team-visible square is legal; into fog is not).
-- **`lobbed` absent/false** (direct burst) — aim legal iff the centre is in range **and
-  `hasLineOfSight(caster, centre)`** (walls block); still cannot aim into fog.
-- **`data/characters/vex.json` `frag_grenade` gains `lobbed: true`.** The other nine circle abilities
-  (`cinder.ember_bolt`/`flare_burst`/`stoke_the_flame`, `ravok.cleave`/`shockwave`, `thorn.barbed_sling`/
-  `verdant_veil`, `lumen.mending_light`, `aegis.barrier_pulse`) default to **direct** — **flag their
-  `lobbed` to the Designer** (many are self/ally-centred `radius: 1` supports that will rarely notice, but a
-  couple — Ravok's Shockwave `radius: 2`, Cinder's Flare Burst — are enemy-facing and want a deliberate
-  call). `validateAbility` refuses `lobbed` on a non-circle shape (like `wallLength` off a wall).
+*AC:*
+- **A unit's model root stays centred on its board tile for every clip.** After `mixer.update`, the renderer
+  neutralises the root bone's (`mixorig:Hips`) **horizontal** translation to its **bind-pose** value each
+  frame, keeping the **vertical** component (a death fall / crouch is preserved). Do it in **world space** so
+  it is robust to the model's authoring axis (do not assume which local index is "up" — that assumption is
+  what shipped the bug).
+- **Wisp renders on the board, idling in place,** in the local hot-seat and in a networked game (she is a
+  cloned instance per unit — the lock is per instance).
+- **No regression to Aegis** (the procedural-path model whose clips sit near bind) — its idle/run/death read
+  unchanged.
+- **Ships with a Vitest test** (golden rule #3): construct a `ModelInstance` (or the extracted pure helper)
+  over a clip whose `Hips` track is displaced by a large horizontal offset, advance the mixer, and assert
+  the root's **world XZ** is at the tile origin (within an epsilon) while a vertical fall is preserved. The
+  test must **fail on the current code** (mutation check: with the lock removed, the root lands ~22u away).
 
-*AC — delayed detonation:* Frag Grenade (`delayTurns: 1`) keeps **stamping the damage amount at cast**
-(Might/Weaken then), but resolves **who is hit (centre→unit LoS) and cover at detonation time**, against the
-board and positions when it goes off (`detonateDelayedBlasts` — currently pre-computes and bypasses cover,
-`resolve.ts:2042`).
-
-*AC — preview parity (client, AIM-PREVIEW-TRUE):* the aimable set is **visible** squares in range (per
-`lobbed`); the previewed hit-set and damage numbers apply the same centre→unit LoS filter and centre-origin
-cover reduction — **a grenade preview must never light a tile the wall will protect.** Drive it through the
-real controller.
-
-*Tests (per the owner, engine + client):* unit behind a wall in-radius → 0; unit behind cover in-radius →
-reduced **iff** the centre is on the cover's faced side, full if on the open side; unit in the open → full; a
-`lobbed` grenade aims over a wall onto a team-visible square but **not** into fog; a direct burst is refused
-through a wall; the caster is caught only with centre-LoS; a delayed grenade shelters against
-detonation-time positions.
-
-**Spec Notes.** Files: `packages/engine/src/resolve.ts` (the centre-LoS filter in `runBlast` **and**
-`detonateDelayedBlasts`; the centre-as-`attackerPos` cover origin for circles; the `aimIsLegal` vision/LoS
-gate for `circle`), `packages/engine/src/vision.ts` (`hasLineOfSight`/`teamCanSee` are already there — reuse,
-don't reinvent), `packages/engine/src/types.ts` + `validate.ts` (`lobbed?: boolean`, refused off non-circle),
-`data/characters/vex.json` (`lobbed: true`), the client (`targeting.ts`/`app.ts` — the aimable set + preview
-filter). **Determinism/purity:** all of it reuses the existing integer-exact `hasLineOfSight`/vision — **no
-floats, no new geometry, N-safe.** **The load-bearing gotcha:** the aim-vision check must use the **turn's
-opening team vision** (the fog the player planned against), not the live post-Dash board — pin it in a test,
-because a resolution-time vision snapshot would refuse aims the player legitimately made. **Out of scope:**
-`line`/`cone` occlusion (already correct); changing which abilities are `lobbed` beyond Frag Grenade (that's
-the Designer's data pass — flagged); a range/vision change to direct fire. **Owner decisions already made:**
-vision-gated aiming (yes), a `lobbed` flag (yes), walls shelter (yes), cover directional-from-centre (yes).
+**Spec Notes.** Files: `packages/client/src/renderer3d.ts` (the per-frame lock in the unit `update`/animation
+loop, around where `instance.update(delta)` is called at `:2403`, and `modelBounds`/placement at
+`:1854–1887`) and/or `packages/client/src/character-model.ts` (`ModelInstance.update`, `:390`, is where the
+mixer advances and posture is re-applied after it — the same "after the mixer" seam is the natural home).
+Prefer factoring the correction into a **pure, exported helper** (like `paintFlash`/`modelBounds` already
+are) so it is unit-testable without a WebGL context — the renderer's own guidance is that anything left
+inside the closure can only be checked by photographing a browser. **The load-bearing subtlety:** "vertical"
+is the world up-axis (Y), not a fixed local bone index — read the bind translation once at instance build,
+and each frame replace the animated Hips **world** X/Z with the bind world X/Z while keeping animated Y.
+Keep it deterministic and allocation-light (runs every frame for every unit). **Out of scope:** rebuilding
+the `.glb` or touching `tools/art` (that is WISP-GLB-REBAKE, an ART item); any engine change (unit position
+is already engine-owned — this is pure view); dash/blink *travel* (the group lerp already provides it — the
+clip is in-place by design, confirmed by the art note "the vanish/reappear itself is VFX"). **Why the client
+lock and not just a rebuild:** it fixes Wisp with a test the Builder can land without Blender, and makes
+every future imported model immune however its clips were baked — the whole roster comes down this path.
 
 ---
 
-## MED — a hit must read as a hit (possible real regression)
+## HIGH — one charge/line-breadth field, not two
 
-### VFX-FLASH-VERIFY. Confirm the victim flash lands on screen (CLIENT, reproduction-first) — UNBLOCKED (first)
-**Addresses Builder session-17 OQ #4.** `e2e/vfx.spec.ts:71` (VFX-FLASH-ON-SCREEN) measures no localised
-brightness spike when a hit lands — best spike 165 against a floor of 800, lit-pixel counts flat across the
-resolution (6670 → 3544 → ~6600, a step change in *scene* brightness, not one victim lighting and releasing).
-The flash's decision (`vfx.ts`), delivery (`vfx-wiring`), material (`detach-materials`) and paint
-(`paint-flash`) are each unit-tested; the *unoccluded-on-screen* inch is exactly what this catches, and it
-says nothing spiked. **This is NOT obviously test drift like its render-suite neighbours** — it may be a real
-regression. *AC:*
-- **Diagnose first, through the film harness** (which now aims like a player): does the victim flash actually
-  appear as a localised bright spike on the hit unit during resolution, or not?
-- **If it's a real bug** (the flash occluded, the paint not reaching the lit mesh, or a later render pass —
-  the value-budget/rim-light or ACES revert — clamping it away): fix it so a landed hit produces a visible,
-  localised flash, and make the e2e assert a **local** spike on the victim (not global scene brightness).
-- **If it's test drift** (the flash is visible but the assertion measures the wrong thing): fix the
-  assertion to sample the victim's own pixels for a spike, and say so.
+### HITS-RENAME. Rename `chargeHits` → `hits`, widen to `line` (ENGINE + data + client) — UNBLOCKED (first of the W-batch)
+**Addresses Dev Note (W2): _"Bola should slow and only hit the first enemy in the line."_** Ruled **HITS**
+in edge-cases. **CORRECTION to the owner's W2 premise:** the note says "R1b is UNBUILT" — it is **built and
+shipped** (`chargeHits` is in `validate.ts:245`, `resolve.ts`, `types.ts`, five engine tests, two client
+files, and **two** data files). So this is a **rename-in-place of a live field**, done as one atomic commit,
+not a pre-ship edit.
 
-**Spec Notes.** Files: `packages/client/src/vfx.ts`/`renderer3d.ts` (only if the flash is genuinely not
-landing), `packages/client/e2e/vfx.spec.ts` (the measurement). **Suspect the recent render passes first** —
-the value-budget, the tinted rig/rim light, and the ACES-tone-mapping revert all moved scene luminance and
-any could have swallowed a per-unit emissive spike. Do not "fix" the test into passing over a flash that
-isn't there — the whole point of the impact work is that a hit reads as a hit. Out of scope: the other VFX
-steps; the flash's unit-tested internals (correct).
+*AC:*
+- **Rename** `chargeHits` → `hits` everywhere: `types.ts`, `validate.ts` (field + the error message),
+  `resolve.ts`, the engine tests that name it (`content`, `dash`, `dash-status`, `bastion-ram-line`,
+  `validate-keys`), the client (`targeting.ts`, `preview-numbers.ts`), and the data files
+  (`kestrel.json`, `bastion.json`). **`chargeHits` must not survive anywhere** (grep clean).
+- **Widen the shape rule:** `hits` is valid on **`line` and `path`**; still rejected on
+  cone/circle/square/self.
+- **`line` semantics:** `hits: "first"` applies the ability's effects to the **first enemy encountered
+  walking the line outward** — `lineSquares` already returns depth-ordered squares, so it is deterministic
+  with no new machinery; `hits: "all"` (or absent, keeping the existing default) hits every enemy on the
+  line. **Allies never block or absorb** (no-friendly-fire + "units never block"; state it — no new ruling).
+- **Ships with a test:** a `line` ability with `hits: "first"` against two enemies in a row hits only the
+  nearer; `hits: "all"` hits both; the field is rejected on a circle. Mutation-check that "first" actually
+  stops (delete the stop and the far enemy takes damage).
 
----
+**Spec Notes.** The default value: R1b's ruling made `chargeHits` default `"first"`; keep `hits` defaulting
+to `"first"` so Kestrel/Bastion (`"all"`, explicit) are unchanged and any un-annotated `line`/`path` keeps
+first-only behaviour. Verify `preview-numbers.ts`/`targeting.ts` preview the same first-enemy stop the
+resolver applies (preview parity). **Out of scope:** changing Kestrel/Bastion behaviour (pure rename for
+them); the bola data (BOLA-HITS); the overlay length (BOLA-OVERLAY). This unblocks BOLA-HITS.
 
-## MED — close the render suite
-
-### RENDER-SUITE-GREEN-4. The last render tests, re-specced to the moved board (TEST INFRA) — UNBLOCKED
-**Addresses Builder session-17 OQ #3 + the FOG-ZORDER finding.** Two tests are "a suite written against a
-board that framed everything, asked to work on one where the camera and the map both moved" — they need
-re-specs, not re-points, and the Analyzer's choices are ruled here:
-- **The single-pad test (RENDER-COVERAGE, "a pad marker survives the next turn boundary"):** Proving Grounds
-  has one Health pad at (8,1) and a consumed pad drops to 0.14 opacity, below `isPadTeal`'s floor, so "still
-  drawn" is unobservable. **Re-spec the assertion to "the pad re-arms on its `everyTurns` cycle"** — the
-  actual pad behaviour, map-agnostic. (Not moving it to Iron Basin for its pad pairs — that couples the test
-  to one map's layout.)
-- **FOG-ZORDER's aimed half:** `bestAimed` sits at 1 (floor 20) because the nearest lit brush is at the very
-  edge of a turn-1 reach and most brush is fogged on the opening frame — no candidate choice fixes it.
-  **Re-spec to DRIVE a character toward a brush band over a turn or two, then measure** the aim overlay's
-  z-order against brush from range. (The coarse-floor half already passes on Iron Basin at 4v4.)
-
-*AC:* both tests pass on `main` by asserting the real behaviour on the current maps; the render suite is
-green (VFX-FLASH is its own item above). **Spec Notes.** Files: `packages/client/e2e/render.spec.ts`.
-Test-side only — production behaviour is correct. Out of scope: VFX-FLASH (VFX-FLASH-VERIFY); new visual
-assertions.
+### BOLA-HITS. Bola hits the first enemy in the line (DATA-ONLY) — BLOCKED on HITS-RENAME
+**Addresses Dev Note (W2): _"BOLA becomes DATA-ONLY once this lands: add `"hits": "first"` to wisp.json
+bola. Damage 12 and slow 1 are unchanged."_** *AC:* `wisp.json` `bola` gains `"hits": "first"`; it is a
+`line` (already), so the effects apply to the first enemy walked to. **Spec Notes / FLAG:** the owner's note
+says "Damage 12 … unchanged," but `wisp.json` bola currently has **`amount: 24`** (slow duration 1 matches).
+**Keep 24 — do not silently change balance** — and surface the 12-vs-24 discrepancy to the owner for
+confirmation (the AC is "damage unchanged," and the "12" is the owner's recollection, not an instruction to
+re-tune). No test beyond the content fairness guard; the mechanic is tested by HITS-RENAME.
 
 ---
 
-## MED — complete the FoF read (the owner asked for outlines)
+## HIGH — the decoy is placed, not worn
 
-### FOF-OUTLINE. The character body/rim takes its friend/foe colour (CLIENT) — UNBLOCKED (after the render items)
-**Addresses Builder session-17 OQ #1 and the FoF Dev Note's "blue/red **outline highlights**."** FOF-UNITS
-shipped the foot ring + nameplate but **not** the model outline — `emissive` is the victim flash's, and an
-inverted-hull outline is per-mesh geometry on an already-slow render path. *AC:* a unit's **body reads its
-FoF colour** (self blue / ally green / foe red) as an outline/tint, without conflicting with the victim
-flash or adding per-mesh geometry. **Spec Notes.** The clean technique is to **tint the achromatic rim light**
-shipped in `5e022a8` by the unit's FoF colour — the rim already outlines the silhouette, costs no new
-geometry, and does not touch `emissive`. Reuse FOF-UNITS' viewer-relative colour resolver (one source of
-truth). **Confirm in the playtest first** whether ring + nameplate already read clearly enough — if so, this
-can wait; if the owner wants the fuller AR outline, the rim tint is it. Out of scope: `emissive`-based
-outlines (reserved for the flash); a second inverted-hull pass. **Determinism guard:** pure view, no path
-into state.
+### W1-DECOY-TARGET. Per-effect `target`; decoy placeable at range 3 (ENGINE additive + data) — UNBLOCKED
+**Addresses Dev Note (W1): _"She can place her decoy at a range of 3 — keep the decoy static."_** Ruled
+**DECOY-PLACEMENT** in edge-cases (the occupied-square question the owner flagged is now answered: **may not
+be placed on a square occupied by any unit at Prep; the aim is refused, not routed**).
 
-## Routed to Designer / Owner / flags
+*AC (engine, additive and generic — golden rule #2, not a decoy special case):*
+- **`AbilityEffect` gains optional `target: "self" | "aimed"`, defaulting to `"self"`.** Defaulting means
+  **no existing character data changes.** Any future ability that buffs the caster while placing something
+  at an aimed square gets this for free.
+- **`validate.ts`:** `target: "aimed"` requires a non-`self` shape.
+- **`data/characters/wisp.json` `veil_decoy`** becomes shape **`square`**, range **3**; the stealth effect
+  gets `target: "self"`, the decoy effect gets `target: "aimed"`. It **stays `free: true`** (the free-action
+  compose is unchanged — Wisp can still vanish and Sprint).
+- **DECOY-PLACEMENT:** an `aimed` decoy at a square occupied by any unit is refused at Prep (not routed to
+  nearest). Aiming into fog stays legal (free-aim ruling).
+- **R2 otherwise stands UNCHANGED** — the decoy remains static, dies to any damage, blocks nothing, grants
+  no energy. **Only its spawn location changes.** Do not reopen R2's other clauses.
+- **Ships with tests:** stealth lands on the caster while the decoy spawns at the aimed square; an aim onto
+  an occupied square is refused; `target: "aimed"` on a `self`-shape ability is a validation error; the
+  default (`"self"`) leaves every other character's effects untouched (a broad no-change assertion).
 
-- **FOF-OVERLAY-HUE (Designer, from OQ #2).** The friendly committed-overlay blue is the same hue as the
-  `REACH` range envelope, separated only by weight. If an ally's committed plan under a live aim reads
-  ambiguous on a real board, the Designer picks a distinct friendly hue (a teal or a different blue). Playtest
-  question first; not a Builder item until the hue is chosen.
-- **The map lane owns e2e render tests it moves.** Proving Grounds broke the render suite and it took two
-  Analyzer cycles to close — note for the map lane: a map reshape should re-point its own coordinate/format-
-  coupled render tests in the same change, as COVER-EDGE shipped its engine tests.
-- **Camera-follow-on-select; zoom beyond wheel; intent badge name vs digit; ASSET-BUDGET caps + CLIP-DEDUP
-  (§18); 300 kB JS budget headroom; CHASE-SECOND-CLOCK; NET-E2E-EXPAND-2; DO-E2E; RAVOK-RECOIL; Warding Wall
-  power; Skim/Chain Hook; FRAG-SELF zoning; WALL-BLINK-ONTO; INTERCEPT shield lever; Aegis beam distinctness;
-  self-lethal recoil warning; burn/regen pip glyphs; Warding Halo dead `weaken`; trap count cap; inspect
-  chips hoverable; Solar Flare DoT ceiling; Thorn mine carpet** — unchanged flags.
+**Spec Notes.** Files: `packages/engine/src/types.ts` (`AbilityEffect.target?`), `validate.ts` (the shape
+rule), `resolve.ts` (effect application reads `target` — `self` → caster, `aimed` → the ability's aimed
+square; the decoy spawn already exists as a `GameState.decoys` entry, so this reroutes its position),
+`data/characters/wisp.json`. **Determinism/purity:** additive field, integer square, N-safe — no floats.
+**Out of scope:** the decoy's enemy-side ring (**P1**, deferred to RND1 — see flags); any change to R2's
+lifetime/static/no-block clauses; the decoy's animation set (**W3**, invariant below).
+
+---
+
+## MED — the drawn line must not over-promise
+
+### BOLA-OVERLAY. The line overlay terminates at the impact point (CLIENT, amends UI2) — BLOCKED on BOLA-HITS
+**Addresses Dev Note (W2 UI consequence): _"the drawn line overlay must TERMINATE AT THE IMPACT POINT, not
+extend to the full range 6 — otherwise the overlay promises reach the ability no longer has."_** *AC:* for a
+`hits: "first"` line, the previewed/committed line overlay is drawn only to the **first enemy** the line
+reaches (the impact tile), not to full `range`. If no enemy is in the line, it draws to full range (nothing
+to stop it). **Spec Notes.** Files: the line-overlay path in the client targeting/overlay renderer. This is
+the same first-enemy stop the engine computes — **read it from the engine's resolved coverage, do not
+recompute** (preview parity). Depends on BOLA-HITS' data + HITS-RENAME's line semantics. If the world-space
+line overlay (UI2) is not yet built for lines, scope this to the overlay that exists and note the gap.
+
+---
+
+## Record now, build later
+
+### W3-DECOY-PARITY. Idle/ambient parity is a standing invariant (NO BUILD NOW)
+**Addresses Dev Note (W3): _"Wisp will have all the animations, decoy should get the full animation set."_**
+The scope is narrower than it sounds: the decoy is static, so it never plays run or attack — **only IDLE and
+AMBIENT must be pixel-identical** to a real Wisp holding position (a motionless decoy is correct, not a
+tell). **Invariant to enforce when animation work starts:** any ambient or idle effect added to Wisp must be
+wired to the decoy **in the same commit**, or the tell silently reappears the first time someone adds (e.g.)
+a smoke shader. Recorded here, not scheduled — there is no idle/ambient VFX on Wisp yet. **Playtest flag
+(not a build):** the real tell is **duration**, not animation — R2 gives the decoy the cast turn plus the
+next, and two turns of a Wisp doing nothing is readable at high skill; R2 already names the fix (drop
+lifetime to the cast turn only). No action now.
+
+## Routed to Designer / Owner / ART / flags
+
+- **WISP-GLB-REBAKE (ART, pairs with WISP-INVISIBLE-FIX).** Rebuild `packages/client/public/models/wisp.glb`
+  so the asset is honest, and fix `tools/art/build_glb.py --in-place`: it must **re-base** the `Hips`
+  translation to the bind pose (subtract the baseline), not pin per-clip drift to a frame-0 that is itself
+  ~22 units off, and it must **not assume local-Y is world-up** (veil/bola carry large Y offsets). Verify by
+  re-reading the rebuilt `.glb`'s `Hips` tracks sit near the bind translation. The client MODEL-ROOT-LOCK is
+  the guarantee; this keeps the source clean. Not Builder (Vitest) work — it needs the art toolchain.
+- **W5 — Firepower "Phantom" exception (Designer, `docs/design/roster-v1.md` §2).** _"roster-v1.md §2 states
+  Firepower gets 'exactly ONE signature survival tool — a dash, stealth, or a shield.' Wisp has THREE: Blink
+  (dash), Veil (stealth), and Shadowstep Strike (dash + untargetable), on the joint-lowest HP pool … the
+  most evasive character in the roster."_ Write an explicit **Phantom exception** into §2 (recommended —
+  evasion IS the theme) or convert one tool. Right now the contract is silently violated, so a future
+  balance pass could "fix" her by mistake. Designer doc change, **not Builder work.**
+- **LOBBED-SWEEP (Designer, per-ability).** After AOE-LoS, the `range > 0` circles default to **direct**
+  (require caster→centre LoS): `cinder.ember_bolt`/`flare_burst`/`solar_flare`/`stoke_the_flame`,
+  `thorn.barbed_sling`/`verdant_veil`/`overgrowth`, `lumen.mending_light`/`sanctuary`, `aegis.barrier_pulse`.
+  Each needs a deliberate `lobbed: true`-or-`direct` call (most supports rarely notice; Cinder's Flare Burst
+  is the enemy-facing one the owner named). Default `direct` stands until ruled. The `range: 0` self-circles
+  need no call (AOE-LoS-SELF-BURST). `data/characters/*.json`.
+- **AIM-VISION-SHAPE / ember_bolt (Owner balance).** The aimable set is a Manhattan-vision diamond clipped
+  from a Euclidean-range disc (ruled intended, flagged). Concrete casualty: `cinder.ember_bolt` at `range:
+  7` exceeds `VISION_RANGE` (6), gating off ~43% of its aimable area and a full tile of axial reach. Lever:
+  `range: 6`, or change the AIM-VISION-SHAPE rule (state vision-capped aiming, or make vision Euclidean).
+  Owner/Designer call — not touched (no rebalancing).
+- **P1 — decoy enemy-side ring (defer into RND1).** _"the decoy renders to the enemy team as Wisp, so it
+  must carry the ENEMY-SIDE ring from their point of view. If the ring is derived from the decoy's true
+  owner, the ring becomes the tell that defeats the entire ability."_ The FoF ring must be resolved from the
+  **viewer's** seat for a decoy exactly as for a real unit (FOF-COLORS already resolves viewer-relative — the
+  decoy must go through the same resolver, appearing as an enemy to the enemy). **Defer into RND1** unless
+  RND1 is far out; the ground ring lives on the same plane as UI2's AoE shapes, so build it there. Flag it
+  now so the decoy is never accidentally given an owner-derived ring.
+- **RENDER-LUMA-GUARD (flag, from session-18 OQ #3).** The victim-flash regression was caught only by a test
+  failing for an unrelated reason after scene luminance moved ~16×. A luminance guard on the render passes
+  that move grading would let the next re-grade report itself rather than surfacing as a broken VFX
+  assertion. Not scheduled — recorded as a gap.
+- **FOF-OVERLAY-HUE (Designer, still open).** Friendly committed-overlay blue shares the `REACH` hue,
+  separated only by weight. If an ally's committed plan under a live aim reads ambiguous on a real board, the
+  Designer picks a distinct friendly hue. Playtest question first.
+- **Long-standing flags (unchanged):** the map lane owns e2e render tests it moves; camera-follow-on-select;
+  zoom beyond wheel; intent badge name vs digit; ASSET-BUDGET caps + CLIP-DEDUP (§18); JS budget headroom;
+  CHASE-SECOND-CLOCK; NET-E2E-EXPAND-2; DO-E2E; RAVOK-RECOIL; Warding Wall power; Skim/Chain Hook; FRAG-SELF
+  zoning; WALL-BLINK-ONTO; INTERCEPT shield lever; Aegis beam distinctness; self-lethal recoil warning;
+  burn/regen pip glyphs; Warding Halo dead `weaken`; trap count cap; inspect chips hoverable; Solar Flare DoT
+  ceiling; Thorn mine carpet.
 
 ## 🎮 PLAYTEST — the standing validation loop (owner + humans)
 
-The FoF work has already had one round; a second confirms **FoF reads cleanly in a real mirror** (and
-whether ring+nameplate suffices without FOF-OUTLINE, and whether friendly-blue vs range-blue is legible —
-FOF-OVERLAY-HUE). Also still owed a live look: **DEATH-HANG-3** in a networked game, the **Proving Grounds
-map + COVER-EDGE** (do half-walls read), the character-centred camera + VFX impact, and the balance
-watch-list (TTK burst, 20-turn pacing, Skim/Chain Hook/Lumen, RAVOK-RECOIL, clock-vs-kills). Output: felt
-problems → Dev Notes.
+**First look owed: Wisp on the board once WISP-INVISIBLE-FIX lands** — does she read, does the decoy at
+range 3 deceive, does idle/ambient stay a non-tell. Then: **AOE-LoS in a real game** — do walls shelter as
+expected, does the diamond-clipped-from-disc aimable shape (AIM-VISION-SHAPE) read as a rule or a bug, is
+ember_bolt's gated reach a problem. Still owed: **FoF in a real mirror** (does ring+nameplate suffice
+without FOF-OUTLINE; friendly-blue vs range-blue legibility — FOF-OVERLAY-HUE); **DEATH-HANG-3** networked;
+**Proving Grounds + COVER-EDGE** (do half-walls read); character-centred camera + VFX impact; the balance
+watch-list. Output: felt problems → Dev Notes.
 
 ## Flagged future (not scheduled)
 
-- **The rest of the VFX pipeline** (projectiles/casts/status VFX; more ambient motion). **The other eight
-  characters' art** (CHARACTER_PLAYBOOK now records what building Aegis taught; gated on CLIP-DEDUP).
-  **M3-REMATCH, IDLE-KICK, LOBBY-TEAM-CHOICE**; **same-turn-buff preview**; **route-around-bodies dash impact
-  preview**.
+- **The rest of the VFX pipeline** (projectiles/casts/status VFX; more ambient motion — remember W3's
+  decoy-parity invariant when any Wisp ambient lands). **The other eight characters' art** (CHARACTER_PLAYBOOK
+  records what building Aegis taught; the Rodin import path now has WISP-GLB-REBAKE's lessons too; gated on
+  CLIP-DEDUP). **M3-REMATCH, IDLE-KICK, LOBBY-TEAM-CHOICE**; **same-turn-buff preview**;
+  **route-around-bodies dash impact preview**.
