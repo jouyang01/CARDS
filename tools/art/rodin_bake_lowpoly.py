@@ -170,20 +170,28 @@ def paint_blindfold(low, png_path, band, color_hex, front_thresh=0.20, dilate=3)
     col = np.array([int(color_hex.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)], np.uint8)
     mask = np.zeros((H, W), bool)
 
-    # Back-of-skull cutoff (‑Y is front): the band must wrap the head but STOP at
-    # the back of the skull, never continuing onto the ponytail behind it. The
-    # ponytail skews a Y-range estimate, so size the skull from its X-width (which
-    # the ponytail barely affects at eye height) and cut off one head-depth back.
-    def _pct(a, p):
-        a = sorted(a)
-        return a[min(len(a) - 1, max(0, int(p * len(a))))]
+    # WRAP-AROUND band: paint the whole skull at eye height — front, temples, AND
+    # the back over the hair — but NOT the ponytail trailing behind it. The
+    # ponytail is spatially separated from the skull by a gap in Y (‑Y is front),
+    # so find the largest Y-gap in the back portion of the eye-height ring: the
+    # skull is in front of it, the ponytail behind. Paint everything up to that
+    # split. No front-facing filter — the back of the skull faces away and must
+    # still take the band. If there is no distinct ponytail (small gap), the band
+    # simply wraps the whole head.
     band_vs = [v for v in vs if lo_nz <= (v.z - mnz) / h <= hi_nz]
     if band_vs:
-        bxs = [v.x for v in band_vs]
-        bys = [v.y for v in band_vs]
-        rx = (_pct(bxs, 0.80) - _pct(bxs, 0.20)) / 2      # skull half-width
-        y_front = _pct(bys, 0.03)                          # frontmost (face)
-        back_cutoff = y_front + 2.4 * rx                   # ~one head-depth back
+        ys = sorted(v.y for v in band_vs)
+        y_front = ys[max(0, int(0.02 * len(ys)))]
+        span = ys[-1] - y_front
+        back_cutoff = ys[-1] + 1.0                          # default: whole head
+        best = 0.0
+        for i in range(int(0.45 * len(ys)), len(ys) - 1):   # search the back portion
+            g = ys[i + 1] - ys[i]
+            if g > best:
+                best = g
+                split = (ys[i] + ys[i + 1]) / 2
+        if best > 0.05 * span:                              # a real ponytail gap
+            back_cutoff = split
     else:
         back_cutoff = float("inf")
 
@@ -193,18 +201,12 @@ def paint_blindfold(low, png_path, band, color_hex, front_thresh=0.20, dilate=3)
             yield (idx[0], idx[i], idx[i + 1])
 
     for poly in me.polygons:
-        n = N @ poly.normal
-        if n.length == 0:
-            continue
-        n.normalize()
-        if n.y >= front_thresh:            # front/temple facing only (‑Y is front)
-            continue
         for (a, b, c) in tris(poly):
             wp = [M @ me.vertices[me.loops[l].vertex_index].co for l in (a, b, c)]
             zs = [p.z for p in wp]
             if (min(zs) - mnz) / h > hi_nz or (max(zs) - mnz) / h < lo_nz:
                 continue
-            if sum(p.y for p in wp) / 3 > back_cutoff:     # behind the skull -> ponytail
+            if sum(p.y for p in wp) / 3 > back_cutoff:      # behind the split -> ponytail
                 continue
             P = [(uv[l].uv[0] * W, (1 - uv[l].uv[1]) * H) for l in (a, b, c)]
             (x0, y0), (x1, y1), (x2, y2) = P
