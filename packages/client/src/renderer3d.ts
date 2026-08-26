@@ -74,7 +74,7 @@ import { overlayBoost } from './themes.js';
 import { seedOf, tileTint, type GrainSpec } from './grain.js';
 import { browserRenderOnDemand } from './render-flags.js';
 import { rimBreath } from './ambient-motion.js';
-import { placeProp } from './prop-placement.js';
+import { placeProp, propOpacity } from './prop-placement.js';
 import { easeCamera } from './camera-ease.js';
 import { clampCentre, panDelta } from './camera-pan.js';
 
@@ -1601,6 +1601,11 @@ export function createRenderer(
   const propGroup = new Group();
   propGroup.name = 'props';
   world.add(propGroup);
+  // PROP-FADE: the distinct materials the loaded props share, so a single
+  // opacity per material ghosts every pillar and barricade at a low camera
+  // angle (see `applyCamera`). Collected as templates load; empty until then,
+  // which is why the fade in `applyCamera` is a no-op on a board with no props.
+  const propMaterials = new Set<MeshStandardMaterial>();
 
   const loadProps = async (): Promise<void> => {
     try {
@@ -1608,40 +1613,67 @@ export function createRenderer(
       const res = await fetch(`${base}/props/manifest.json`, { cache: 'no-cache' });
       if (!res.ok) throw new Error(`props manifest ${res.status}`);
       const manifest = (await res.json()) as {
-        props?: { theme: string; role: string; file: string; version?: string; yawSteps?: number; height?: number }[];
+        props?: {
+          theme: string; role: string; yawSteps?: number; height?: number;
+          // Several interchangeable variants per role; the board picks one per tile.
+          variants?: { file: string; version?: string }[];
+          // Legacy single-file format, read as a one-variant list so an older
+          // committed manifest still renders while a rebuild is pending.
+          file?: string; version?: string;
+        }[];
       };
       const mine = (manifest.props ?? []).filter((e) => e.theme === palette.themeId);
       if (mine.length === 0) return; // this theme has no props yet — boxes it is
       const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
       const loader = new GLTFLoader();
 
+      const url = (file: string, version?: string): string =>
+        version === undefined || version === '' ? `${base}/${file}` : `${base}/${file}?v=${encodeURIComponent(version)}`;
+
       for (const entry of mine) {
         const squares = entry.role === 'wall' ? map.walls : entry.role === 'cover' ? map.cover : [];
         if (squares.length === 0) continue;
-        let template: Group;
-        try {
-          const url = entry.version === undefined || entry.version === ''
-            ? `${base}/${entry.file}`
-            : `${base}/${entry.file}?v=${encodeURIComponent(entry.version)}`;
-          template = (await loader.loadAsync(url)).scene as Group;
-        } catch (err) {
-          // One role missing is not the others' problem — its tiles keep their box.
-          console.warn(`[cards] terrain prop "${entry.theme}/${entry.role}" did not load: ${String(err)}`);
-          continue;
+        const files = entry.variants ?? (entry.file !== undefined ? [{ file: entry.file, version: entry.version }] : []);
+        if (files.length === 0) continue;
+
+        // Load every variant mesh for the role, dropping any that fail — a role
+        // with even one usable variant still dresses its tiles.
+        const templates: Group[] = [];
+        for (const v of files) {
+          try {
+            templates.push((await loader.loadAsync(url(v.file, v.version))).scene as Group);
+          } catch (err) {
+            console.warn(`[cards] terrain prop "${entry.theme}/${entry.role}" variant ${v.file} did not load: ${String(err)}`);
+          }
         }
-        template.traverse((o) => {
-          if ((o as Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; }
-        });
+        if (templates.length === 0) continue;
+        for (const t of templates) {
+          t.traverse((o) => {
+            const mesh = o as Mesh;
+            if (!mesh.isMesh) return;
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            // Clones share these materials, so one opacity fades every instance —
+            // exactly the global pitch-fade we want.
+            for (const mat of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+              propMaterials.add(mat as MeshStandardMaterial);
+            }
+          });
+        }
+
         for (const sq of squares) {
-          const inst = template.clone(true);
+          // Pick which variant this tile shows (my hashed variety), then place it.
+          const choice = placeProp(map.id, sq.x, sq.y, { yawSteps: entry.yawSteps, variants: templates.length });
+          const inst = templates[choice.variant]!.clone(true);
           inst.position.copy(toWorld(map, sq)); // prop base sits at local y=0 = the floor
           const facing = entry.role === 'cover' ? (sq as { facing?: 'N' | 'S' | 'E' | 'W' }).facing : undefined;
           if (facing) {
-            // COVER-EDGE: the barricade is a half-wall on ONE edge. Sit it on that
-            // tile boundary and turn it to run ALONG the edge (its stakes are
-            // built spanning +x, so N/S keep yaw 0 and E/W turn a quarter), then
-            // stretch it to crouch-cover height. Not the hashed placeProp yaw —
-            // a directional fence's orientation is the facing, not a coin flip.
+            // COVER-EDGE: a faced cover tile is a half-wall on ONE edge. Sit the
+            // barricade on that tile boundary, turn it to run ALONG the edge
+            // (stakes span +x, so N/S keep yaw 0 and E/W turn a quarter), and
+            // stretch it to crouch-cover height. The map's authored facing is the
+            // orientation here — not the hashed yaw, which a directional fence has
+            // no use for.
             const off = TILE * 0.5;
             if (facing === 'E') { inst.position.x += off; inst.rotation.y = Math.PI / 2; }
             else if (facing === 'W') { inst.position.x -= off; inst.rotation.y = Math.PI / 2; }
@@ -1649,7 +1681,8 @@ export function createRenderer(
             else { inst.position.z -= off; inst.rotation.y = 0; } // N
             inst.scale.y = EDGE_COVER_HEIGHT / (entry.height ?? COVER_HEIGHT);
           } else {
-            inst.rotation.y = placeProp(map.id, sq.x, sq.y, { yawSteps: entry.yawSteps }).yawRadians;
+            // A full-block cover tile or a wall: hashed quarter-turn for variety.
+            inst.rotation.y = choice.yawRadians;
           }
           propGroup.add(inst);
           // Hide the box this prop now stands for. Kept (not removed) so a future
@@ -1658,6 +1691,7 @@ export function createRenderer(
           if (box !== undefined) box.visible = false;
         }
       }
+      fadeProps();   // set the opacity for the pitch the camera is already at
       markDirty();
     } catch (err) {
       // The whole load failing is ordinary — an older build with no props, a
@@ -2151,7 +2185,29 @@ export function createRenderer(
     camera.up.set(0, 1, 0);
     camera.lookAt(target);
     camera.updateProjectionMatrix();
+    fadeProps();
   }
+
+  // PROP-FADE: ghost the props toward transparent as the orbit drops to a low
+  // angle, so a tall pillar never hides the unit behind it (Atlas Reactor does
+  // the same). Runs from `applyCamera`, i.e. on every camera change, so it costs
+  // nothing on a still board and needs no per-frame tick. `transparent` is
+  // flipped only when it actually changes — that flag forces a shader recompile,
+  // the opacity does not — and depth is written only while essentially opaque so
+  // a ghosted pillar does not occlude what is drawn behind it.
+  const fadeProps = (): void => {
+    if (propMaterials.size === 0) return;
+    const opacity = propOpacity(pitchDeg);
+    const ghost = opacity < 0.99;
+    for (const mat of propMaterials) {
+      mat.opacity = opacity;
+      if (mat.transparent !== ghost) {
+        mat.transparent = ghost;
+        mat.depthWrite = !ghost;
+        mat.needsUpdate = true;
+      }
+    }
+  };
 
   /**
    * UI-VIEWPORT — how much of the canvas is covered by chrome, in CSS pixels.

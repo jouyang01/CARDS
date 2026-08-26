@@ -127,14 +127,20 @@ test.describe('the victim flash reaches the screen', () => {
     // Walk the phase a frame at a time, counting lit pixels. The flash is 0.18s
     // — about 6 frames at 30fps — inside a Blast of a few seconds, so this is
     // looking for a spike, not a level.
-    // Tight on the victim, at full sample density. The flash lights ONE unit,
-    // which is a few hundred pixels of a 1400x950 board — a rounding error in a
-    // whole-board count, and smaller than the jitter the screen shake puts into
-    // one. Cropping to where the hit was aimed makes the same pixels the
-    // majority of what is measured.
-    const clip = {
-      x: Math.max(0, aim!.x - 160), y: Math.max(0, aim!.y - 160), width: 320, height: 320,
-    };
+    //
+    // The whole board, not a crop on the aim point. This used to clip 320px
+    // around where the ability was aimed, on the assumption the victim stays
+    // under that point through resolution — but CAMERA-CONTROLS re-frames the
+    // board for playback (it leans the camera toward the action), so between the
+    // planning aim and the Blast the victim slides clean out of a planning-time
+    // crop and the flash lands entirely outside it (measured: 77 in the crop,
+    // 1458 over the board — the flash-on figure exactly). The `isLit` probe and
+    // the both-sided spike below are what make the wide frame safe: near-white is
+    // rare on a resting board with the overlays hidden, and a single-frame rise
+    // above BOTH neighbours rejects the sustained brightening a camera pull-back
+    // or a phase change adds — so the flash reads as the one transient it is,
+    // wherever on the board the camera has put the victim.
+    const clip = await boardClip(page, box);
     const lit: number[] = [];
     for (let i = 0; i < 90; i++) {
       lit.push(countPixels(decodePng(await page.screenshot({ clip })), isLit, 1));

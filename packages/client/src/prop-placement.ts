@@ -78,3 +78,29 @@ export const placeProp = (
     yawRadians: (yawTurns * 2 * Math.PI) / steps,
   };
 };
+
+
+/**
+ * PROP-FADE — how see-through a prop is at a given camera pitch.
+ *
+ * The orbit reaches ~8° (`PITCH_LIMITS.min`), where a tall pillar stands
+ * between the camera and half the board. Atlas Reactor solved the same problem
+ * the same way: at a low angle the scenery ghosts, so a wall never hides the
+ * unit behind it. This is pitch-based rather than per-occluder — the whole ask
+ * is "when the camera is low, make the props transparent" — which is cheap
+ * (one opacity on a shared material) and never surprises the player by fading a
+ * prop they are looking straight down at.
+ *
+ * Opaque at and above the isometric default (35.3°) so the normal view is
+ * untouched; eases to `PROP_FADE.min` — a faint ghost, not gone, so the tile
+ * still reads as blocked — as the pitch drops toward the floor.
+ */
+export const PROP_FADE = { hi: 32, lo: 12, min: 0.18 } as const;
+
+/** A prop's opacity at `pitchDeg`, in `[PROP_FADE.min, 1]`. */
+export const propOpacity = (pitchDeg: number): number => {
+  if (!(pitchDeg < PROP_FADE.hi)) return 1;          // also catches NaN → opaque
+  if (pitchDeg <= PROP_FADE.lo) return PROP_FADE.min;
+  const t = (pitchDeg - PROP_FADE.lo) / (PROP_FADE.hi - PROP_FADE.lo);
+  return PROP_FADE.min + (1 - PROP_FADE.min) * t;
+};

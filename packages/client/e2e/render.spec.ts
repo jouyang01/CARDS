@@ -520,8 +520,14 @@ test('a resolved turn animates, logs both ends, and floats a readout', async ({ 
     if (!(await lock.isVisible())) break;
     const ability = page.locator('.hud-ability:not([disabled])');
     if (await ability.count() > 0) {
-      await ability.first().click();
+      // Pick the target BEFORE arming. `aimTarget` reads the seat's bodies from
+      // the frame, and arming the ability floods the reach envelope with the
+      // faint blue the FOF pass now uses, which `blueBodies` splits into false
+      // clusters — so a target taken from the armed frame lands on an envelope
+      // fragment off any unit, and the shot hits nobody and floats no readout.
+      // The clean pre-arm frame has only the two real bodies.
       const at = await aimTarget(page);
+      await ability.first().click();
       await pointAt(page, at.fx, at.fy);
       await clickAt(page, at.fx, at.fy);
     }
@@ -935,26 +941,99 @@ test.describe('HUD-LAYOUT: the blocks moved and the board got the space', () => 
  * shows up **on those same pixels** — not merely somewhere on screen, which is
  * what a whole-frame colour count would have let through.
  *
- * **Iron Basin at 4v4**, and both halves of that are load-bearing.
- *
- * 4v4 because in a duel the seat's vision never reaches a brush band, so every
- * green pixel on screen is fogged brush and there is nothing to prove anything
- * against. Iron Basin because Proving Grounds — which this used to name — has
- * **two spawns a side**, so `format=4v4` on it is not a harder test, it is an
- * "invalid setup" error and a board that never boots.
- *
- * Measured rather than reasoned, because the two failure modes look identical
- * from the assertion: lit brush on the opening frame is 32 px on Proving
- * Grounds at 2v2 (below this test's own floor of 100) against 2042 px on Iron
- * Basin at 4v4. Only one of the four map/format pairs can carry this test.
+ * Driven into range on purpose. Proving Grounds runs its brush down the centre
+ * line — the ground both teams cross — so on the opening frame every seat is on
+ * a flank with the brush in fog, and there is nothing lit to prove anything
+ * against. A couple of Sprints toward mid-board bring a unit up beside it, which
+ * both lights the brush and puts it inside an ability's reach. (The old
+ * duel-arena sat a brush band inside a 4v4 seat's opening vision; the rebuild
+ * moved it to the seam between the teams, so the test closes on it rather than
+ * starting on top of it. Iron Basin at 4v4 lights a brush band on the opening
+ * frame, but its bands sit in corners the mid-field seats cannot aim at — the
+ * range wash reaches them, the aim never does — so this drives on Proving
+ * Grounds instead.)
  */
 test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async ({ page }) => {
-  await page.goto('./?map=iron-basin&format=4v4');
+  test.setTimeout(180_000); // drives several real turns to close on the centre brush
+  await page.goto('./');
   await expect(boardCanvas(page)).toBeVisible();
-  await page.waitForTimeout(700);
+  await page.waitForTimeout(500);
+
+  // Close a unit onto the brush band, then aim across it. Two things shape this:
+  //   * The dense band of lit brush, not every green pixel. The material-polished
+  //     board (chamfers, normal maps) throws green-shifted highlights on raised
+  //     solids that `isBrushGreen` catches one-off, scattering false brush across
+  //     the frame; the real band is the one big proximity cluster (`largestCluster`).
+  //   * Sprint toward the band itself, not a fixed screen fraction. An order past
+  //     the budget is dropped whole, and the band is more than a Sprint from spawn
+  //     — so each turn steps the nearest unit part-way toward the band's centroid,
+  //     which is a legal reach at any zoom and converges instead of guessing a
+  //     direction that CAMERA-CONTROLS' recentring keeps moving.
+  const brushBand = (img: Image, step = 4): { x: number; y: number }[] =>
+    largestCluster(findPixels(img, isBrushGreen, step), step * 3);
+  const bodyByBrush = async (): Promise<boolean> => {
+    const img = await pixels(page);
+    const bodies = blueBodies(img);
+    const band = brushBand(img);
+    // ~1.5 tiles: close enough that the band is inside a mid-range ability's aim
+    // (verified — an AoE lands on it from here), so the drive can stop and hand
+    // off to the sweep rather than spend more turns inching onto the tile.
+    return band.length > 30 && bodies.length > 0
+      && band.some((p) => bodies.some((b) => Math.hypot(p.x - b.x, p.y - b.y) < 135));
+  };
+  const sprintTowardBand = async (): Promise<void> => {
+    // Read the unit positions from a CLEAN frame, BEFORE arming the move —
+    // arming floods the reach envelope with faint-blue tiles that `blueBodies`
+    // splits into a scatter of false clusters across the board, which would drag
+    // the "which body is nearest the band" pick off the real unit. The brush band
+    // (green) is unaffected by the blue wash, so it can be read either side.
+    const preImg = await pixels(page);
+    const bodies = blueBodies(preImg);
+    const sprint = page.locator('.hud-move', { hasText: /^Sprint/ });
+    const move = page.locator('.hud-move', { hasText: /^Move/ });
+    const ctl = (await sprint.isVisible()) && !(await sprint.isDisabled()) ? sprint : move;
+    if (!(await ctl.isVisible()) || (await ctl.isDisabled())) return;
+    await ctl.click();
+    const img = await pixels(page);
+    const band = brushBand(img);
+    const clip = await boardClip(page);
+    const s = { x: clip.width / img.width, y: clip.height / img.height };
+    // A real band (not a few stray green pixels) to steer by: on the opening
+    // frames the centre brush is still fogged, so `brushBand` is noise, and
+    // aiming a Sprint at noise lands on no legal tile and moves nobody. Until the
+    // band is genuinely lit, drive on the fixed fraction toward mid-board (which
+    // always reaches a legal square) to un-fog it; once it is lit, steer onto it.
+    if (band.length >= 40 && bodies.length > 0) {
+      const bc = { x: band.reduce((a, p) => a + p.x, 0) / band.length, y: band.reduce((a, p) => a + p.y, 0) / band.length };
+      const body = bodies.reduce((n, b) => (Math.hypot(b.x - bc.x, b.y - bc.y) < Math.hypot(n.x - bc.x, n.y - bc.y) ? b : n));
+      const tx = body.x + (bc.x - body.x) * 0.55;
+      const ty = body.y + (bc.y - body.y) * 0.55;
+      await page.mouse.click(clip.x + tx * s.x, clip.y + ty * s.y);
+    } else {
+      const seat = (await page.locator('#status').textContent()) ?? '';
+      await clickAt(page, /Team 1\b/.test(seat) ? 0.7 : 0.3, 0.5);
+    }
+  };
+  for (let turn = 0; turn < 6 && !(await bodyByBrush()); turn++) {
+    for (let seat = 0; seat < 6; seat++) {
+      const lk = lockIn(page);
+      if (!(await lk.isVisible())) break;
+      // Only the viewer's own units (labelled "Team 1") need to close on the
+      // brush; sprinting the far team too doubles the per-turn screenshot cost
+      // for nothing. The rest just lock so the turn resolves.
+      if (/Team 1\b/.test((await page.locator('#status').textContent()) ?? '')) await sprintTowardBand();
+      await lk.click().catch(() => {});
+      await page.waitForTimeout(120);
+      if (await page.locator('.hud-playback').isVisible()) break;
+    }
+    for (let i = 0; i < 30; i++) {
+      if (await lockIn(page).isVisible()) { await page.waitForTimeout(200); break; }
+      await page.waitForTimeout(200);
+    }
+  }
 
   const bare = await pixels(page);
-  const brush = findPixels(bare, isBrushGreen, 2);
+  const brush = largestCluster(findPixels(bare, isBrushGreen, 2), 8);
   expect(brush.length, 'no lit brush on the board — nothing to test against').toBeGreaterThan(100);
 
   const box = (await boardCanvas(page).boundingBox())!;
@@ -966,31 +1045,35 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
   };
   /** Brush pixels that are no longer bare brush — i.e. something drew on them. */
   const covered = (img: Image): number => brush.filter((p) => !isBrushGreen(pixelAt(img, p.x, p.y))).length;
-  const aimed = (img: Image): number => brush.filter((p) => isAimOrange(pixelAt(img, p.x, p.y))).length;
+  /**
+   * The aim overlay reading over brush. `isAimOrange` (r > 150) is the right
+   * probe on bare floor, but the board-material pass (#164 — contact shading,
+   * normal maps darkening the brush lid the overlay blends with) desaturates the
+   * orange composited *over green brush* to a warm olive around `110,112,79` —
+   * plainly the overlay, plainly on top, but no longer a saturated orange. So on
+   * brush the test asks the property that actually distinguishes the aim overlay
+   * from the two things it must beat: it is **warm** (green well above blue),
+   * where the cyan range wash (`~98,118,118`, blue ≈ green) and bare brush (red
+   * too low) are not. That is exactly "the aim drew over the brush instead of
+   * being eaten by it" — the whole claim — read at the saturation the shipped
+   * board actually produces.
+   */
+  const aimOnBrush = (px: { r: number; g: number; b: number }): boolean =>
+    px.r > 90 && px.g - px.b > 15 && px.r >= px.b && !isBrushGreen(px);
+  const aimed = (img: Image): number => brush.filter((p) => aimOnBrush(pixelAt(img, p.x, p.y))).length;
 
-  // Candidates are the brush NEAREST THE CASTER, not a spread across the map.
-  //
-  // Spreading them evenly over every lit brush pixel was right when the camera
-  // framed the whole board and the map was 17 wide. On Iron Basin's 22x19 an
-  // even spread puts most samples a dozen squares from a seat that spawns at
-  // x=4, and no ability reaches any of them — the coarse half passed on the
-  // range wash while `bestAimed` stayed 0, which reads as "brush ate the
-  // overlay" and means "nothing was ever aimed at brush".
-  //
-  // Since CAMERA-CONTROLS the planning camera centres on the character being
-  // ordered, so distance from the frame centre IS distance from the caster.
-  // Sorting by it and keeping a spread-out handful is the same correction
-  // DASH-CAT-ROUTE needed, for the same reason.
-  const mid = { x: bare.width / 2, y: bare.height / 2 };
-  const near = [...brush].sort((a2, b2) =>
-    Math.hypot(a2.x - mid.x, a2.y - mid.y) - Math.hypot(b2.x - mid.x, b2.y - mid.y));
-  // …spread out, so six samples are six squares rather than six pixels of one.
-  const SPREAD_PX = 30;
-  const candidates: { x: number; y: number }[] = [];
-  for (const p of near) {
-    if (candidates.length >= 6) break;
-    if (candidates.every((c) => Math.hypot(c.x - p.x, c.y - p.y) > SPREAD_PX)) candidates.push(p);
-  }
+  // Aim at the part of the band nearest the seat's units — the same near-caster
+  // correction the engine lane's RENDER-SUITE-GREEN-3 arrived at independently,
+  // keyed off the driven unit's real pixels rather than the frame centre. The
+  // drive parked a unit within an ability's range of the band but not on it, and
+  // an AoE lands only a short throw from the caster — so the tiles that take
+  // paint are the near edge of the band, not its far end. `brush` is already the
+  // dense cluster (scattered false-brush filtered out above), so nearest-a-body
+  // is a real brush tile the hover maps straight onto.
+  const bodiesForAim = blueBodies(bare);
+  const nearBody = (p: { x: number; y: number }): number =>
+    bodiesForAim.length ? Math.min(...bodiesForAim.map((b) => Math.hypot(p.x - b.x, p.y - b.y))) : 0;
+  const candidates = [...brush].sort((a, b) => nearBody(a) - nearBody(b)).filter((_, i) => i % 2 === 0).slice(0, 8);
 
   const abilities = page.locator('.hud-ability:not([disabled])');
   const count = await abilities.count();
@@ -1003,18 +1086,17 @@ test('overlays draw over brush instead of being eaten by it (FOG-ZORDER)', async
   // used to stop at the first candidate that landed *any* aim-orange, which
   // froze `bestCovered` at whatever that one ability happened to wash — and the
   // two measurements want different abilities. A line ability (Rail Shot) puts
-  // orange on brush with its very first hover while covering a sliver of the
-  // band: 1355 covered against a 1742 floor. The AoE behind it (Frag Grenade)
-  // washes 4423 of 6970 — 63%, comfortably clear — and was never reached.
-  // Which of the two got there first depended on where the camera had put the
-  // board, so the CAMERA-CONTROLS reframing flipped it and the coarse half
-  // began failing on a board where nothing about z-order had changed.
+  // paint on brush with its very first hover while covering only a sliver of the
+  // band; the AoE behind it (Frag Grenade) washes most of the band and was never
+  // reached. Which of the two got there first depended on where the camera had
+  // put the board, so the CAMERA-CONTROLS reframing flipped it and the coarse
+  // half began failing on a board where nothing about z-order had changed.
   //
   // Sweeping until *both* floors are satisfied measures the two claims
   // independently, which is what two separate maxima were always for. The
-  // fraction is kept rather than dropped to an absolute floor: the coarse
-  // claim is that a large *share* of the brush in frame takes paint, 63%
-  // against 25% is a wide margin, and the bug this guards puts it at zero.
+  // fraction is kept rather than dropped to an absolute floor: the coarse claim
+  // is that a large *share* of the brush in frame takes paint, and the bug this
+  // guards puts that share at zero.
   const COVER_FLOOR = brush.length / 4;
   const AIM_FLOOR = 20;
   let bestCovered = 0;
@@ -1313,7 +1395,10 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
   // These drive several real turns each, animation included, so they need more
   // than the suite's single-frame budget. The alternative — skipping the
   // animation — would be testing a different renderer than the one that ships.
-  test.setTimeout(150_000);
+  // Raised past the material-polish pass (#164 — chamfers, normal maps, contact
+  // shading), which added enough per-frame cost under SwiftShader that the
+  // longest drive (a pad that outlives a turn boundary) crept over 150s.
+  test.setTimeout(180_000);
 
 /**
    * Lock in every seat until the turn resolves, then wait out the playback.
@@ -1459,14 +1544,27 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
 
   /** Switch to the top-down projection, where a ground mark cannot be occluded. */
   const lookStraightDown = async (page: Page): Promise<void> => {
-    const proj = page.locator('.hud-view .hud-small').first();
-    // The button is labelled with the projection it is currently *in*.
-    if ((await proj.textContent()) !== 'Top-down') await proj.click();
-    await expect(proj).toHaveText('Top-down');
+    // Drive the renderer straight to the top projection rather than the HUD
+    // button. The button's label is the projection it will switch *to*, not the
+    // one it is in, so toggling by text is a coin flip; and playback re-frames
+    // (`focusOn`) touch only centre and span, never pitch, so a projection set
+    // here holds for the rest of the drive.
+    await page.evaluate(() => (globalThis as unknown as {
+      __cardsRenderer?: { setProjection(name: 'isometric' | 'top'): void };
+    }).__cardsRenderer?.setProjection('top'));
     await page.waitForTimeout(200);
   };
 
   const drivePadOpen = async (page: Page): Promise<number> => {
+    // Iron Basin, not the default Proving Grounds: its Health pad sits on `(5,5)`,
+    // one square off team 0's `(4,6)` spawn, so it is inside the seat's own vision
+    // from turn 1 and reads at full brightness the moment it arms. Proving
+    // Grounds parks its lone Health pad on `(8,1)`, deep in the fog band the seat
+    // never sees into, where the plate composites against near-black and no
+    // amount of driving an idle turn brings it into sight.
+    await page.goto('./?map=iron-basin&format=4v4');
+    await expect(boardCanvas(page)).toBeVisible();
+    await page.waitForTimeout(500);
     await lookStraightDown(page);
     let teal = countPixels(await pixels(page), isPadTeal);
     for (let turn = 0; turn < PAD_TURNS && teal <= 20; turn++) {
@@ -1478,8 +1576,9 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
   };
 
   test('an armed pad marker is on the board, in its own colour family', async ({ page }) => {
-    // duel-arena ships a mirrored pair of Health pads, and they are public
-    // terrain — drawn for both teams, fog or no fog.
+    // Iron Basin ships a mirrored pair of Health pads on the flanks, one of them
+    // a square off team 0's spawn — public terrain, lit from turn 1 and armed by
+    // turn 4 (`drivePadOpen` navigates there and looks straight down).
     expect(
       await drivePadOpen(page),
       'no pad marker composited — the maps carry pads nobody can see',
@@ -1589,12 +1688,25 @@ test.describe('RENDER-COVERAGE: the render styles that had no browser test', () 
     await page.locator('.hud-move', { hasText: /^Move/ }).click();
     await page.waitForTimeout(150);
 
-    // The teammate is whichever body is not the selected one; either works, so
-    // take the second in the suite's stable top-to-bottom order.
+    // The teammate is the seat's *other* character — read from the CLEAN pre-arm
+    // frame, never the armed one. Arming Move floods the reach envelope with
+    // faint-blue tiles that `blueBodies` splits into a scatter of false clusters
+    // right across the board (measured: two clean bodies become eight), so the
+    // armed frame cannot be indexed for a body at all. In the clean frame there
+    // are exactly the two units, top-to-bottom: `before[0]` is the character on
+    // the clock (turn 1 selects the first seat, whose spawn is the topmost), so
+    // the teammate is the last clean body. Snap to the nearest real body in the
+    // armed frame only for click precision against a few pixels of camera drift.
     const clip = await boardClip(page);
     const image = await pixels(page);
     const scale = { x: clip.width / image.width, y: clip.height / image.height };
-    const mate = blueBodies(image)[1]!;
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+    const teammate = before[before.length - 1]!;
+    const armed = blueBodies(image);
+    const mate = armed.length
+      ? armed.reduce((best, a) => (dist(a, teammate) < dist(best, teammate) ? a : best))
+      : teammate;
     await page.mouse.click(clip.x + mate.x * scale.x, clip.y + mate.y * scale.y);
     await page.waitForTimeout(250);
 

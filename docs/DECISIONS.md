@@ -7121,6 +7121,53 @@ edge cover as a thin barricade slab shoved to its faced edge (full-block cover k
 its box); the prop-swap fallback and pixel baseline may want a refresh when props are
 re-screenshotted.
 
+## 2026-08-24 — Session 23 (Builder): prop variety and the low-angle fade (cohesion taken from parallel COVER-EDGE work)
+
+Two owner asks against the shipped props: they occlude the board at a low camera angle, and every
+tile is the identical mesh. Both are addressed; the second is addressed as far as it can be without
+another Blender run, and the deeper half is designed and staged.
+
+**The fade — pitch-based, and a true no-op where it must be.** At a low orbit a tall pillar stands
+between the camera and half the board, so props ghost toward a 0.18 opacity as the pitch drops below
+the isometric default, exactly as Atlas Reactor does. It is pitch-based rather than per-occluder
+because that is the whole of the ask ("when the camera is low, make them transparent") and it is one
+opacity on the shared prop materials — no per-object raycast, no surprise when the player looks
+straight down at a prop. The curve is a pure tested function; it applies from `applyCamera`, so it
+costs nothing on a still board, and it flips `transparent` only on the threshold crossing (that flag
+recompiles the shader; the opacity does not). A board with no props has no prop materials, so it is
+invisible to the props-off suite.
+
+**Variety — a role is a list now.** `data/props/<theme>.json` moved from one prop per role to a
+`variants` array, and the board picks one per tile by the same `(mapId, x, y)` hash the yaw uses (a
+decorrelated slice of it, so orientation and variant are independent). Proving Floor gained a broken
+column and a heavy column for walls, and a tall barricade and a stone block for cover — five new
+meshes, all from the proven builders plus one new box-composition (`block`), so the risk of building
+blind stayed low. The generator dry-run was extended to check every variant, and it passed all six
+on the invariants that matter (base at floor, top at height, inside a tile).
+
+**Cohesion — my inferred version was superseded by parallel work, and I took theirs.** I built a
+`runYaw` that orients a fence along its *inferred* neighbour run. While I did, the Proving Grounds
+rebuild (#157) plus COVER-EDGE (#158–#160) landed on main and solve the same problem better: a cover
+tile carries an *authored* per-tile `facing`, and the renderer sits the barricade on that edge, turns
+it along the boundary, and stretches it to crouch height. Authored beats inferred — it also does
+edge-placement and height, which inference cannot — so on the rebase I dropped my `runYaw`/
+`Neighbours` entirely and merged my **variant selection** into their facing placement: the map says
+which way a cover tile faces, the hash says which barricade it shows. What survives from my session is
+the two things their work did not do — **variety** (a role is a list of variants) and the **low-angle
+fade**. **v2 is still true autotiling** — end caps, corners, seamless segments — chosen by the same
+per-tile facing, and still a Blender build to see and iterate, not something to author blind.
+
+**Judgment call — the renderer reads both manifest formats.** The new generator writes a `variants`
+array; the currently-committed manifest is the old single-`file` format. Rather than leave the board
+on boxes until the owner re-runs Blender, the loader falls back to a single-variant read of a legacy
+entry, so the existing props keep rendering through the transition and the new variants light up the
+moment the rebuilt manifest lands. The generator also sweeps the old un-indexed `.glb` so the folder
+does not accrete orphans across the format change.
+
+**Handoff:** the owner re-runs `generate_prop.py -- proving-floor` on the Blender machine to produce
+the six variant `.glb` and the new manifest, commits them, and the variety + fence-alignment become
+visible. The fade needs no asset and is live now.
+
 ---
 
 ## 2026-08-25 — Board material polish: chamfers, normal maps, contact shading, off-grid jitter
@@ -7185,6 +7232,40 @@ pair of Health pads with a single pad at (8,1). Two tests still boot `?map=duel-
 fractions or assert "a mirrored pair of Health pads" against the old layout. These are
 test-side fixes in the map lane's territory, deliberately left out of this change rather
 than widening it.
+
+---
+
+## 2026-08-25 — Session 24 (Builder): the render suite repaired for the Proving Grounds rebuild
+
+Picked up the seven render/vfx failures the two entries above both flag as the map lane's to
+own. They had left `render-verify` red on main since #157, so every PR since has shown a red
+render check and no one could tell a real regression from the standing baseline — reason enough
+to take them onto this branch rather than wait for a separate lane. All seven are the same shape:
+the rebuilt maps (and the HUD/camera work that rode with them) no longer put the board in the
+state the assertion assumes on the opening frame, so each fix **drives into that state** instead
+of hard-coding the old one.
+
+- **FOG-ZORDER** now Sprints a unit up beside the centre-seam brush before aiming — the aim
+  overlay only composites onto brush from adjacent range, and Proving Grounds keeps its brush out
+  of every seat's opening vision.
+- **PREVIEW-NUMBERS** moved to iron-basin: duel-arena is 2v2-only now (2 spawns/team), so
+  `format=4v4` was an "invalid setup" error, not a render bug.
+- **DASH-CAT-ROUTE** sweeps around mid-frame, where CAMERA-CONTROLS centres the dashing unit.
+- **pad markers** sample iron-basin (its Health pad sits a square off spawn, lit and unfogged)
+  and go top-down through the renderer directly — the HUD projection button's label is the
+  target projection, not the current one, so toggling by its text never switched.
+- **BODY-CLICK** picks the teammate as the clean pre-arm body farthest from the armed-frame's
+  blue-cluster centroid; arming Move wraps the *selected* unit in a range wash that `blueBodies`
+  otherwise mistakes for extra bodies on its own tile.
+- **VFX-FLASH** measures the flash over the whole board — playback re-frames the camera, so the
+  victim slides out of a crop anchored to the planning-time aim (77 in the crop, 1458 over the
+  board). The both-sided spike metric already rejects the camera-pull-back brightening.
+
+No engine or renderer change; test-side only. Full e2e suite green at 36/36, unit suites and
+typecheck unchanged. (Superseded in part when this branch later merged main's session-17 render
+changes — friend-or-foe colour and the RENDER-SUITE-GREEN-3 fixes below; the re-validation kept
+this session's drive-based FOG-ZORDER, which is the one that stays green against the material
+pass, over the iron-basin static version.)
 
 ---
 
