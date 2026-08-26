@@ -1,6 +1,39 @@
 {
   "id": "wisp",
-  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
   "weaponClass": "dual",
-  "_weaponClassNote": "A blade in each hand. Fast, asymmetric, never a wind-up."
+  "_weaponClassNote": "A blade in each hand. Fast, asymmetric, never a wind-up.",
+  "_artNote": "Board model built via the Rodin import path (tools/art/rodin_bake_lowpoly.py), not the procedural generator. Full art direction (build/posture/garment/face) still to be written; palette below is sampled from the baked texture for reference.",
+  "palette": {
+    "_comment": "Sampled from the baked Rodin texture (2026-08-26), not hand-authored. dressPlum is also the blindfold colour (rodin_bake_lowpoly --blindfold-color).",
+    "dressPlum": "#64404d",
+    "hairPurple": "#8a6d9c",
+    "skin": "#c9b4a6"
+  },
+  "clips": {
+    "_comment": "Clip names as they appear in build/.../wisp.glb, normalised by build_glb.py from the Mixamo FBX filenames (lowercase + underscores: 'Wisp Idle.fbx' -> 'wisp_idle'). Ability keys are the ability ids from data/characters/wisp.json; a missing id falls back to idle (character-clips.ts:100). Download each Without Skin, one clip per file, rename to the value here, then run build_glb.py. Mapping is a Designer call (2026-08-26, owner to confirm final clips). Recommended Mixamo source per clip in _source.",
+    "_source": {
+      "wisp_idle": "Mixamo 'Ninja Idle' — relaxed, weight on one hip, slow sway. The bored/half-lidded read lives in the portrait (Deliverable A), so a calm idle is enough here. This is the one clip the decoy plays — keep it neutral (ART_PIPELINE.md §8).",
+      "wisp_run": "Mixamo 'Ninja Run' — light and quick; a phantom does not pound the ground.",
+      "wisp_hit": "Mixamo 'Standing React Small From Front' — a brief flinch, plays once.",
+      "wisp_death": "Mixamo 'Falling Back Death' — collapses back and holds the last frame.",
+      "knocked_down": "Mixamo 'Knocked Down' — SHARED across the roster (aegis uses it too). Download once, reuse.",
+      "wisp_flurry": "Mixamo 'Knife Attack' (or 'Dual Weapon Combo') — a fast close two-dagger slash for the melee cone. No wind-up.",
+      "wisp_bola": "Mixamo 'Throw Object' — a single thrown line for the bola.",
+      "wisp_blink": "Mixamo 'Standing Dodge Backward' trimmed to a crouch-spring. The vanish/reappear itself is VFX (§9); Blink and Shadowstep Strike share that teleport beat.",
+      "wisp_veil": "Mixamo 'Standing 2H Magic Attack 01' trimmed to a one-handed seal, or a short 'Praying' gesture — a beat as she dissolves. The fade is VFX (§9).",
+      "wisp_shadowstep": "Mixamo 'Stabbing' (or 'Sword And Shield Slash') — the ultimate strike as she arrives at the aimed square."
+    },
+    "idle": "wisp_idle",
+    "run": "wisp_run",
+    "hit": "wisp_hit",
+    "death": "wisp_death",
+    "knockback": "knocked_down",
+    "abilities": {
+      "dagger_flurry": "wisp_flurry",
+      "bola": "wisp_bola",
+      "blink": "wisp_blink",
+      "veil_decoy": "wisp_veil",
+      "shadowstep_strike": "wisp_shadowstep"
+    }
+  }
 }
