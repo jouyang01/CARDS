@@ -78,21 +78,21 @@ describe('ASSET-WEIGHT-BUDGET: it actually fails', () => {
     // total-only guard could not tell "one more character" from "one character
     // got twice as heavy".
     const { report } = await load();
-    const out = report(models({ 'aegis.glb': 2.4 }));
+    const out = report(models({ 'aegis.glb': 4.4 }));
     expect(out.errors).toHaveLength(1);
     expect(out.errors[0]).toContain('aegis');
     expect(out.errors[0], 'and points at where the fix lives').toContain('ART_PIPELINE.md §18');
   });
 
   it('and a roster that fits its per-character caps can still blow the total', async () => {
-    // The other cap earning its place. Fourteen characters at a legal 1.4 MB
-    // each is 19.6 MB of art with nothing individually wrong with it — which is
+    // The other cap earning its place. Fourteen characters at a legal 2.4 MB
+    // each is 33.6 MB of art with nothing individually wrong with it — which is
     // exactly the download §18 exists to prevent.
     const { report } = await load();
     const files: Record<string, number> = {};
-    for (let i = 0; i < 14; i++) files[`char${i}.glb`] = 1.4;
+    for (let i = 0; i < 14; i++) files[`char${i}.glb`] = 2.4;
     const out = report(models(files));
-    expect(out.characters.every((c) => c.bytes < 2 * 1024 * 1024), 'each one is legal').toBe(true);
+    expect(out.characters.every((c) => c.bytes < 4 * 1024 * 1024), 'each one is legal').toBe(true);
     expect(out.errors, 'and the total is not').toHaveLength(1);
     expect(out.errors[0]).toContain('public/models/');
   });

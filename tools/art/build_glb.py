@@ -103,6 +103,30 @@ def strip_root_motion(action):
     return n
 
 
+def scale_action_translation(action, factor):
+    """Scale an action's translation fcurves by `factor` (Mixamo cm -> client m).
+
+    The base armature had its centimetre scale APPLIED (normalise_scale), so an
+    action retargeted onto it plays its *translation* 1/factor too large — a 1 m
+    root motion lands at 100 units and throws the root bone clean off the map.
+    root_travel() misses it because it samples the clip's OWN armature, which is
+    still at the un-applied cm scale; model-root-motion.test.ts is the guard that
+    does not. Rotation and scale fcurves are scale-free and left untouched.
+    """
+    if factor == 1.0:
+        return
+    n = 0
+    for fc in action_fcurves(action):
+        if fc.data_path.endswith(".location"):
+            for kp in fc.keyframe_points:
+                kp.co[1] *= factor
+                kp.handle_left[1] *= factor
+                kp.handle_right[1] *= factor
+            fc.update()
+            n += 1
+    return n
+
+
 def clear_scene():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
@@ -289,6 +313,10 @@ def main():
                     flag = f"  <-- ROOT MOTION {travel:.2f}u, re-export In Place"
                     rooted.append(action.name)
                 print(f"  clip   {action.name:<24} {n if n >= 0 else '?':>4} curves{flag}")
+                # Match the action's translation to the base armature, whose cm
+                # scale was applied. Done AFTER root_travel so its warning still
+                # measures the clip's own (un-applied) armature correctly.
+                scale_action_translation(action, factor)
         except Exception as exc:
             # One bad file must not cost the other seven clips.
             print(f"  ! {path.name}: {type(exc).__name__}: {exc}")
