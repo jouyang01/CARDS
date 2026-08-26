@@ -290,7 +290,10 @@ def main():
     ap.add_argument("--id", default="wisp")
     ap.add_argument("--target", type=int, default=4200, help="triangle budget (see ART_PIPELINE §7)")
     ap.add_argument("--voxel-div", type=float, default=240.0, help="remesh fineness: diag/this")
-    ap.add_argument("--bake-res", type=int, default=1024)
+    ap.add_argument("--bake-res", type=int, default=1024,
+                    help="atlas resolution. 1024 fits the 2 MB per-character "
+                         "budget (ART_PIPELINE §18); drop to 512 for a smaller "
+                         "download — the token is small enough that it barely reads.")
     ap.add_argument("--blindfold", action="store_true", help="paint a plum eye band")
     ap.add_argument("--blindfold-band", default="0.907,0.938", help="lo,hi as fractions of height")
     ap.add_argument("--blindfold-color", default="#64404d", help="defaults to the dress plum")
@@ -340,6 +343,13 @@ def main():
     if tex is not None:
         tex.image = bpy.data.images.load(str(png))   # painted (or plain) texture
     low = token
+
+    # Emit the texture under the name build_glb.py looks for (<id>_atlas.png), so
+    # after Mixamo rigging `build_glb.py -- <id> <folder>` textures the rig with
+    # no manual copy. Same pixels as <id>_baked.png; both are written.
+    atlas = out_dir / f"{args.id}_atlas.png"
+    atlas.write_bytes(png.read_bytes())
+    print(f"wrote {atlas.relative_to(ROOT)} (for build_glb.py)")
 
     glb = out_dir / f"{args.id}_token.glb"
     bpy.ops.object.select_all(action="DESELECT")

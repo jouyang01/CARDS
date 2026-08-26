@@ -7728,3 +7728,22 @@ grading should carry a luminance guard of their own, so the next re-grade report
 surfacing as a broken VFX assertion. Not proposed as an item — flagged as a gap.
 
 **4. No engine work this session, as instructed.** Every change is in `packages/client`.
+
+## Wisp rigged and shipped; build_glb --in-place — 2026-08-26
+
+Wisp's Mixamo clips built into `packages/client/public/models/wisp.glb` (+ manifest). Two
+judgment calls closing the rig loop:
+
+**`build_glb.py --in-place` (opt-in root-motion strip).** Six of Wisp's clips carried root
+motion (blink 2.47u, knocked_down 2.08u, death/bola ~0.8u, idle/veil ~0.25u) — they travel, and
+the engine owns unit position, so they would drift her off her square. The repo's answer is
+"re-download with In Place", but Mixamo does not offer that toggle for every animation (it was
+absent for these). Added an opt-in `--in-place` flag that pins the Hips horizontal translation to
+frame 0 while keeping vertical — after `automatic_bone_orientation` the Mixamo Hips' local Y (index
+1) is world-up, so it is kept (a death still falls: verified 0.95m/0.54m vertical preserved) and
+local X/Z (0,2) are flattened (verified horizontal → 0.0u). Default behaviour unchanged; the flag
+is required, so nothing strips silently.
+
+**Atlas naming bridge.** The import path bakes `<id>_baked.png`; `build_glb.py` looks for
+`<id>_atlas.png`. `rodin_bake_lowpoly.py` now writes both, so a rig build textures with no manual
+copy.

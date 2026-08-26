@@ -1,0 +1,31 @@
+{
+  "id": "wisp",
+  "version": "e8300f2bbeb2",
+  "clips": [
+    "knocked_down",
+    "wisp_blink",
+    "wisp_bola",
+    "wisp_death",
+    "wisp_flurry",
+    "wisp_hit",
+    "wisp_idle",
+    "wisp_run",
+    "wisp_shadowstep",
+    "wisp_veil"
+  ],
+  "map": {
+    "idle": "wisp_idle",
+    "run": "wisp_run",
+    "hit": "wisp_hit",
+    "death": "wisp_death",
+    "knockback": "knocked_down",
+    "abilities": {
+      "dagger_flurry": "wisp_flurry",
+      "bola": "wisp_bola",
+      "blink": "wisp_blink",
+      "veil_decoy": "wisp_veil",
+      "shadowstep_strike": "wisp_shadowstep"
+    }
+  },
+  "posture": {}
+}
