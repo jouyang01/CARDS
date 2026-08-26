@@ -63,6 +63,7 @@
       "phase": "blast",
       "shape": "line",
       "range": 6,
+      "hits": "first",
       "cooldown": 3,
       "energyGain": 8,
       "effects": [
@@ -75,7 +76,7 @@
           "duration": 1
         }
       ],
-      "description": "Thrown bola: 24 damage and Slow for a turn. Wisp's tool for keeping Bastion off her and catching Vex mid-rotation."
+      "description": "Thrown bola: 24 damage and Slow for a turn to the FIRST enemy in the line. Wisp's tool for keeping Bastion off her and catching Vex mid-rotation."
     }
   ],
   "ultimate": {
