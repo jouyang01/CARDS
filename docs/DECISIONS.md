@@ -7307,3 +7307,34 @@ coordinate or colour problem like its six neighbours, so it may be a real VFX re
 than test drift. Not diagnosed this session.
 
 **5. No engine work this session, as instructed.** Every change is in `packages/client`.
+
+## Rodin import art path for Wisp — 2026-08-26
+
+The procedural pipeline (`generate_character.py`) builds bodies from `data/art/*.json`. Wisp
+instead started from a Rodin-generated mesh (an external text/image-to-3D sculpt). That needs a
+different, parallel toolchain, now in `tools/art/rodin_*.py`. Judgment calls made building it:
+
+**Reduce by voxel remesh + bake, not raw collapse.** Blind Decimate/COLLAPSE on a 120k scan mesh
+spikes and shreds at token budget, and its UV distortion smears the 2048 atlas (worst on the face).
+The working pipeline (`rodin_bake_lowpoly.py`) voxel-remeshes to uniform topology, decimates to
+budget, shade-smooths, re-unwraps (Smart UV), and bakes the high mesh's diffuse onto the clean UVs.
+`rodin_import_decimate.py` (raw collapse) is kept only for untextured blockouts + the §7 silhouette
+test.
+
+**Triangle budget 4200, not the ~1800 roster floor.** Smoothness costs geometry on an organic
+scan; 1800 stays smooth (remesh + smooth-normals carry it) but loses fine detail. Flagged for RND1
+confirmation per ART_PIPELINE §7 — proposed, not fixed. `--target` overrides.
+
+**Blindfold is painted into the texture, never geometry.** Owner's call (2026-08-26): cover the
+weird baked eyes with a thin plum blindfold over brows+eyes, nose+mouth visible. A geometry band is
+a rigid ellipse that floats where the face recedes and clips where it juts — it cannot conform.
+Painting a plum band (the dress colour `#64404d`) onto the eye-height texels follows the face
+exactly. Done at pixel resolution (each texel's true 3D height tested) and dilated to close UV
+seams. This keeps the blindfold decoy-safe (ambient, constant) per ART_PIPELINE §8, and adds zero
+triangles. The paint must run on the glTF-reimported (triangulated) mesh, not the in-session one,
+or it rasterises sparsely.
+
+**Face detail lives in the texture, not geometry.** At token size the face is a few pixels, so the
+board mesh carries no sculpted features — the bored expression is the baked Rodin texture (and, for
+Deliverable A, the full-res render). `data/art/wisp.json` is still a stub; its palette should be
+written from the sampled dress plum and hair purple when the Designer fills it in.
