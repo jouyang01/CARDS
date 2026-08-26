@@ -1252,6 +1252,8 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
 
   // Walk the hot-seat until Wisp is on the clock, casting nothing on the way.
   let cast = false;
+  /** DECOY-MODEL: how many friendly characters the seat drew before the cast. */
+  let bodiesBefore = 0;
   for (let i = 0; i < 6 && !cast; i++) {
     if ((await status.textContent())?.includes('Wisp') === true) {
       const veil = page.locator('.hud-ability.free').first();
@@ -1279,6 +1281,7 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
       const sc2 = { x: clip2.width / armedImage.width, y: clip2.height / armedImage.height };
       const rows = blueBodies(armedImage).sort((a, b) => a.y - b.y);
       expect(rows.length, 'the seat drew no bodies to measure a tile from').toBeGreaterThan(1);
+      bodiesBefore = rows.length;
       const tile = Math.abs(rows[rows.length - 1]!.y - rows[0]!.y) / 2;
       for (const body of rows) {
         await page.mouse.click(clip2.x + (body.x + tile) * sc2.x, clip2.y + body.y * sc2.y);
@@ -1321,8 +1324,21 @@ test('Wisp casts Veil & Decoy and its own team sees the purple decoy (STEALTH-CO
 
   // …and the board shows it, in the purple only a decoy\'s owner ever sees.
   await expect(status).toContainText('Turn 2');
-  expect(countPixels(await pixels(page), isDecoyPurple), 'no purple decoy on the board')
+  const resolved = await pixels(page);
+  expect(countPixels(resolved, isDecoyPurple), 'no purple decoy on the board')
     .toBeGreaterThan(0);
+
+  // DECOY-MODEL — *"Wisp's decoy renders as a giant red box to the enemy and a
+  // random purple square for allies. Not the Wisp model with idle animation."*
+  //
+  // The purple above says a decoy is THERE. This says it is a CHARACTER: a body
+  // with a friend-coloured foot ring under it, which is what `blueBodies` counts
+  // (a ring and the body above it are folded back into one). Before the fix the
+  // owner's decoy was a bare ground plate with nothing standing on it, so this
+  // number did not move. Only the browser can answer it — a mesh is the one
+  // thing the headless suite cannot see.
+  expect(blueBodies(resolved).length, 'the decoy did not add a body to the board')
+    .toBeGreaterThan(bodiesBefore);
 });
 
 

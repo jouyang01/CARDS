@@ -689,10 +689,11 @@ export const WALL_PILLAR_WIDTH = TILE * 0.19;
 export const WALL_PILLAR_COLOUR = 0x9a9c99;
 
 /**
- * A decoy, as one viewer should see it (DECOY-RENDER). `asEnemy` decides the
- * whole appearance: a decoy's job is to be mistaken for a real Wisp, so to the
- * team being fooled it is drawn exactly like an enemy unit — same box, same
- * team colour, same solidity. Only its owner sees the purple ghost.
+ * A decoy, as one viewer should see it (DECOY-RENDER). A decoy's job is to be
+ * mistaken for a real Wisp, so it is drawn exactly like a unit — the same body,
+ * the same viewer-relative colour, the same solidity. `asEnemy` decides only the
+ * two things that would give it away or hide it: the fake nameplate the fooled
+ * team reads, and the purple ground ring its owner needs to tell theirs apart.
  */
 export interface RenderDecoy {
   id: string;
@@ -700,6 +701,18 @@ export interface RenderDecoy {
   /** The team that placed it — an impersonated enemy wears *their* colour. */
   owner: 0 | 1;
   asEnemy: boolean;
+  /**
+   * DECOY-MODEL — the character it is impersonating, so it can be drawn with
+   * that character's model.
+   *
+   * Owner (2026-10-08): *"Wisp's decoy renders as a giant red box to the enemy
+   * and a random purple square for allies. Not the Wisp model with idle
+   * animation."* A decoy that is a box on a board of rigged characters is not a
+   * decoy at all — it is a sign saying DECOY. Undefined falls back to the same
+   * box every model-less unit gets, which is the honest answer for a character
+   * whose `.glb` has not been built.
+   */
+  characterId?: string;
   /**
    * UI-NAMEPLATES: the **fake** plate an impersonated decoy wears, frozen at the
    * cast (edge-cases: the decoy snapshot carries the nameplate fields). On a
@@ -1711,8 +1724,6 @@ export function createRenderer(
 
   // ── Keyed unit objects (A1's principle, in 3D) ────────────────────────────
   const unitObjects = new Map<string, Group>();
-  /** Loose meshes that must face the camera — decoy nameplates, so far. */
-  let billboards: Mesh[] = [];
 
   /** Point a unit's intent tile at the right texture, or hide it. */
   const setIntent = (bars: Group, intent: { label: string; locked: boolean } | undefined): void => {
@@ -2306,14 +2317,10 @@ export function createRenderer(
       bars.quaternion.copy(camera.quaternion);
       bars.scale.setScalar(scale);
     }
-    // A decoy's fake plate is not inside a keyed unit object — the decoy layer
-    // is rebuilt wholesale each `show()` — so it is registered here instead. It
-    // has to billboard by exactly the same rule, or the one plate that does not
-    // turn with the camera is the one that gives the decoy away.
-    for (const plate of billboards) {
-      plate.quaternion.copy(camera.quaternion);
-      plate.scale.setScalar(scale);
-    }
+    // A decoy's fake plate needs no special case here: DECOY-MODEL put the decoy
+    // body into `unitObjects`, so its plate is a real unit's `bars` group and
+    // turns with the loop above. The separate billboard list this replaced
+    // existed only because the decoy layer was rebuilt wholesale each paint.
   };
 
   // ── Free-orbit input ──────────────────────────────────────────────────────
@@ -2488,7 +2495,16 @@ export function createRenderer(
       // (`setUnitAt`, `setUnitFade`) are applied *after* it, per frame.
       fadeOf.clear();
       const live = new Set<string>();
-      for (const unit of units) {
+      /**
+       * Place one body on its square: build it if it is new, then re-apply
+       * everything that is viewer-relative or per-turn.
+       *
+       * Shared by units and decoys (DECOY-MODEL). A decoy that took a different
+       * path through here is a decoy that looks different, and every one of
+       * those differences — the box body, the missing foot ring, the plate that
+       * did not billboard — was a free tell.
+       */
+      const placeBody = (unit: RenderUnit): void => {
         let g = unitObjects.get(unit.unitId);
         if (g === undefined) {
           g = buildUnit(unit);
@@ -2514,6 +2530,27 @@ export function createRenderer(
         }
         refreshOpacity(unit.unitId);
         live.add(unit.unitId);
+      };
+      for (const unit of units) placeBody(unit);
+      // DECOY-MODEL: the decoy IS a body, keyed by its own id and reconciled
+      // like any other — which is also what gives it a live model. The decoy
+      // layer below is disposed and rebuilt on every `show()`, and a skinned
+      // mesh rebuilt every paint has its animation restarted every paint, so a
+      // decoy drawn there could never idle no matter what clip it was handed.
+      //
+      // It carries no intent badge and never reports HP: `nameplate` is the
+      // frozen lie the fooled team reads, and it is already absent for the
+      // owner's own view.
+      for (const decoy of decoys) {
+        placeBody({
+          unitId: decoy.id,
+          characterId: decoy.characterId,
+          owner: decoy.owner,
+          pos: decoy.pos,
+          hp: 1, maxHp: 1, energy: 0, alive: true,
+          label: (decoy.characterId?.[0] ?? '?').toUpperCase(),
+          nameplate: decoy.nameplate,
+        });
       }
       for (const [id, g] of unitObjects) if (!live.has(id)) g.visible = false;
 
@@ -2606,62 +2643,24 @@ export function createRenderer(
         }
       }
 
+      // The decoy's BODY is placed above, with the units. What is left here is
+      // the one thing that must NOT reach the team being fooled: the purple
+      // ground plate that tells the owner which of those two Wisps is theirs.
+      //
+      // It is a plate rather than a different body on purpose. The decoy's whole
+      // value is that it looks exactly like the caster, so the owner's tell has
+      // to sit *under* an identical model rather than replace it — which is also
+      // why this layer no longer draws anything at all for `asEnemy`.
       const decoyLayer = layerGroup('decoy');
       disposeChildren(decoyLayer);
-      billboards = [];
       for (const decoy of decoys) {
-        const at = toWorld(map, decoy.pos);
-        if (decoy.asEnemy) {
-          // To the team being fooled: a normal enemy unit, indistinguishable —
-          // same geometry, same colour a real one gets, fully opaque. Drawing it
-          // as a translucent ghost is what gave every decoy away for free.
-          //
-          // The colour is resolved from the VIEWER, exactly like a real unit's
-          // (FOF-COLORS). It was hardcoded to `team1` once, then to the decoy's
-          // own team number — both of which read correctly from only one of the
-          // two seats. `asEnemy` already means "the viewer is the team being
-          // fooled", so this lands on foe-red; deriving it rather than asserting
-          // it is what keeps the decoy indistinguishable from a real enemy, which
-          // is the entire mechanic.
-          const fof = fofFor({ unitId: decoy.id, owner: decoy.owner }, viewer);
-          const body = new Mesh(
-            new BoxGeometry(TILE * 0.55, UNIT_HEIGHT, TILE * 0.55),
-            new MeshStandardMaterial({ color: fofColour(fof, palette.fof), ...SURFACE.unit }),
-          );
-          body.position.copy(at).setY(UNIT_HEIGHT / 2);
-          decoyLayer.add(body);
-          // …and its lie, in full: name, frozen HP, no statuses. A nameplate is
-          // most of what a player reads a unit by, so the impersonation is only
-          // as good as this.
-          if (decoy.nameplate !== undefined) {
-            // The same overlay treatment as a real unit's plate, because the
-            // impersonation is only as good as the thing it copies: a decoy
-            // whose name clipped where a character's did not would be a tell.
-            const plate = asOverlay(new Mesh(
-              new PlaneGeometry(PLATE_W, PLATE_H),
-              new MeshBasicMaterial({
-                map: plateTexture(decoy.nameplate, fof),
-                transparent: true,
-                depthWrite: false,
-              }),
-            ), PLATE_ORDER);
-            plate.position.copy(at).setY(UNIT_HEIGHT + 0.34);
-            billboards.push(plate);
-            decoyLayer.add(plate);
-          }
-          continue;
-        }
-        // To its owner: a purple **ground plate**, not a body. Veil & Decoy
-        // leaves the decoy on the caster's own square, so a purple box sat
-        // exactly inside Wisp's own unit and was invisible — the owner could not
-        // see the thing they had just placed. A plate wider than a unit shows as
-        // a ring around its feet, and still reads on its own once Wisp moves off.
+        if (decoy.asEnemy) continue;
         const plate = new Mesh(
           new PlaneGeometry(TILE * 0.9, TILE * 0.9),
           new MeshBasicMaterial({ color: DECOY_PURPLE, transparent: true, opacity: 0.75 }),
         );
         plate.rotation.x = -Math.PI / 2;
-        plate.position.copy(at).setY(DECOY_PLATE_LIFT);
+        plate.position.copy(toWorld(map, decoy.pos)).setY(DECOY_PLATE_LIFT);
         decoyLayer.add(plate);
       }
     },

@@ -754,21 +754,30 @@ export function startHotSeat(
   let decoySnapshots = new Map<string, DecoySnapshot>();
 
   /**
-   * The plate for a decoy the viewer believes is a real unit.
+   * What a decoy is pretending to be: the caster it was copied from.
    *
-   * Only when it is being *impersonated*: to its owner a decoy is a purple
-   * ground marker, not a body, and a nameplate over a marker would be the tell
-   * in reverse.
+   * One lookup for both halves of the impersonation — the fake nameplate and,
+   * since DECOY-MODEL, the character whose model is drawn. They must agree: a
+   * body with Wisp's plate and somebody else's mesh is worse than either.
    */
-  const decoyPlate = (d: { id: string; owner: TeamId; asEnemy: boolean }) => {
-    if (!d.asEnemy) return undefined;
-    const snapshot = decoySnapshots.get(d.id)
+  const decoyOf = (d: { id: string; owner: TeamId }): DecoySnapshot | undefined =>
+    decoySnapshots.get(d.id)
       // A decoy already on the board when this client started drawing (the
       // scenario seeds, a reload) has no recorded cast. Falling back to the
       // caster as it stands is a small lie in the honest direction: it is what
       // the plate would have said a moment ago, and no plate at all is the one
       // answer that outs the decoy.
       ?? snapshotDecoy(state.units, roster, d.owner);
+
+  /**
+   * The plate for a decoy the viewer believes is a real unit.
+   *
+   * Only when it is being *impersonated*: to its owner a decoy wears its purple
+   * ground ring instead, and a nameplate over that would be the tell in reverse.
+   */
+  const decoyPlate = (d: { id: string; owner: TeamId; asEnemy: boolean }) => {
+    if (!d.asEnemy) return undefined;
+    const snapshot = decoyOf(d);
     return snapshot === undefined ? undefined : decoyNameplate(snapshot);
   };
 
@@ -1182,7 +1191,10 @@ export function startHotSeat(
     const viewer = currentSeat()?.team ?? 0;
     return [...view.decoys.values()].map((d) => {
       const shown = { id: d.id, pos: { ...d.pos }, owner: d.teamId, asEnemy: d.teamId !== viewer };
-      return { ...shown, nameplate: decoyPlate(shown) };
+      // DECOY-MODEL: the impersonated character reaches the renderer for BOTH
+      // viewers. The owner sees the same Wisp everyone else does, with the
+      // purple ring under her feet as the only thing that says which is which.
+      return { ...shown, characterId: decoyOf(shown)?.characterId, nameplate: decoyPlate(shown) };
     });
   };
 
