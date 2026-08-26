@@ -541,7 +541,10 @@ function planCatalyst(
   if (!aimIsLegal(board, unit, def, aim, aimStep, draft)) return undefined;
   return {
     def, aim, isUlt: false,
-    area: expandShape(board, def, unit.pos, aim, aimStep),
+    // BOLA-OVERLAY: a stopping line covers only as far as it reaches.
+    area: truncateAtImpact(
+      def, unit.owner, expandShape(board, def, unit.pos, aim, aimStep), draft?.units ?? [],
+    ),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
     inner: innerSquares(board, def, aim),
   };
@@ -658,7 +661,10 @@ function planAbility(
   if (ally === undefined && !aimIsLegal(board, unit, def, aim, aimStep, draft)) return undefined;
   return {
     def, aim, isUlt,
-    area: expandShape(board, def, unit.pos, aim, aimStep),
+    // BOLA-OVERLAY: a stopping line covers only as far as it reaches.
+    area: truncateAtImpact(
+      def, unit.owner, expandShape(board, def, unit.pos, aim, aimStep), draft?.units ?? [],
+    ),
     axis: axisSquares(board, def, unit.pos, aim, aimStep),
     inner: innerSquares(board, def, aim),
     ...(ally === undefined ? {} : { guardTargetId: ally.unitId }),
@@ -2043,6 +2049,34 @@ export function chargeVictims(
  * this rule does not apply to, so a caller can treat it as "nothing truncates
  * this" without asking about the shape twice.
  */
+/**
+ * BOLA-OVERLAY — a `hits: "first"` line's covered squares, cut off at the enemy
+ * it stops on.
+ *
+ * *"The drawn line overlay must TERMINATE AT THE IMPACT POINT, not extend to the
+ * full range 6 — otherwise the overlay promises reach the ability no longer
+ * has."* The beam genuinely does not go past the first enemy any more, so the
+ * squares behind them are not covered by anything, and the honest fix is to
+ * stop calling them covered — not to draw a shorter line over a longer area.
+ *
+ * Applied where `PlannedAbility.area` is built, so **one** truncation feeds the
+ * resolver, the `abilityFired` event the client animates, and the aim overlay a
+ * player is looking at. A client that shortened its own line would be a second
+ * implementation of the stop, which is the drift RAM-LINE-PREVIEW-FIX already
+ * paid for once.
+ *
+ * The area is inclusive of the impact square: that tile is hit. Anything this
+ * rule does not apply to comes back unchanged.
+ */
+export function truncateAtImpact(
+  def: AbilityDef, casterOwner: TeamId, area: readonly Vec2[], units: readonly UnitState[],
+): Vec2[] {
+  const stop = lineImpact(def, casterOwner, area, units);
+  if (stop === undefined) return [...area];
+  const end = area.findIndex((p) => vecEq(p, stop));
+  return end < 0 ? [...area] : area.slice(0, end + 1).map((p) => ({ x: p.x, y: p.y }));
+}
+
 export function lineImpact(
   def: AbilityDef, casterOwner: TeamId, area: readonly Vec2[], units: readonly UnitState[],
 ): Vec2 | undefined {

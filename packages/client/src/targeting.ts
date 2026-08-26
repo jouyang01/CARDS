@@ -20,6 +20,7 @@ import {
   chargedUnits,
   lineImpact,
   placementIsFree,
+  truncateAtImpact,
   abilityProfile,
   circleSquares,
   direction8,
@@ -377,7 +378,12 @@ export function abilityPreview(
   if (target !== undefined && !placementIsFree(ability, target, state)) return [];
   // Same call the engine makes, same step — so the preview is exactly the tile
   // set that will be hit, rotation included.
-  return expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
+  const area = expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
+  // BOLA-OVERLAY: …and the same truncation, so a `hits: "first"` line is drawn
+  // to the enemy it stops on rather than promising the full range behind them.
+  // The engine's own function, on the engine's own area — there is no second
+  // opinion about where the beam ends.
+  return state === undefined ? area : truncateAtImpact(ability, unit.owner, area, state.units);
 }
 
 /**

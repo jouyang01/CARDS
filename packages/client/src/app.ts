@@ -1530,7 +1530,13 @@ export function startHotSeat(
     // *reads* it — "where could this go" is a question you stop asking the
     // moment you have aimed, so the envelope steps back when an aim is live.
     const preview = previewAim(map, state, unit, chosen, draft, interaction);
-    const covered = chosen !== undefined ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep) : [];
+    // `state` goes in for the two rules that depend on who is standing where:
+    // DECOY-PLACEMENT (an occupied square previews nothing, because the cast
+    // will be refused) and BOLA-OVERLAY (a stopping line is drawn only as far
+    // as it reaches). Both are the engine's own answers, not the client's.
+    const covered = chosen !== undefined
+      ? abilityPreview(map, unit, chosen, preview.aim, preview.aimStep, state)
+      : [];
 
     // ── Layer: the effective-range ENVELOPE (UI1 + AIM-RANGE) ────────────────
     // Where an action *could* go, which is a different question from what a

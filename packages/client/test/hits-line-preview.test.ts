@@ -112,12 +112,13 @@ describe('HITS: a stopping line previews one number, and it is the right one', (
     }
   });
 
-  it('the footprint is unchanged — the beam is DRAWN full length here', () => {
-    // Deliberate scope line. HITS decides who is *hit*; truncating the drawn
-    // overlay is BOLA-OVERLAY's job and has its own tests. If this ever starts
-    // failing, the two items have been conflated.
-    const { state, me } = field();
-    void state;
+  it('without a state the footprint is the full beam — the two rules are separable', () => {
+    // HITS decides who is *hit*; BOLA-OVERLAY (below, and in
+    // `bola-overlay.test.ts`) decides how far the beam is *drawn*, and it needs
+    // to know who is standing where. Handed no state, `abilityPreview` is pure
+    // geometry and both lines are the same length — which is what keeps the two
+    // items from being one tangled rule.
+    const { me } = field();
     expect(abilityPreview(MAP, me, BOLA, [EAST]).length)
       .toBe(abilityPreview(MAP, me, BEAM, [EAST]).length);
   });
