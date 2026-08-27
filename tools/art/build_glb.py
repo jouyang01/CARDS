@@ -127,6 +127,40 @@ def scale_action_translation(action, factor):
     return n
 
 
+def trim_action(action, keep):
+    """Shorten a clip to the first `keep` fraction of its length.
+
+    Some Mixamo takes run long: a "throwaway" gesture that should read as a
+    quick flick can carry seconds of settle at the tail. `keep=0.4` drops every
+    keyframe past 40% of the range, so the clip ENDS earlier — the renderer
+    crossfades back to idle from wherever the trimmed clip stops, which is the
+    same "cast finishes, return to idle" it already does, just sooner.
+
+    Frame range is derived from the surviving keyframes, so removing the tail
+    shrinks the exported clip's duration with nothing else to update. A keyframe
+    is planted at the cutoff first, so the clip still has a defined final pose
+    even if no original key sat exactly there.
+    """
+    if not (0.0 < keep < 1.0):
+        return None
+    fcurves = list(action_fcurves(action))
+    starts = [fc.keyframe_points[0].co[0] for fc in fcurves if len(fc.keyframe_points)]
+    ends = [fc.keyframe_points[-1].co[0] for fc in fcurves if len(fc.keyframe_points)]
+    if not starts:
+        return None
+    start, end = min(starts), max(ends)
+    cutoff = start + (end - start) * keep
+    for fc in fcurves:
+        # Plant a key at the cutoff so the trimmed clip keeps a clean final pose,
+        # then drop everything strictly after it.
+        fc.evaluate(cutoff)  # no-op read; keeps API parity across versions
+        doomed = [kp for kp in fc.keyframe_points if kp.co[0] > cutoff + 1e-6]
+        for kp in reversed(doomed):
+            fc.keyframe_points.remove(kp, fast=True)
+        fc.update()
+    return (end - start, cutoff - start)
+
+
 def clear_scene():
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
@@ -300,7 +334,9 @@ def main():
     # (net zero), so it never walks the rig off its tile — the thing the strip and
     # the lock both exist to prevent.
     art_early = ROOT / "data" / "art" / f"{cid}.json"
-    idle_clip = (json.loads(art_early.read_text()).get("clips") or {}).get("idle") if art_early.exists() else None
+    art_clips = (json.loads(art_early.read_text()).get("clips") or {}) if art_early.exists() else {}
+    idle_clip = art_clips.get("idle")
+    trims = art_clips.get("trim") or {}   # {clip_name: keep_fraction} — end long clips early
     clips = []
     rooted = []
     for path in fbx:
@@ -315,6 +351,11 @@ def main():
                 action.name = slug(path.stem)
                 action.use_fake_user = True      # survives the armature's deletion
                 clips.append(action.name)
+                if action.name in trims:
+                    was = trim_action(action, float(trims[action.name]))
+                    if was is not None:
+                        print(f"  trim   {action.name:<24} {was[0]:.0f}f -> {was[1]:.0f}f "
+                              f"(keep {float(trims[action.name]):.0%})")
                 if in_place and action.name != idle_clip:
                     strip_root_motion(action)    # flatten Hips horizontal drift (never the idle — IDLE-SWAY)
                 n = curve_count(action)

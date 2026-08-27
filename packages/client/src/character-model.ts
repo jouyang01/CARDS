@@ -70,6 +70,40 @@ export function propLocalScale(
 }
 
 /**
+ * A live, debug-only override of a prop's attach transform, read from the URL.
+ *
+ * Tuning a held object against a bone you cannot see is guesswork: the offset is
+ * in the bone's local, tile-scaled space, so "move it toward the hand" is not a
+ * number anyone can predict. This lets a value be swept with instant feedback —
+ * `?tuneMainHand=px,py,pz,rx,ry,rz,h` overrides that slot's `position`,
+ * `rotation` and `heightTiles` — so the manifest gets a measured value, never a
+ * guessed one. Absent param → returns the spec untouched, so nothing ships: an
+ * ordinary player never sets a `tune*` query and sees exactly the manifest.
+ *
+ * The seven fields are the six of the attach transform plus height, in the same
+ * units as the manifest (tiles, then XYZ degrees, then tiles). Any trailing
+ * field may be dropped to keep the manifest's value for it.
+ */
+export function tunedPropSpec(spec: PropSpec, search: string): PropSpec {
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const slotKey = `tune${spec.slot.charAt(0).toUpperCase()}${spec.slot.slice(1)}`;
+  const raw = params.get(slotKey);
+  if (raw === null || raw.trim() === '') return spec;
+  const n = raw.split(',').map((s) => Number(s.trim()));
+  if (n.some((v) => Number.isNaN(v))) {
+    console.warn(`[cards] ${slotKey}: non-numeric tune "${raw}" ignored`);
+    return spec;
+  }
+  const tuned: PropSpec = { ...spec };
+  const [px, py, pz, rx, ry, rz, h] = n;
+  if (px !== undefined && py !== undefined && pz !== undefined) tuned.position = [px, py, pz];
+  if (rx !== undefined && ry !== undefined && rz !== undefined) tuned.rotation = [rx, ry, rz];
+  if (h !== undefined) tuned.heightTiles = h;
+  console.log(`[cards] ${slotKey} tuned -> pos=[${tuned.position}] rot=[${tuned.rotation}] h=${tuned.heightTiles}`);
+  return tuned;
+}
+
+/**
  * Where a character's mesh lives, cache-busted by the manifest's version.
  *
  * Vite fingerprints `dist/assets/`; it does NOT fingerprint `public/`, and the
@@ -471,7 +505,9 @@ export class CharacterModels {
     // Props are cloned per instance like the body: two Aegises must not share
     // one door, or the second to be built steals it off the first.
     const props: { root: Object3D; spec: PropSpec; height: number; bone: Bone }[] = [];
-    for (const spec of entry.manifest.props ?? []) {
+    const search = globalThis.location?.search ?? '';
+    for (const rawSpec of entry.manifest.props ?? []) {
+      const spec = tunedPropSpec(rawSpec, search);
       const loadedProp = entry.props.get(spec.slot);
       const bone = findBone(root, spec.bone);
       if (loadedProp === undefined) continue;

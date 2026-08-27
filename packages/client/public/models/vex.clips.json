@@ -1,6 +1,6 @@
 {
   "id": "vex",
-  "version": "9955341d8b14",
+  "version": "f4d62c0acbea",
   "clips": [
     "knocked_down",
     "rifle_death",
@@ -19,6 +19,9 @@
     "hit": "rifle_hit",
     "death": "rifle_death",
     "knockback": "knocked_down",
+    "trim": {
+      "vex_trap": 0.4
+    },
     "abilities": {
       "rail_shot": "vex_railshot",
       "frag_grenade": "vex_grenade",
@@ -34,16 +37,16 @@
       "file": "vex_mainHand.glb",
       "version": "6e93ade0eee1",
       "bone": "mixamorigLeftHand",
-      "heightTiles": 0.3,
+      "heightTiles": 0.32,
       "position": [
-        0.0,
-        0.0,
-        0.0
+        -0.1,
+        0.1,
+        -0.1
       ],
       "rotation": [
-        -90,
-        0,
-        0
+        30,
+        -100,
+        -75
       ]
     }
   ]
