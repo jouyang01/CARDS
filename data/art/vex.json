@@ -26,11 +26,11 @@
           -0.1
         ],
         "rotation": [
-          45,
-          -110,
-          -55
+          30,
+          -100,
+          -75
         ],
-        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. These are the owner's own hand-tuned values (tuneMainHand=-.1,.1,-.1,45,-110,-55,0.32), preferred over the computed hand-line alignment. Tune live with the ?tuneMainHand= override in character-model.ts."
+        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. These are the owner's own hand-tuned values (tuneMainHand=-.1,.1,-.1,30,-100,-75,0.32), preferred over the computed hand-line alignment. Tune live with the ?tuneMainHand= override in character-model.ts."
       },
       "heightTiles": 0.32
     }
@@ -54,6 +54,10 @@
     "hit": "rifle_hit",
     "death": "rifle_death",
     "knockback": "knocked_down",
+    "_trimNote": "trim = {clip: keep-fraction}; build_glb.py drops keyframes past that fraction so a long take ends early. vex_trap's Mixamo take runs 7.0s (near the idle's length) with seconds of settle after the flick — the trap is a FREE throwaway action, so keep the first 40% (~2.8s, in line with the grenade/ult) and let the renderer crossfade to idle from there.",
+    "trim": {
+      "vex_trap": 0.4
+    },
     "abilities": {
       "rail_shot": "vex_railshot",
       "frag_grenade": "vex_grenade",
