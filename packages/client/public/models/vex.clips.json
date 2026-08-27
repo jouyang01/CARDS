@@ -1,6 +1,6 @@
 {
   "id": "vex",
-  "version": "9955341d8b14",
+  "version": "e605b5a0fc53",
   "clips": [
     "knocked_down",
     "rifle_death",
@@ -36,14 +36,14 @@
       "bone": "mixamorigLeftHand",
       "heightTiles": 0.3,
       "position": [
-        0.0,
-        0.0,
-        0.0
+        -0.45,
+        -0.15,
+        0
       ],
       "rotation": [
         -90,
         0,
-        0
+        180
       ]
     }
   ]
