@@ -290,6 +290,17 @@ def main():
     # ── clips ──
     # Import each clip, steal its action, throw the duplicate armature away. The
     # action retargets for free because the bone names are identical.
+    #
+    # IDLE-SWAY: the looping idle is NEVER stripped, even under --in-place. A
+    # weight-shift idle plants its feet by rocking the hips while the legs
+    # counter-rotate to hold the soles still; flatten the hips and the planted
+    # feet skate by the whole sway instead. The renderer exempts the idle from
+    # MODEL-ROOT-LOCK for the same reason (character-model.ts, IDLE-SWAY), so the
+    # sway must survive to here. A looping idle sways around the bind and returns
+    # (net zero), so it never walks the rig off its tile — the thing the strip and
+    # the lock both exist to prevent.
+    art_early = ROOT / "data" / "art" / f"{cid}.json"
+    idle_clip = (json.loads(art_early.read_text()).get("clips") or {}).get("idle") if art_early.exists() else None
     clips = []
     rooted = []
     for path in fbx:
@@ -304,8 +315,8 @@ def main():
                 action.name = slug(path.stem)
                 action.use_fake_user = True      # survives the armature's deletion
                 clips.append(action.name)
-                if in_place:
-                    strip_root_motion(action)    # flatten Hips horizontal drift
+                if in_place and action.name != idle_clip:
+                    strip_root_motion(action)    # flatten Hips horizontal drift (never the idle — IDLE-SWAY)
                 n = curve_count(action)
                 travel = root_travel(arm, action)
                 flag = ""
