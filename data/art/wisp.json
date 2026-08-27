@@ -17,7 +17,7 @@
     "warmthForbidden": true
   },
   "weapon": {
-    "_comment": "Twin daggers held REVERSED (icepick grip), low and loose (WHO SHE IS / COSTUME brief). Two slots — mainHand + offHand — share one 'dagger' geometry, mounted on each hand bone with mirrored rotation. Build: generate_dagger.py -> build/art/wisp/wisp_dagger.fbx, then `build_prop.py -- wisp mainHand` and `-- wisp offHand`. The attach offsets are INITIAL: they can only be tuned by eye once the rigged model renders correctly (that render is being fixed separately). Aegis's door offsets were iterated the same way (see aegis.json weapon.attach).",
+    "_comment": "Twin daggers held REVERSED (icepick grip), low and loose (WHO SHE IS / COSTUME brief). Two slots — mainHand + offHand — share one 'dagger' geometry, mounted on each hand bone. Build: generate_dagger.py -> build/art/wisp/wisp_dagger.fbx, then `build_prop.py -- wisp mainHand` and `-- wisp offHand`. Attach offsets VERIFIED in a headless three.js render of the shipped wisp.glb (2026-08-27), the true runtime rather than a Blender preview: rotation [0,0,0] renders as a clean reverse grip, blades pointing down from both fists in the idle pose. The 'Wolverine claws' the daggers showed was the BIND POSE, not the attach: with no idle playing (the model-below-board render bug) the arms splay out horizontally, and the blade — which runs down the fingers — splays with them. Fixed once the model idles. See each attach's _comment. The rotation lives in wisp.clips.json too (build_prop.py's manifest, which is what the client reads); keep the two in step.",
     "mainHand": {
       "kind": "dagger",
       "flat": true,
@@ -25,7 +25,7 @@
       "gripReversed": true,
       "heightTiles": 0.38,
       "attach": {
-        "_comment": "Right hand, reversed (icepick) grip. The hand bone's local +Y runs toward the fingers, so position moves ~half a hand-length along it INTO THE PALM (not the wrist); local +Z is world-DOWN and the blade is authored +Z, so rotation [0,0,0] points the blade straight down — a reverse grip. (The old [180,0,0] pointed it UP.) Bone-local, position in TILES, rotation degrees. Tuned against a faithful bone-frame preview; fine-tune once the model renders in the client.",
+        "_comment": "Right hand, reversed (icepick) grip. The blade geometry runs along the prop's +Y (its long axis, extent 0.54), and the hand bone's local +Y runs toward the fingers — which in the idle pose hangs world-DOWN — so at rotation [0,0,0] the blade points straight down the fist: a reverse grip, verified in a headless render of the real wisp.glb. DO NOT rotate it onto another axis: -90° about X sends the blade out along the arm (the actual 'claws'). Position moves ~half a hand-length along +Y into the palm. Bone-local, position in TILES, rotation degrees.",
         "bone": "mixamorigRightHand",
         "position": [0, 0.055, 0],
         "rotation": [0, 0, 0]
@@ -38,7 +38,7 @@
       "gripReversed": true,
       "heightTiles": 0.38,
       "attach": {
-        "_comment": "Left hand, mirrored — the bone's own local frame mirrors it, so the SAME bone-local position/rotation reverse-grips this hand too. Fine-tune once the model renders in the client.",
+        "_comment": "Left hand — the left hand bone hangs the same way in idle (local +Y world-down), so the same rotation [0,0,0] points its blade straight down too. Symmetric with the right, verified in the same render.",
         "bone": "mixamorigLeftHand",
         "position": [0, 0.055, 0],
         "rotation": [0, 0, 0]
