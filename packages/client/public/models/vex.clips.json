@@ -27,5 +27,24 @@
       "lance_of_dawn": "vex_ult"
     }
   },
-  "posture": {}
+  "posture": {},
+  "props": [
+    {
+      "slot": "mainHand",
+      "file": "vex_mainHand.glb",
+      "version": "6e93ade0eee1",
+      "bone": "mixamorigRightHand",
+      "heightTiles": 0.3,
+      "position": [
+        0.0,
+        0.0,
+        -0.5
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ]
+    }
+  ]
 }
