@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { auditClips, modelUrl, postureRotations, propLocalScale, type PostureSpec } from '../src/character-model.js';
+import { auditClips, modelUrl, postureRotations, propLocalScale, tunedPropSpec, type PostureSpec, type PropSpec } from '../src/character-model.js';
 import type { ClipSet } from '../src/character-clips.js';
 
 /**
@@ -192,5 +192,58 @@ describe('propLocalScale', () => {
     // 1 rather than Infinity, which would put a prop across the whole board.
     expect(propLocalScale(0, 1.55, 1, MODEL_SCALE)).toBe(1);
     expect(propLocalScale(1.55, 1.55, 1, 0)).toBe(1);
+  });
+});
+
+/**
+ * The live attach tuner. A rifle floated because its offset put its centre off
+ * the hand; tuning that offset against a bone you cannot see is guesswork, so
+ * the transform is overridable from the URL and the good value read back off the
+ * screen. The override must be inert for an ordinary player (no `tune*` query)
+ * and must never invent a value the query did not carry.
+ */
+describe('tunedPropSpec', () => {
+  const base: PropSpec = {
+    slot: 'mainHand',
+    file: 'vex_mainHand.glb',
+    bone: 'mixamorigLeftHand',
+    heightTiles: 0.3,
+    position: [-0.45, -0.15, 0],
+    rotation: [-90, 0, 180],
+  };
+
+  it('returns the spec untouched when no tune query is present', () => {
+    // The ordinary player: nothing in the URL, nothing changes.
+    expect(tunedPropSpec(base, '')).toBe(base);
+    expect(tunedPropSpec(base, '?ambient=off&models=on')).toBe(base);
+  });
+
+  it('overrides position, rotation and height for the matching slot', () => {
+    const t = tunedPropSpec(base, '?tuneMainHand=0,0,0,90,0,0,0.32');
+    expect(t.position).toEqual([0, 0, 0]);
+    expect(t.rotation).toEqual([90, 0, 0]);
+    expect(t.heightTiles).toBe(0.32);
+    // The un-tuned fields survive.
+    expect(t.bone).toBe('mixamorigLeftHand');
+    expect(t.file).toBe('vex_mainHand.glb');
+  });
+
+  it('keys the query off the slot name, so an unrelated slot is left alone', () => {
+    const off = tunedPropSpec({ ...base, slot: 'offHand' }, '?tuneMainHand=0,0,0,90,0,0');
+    expect(off.position).toEqual(base.position);
+    expect(off.rotation).toEqual(base.rotation);
+  });
+
+  it('takes only as many fields as the query carries', () => {
+    // Three numbers move it without re-rotating; the manifest rotation stays.
+    const posOnly = tunedPropSpec(base, '?tuneMainHand=0.1,0.2,0.3');
+    expect(posOnly.position).toEqual([0.1, 0.2, 0.3]);
+    expect(posOnly.rotation).toEqual([-90, 0, 180]);
+    expect(posOnly.heightTiles).toBe(0.3);
+  });
+
+  it('ignores a malformed (non-numeric) tune rather than placing NaN', () => {
+    const bad = tunedPropSpec(base, '?tuneMainHand=0,0,down,90,0,0');
+    expect(bad).toBe(base);
   });
 });

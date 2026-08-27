@@ -19,20 +19,20 @@
       "kind": "rifle-rodin",
       "attach": {
         "bone": "mixamorigLeftHand",
-        "heightTiles": 0.3,
+        "heightTiles": 0.32,
         "position": [
-          -0.45,
-          -0.15,
+          0.0,
+          0.0,
           0.0
         ],
         "rotation": [
-          -90,
+          90,
           0,
-          180
+          0
         ],
-        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. rot[-90,0,180] holds it right-side up (amber vents on top), barrel forward; pos[-0.45,-0.15,0] slides the foregrip to the left hand so the butt swings back to the right shoulder \u2014 a two-handed carry. Tuned in-client, screenshots approved. NOTE: exact trigger/foregrip contact only holds in the two-handed FIRING clips; the 'Bored' idle carries it across the body."
+        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. FLOATING FIX: the old pos[-0.45,-0.15,0] held the rifle's centre ~0.45 tiles OFF the hand, so as the 'Bored' idle waved the hand the rifle orbited it and read as floating. pos[0,0,0] seats the rifle's centre ON the hand (minimum lever arm); rot[90,0,0] lays the natively-vertical rifle HORIZONTAL, barrel forward \u2014 a relaxed hip carry. Tuned in-client with the ?tuneMainHand= live override (character-model.ts), screenshots shared. NOTE: the 'Bored' idle still raises the left hand mid-loop, lifting the rifle to chest height for part of the cycle \u2014 it is attached, not floating, but a dedicated rifle-hold idle is the only way to keep the carry perfectly still (owner's character-thesis call)."
       },
-      "heightTiles": 0.3
+      "heightTiles": 0.32
     }
   },
   "clips": {
