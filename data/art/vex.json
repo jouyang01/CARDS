@@ -1,11 +1,11 @@
 {
   "id": "vex",
   "weaponClass": "rifle",
-  "_weaponClassNote": "Shouldered rifle. Combat grip is two-handed, one hand always on the foregrip. Her IDLE carry is the one-handed low slouch (muzzle down) — that is a pose/posture read, not the weaponClass.",
-  "thesis": "Vex doesn't shoot you — she shoots where you're going to be. A slender futuristic sharpshooter carrying a rifle far too big for her, one-handed and completely relaxed, because she did the maths three turns ago and is waiting for you to catch up. Loud, delighted, insufferably right; the humour lives in pose, expression and idle, never in the costume. She reads LIGHT against a dark board and is the exact mirror of Wisp: Wisp is dark and dissolving and removes information; Vex is light and amber-armed and adds it. The oversized rifle is the whole silhouette and carries her identity from every angle, because half her board presence (the aerial mines) is invisible to the enemy. VFX primitive: the hovering amber armed mote/mine, one ordnance language repeated across beam, grenade, trap and ult, every hovering element casting a ground shadow.",
-  "_artNote": "Board model built via the Rodin import path (tools/art/rodin_bake_lowpoly.py), the same as Wisp — not the procedural generator. Body baked at 8000 tris / 1024 atlas; rifle prop baked separately at 2500 tris / 512 atlas via tools/art/rodin_prop_lowpoly.py. Text-to-image generation summary that fed Rodin: docs/design/vex-text-to-image.md. Remaining: rig the body through Mixamo, run build_glb.py to assemble vex.glb + clips, then tune the rifle attach offsets against the rigged hand bone. Full parameter block (build/posture/garment/face/vfxLanguage) still to be written; palette to be re-sampled from the baked texture.",
+  "_weaponClassNote": "Shouldered rifle. Combat grip is two-handed, one hand always on the foregrip. Her IDLE carry is the one-handed low slouch (muzzle down) \u2014 that is a pose/posture read, not the weaponClass.",
+  "thesis": "Vex doesn't shoot you \u2014 she shoots where you're going to be. A slender futuristic sharpshooter carrying a rifle far too big for her, one-handed and completely relaxed, because she did the maths three turns ago and is waiting for you to catch up. Loud, delighted, insufferably right; the humour lives in pose, expression and idle, never in the costume. She reads LIGHT against a dark board and is the exact mirror of Wisp: Wisp is dark and dissolving and removes information; Vex is light and amber-armed and adds it. The oversized rifle is the whole silhouette and carries her identity from every angle, because half her board presence (the aerial mines) is invisible to the enemy. VFX primitive: the hovering amber armed mote/mine, one ordnance language repeated across beam, grenade, trap and ult, every hovering element casting a ground shadow.",
+  "_artNote": "Board model built via the Rodin import path (tools/art/rodin_bake_lowpoly.py), the same as Wisp \u2014 not the procedural generator. Body baked at 8000 tris / 1024 atlas; rifle prop baked separately at 2500 tris / 512 atlas via tools/art/rodin_prop_lowpoly.py. Text-to-image generation summary that fed Rodin: docs/design/vex-text-to-image.md. Remaining: rig the body through Mixamo, run build_glb.py to assemble vex.glb + clips, then tune the rifle attach offsets against the rigged hand bone. Full parameter block (build/posture/garment/face/vfxLanguage) still to be written; palette to be re-sampled from the baked texture.",
   "palette": {
-    "_comment": "PROPOSED targets for the text-to-image reference (propose-and-confirm, ART_PIPELINE.md §7) — owner to confirm. These are NOT yet sampled: like Wisp's, the shipped palette should be re-sampled from the baked Rodin texture and this block replaced. Test against the real board (#12141a bg, cool slate terrain), never white. Body must read LIGHT (opposition to Wisp's dark plum #64404d); amber is sparse on her and emissive only.",
+    "_comment": "PROPOSED targets for the text-to-image reference (propose-and-confirm, ART_PIPELINE.md \u00a77) \u2014 owner to confirm. These are NOT yet sampled: like Wisp's, the shipped palette should be re-sampled from the baked Rodin texture and this block replaced. Test against the real board (#12141a bg, cool slate terrain), never white. Body must read LIGHT (opposition to Wisp's dark plum #64404d); amber is sparse on her and emissive only.",
     "bodyBone": "#e6e0d2",
     "bodyPaleGrey": "#c2c6cc",
     "suitShadow": "#8f9299",
@@ -14,25 +14,40 @@
     "rifleBody": "#3a3d44"
   },
   "weapon": {
-    "_comment": "The rifle is a Rodin-generated prop, baked low-poly with tools/art/rodin_prop_lowpoly.py (emissive amber composited into the base colour so the emitter/heat-sinks read under flat lighting). It is NOT rigged and NOT in the Mixamo upload (ART_PIPELINE §12/§14); it parents to the right-hand bone at runtime. attach offsets (bone-local, in tiles) are tuned AFTER the body is rigged and vex.glb exists — the values below are a placeholder to be measured then.",
+    "_comment": "The rifle is a Rodin-generated prop, baked low-poly with tools/art/rodin_prop_lowpoly.py (emissive amber composited into the base colour so the emitter/heat-sinks read under flat lighting). It is NOT rigged and NOT in the Mixamo upload (ART_PIPELINE \u00a712/\u00a714); it parents to the right-hand bone at runtime. attach offsets (bone-local, in tiles) are tuned AFTER the body is rigged and vex.glb exists \u2014 the values below are a placeholder to be measured then.",
     "mainHand": {
       "kind": "rifle-rodin",
-      "attach": { "bone": "mixamorigRightHand", "position": [0, 0, 0], "rotation": [0, 0, 0] }
+      "attach": {
+        "bone": "mixamorigRightHand",
+        "heightTiles": 0.3,
+        "position": [
+          0.0,
+          0.0,
+          -0.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "_comment": "Rifle held at the right hand, gripped near the stock so it points forward. position z=-0.5 tiles slides the prop forward along its own length (its origin is the length-centre, so at z=0 the stock crossed the body to the left shoulder). Tuned in-client against the idle pose (screenshots), 2026-08-27."
+      },
+      "heightTiles": 0.3
     }
   },
   "clips": {
-    "_comment": "Clip names as they will appear in vex.glb, normalised by build_glb.py from Mixamo filenames (lowercase + underscores). Ability keys are the ability ids from data/characters/vex.json; a missing id falls back to idle (character-clips.ts). Download each Without Skin, rename to the value here, then run build_glb.py. Mapping is a Designer call — owner to confirm against the live Mixamo library. Shared names (rifle_*, knocked_down) are deliberately generic for later dedup across the rifle class / roster (ART_PIPELINE §18); knocked_down already exists from Aegis/Wisp.",
+    "_comment": "Clip names as they will appear in vex.glb, normalised by build_glb.py from Mixamo filenames (lowercase + underscores). Ability keys are the ability ids from data/characters/vex.json; a missing id falls back to idle (character-clips.ts). Download each Without Skin, rename to the value here, then run build_glb.py. Mapping is a Designer call \u2014 owner to confirm against the live Mixamo library. Shared names (rifle_*, knocked_down) are deliberately generic for later dedup across the rifle class / roster (ART_PIPELINE \u00a718); knocked_down already exists from Aegis/Wisp.",
     "_source": {
-      "vex_idle": "Mixamo 'Bored' — weight-shift, glance, shrug. The humour lives here (§7). NOT a braced 'Rifle Idle'; her carry is one-handed and low.",
-      "rifle_run": "Mixamo 'Rifle Run' — light, unhurried. Shared across the rifle weapon class. Tick In Place.",
-      "vex_railshot": "Mixamo 'Firing Rifle' trimmed to a quick minimal take (hip-fire variant if available). CASUAL, near-zero recoil — the deliberate contrast to the braced ult.",
+      "vex_idle": "Mixamo 'Bored' \u2014 weight-shift, glance, shrug. The humour lives here (\u00a77). NOT a braced 'Rifle Idle'; her carry is one-handed and low.",
+      "rifle_run": "Mixamo 'Rifle Run' \u2014 light, unhurried. Shared across the rifle weapon class. Tick In Place.",
+      "vex_railshot": "Mixamo 'Firing Rifle' trimmed to a quick minimal take (hip-fire variant if available). CASUAL, near-zero recoil \u2014 the deliberate contrast to the braced ult.",
       "vex_grenade": "Mixamo 'Throw Object' trimmed to a lazy underhand lob (underhand alt: 'Bowling'). No wind-up.",
       "vex_trap": "Mixamo 'Dismissing Gesture' (a nonchalant flick) or a short 'Throw Object'. The mine floats up on its own; it's a FREE action, keep it throwaway.",
-      "vex_roll": "Mixamo 'Sprinting Forward Roll' — a GENUINE traveling roll through the squares, never a blink. Tick In Place.",
-      "vex_ult": "Mixamo 'Standing Aim Recoil' / braced 'Firing Rifle', shouldered two-handed. Lance of Dawn is the ONE time she braces (§7).",
-      "rifle_hit": "Mixamo 'Standing React Small From Front' — brief flinch. Shared, rifle class.",
+      "vex_roll": "Mixamo 'Sprinting Forward Roll' \u2014 a GENUINE traveling roll through the squares, never a blink. Tick In Place.",
+      "vex_ult": "Mixamo 'Standing Aim Recoil' / braced 'Firing Rifle', shouldered two-handed. Lance of Dawn is the ONE time she braces (\u00a77).",
+      "rifle_hit": "Mixamo 'Standing React Small From Front' \u2014 brief flinch. Shared, rifle class.",
       "rifle_death": "Mixamo 'Death From Front'. Shared, rifle class.",
-      "knocked_down": "Mixamo 'Knocked Down' — SHARED across the roster (Aegis/Wisp too). Download once, reuse."
+      "knocked_down": "Mixamo 'Knocked Down' \u2014 SHARED across the roster (Aegis/Wisp too). Download once, reuse."
     },
     "idle": "vex_idle",
     "run": "rifle_run",
