@@ -492,6 +492,17 @@ export class CharacterModels {
     // MODEL-ROOT-LOCK: read the bind translation NOW, while the clone is still
     // in its bind pose. One `mixer.update` from here and it is gone.
     const rootLock = measureRootLock(root);
+    // …but the LOOPING IDLE is exempt (IDLE-SWAY). Root-lock exists to stop a
+    // clip from translating the rig off its tile; a looping idle never does — it
+    // sways around the bind pose and returns, its net travel is zero. And its
+    // hips are how it plants its feet: a weight-shift idle rocks the hips while
+    // the legs counter-rotate to keep the soles still (Wisp's toes travel 0.000
+    // as authored). Cancelling the hip sway leaves the leg counter-rotation with
+    // nothing to cancel, so the planted feet skate by the full sway instead —
+    // Dev Note: *"Wisp's idle has her feet sliding around."* Locomotion and every
+    // one-shot (run, hit, casts, death, knockback) still pin: those DO travel,
+    // and pinning is the whole of MODEL-ROOT-LOCK for them.
+    const idleClip = entry.manifest.map?.idle;
 
     let current: AnimationAction | undefined;
     let currentName = '';
@@ -546,8 +557,10 @@ export class CharacterModels {
         for (const { bone, extra, base } of bones.values()) bone.rotation.x = base + extra;
         // MODEL-ROOT-LOCK, for the same reason and at the same seam: the mixer
         // has just written the clip's root translation over the bind pose, and
-        // a clip that translates the root drags the character off its tile.
-        applyRootLock(rootLock);
+        // a clip that translates the root drags the character off its tile. The
+        // looping idle is exempt (IDLE-SWAY, above) — pinning its hips is what
+        // made its planted feet slide.
+        applyRootLock(currentName === idleClip ? undefined : rootLock);
       },
       dispose() {
         mixer.stopAllAction();
