@@ -722,6 +722,17 @@ export interface RenderDecoy {
    * ground plate is a marker, not a unit, and wants no nameplate.
    */
   nameplate?: Nameplate;
+  /**
+   * DECOY-FACING — which way the decoy looks, as a board-space delta (like a
+   * unit's facing). A decoy is a lie about where Wisp is, so it has to stand the
+   * way she would if she had stepped onto that square: frozen at the cast from
+   * the caster's position to the decoy's tile (`app.ts`). A real unit derives its
+   * facing per-frame from the cue timeline, but a decoy has no cues of its own —
+   * it just holds this one direction, at rest and through playback alike. Absent
+   * (a decoy on the caster's own square, so there is no direction) leaves it at
+   * its rest heading.
+   */
+  facing?: { x: number; y: number };
 }
 
 /**
@@ -2551,6 +2562,17 @@ export function createRenderer(
           label: (decoy.characterId?.[0] ?? '?').toUpperCase(),
           nameplate: decoy.nameplate,
         });
+        // DECOY-FACING: point it the way Wisp would face had she moved onto the
+        // square. A decoy has no cue timeline of its own, so nothing else turns
+        // it; stored in `facingOf` like a unit's so a body rebuilt on a later
+        // paint (a new viewer, a model that just loaded) keeps looking the right
+        // way. Zero delta (a decoy on the caster's own tile) is ignored, leaving
+        // the rest heading.
+        const f = decoy.facing;
+        if (f !== undefined && (f.x !== 0 || f.y !== 0)) {
+          facingOf.set(decoy.id, { dx: f.x, dy: f.y });
+          applyFacing(decoy.id);
+        }
       }
       for (const [id, g] of unitObjects) if (!live.has(id)) g.visible = false;
 

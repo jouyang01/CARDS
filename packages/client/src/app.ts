@@ -108,7 +108,7 @@ import { padViews, type PadView, type ViewState } from './playback.js';
 import { applyScenario, type ScenarioId } from './scenarios.js';
 import { statusChips, statusPips, viewableStatuses } from './status-pips.js';
 import {
-  decoyNameplate, snapshotDecoy, unitNameplate, type DecoySnapshot,
+  decoyCaster, decoyNameplate, snapshotDecoy, unitNameplate, type DecoySnapshot,
 } from './nameplates.js';
 import { inspectDecoy, inspectUnit } from './inspect.js';
 import { intentBadges } from './intent.js';
@@ -754,6 +754,18 @@ export function startHotSeat(
   let decoySnapshots = new Map<string, DecoySnapshot>();
 
   /**
+   * DECOY-FACING — which way each decoy stands, frozen at the cast.
+   *
+   * Client memory, exactly like `decoySnapshots` and for the same reason: facing
+   * is presentation (`facing.ts`), the engine decoy carries none, and a decoy has
+   * no cue timeline of its own to derive one from per frame. So it is captured
+   * once, at the cast, as the direction from the caster to the decoy's tile — the
+   * way Wisp would face had she stepped there — and held until the decoy expires.
+   * Keyed by decoy id; read wherever a `RenderDecoy` is built.
+   */
+  let decoyFacings = new Map<string, Facing>();
+
+  /**
    * What a decoy is pretending to be: the caster it was copied from.
    *
    * One lookup for both halves of the impersonation — the fake nameplate and,
@@ -1194,7 +1206,7 @@ export function startHotSeat(
       // DECOY-MODEL: the impersonated character reaches the renderer for BOTH
       // viewers. The owner sees the same Wisp everyone else does, with the
       // purple ring under her feet as the only thing that says which is which.
-      return { ...shown, characterId: decoyOf(shown)?.characterId, nameplate: decoyPlate(shown) };
+      return { ...shown, characterId: decoyOf(shown)?.characterId, nameplate: decoyPlate(shown), facing: decoyFacings.get(d.id) };
     });
   };
 
@@ -1472,7 +1484,7 @@ export function startHotSeat(
       // UI-NAMEPLATES: a decoy being taken for a real unit wears a real unit's
       // plate. `fogView` already decided which decoys this viewer sees and
       // whether each is being impersonated; this only dresses them.
-      view.decoys.map((d) => ({ ...d, nameplate: decoyPlate(d) })),
+      view.decoys.map((d) => ({ ...d, nameplate: decoyPlate(d), facing: decoyFacings.get(d.id) })),
       view.traps, pads(),
     );
     // WARDING WALL, standing. Driven off the traps rather than the cues here,
@@ -2547,12 +2559,23 @@ export function startHotSeat(
     // see.) Expired ids are dropped so the map cannot grow for the whole match.
     const stillThere = new Set(result.state.decoys.map((d) => d.id));
     const nextSnapshots = new Map([...decoySnapshots].filter(([id]) => stillThere.has(id)));
+    // DECOY-FACING: frozen the same way and pruned the same way. `prev.units` is
+    // the pre-turn board — the caster where she stood when she placed it (Veil &
+    // Decoy is a Prep free action, so nothing has moved her yet), so the vector
+    // to the decoy's tile is the step she is pretending to have taken.
+    const nextFacings = new Map([...decoyFacings].filter(([id]) => stillThere.has(id)));
     for (const event of result.events) {
       if (event.type !== 'decoySpawned') continue;
       const snapshot = snapshotDecoy(prev.units, roster, event.teamId);
       if (snapshot !== undefined) nextSnapshots.set(event.decoyId, snapshot);
+      const caster = decoyCaster(prev.units, roster, event.teamId);
+      if (caster !== undefined) {
+        const f = { x: event.pos.x - caster.pos.x, y: event.pos.y - caster.pos.y };
+        if (f.x !== 0 || f.y !== 0) nextFacings.set(event.decoyId, f);
+      }
     }
     decoySnapshots = nextSnapshots;
+    decoyFacings = nextFacings;
 
     // The player owns state — its fold IS the board, so skipping and watching
     // agree by construction. Everything below only *decorates* that fold:
