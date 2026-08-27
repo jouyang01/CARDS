@@ -33,15 +33,15 @@
       "slot": "mainHand",
       "file": "vex_mainHand.glb",
       "version": "6e93ade0eee1",
-      "bone": "mixamorigRightHand",
+      "bone": "mixamorigLeftHand",
       "heightTiles": 0.3,
       "position": [
         0.0,
         0.0,
-        -0.5
+        0.0
       ],
       "rotation": [
-        0,
+        -90,
         0,
         0
       ]
