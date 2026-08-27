@@ -21,16 +21,16 @@
         "bone": "mixamorigLeftHand",
         "heightTiles": 0.3,
         "position": [
-          0.0,
-          0.0,
+          -0.45,
+          -0.15,
           0.0
         ],
         "rotation": [
           -90,
           0,
-          0
+          180
         ],
-        "_comment": "Rifle attached to the LEFT hand (owner's call) so the right hand is free for the grenade throw / trap flick without swinging the rifle. rot[-90,0,0] levels it horizontal; at [0,0,0] it cradles across the chest, barrel forward. Tuned in-client, 2026-08-27."
+        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. rot[-90,0,180] holds it right-side up (amber vents on top), barrel forward; pos[-0.45,-0.15,0] slides the foregrip to the left hand so the butt swings back to the right shoulder \u2014 a two-handed carry. Tuned in-client, screenshots approved. NOTE: exact trigger/foregrip contact only holds in the two-handed FIRING clips; the 'Bored' idle carries it across the body."
       },
       "heightTiles": 0.3
     }
