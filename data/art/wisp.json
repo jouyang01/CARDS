@@ -17,7 +17,7 @@
     "warmthForbidden": true
   },
   "weapon": {
-    "_comment": "Twin daggers held REVERSED (icepick grip), low and loose (WHO SHE IS / COSTUME brief). Two slots — mainHand + offHand — share one 'dagger' geometry, mounted on each hand bone. Build: generate_dagger.py -> build/art/wisp/wisp_dagger.fbx, then `build_prop.py -- wisp mainHand` and `-- wisp offHand`. Attach offsets VERIFIED in a headless three.js render of the shipped wisp.glb (2026-08-27), the true runtime rather than a Blender preview: rotation [0,0,0] renders as a clean reverse grip, blades pointing down from both fists in the idle pose. The 'Wolverine claws' the daggers showed was the BIND POSE, not the attach: with no idle playing (the model-below-board render bug) the arms splay out horizontally, and the blade — which runs down the fingers — splays with them. Fixed once the model idles. See each attach's _comment. The rotation lives in wisp.clips.json too (build_prop.py's manifest, which is what the client reads); keep the two in step.",
+    "_comment": "Twin daggers held REVERSED (icepick grip), low and loose (WHO SHE IS / COSTUME brief). Two slots — mainHand + offHand — share one 'dagger' geometry, mounted on each hand bone. Build: generate_dagger.py -> build/art/wisp/wisp_dagger.fbx, then `build_prop.py -- wisp mainHand` and `-- wisp offHand`. Rotations TUNED in a headless three.js render of the shipped wisp.glb (2026-08-27), the true runtime, iterating against the owner's target: the blade points BACK toward her rear ('towards the butt'), angled ~30° below horizontal — an icepick grip carried along the forearm, not pointing straight down (which read as claws) and not out to the side. Derived by FK: the target world direction is (0, -0.5, -0.87) at each hand, mapped through the hand bone's idle-pose frame to a bone-local rotation (the two hands differ because their bones mirror, so the rotations are NOT the same). The rotation lives in wisp.clips.json too (build_prop.py's manifest, which is what the client reads); keep the two in step.",
     "mainHand": {
       "kind": "dagger",
       "flat": true,
@@ -25,10 +25,10 @@
       "gripReversed": true,
       "heightTiles": 0.38,
       "attach": {
-        "_comment": "Right hand, reversed (icepick) grip. The blade geometry runs along the prop's +Y (its long axis, extent 0.54), and the hand bone's local +Y runs toward the fingers — which in the idle pose hangs world-DOWN — so at rotation [0,0,0] the blade points straight down the fist: a reverse grip, verified in a headless render of the real wisp.glb. DO NOT rotate it onto another axis: -90° about X sends the blade out along the arm (the actual 'claws'). Position moves ~half a hand-length along +Y into the palm. Bone-local, position in TILES, rotation degrees.",
+        "_comment": "Right hand, reversed (icepick) grip, blade back toward her rear. The blade geometry runs along the prop's +Y (its long axis, extent 0.54); at rotation [0,0,0] that aligns with the hand bone's +Y, which hangs world-DOWN in idle (blade straight down — the owner read that as claws). This rotation swings the blade back and ~30° down, to world (0,-0.5,-0.87) — pointing behind her. Bone-local, position in TILES, rotation degrees. Render-tuned; re-derive with the FK helper if the idle clip changes.",
         "bone": "mixamorigRightHand",
         "position": [0, 0.055, 0],
-        "rotation": [0, 0, 0]
+        "rotation": [25.8, 19.1, 72.7]
       }
     },
     "offHand": {
@@ -38,10 +38,10 @@
       "gripReversed": true,
       "heightTiles": 0.38,
       "attach": {
-        "_comment": "Left hand — the left hand bone hangs the same way in idle (local +Y world-down), so the same rotation [0,0,0] points its blade straight down too. Symmetric with the right, verified in the same render.",
+        "_comment": "Left hand, same backward icepick aim as the right — blade to world (0,-0.5,-0.87), behind her. The bone-local rotation DIFFERS from the right hand's because the left hand bone's frame mirrors it; both were solved to the same world direction, not copied. Render-tuned.",
         "bone": "mixamorigLeftHand",
         "position": [0, 0.055, 0],
-        "rotation": [0, 0, 0]
+        "rotation": [30.3, -18.4, -61.9]
       }
     }
   },
