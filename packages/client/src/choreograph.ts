@@ -55,7 +55,11 @@ interface CueBase {
 export type Cue =
   | (CueBase & { kind: 'phase'; phase: Phase })
   | (CueBase & { kind: 'ability'; phase: Phase; unitId: string; abilityId: string; area: Vec2[] })
-  | (CueBase & { kind: 'move'; unitId: string; from: Vec2; to: Vec2 })
+  // `teleport` rides through from the engine's `moveStep`: the caster arrives
+  // rather than crosses, so `animate.ts` jumps it instead of sliding it. A blink
+  // that lands one tile away is still a blink — the flag says so where geometry
+  // (an adjacent square looks exactly like a walk) cannot.
+  | (CueBase & { kind: 'move'; unitId: string; from: Vec2; to: Vec2; teleport?: boolean })
   | (CueBase & { kind: 'displace'; unitId: string; from: Vec2; to: Vec2; displaceKind: 'knockback' | 'pull' })
   | (CueBase & { kind: 'impact'; unitId: string; amount: number; absorbed: number; sourceUnitId: string; abilityId: string })
   // A benefit landing (UI5). Same shape as an impact and bound to its actor the
@@ -204,7 +208,7 @@ function simultaneousPhase(phase: Phase, events: readonly TurnEvent[], start: nu
     if (e.type !== 'moveStep') continue;
     const k = stepsSoFar.get(e.unitId) ?? 0;
     stepsSoFar.set(e.unitId, k + 1);
-    cues.push({ kind: 'move', t: start + k * BEAT, dur: BEAT, unitId: e.unitId, from: e.from, to: e.to });
+    cues.push({ kind: 'move', t: start + k * BEAT, dur: BEAT, unitId: e.unitId, from: e.from, to: e.to, teleport: e.teleport });
   }
 
   const impactT = maxEnd(cues, start);
@@ -253,13 +257,27 @@ function cueDecoys(events: readonly TurnEvent[], cues: Cue[], start: number): vo
  *   did, and the tracer, whose flight window is `[cast.t, impact.t)`, flies at
  *   the speed it always flew. Stretching the cast into its own impact would have
  *   turned every bola into a four-second crawl.
- * - Everything at or after the actor's slot end shifts by the difference: the
- *   next actor waits, and so do the phase's deaths and every later phase.
+ * - Everything at or after the **hold boundary** shifts by the difference. What
+ *   the boundary is depends on the phase, and it is the whole of the difference
+ *   between a sequential hold and a dash hold:
  *
- * **Sequential phases only** (prep, blast), where actors already own disjoint
- * ranges and "the next one waits" is the existing rule. In Dash and Move
- * everyone goes at once and step *k* of every mover shares a beat; shifting the
- * cues after a cast would put a hole in the middle of somebody else's run.
+ *   - **Sequential** (prep, blast): the boundary is the actor's own slot end.
+ *     Actors own disjoint ranges, so shifting from there just makes the next one
+ *     wait — the existing rule. The cast plus the landings bound to it (A0, by
+ *     `sourceUnitId`) is the slot, and the landings must not move or the hit
+ *     drifts off the swing that caused it.
+ *   - **Dash**: the boundary is the end of the *whole phase*, not the caster's
+ *     slot. Dash is simultaneous — step *k* of every mover shares a beat — so
+ *     shifting from the caster's slot would open a hole in the middle of somebody
+ *     else's charge. Shifting from the phase end instead leaves every in-phase
+ *     step where it was (they all start before the end) and only pushes Blast and
+ *     everything after it out, so a blink whose clip runs four beats gets those
+ *     beats while the other dashers simply finish and wait. Held only when the
+ *     caster does not *walk* this phase — a `teleport` step or no step at all —
+ *     because a path-charge dasher's story is the run, not a cast clip pinned
+ *     over it (`selectClip` ranks ability over movement).
+ *
+ * Move is never held: nothing casts in it.
  */
 export function holdCasts(
   cues: readonly Cue[],
@@ -267,24 +285,45 @@ export function holdCasts(
 ): Cue[] {
   const out: Cue[] = cues.map((c) => ({ ...c }));
   const casts = out
-    .filter((c): c is Extract<Cue, { kind: 'ability' }> => c.kind === 'ability' && SEQUENTIAL.has(c.phase))
+    .filter((c): c is Extract<Cue, { kind: 'ability' }> =>
+      c.kind === 'ability' && (SEQUENTIAL.has(c.phase) || c.phase === 'dash'))
     .sort((a, b) => a.t - b.t);
+
+  /** `[banner, nextBanner)` of the cast's phase — recomputed per cast, as earlier holds move later banners. */
+  const phaseSpan = (phase: Phase): { start: number; end: number } => {
+    const banner = out.find((c) => c.kind === 'phase' && c.phase === phase);
+    if (banner === undefined) return { start: 0, end: Infinity };
+    const later = out.filter((c) => c.kind === 'phase' && c.t > banner.t).map((c) => c.t);
+    return { start: banner.t, end: later.length > 0 ? Math.min(...later) : Infinity };
+  };
 
   for (const cast of casts) {
     const need = beatsFor(cast.unitId, cast.abilityId);
     if (need === undefined || !(need > cast.dur)) continue;
-    // The actor's own slot: the cast plus the landings bound to it (A0 again —
-    // by `sourceUnitId`, never by log adjacency). These must not move, or the
-    // hit would drift away from the swing that caused it.
-    const slotEnd = out.reduce(
-      (m, c) => ((c.kind === 'impact' || c.kind === 'benefit')
-        && c.sourceUnitId === cast.unitId && c.t >= cast.t ? Math.max(m, end(c)) : m),
-      end(cast),
-    );
-    const delta = cast.t + need - slotEnd;
+
+    let boundary: number;
+    if (SEQUENTIAL.has(cast.phase)) {
+      // The actor's own slot: the cast plus the landings bound to it (A0 again —
+      // by `sourceUnitId`, never by log adjacency).
+      boundary = out.reduce(
+        (m, c) => ((c.kind === 'impact' || c.kind === 'benefit')
+          && c.sourceUnitId === cast.unitId && c.t >= cast.t ? Math.max(m, end(c)) : m),
+        end(cast),
+      );
+    } else {
+      // Dash. Do not hold a caster that is charging on foot this phase.
+      const span = phaseSpan(cast.phase);
+      const inPhase = (c: Cue): boolean => c.t >= span.start && c.t < span.end;
+      const walks = out.some((c) => c.kind === 'move' && c.unitId === cast.unitId && c.teleport !== true && inPhase(c));
+      if (walks) continue;
+      // The whole phase's action end — every in-phase step is before it.
+      boundary = out.reduce((m, c) => (inPhase(c) ? Math.max(m, end(c)) : m), end(cast));
+    }
+
+    const delta = cast.t + need - boundary;
     cast.dur = need;
-    if (delta <= 0) continue; // the landings already cover the swing
-    for (const c of out) if (c !== cast && c.t >= slotEnd) c.t += delta;
+    if (delta <= 0) continue; // the room is already there
+    for (const c of out) if (c !== cast && c.t >= boundary) c.t += delta;
   }
 
   return out.sort((a, b) => a.t - b.t);

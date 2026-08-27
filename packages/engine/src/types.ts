@@ -920,7 +920,12 @@ export type TurnEvent =
   // *derive* when a buff wore off, which the rendering contract forbids —
   // status indicators (STATUS-AUDIT) are folded from these two events alone.
   | { type: 'statusRemoved'; unitId: string; status: EffectKind; reason: 'broken' | 'expired' }
-  | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2 }
+  // `teleport` marks a step that ARRIVES rather than crosses — a blink/Shift,
+  // where the unit is never on any square between `from` and `to`. Presentation
+  // only (the engine treats every step the same): the renderer reads it to jump
+  // the model instead of sliding it, so a one-tile blink is not mistaken for a
+  // walk. Absent on an ordinary walked or charged step.
+  | { type: 'moveStep'; unitId: string; from: Vec2; to: Vec2; teleport?: boolean }
   | { type: 'displaced'; unitId: string; from: Vec2; to: Vec2; kind: 'knockback' | 'pull' }
   | { type: 'trapPlaced'; trapId: string; pos: Vec2; owner: TeamId }
   // …and its counterpart: the trap ran out its life without anyone stepping on

@@ -2159,7 +2159,10 @@ function teleport(
   if (vecEq(landing, unit.pos)) return false; // already there; no step to emit
   const from = unit.pos;
   unit.pos = { x: landing.x, y: landing.y };
-  events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos });
+  // `teleport: true` — this step arrives, it does not cross (see `moveStep`).
+  // The renderer jumps the model instead of sliding it, so a blink that happens
+  // to land one square away is still read as a blink and not as a walk.
+  events.push({ type: 'moveStep', unitId: unit.unitId, from, to: unit.pos, teleport: true });
   // WARDING-WALL: a blink *arrives*, it does not cross — so a hazard that only
   // catches things passing through it (the wall) sits this out, while a mine
   // you materialise on top of still goes off, exactly as before.

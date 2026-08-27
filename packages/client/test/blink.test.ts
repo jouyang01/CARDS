@@ -20,6 +20,9 @@ const displace = (t: number, unitId: string, from: [number, number], to: [number
     from: { x: from[0], y: from[1] }, to: { x: to[0], y: to[1] },
   }) as Cue;
 
+const teleport = (t: number, unitId: string, from: [number, number], to: [number, number]): Cue =>
+  ({ kind: 'move', t, dur: BEAT, unitId, from: { x: from[0], y: from[1] }, to: { x: to[0], y: to[1] }, teleport: true }) as Cue;
+
 const legOf = (c: Cue): Parameters<typeof isBlink>[0] => c as Parameters<typeof isBlink>[0];
 
 describe('isBlink', () => {
@@ -29,10 +32,20 @@ describe('isBlink', () => {
     expect(isBlink(legOf(move(0, 'a', [2, 2], [5, 5])))).toBe(true);
   });
 
-  it('BLINK-NOT-A-STEP: orthogonal and diagonal neighbours are walked', () => {
+  it('BLINK-NOT-A-STEP: an UNFLAGGED orthogonal or diagonal neighbour is walked', () => {
+    // Geometry alone: no `teleport` flag, and a jump of one square could only
+    // have been a walk, so it slides.
     expect(isBlink(legOf(move(0, 'a', [2, 2], [3, 2])))).toBe(false);
     expect(isBlink(legOf(move(0, 'a', [2, 2], [2, 3])))).toBe(false);
     expect(isBlink(legOf(move(0, 'a', [2, 2], [3, 3])))).toBe(false);
+  });
+
+  it('BLINK-FLAG-WINS: a FLAGGED one-tile step is a teleport, not a walk', () => {
+    // The report: "Wisp's blink should be a teleport, not a slide." A blink that
+    // lands next door emits the same {from,to} a walk would, so only the engine's
+    // `teleport` mark tells them apart — and it does, at any distance.
+    expect(isBlink(legOf(teleport(0, 'a', [2, 2], [3, 2])))).toBe(true);
+    expect(isBlink(legOf(teleport(0, 'a', [2, 2], [3, 3])))).toBe(true);
   });
 
   it('BLINK-NOT-A-THROW: a knockback is thrown across the gap, not teleported', () => {
@@ -74,6 +87,24 @@ describe('a blink holds, then arrives', () => {
 
   it('BLINK-ENDS-THERE: after the beat he stands at the destination', () => {
     expect(where(2)).toEqual({ x: 8, y: 5 });
+  });
+});
+
+describe('a FLAGGED adjacent blink jumps where a walk would slide', () => {
+  // Same one-tile {from,to} as a walk, but marked a teleport: it must hold and
+  // arrive, never interpolate. This is the exact case the geometric test missed.
+  const cues = [teleport(0, 'a', [5, 5], [6, 5])];
+  const at = (t: number): number => sampleFrame(cues, t).poses.get('a')!.x;
+
+  it('holds at the origin through the wind-up', () => {
+    expect(at(BLINK_AT - 0.01)).toBe(5);
+  });
+  it('and is simply at the destination after — never at 5.5', () => {
+    expect(at(BLINK_AT + 0.01)).toBe(6);
+    for (let i = 0; i <= 100; i++) {
+      const x = at(i / 100);
+      expect(x === 5 || x === 6, `slid to x=${x}`).toBe(true);
+    }
   });
 });
 

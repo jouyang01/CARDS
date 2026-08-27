@@ -18,6 +18,7 @@ const char: CharacterDef = {
     ability({ id: 'shoot', shape: 'line', range: 8, energyGain: 8, effects: [{ kind: 'damage', amount: 20 }] }),
     ability({ id: 'guard', phase: 'prep', shape: 'self', range: 0, effects: [{ kind: 'shield', amount: 30, duration: 2 }] }),
     ability({ id: 'charge', phase: 'dash', shape: 'path', range: 4, energyGain: 8, effects: [{ kind: 'damage', amount: 15 }, { kind: 'knockback', amount: 1 }] }),
+    ability({ id: 'blink', phase: 'dash', shape: 'square', range: 4, effects: [{ kind: 'teleport' }] }),
     ability({ id: 'shove', shape: 'line', range: 6, energyGain: 4, effects: [{ kind: 'damage', amount: 5 }, { kind: 'knockback', amount: 2 }] }),
   ],
   ultimate: ability({ id: 'ult', shape: 'square', range: 8, effects: [{ kind: 'damage', amount: 40 }] }),
@@ -132,6 +133,23 @@ describe('A2: simultaneous phases share a start', () => {
     const dash = of(choreograph(events), 'ability').filter((c) => c.phase === 'dash');
     expect(dash).toHaveLength(2);
     expect(dash[0]!.t).toBe(dash[1]!.t); // shared start — Dash is shown simultaneously
+  });
+
+  it('a blink step carries `teleport` onto its move cue; a walk does not', () => {
+    // The presentation flag rides from the engine's `moveStep` through to the
+    // cue `animate.ts` reads, so a blink is jumped and a walk is slid — even when
+    // both are one square long.
+    const blink = run(mkState([mkUnit('a', 0, 5, 6), mkUnit('e', 1, 11, 6)]),
+      [{ unitId: 'a', ability: { abilityId: 'blink', target: [{ x: 6, y: 6 }] } }], []);
+    const jumped = of(choreograph(blink.events), 'move').filter((m) => m.unitId === 'a');
+    expect(jumped.length).toBeGreaterThan(0);
+    expect(jumped.every((m) => m.teleport === true)).toBe(true);
+
+    const walk = run(mkState([mkUnit('a', 0, 5, 6), mkUnit('e', 1, 11, 6)]),
+      [{ unitId: 'a', movePath: [{ x: 6, y: 6 }] }], []);
+    const slid = of(choreograph(walk.events), 'move').filter((m) => m.unitId === 'a');
+    expect(slid.length).toBeGreaterThan(0);
+    expect(slid.every((m) => m.teleport !== true)).toBe(true);
   });
 });
 
