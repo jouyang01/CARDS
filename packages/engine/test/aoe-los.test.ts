@@ -146,6 +146,58 @@ describe('AOE-LoS: a wall between the centre and you shelters you completely', (
   });
 });
 
+// ── 1b. A grenade cannot be lobbed onto a wall ──────────────────────────────
+
+describe('AOE-LoS: a blast centre may not sit on a wall', () => {
+  it('lobbing onto the pillar itself is refused — the order drops, nobody is hit', () => {
+    // `v` sits at (4,4), one tile off the pillar at (4,3) and inside the radius-2
+    // disc of a blast centred on it. Before the wall-centre check this landed and
+    // `v` took 40; a grenade cannot rest on a solid wall, so the aim is illegal
+    // and the whole order is dropped.
+    const s = fire(PILLAR, makeState([
+      at('a', 0, 1, 4),
+      at('v', 1, 4, 4),
+    ]), 'grenade', { x: 4, y: 3 });
+    expect(lost(s, 'v'), 'the grenade never fired').toBe(0);
+  });
+
+  it('one tile off the wall, onto open floor, the same grenade still lands', () => {
+    // The control: only the wall centre is refused, not the neighbourhood. Aiming
+    // the floor tile the victim stands on detonates as normal.
+    const s = fire(PILLAR, makeState([
+      at('a', 0, 1, 4),
+      at('v', 1, 4, 4),
+    ]), 'grenade', { x: 4, y: 4 });
+    expect(lost(s, 'v'), 'a legal floor target still detonates').toBe(40);
+  });
+});
+
+// ── 1c. A delayed detonation does not replay the throw ──────────────────────
+
+describe('a delayed grenade detonation is marked so the throw is not replayed', () => {
+  it('the throw fires a plain abilityFired; the detonation one turn later is marked delayed', () => {
+    const s0 = makeState([at('a', 0, 2, 2)]);
+    // Turn 1 — throw the delayed grenade (Frag Grenade's exact shape) at open floor.
+    const r1 = resolveTurn(s0, FIELD, [
+      { team: 0, units: [{ unitId: 'a', ability: { abilityId: 'delayed', target: [{ x: 4, y: 4 }] } }] },
+      { team: 1, units: [] },
+    ] as [PlayerOrders, PlayerOrders], roster);
+    const throwCast = r1.events.filter((e) => e.type === 'abilityFired' && e.abilityId === 'delayed');
+    expect(throwCast, 'the throw itself fires').toHaveLength(1);
+    expect(throwCast[0]!.type === 'abilityFired' && throwCast[0]!.delayed,
+      'and is NOT delayed — the throw animation should play').toBeFalsy();
+
+    // Turn 2 — nobody orders anything; the armed grenade goes off now.
+    const r2 = resolveTurn(r1.state, FIELD, [
+      { team: 0, units: [] }, { team: 1, units: [] },
+    ] as [PlayerOrders, PlayerOrders], roster);
+    const detonation = r2.events.filter((e) => e.type === 'abilityFired' && e.abilityId === 'delayed');
+    expect(detonation, 'the detonation still emits abilityFired so its blast VFX plays').toHaveLength(1);
+    expect(detonation[0]!.type === 'abilityFired' && detonation[0]!.delayed,
+      'but marked delayed, so the client skips replaying the throw').toBe(true);
+  });
+});
+
 // ── 2. Cover washes over, directionally, from the centre ────────────────────
 
 /**

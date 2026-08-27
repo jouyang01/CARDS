@@ -36,6 +36,7 @@ import {
   reachableSquares,
   reconstructPath,
   stepCost,
+  terrainAt,
   validateMovePath,
   vecEq,
   vectorToStep,
@@ -983,6 +984,11 @@ export function commitAim(
     // square aim and falls through to the check below.
     if (guardLandings(buildBoard(map), state, unit, ability.range).length > 0) return undefined;
   }
+
+  // A blast centre may not sit on a wall (mirrors the engine's `aimIsLegal`): a
+  // grenade cannot be lobbed onto a solid wall block. Refused at the click so the
+  // board never offers a target the order pipeline would then drop.
+  if (ability.shape === 'circle' && terrainAt(buildBoard(map), target) === 'wall') return undefined;
 
   const resolved = aimFor(map, state, unit, ability, target, rotation);
   return aimLegal(unit, ability, resolved.aim, resolved.aimStep) ? resolved : undefined;

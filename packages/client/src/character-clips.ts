@@ -24,6 +24,9 @@ export interface ClipChoice {
   loop: boolean;
   /** Beats since the clip's trigger, so the renderer can seek rather than restart. */
   since: number;
+  /** WALKED-DASH: time-scale the clip to fill this many beats (a combat roll fits
+   *  its whole traversal, so it completes exactly on arrival). Absent = authored rate. */
+  fitBeats?: number;
 }
 
 /**
@@ -95,11 +98,18 @@ export function selectClip(
     }
   }
   for (const cue of cues) {
-    if (cue.kind === 'ability' && active(cue, t, unitId)) {
+    // A delayed detonation (a frag grenade going off a turn after the throw)
+    // lights its area and plays its blast VFX from this same cue, but the caster
+    // must NOT replay the throw — they threw it last turn. Skipping it here drops
+    // the caster through to whatever they are actually doing now (a move, or idle).
+    if (cue.kind === 'ability' && cue.delayed !== true && active(cue, t, unitId)) {
       return {
         clip: clips.abilities[cue.abilityId] ?? clips.idle,
         loop: false,
         since: t - cue.t,
+        // WALKED-DASH: a stretched cue (a combat roll) fits its clip to the whole
+        // traversal so it plays the entire way and finishes on arrival.
+        ...(cue.stretch === true ? { fitBeats: cue.dur } : {}),
       };
     }
   }

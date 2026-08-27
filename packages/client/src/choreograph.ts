@@ -54,7 +54,9 @@ interface CueBase {
 
 export type Cue =
   | (CueBase & { kind: 'phase'; phase: Phase })
-  | (CueBase & { kind: 'ability'; phase: Phase; unitId: string; abilityId: string; area: Vec2[] })
+  // `delayed` (a grenade detonation replays no throw) and `stretch` (a walked
+  // dash time-scales its clip to the whole traversal) are presentation flags.
+  | (CueBase & { kind: 'ability'; phase: Phase; unitId: string; abilityId: string; area: Vec2[]; delayed?: boolean; stretch?: boolean })
   // `teleport` rides through from the engine's `moveStep`: the caster arrives
   // rather than crosses, so `animate.ts` jumps it instead of sliding it. A blink
   // that lands one tile away is still a blink — the flag says so where geometry
@@ -172,7 +174,7 @@ function sequentialPhase(phase: Phase, events: readonly TurnEvent[], start: numb
   for (const actor of order) {
     const slot: Cue[] = [];
     for (const e of fired.filter((f) => f.unitId === actor)) {
-      slot.push({ kind: 'ability', phase, t, dur: BEAT, unitId: e.unitId, abilityId: e.abilityId, area: e.area });
+      slot.push({ kind: 'ability', phase, t, dur: BEAT, unitId: e.unitId, abilityId: e.abilityId, area: e.area, delayed: e.delayed });
     }
     // Hits land after the ability that caused them — bound by sourceUnitId (A0),
     // never by where the damage event happens to sit in the log.
@@ -196,7 +198,7 @@ function simultaneousPhase(phase: Phase, events: readonly TurnEvent[], start: nu
 
   for (const e of events) {
     if (e.type === 'abilityFired') {
-      cues.push({ kind: 'ability', phase, t: start, dur: BEAT, unitId: e.unitId, abilityId: e.abilityId, area: e.area });
+      cues.push({ kind: 'ability', phase, t: start, dur: BEAT, unitId: e.unitId, abilityId: e.abilityId, area: e.area, delayed: e.delayed });
     }
   }
 
@@ -209,6 +211,33 @@ function simultaneousPhase(phase: Phase, events: readonly TurnEvent[], start: nu
     const k = stepsSoFar.get(e.unitId) ?? 0;
     stepsSoFar.set(e.unitId, k + 1);
     cues.push({ kind: 'move', t: start + k * BEAT, dur: BEAT, unitId: e.unitId, from: e.from, to: e.to, teleport: e.teleport });
+  }
+
+  // WALKED-DASH — a combat roll traverses its squares (walked moveSteps), and its
+  // own ability cue is only one beat, so `selectClip` (ability > movement) played
+  // the roll for the first tile and the RUN clip for the rest, and on a one-tile
+  // roll the ~1.5 s clip was cut off after 0.76 s. Grow the dash ability cue to
+  // span the whole traversal so the roll is what plays the entire way, and mark it
+  // `stretch` so the renderer time-scales the clip to finish exactly on arrival —
+  // a short roll reads quick, a long one reads longer.
+  //
+  // Only WALKED steps count. A teleport dash (Blink) arrives rather than crosses
+  // (`teleport: true`); it has no walked traversal to span and is `holdCasts`'s
+  // job (its clip is held to length, not fitted to a walk). Counting only the
+  // walked steps keeps the two mechanisms disjoint: roll here, blink there.
+  if (phase === 'dash') {
+    const walked = new Map<string, number>();
+    for (const c of cues) {
+      if (c.kind === 'move' && c.teleport !== true) walked.set(c.unitId, (walked.get(c.unitId) ?? 0) + 1);
+    }
+    for (const c of cues) {
+      if (c.kind !== 'ability') continue;
+      const steps = walked.get(c.unitId) ?? 0;
+      if (steps > 0) {
+        c.dur = steps * BEAT;
+        c.stretch = true;
+      }
+    }
   }
 
   const impactT = maxEnd(cues, start);
@@ -286,7 +315,7 @@ export function holdCasts(
   const out: Cue[] = cues.map((c) => ({ ...c }));
   const casts = out
     .filter((c): c is Extract<Cue, { kind: 'ability' }> =>
-      c.kind === 'ability' && (SEQUENTIAL.has(c.phase) || c.phase === 'dash'))
+      c.kind === 'ability' && c.delayed !== true && (SEQUENTIAL.has(c.phase) || c.phase === 'dash'))
     .sort((a, b) => a.t - b.t);
 
   /** `[banner, nextBanner)` of the cast's phase — recomputed per cast, as earlier holds move later banners. */

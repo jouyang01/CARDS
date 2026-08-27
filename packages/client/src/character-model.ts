@@ -534,6 +534,13 @@ export class CharacterModels {
         next.reset();
         next.loop = choice.loop ? LoopRepeat : LoopOnce;
         next.clampWhenFinished = !choice.loop; // a corpse holds its last frame
+        // WALKED-DASH: fit the clip into `fitBeats` beats so a combat roll finishes
+        // exactly as the unit arrives — a short roll reads quick, a long one longer.
+        // Always set (default 1), so an action reused later never inherits a stretch.
+        const fitSeconds = choice.fitBeats !== undefined && choice.fitBeats > 0
+          ? choice.fitBeats * beatSeconds : undefined;
+        next.timeScale = fitSeconds !== undefined && clip.duration > 0
+          ? clip.duration / fitSeconds : 1;
         // Seek to where the cue says we are, so joining mid-clip looks right —
         // but ONLY for one-shots. A cast or a death has a right point to be at;
         // a looping clip does not, and seeking it starts a walk mid-stride.
@@ -543,8 +550,12 @@ export class CharacterModels {
         // dropped him in at t=0.18 of the cycle, so he began mid-swing, took a
         // step and a half, and snapped back to idle. Starting at zero means a
         // step begins on a foot plant, which is what makes a short move read as
-        // a step rather than a twitch.
-        next.time = choice.loop ? 0 : Math.min(choice.since * beatSeconds, clip.duration);
+        // a step rather than a twitch. A stretched clip seeks by its own fraction
+        // of the traversal instead of by wall-time.
+        next.time = choice.loop ? 0
+          : fitSeconds !== undefined
+            ? Math.min(choice.since / choice.fitBeats!, 1) * clip.duration
+            : Math.min(choice.since * beatSeconds, clip.duration);
         if (current !== undefined && current !== next) current.crossFadeTo(next, 0.12, false);
         next.play();
         current = next;
