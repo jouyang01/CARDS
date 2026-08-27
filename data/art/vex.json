@@ -19,20 +19,20 @@
       "kind": "rifle-rodin",
       "attach": {
         "bone": "mixamorigLeftHand",
-        "heightTiles": 0.32,
+        "heightTiles": 0.5,
         "position": [
+          -0.06,
           0.0,
-          0.0,
-          0.0
+          -0.04
         ],
         "rotation": [
           90,
           0,
           0
         ],
-        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. FLOATING FIX: the old pos[-0.45,-0.15,0] held the rifle's centre ~0.45 tiles OFF the hand, so as the 'Bored' idle waved the hand the rifle orbited it and read as floating. pos[0,0,0] seats the rifle's centre ON the hand (minimum lever arm); rot[90,0,0] lays the natively-vertical rifle HORIZONTAL, barrel forward \u2014 a relaxed hip carry. Tuned in-client with the ?tuneMainHand= live override (character-model.ts), screenshots shared. NOTE: the 'Bored' idle still raises the left hand mid-loop, lifting the rifle to chest height for part of the cycle \u2014 it is attached, not floating, but a dedicated rifle-hold idle is the only way to keep the carry perfectly still (owner's character-thesis call)."
+        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. Vex's idle IS a two-handed Mixamo rifle stance (hands measured 0.28 tiles apart, both at chest height, stable across the loop) \u2014 so the rifle must SPAN both hands, not perch on one. rot[90,0,0] lays the natively-vertical rifle horizontal, muzzle forward; heightTiles 0.5 makes it long enough to reach from the forward (left) hand back past the rear (right) hand to the shoulder; pos[-0.06,0,-0.04] seats it so both hands land on the body of the weapon. A proper two-handed carry. Tuned in-client against the measured hand-bone positions (tools probe) with the ?tuneMainHand= live override (character-model.ts); screenshots shared. Because every rifle clip (idle/run/fire/ult) shares this one hand position, this single socket works across all of them."
       },
-      "heightTiles": 0.32
+      "heightTiles": 0.5
     }
   },
   "clips": {
