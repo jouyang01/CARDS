@@ -26,11 +26,11 @@
           -0.04
         ],
         "rotation": [
-          90,
-          0,
-          0
+          -59,
+          52,
+          57
         ],
-        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. Vex's idle IS a two-handed Mixamo rifle stance (hands measured 0.28 tiles apart, both at chest height, stable across the loop) \u2014 so the rifle must SPAN both hands, not perch on one. rot[90,0,0] lays the natively-vertical rifle horizontal, muzzle forward; heightTiles 0.5 makes it long enough to reach from the forward (left) hand back past the rear (right) hand to the shoulder; pos[-0.06,0,-0.04] seats it so both hands land on the body of the weapon. A proper two-handed carry. Tuned in-client against the measured hand-bone positions (tools probe) with the ?tuneMainHand= live override (character-model.ts); screenshots shared. Because every rifle clip (idle/run/fire/ult) shares this one hand position, this single socket works across all of them."
+        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. Vex's idle IS a two-handed Mixamo rifle stance: the LEFT and RIGHT hand bones sit 0.28 tiles apart at chest height and hold that grip stably across the whole loop, so the rifle must lie ACROSS both hands (a cross-body carry, like a rifle held at rest), not perch on one and point away. The rotation was SOLVED, not guessed: the prop's barrel axis is +Z in its own space (0.21,-0.23,0.95) \u2014 derived from the fact that at rot[0,0,0] the rifle stands straight up \u2014 and rot[-59,52,57] is the exact Euler that maps that barrel onto the measured hand-line (verify dot=1.000, tools/_solve2). heightTiles 0.5 makes it long enough to span both hands to the shoulder; pos[-0.06,0,-0.04] centres it on the grip. Because every rifle clip (idle/run/rail_shot/lance_of_dawn) shares this one hand position, this single socket works across all of them. (The mirror solution rot[-179,-82,140] carries it muzzle-forward at the waist instead \u2014 swap if a lower carry is wanted.)"
       },
       "heightTiles": 0.5
     }
