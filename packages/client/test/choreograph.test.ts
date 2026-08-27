@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type TurnEvent, type UnitOrders } from '@cards/engine';
-import { choreograph, timelineLength, type Cue } from '../src/choreograph.js';
+import { BEAT, choreograph, timelineLength, type Cue } from '../src/choreograph.js';
 
 /**
  * A2 — the choreographer is asserted on ORDERING and CONCURRENCY only, never on
@@ -150,6 +150,25 @@ describe('A2: simultaneous phases share a start', () => {
     const slid = of(choreograph(walk.events), 'move').filter((m) => m.unitId === 'a');
     expect(slid.length).toBeGreaterThan(0);
     expect(slid.every((m) => m.teleport !== true)).toBe(true);
+  });
+
+  it('WALKED-DASH: a walked dash cue spans its whole traversal and is marked stretch', () => {
+    // A combat roll / charge traverses its squares (walked steps). Its ability cue
+    // used to be one beat, so `selectClip` played the clip for the first tile and
+    // the run clip for the rest; now it spans every walked step so the clip plays
+    // the whole way, and carries `stretch` so the renderer time-scales it to finish
+    // on arrival. (A blink teleports and is `holdCasts`'s job, not this one.)
+    const a = mkUnit('a', 0, 1, 4);
+    const { events } = run(mkState([a, mkUnit('e', 1, 11, 6)]), [
+      { unitId: 'a', ability: { abilityId: 'charge', target: [{ x: 2, y: 4 }, { x: 3, y: 4 }, { x: 4, y: 4 }] } },
+    ], []);
+    const cues = choreograph(events);
+    const dash = of(cues, 'ability').filter((c) => c.phase === 'dash');
+    const steps = of(cues, 'move').filter((m) => m.unitId === 'a' && m.teleport !== true);
+    expect(dash).toHaveLength(1);
+    expect(steps.length, 'it actually walked several tiles').toBeGreaterThan(1);
+    expect(dash[0]!.dur, 'the cue spans every walked step').toBe(steps.length * BEAT);
+    expect(dash[0]!.stretch, 'and is time-scaled to complete on arrival').toBe(true);
   });
 });
 

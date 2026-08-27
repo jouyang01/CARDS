@@ -1,6 +1,6 @@
 {
   "id": "vex",
-  "version": "19298fc6ea76",
+  "version": "9955341d8b14",
   "clips": [
     "knocked_down",
     "rifle_death",
@@ -33,15 +33,15 @@
       "slot": "mainHand",
       "file": "vex_mainHand.glb",
       "version": "6e93ade0eee1",
-      "bone": "mixamorigRightHand",
+      "bone": "mixamorigLeftHand",
       "heightTiles": 0.3,
       "position": [
         0.0,
         0.0,
-        -0.5
+        0.0
       ],
       "rotation": [
-        0,
+        -90,
         0,
         0
       ]

@@ -18,19 +18,19 @@
     "mainHand": {
       "kind": "rifle-rodin",
       "attach": {
-        "bone": "mixamorigRightHand",
+        "bone": "mixamorigLeftHand",
         "heightTiles": 0.3,
         "position": [
           0.0,
           0.0,
-          -0.5
+          0.0
         ],
         "rotation": [
-          0,
+          -90,
           0,
           0
         ],
-        "_comment": "Rifle held at the right hand, gripped near the stock so it points forward. position z=-0.5 tiles slides the prop forward along its own length (its origin is the length-centre, so at z=0 the stock crossed the body to the left shoulder). Tuned in-client against the idle pose (screenshots), 2026-08-27."
+        "_comment": "Rifle attached to the LEFT hand (owner's call) so the right hand is free for the grenade throw / trap flick without swinging the rifle. rot[-90,0,0] levels it horizontal; at [0,0,0] it cradles across the chest, barrel forward. Tuned in-client, 2026-08-27."
       },
       "heightTiles": 0.3
     }

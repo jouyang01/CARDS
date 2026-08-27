@@ -57,6 +57,29 @@ describe('selectClip', () => {
       .toBe('warding_wall_cast');
   });
 
+  it('does NOT replay the caster clip for a delayed detonation (a grenade going off)', () => {
+    // The armed grenade lights its area and plays its blast VFX from this cue,
+    // but the caster threw it last turn and must not throw again. A delayed cue
+    // drops the caster through to whatever they are actually doing now.
+    const delayed = { kind: 'ability', t: 0, dur: BEAT, phase: 'blast', unitId: 'a',
+                      abilityId: 'shield_bash', area: [], delayed: true } as Cue;
+    expect(selectClip([delayed], 0.1, 'a', CLIPS).clip, 'idle, not the throw').toBe('aegis_idle');
+    expect(selectClip([delayed, move(0)], 0.1, 'a', CLIPS).clip, 'a move underneath still plays')
+      .toBe('sword_and_shield_run');
+  });
+
+  it('WALKED-DASH: a stretched ability cue fits its clip to the whole traversal', () => {
+    // A combat roll's cue spans its traversal and carries `stretch`; the choice
+    // then names how many beats to fit the clip into, so it completes on arrival.
+    const roll = { kind: 'ability', t: 0, dur: 3 * BEAT, phase: 'dash', unitId: 'a',
+                   abilityId: 'shield_bash', area: [], stretch: true } as Cue;
+    const choice = selectClip([roll], 1.0, 'a', CLIPS);
+    expect(choice.clip, 'still the ability clip').toBe('aegis_smash');
+    expect(choice.fitBeats, 'fits the 3-beat traversal').toBe(3 * BEAT);
+    expect(selectClip([ability(0, 'shield_bash')], 0.1, 'a', CLIPS).fitBeats,
+      'a normal ability plays at authored rate').toBeUndefined();
+  });
+
   it('falls back to idle for an ability with no clip mapped', () => {
     expect(selectClip([ability(0, 'not_in_the_glb')], 0.1, 'a', CLIPS).clip).toBe('aegis_idle');
   });

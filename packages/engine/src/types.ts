@@ -899,7 +899,11 @@ export interface PlayerOrders {
  */
 export type TurnEvent =
   | { type: 'phaseStart'; phase: Phase }
-  | { type: 'abilityFired'; unitId: string; abilityId: string; area: Vec2[] }
+  // `delayed` marks a detonation of an ability armed on an earlier turn (a frag
+  // grenade going off): the area still lights and the explosion still plays, but
+  // the caster does NOT replay the cast/throw animation — they threw it last turn
+  // and are doing something else now. Presentation-only; the resolver ignores it.
+  | { type: 'abilityFired'; unitId: string; abilityId: string; area: Vec2[]; delayed?: boolean }
   // `sourceUnitId`/`abilityId` attribute the hit to whoever caused it (A0). Blast
   // emits every `abilityFired` before any `damage`, so log adjacency cannot say
   // which ability landed a hit — presentation (sequential Blast, "shooter in

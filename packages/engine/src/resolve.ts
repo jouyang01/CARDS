@@ -783,6 +783,13 @@ function aimIsLegal(
       // always has a line to, so self-centred bursts are untouched.
       const target = aim[0];
       if (target === undefined || !aimInRange(unit.pos, target, def.range)) return false;
+      // A blast centre may not sit inside a solid wall. `circleSquares` already
+      // drops walls *within* the radius, but the aimed centre itself was never
+      // checked — so a frag grenade could be lobbed onto a wall block, where it
+      // has nothing to rest on. A `range: 0` self-burst is unaffected: a unit
+      // never stands on a wall. (Cover is deliberately not blocked — it is
+      // crouch-height, and a grenade lands on the floor behind it.)
+      if (terrainAt(board, target) === 'wall') return false;
       return aimVisionAllows(board, state, unit, def, target);
     }
     case 'square': {
@@ -2574,7 +2581,10 @@ function detonateDelayedBlasts(
     const found = findAbility(roster, caster.characterId, d.abilityId);
     if (found === undefined) continue;
     const def = found.def;
-    events.push({ type: 'abilityFired', unitId: caster.unitId, abilityId: def.id, area: d.area });
+    // `delayed: true` — the area lights and the blast plays, but the caster does
+    // not replay the throw: the grenade was thrown a turn ago and is only now
+    // going off (owner: "should not play the throwing animation the second time").
+    events.push({ type: 'abilityFired', unitId: caster.unitId, abilityId: def.id, area: d.area, delayed: true });
 
     // Same polarity as the direct-Blast loop (FF1-delayed): a detonation is an
     // aimed area, so harmful effects catch EVERY unit standing in it, ally or
