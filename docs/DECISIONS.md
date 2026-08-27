@@ -8323,22 +8323,22 @@ existing `decoySnapshots`, pruned the same way, and applied to the decoy body li
 a unit's facing (a decoy has no cue timeline of its own to derive one from). A
 decoy on the caster's own square has no direction and keeps its rest heading.
 
-### Daggers — the attach was already right; "claws" was the T-pose
+### Daggers — the blade points back toward her rear, not down
 
-Third report of "Wolverine claws," and this time the answer was *not* the attach.
-Verified by a headless three.js render of the shipped `wisp.glb` (the real
-runtime, not a Blender preview): rotation **[0,0,0]** renders as a clean reverse
-grip, blades down from both fists in the idle pose. The dagger geometry runs
-along its own +Y (long axis, extent 0.54), and the hand bone's local +Y — toward
-the fingers — hangs world-down in idle, so [0,0,0] already points the blade down
-the fist. (A −90° "fix" about local X sends it out along the arm — that would be
-the actual claws, and this pass nearly shipped it before the render caught it.)
-The claws the owner saw are the **bind pose**: with no idle playing — the
-model-below-board render bug the Analyzer/Builder are fixing — the arms splay out
-horizontally and the finger-aligned blade splays with them. It resolves the
-moment the model idles on the board; no attach change was needed. Left [0,0,0] in
-`wisp.json`/`wisp.clips.json` and documented the axis so the next pass does not
-"correct" a grip that is already right. **Lesson**: for a hand-held prop, render
-the actual runtime in the actual clip before touching an offset — an FK read of
-the bone frame is necessary but not sufficient, because it says nothing about the
-*prop's* own authored axis (this pass assumed the blade was +Z; it is +Y).
+Three passes on this, and the resolution took a render loop against the owner's
+actual target, not a formula. The blade geometry runs along the prop's +Y (long
+axis, extent 0.54), and the hand bone's local +Y hangs world-down in idle — so
+rotation **[0,0,0]** points the blade straight down the fist. That is a reverse
+grip, but the owner reads straight-down as the "Wolverine claws"; the wanted look
+is the blade carried BACK along the forearm, tip toward her rear ("towards the
+butt"). Solved by FK: pick the world target `(0, -0.5, -0.87)` (back, ~30° down)
+and map it through each hand's idle-pose frame to a bone-local rotation —
+`[25.8, 19.1, 72.7]` right, `[30.3, -18.4, -61.9]` left (they differ because the
+hand bones mirror), verified in a headless three.js render of the shipped
+`wisp.glb`. **Lessons**, both paid for here: (1) for a hand-held prop, render the
+real runtime in the real clip — an FK read of the bone frame is necessary but not
+sufficient, because it says nothing about the *prop's* own authored axis (an
+earlier pass assumed the blade was +Z; it is +Y, and nearly shipped a −90° that
+would have splayed it out sideways — real claws). (2) "Reverse grip" was
+under-specified; "down" and "back" are both reverse grips, and only a render in
+front of the owner settled which.
