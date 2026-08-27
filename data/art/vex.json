@@ -19,20 +19,20 @@
       "kind": "rifle-rodin",
       "attach": {
         "bone": "mixamorigLeftHand",
-        "heightTiles": 0.5,
+        "heightTiles": 0.32,
         "position": [
-          -0.06,
-          0.0,
-          -0.04
+          -0.1,
+          0.1,
+          -0.1
         ],
         "rotation": [
-          -59,
-          52,
-          57
+          45,
+          -110,
+          -55
         ],
-        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. Vex's idle IS a two-handed Mixamo rifle stance: the LEFT and RIGHT hand bones sit 0.28 tiles apart at chest height and hold that grip stably across the whole loop, so the rifle must lie ACROSS both hands (a cross-body carry, like a rifle held at rest), not perch on one and point away. The rotation was SOLVED, not guessed: the prop's barrel axis is +Z in its own space (0.21,-0.23,0.95) \u2014 derived from the fact that at rot[0,0,0] the rifle stands straight up \u2014 and rot[-59,52,57] is the exact Euler that maps that barrel onto the measured hand-line (verify dot=1.000, tools/_solve2). heightTiles 0.5 makes it long enough to span both hands to the shoulder; pos[-0.06,0,-0.04] centres it on the grip. Because every rifle clip (idle/run/rail_shot/lance_of_dawn) shares this one hand position, this single socket works across all of them. (The mirror solution rot[-179,-82,140] carries it muzzle-forward at the waist instead \u2014 swap if a lower carry is wanted.)"
+        "_comment": "Rifle on the LEFT hand (owner's call) so the right hand is free for the grenade/trap. These are the owner's own hand-tuned values (tuneMainHand=-.1,.1,-.1,45,-110,-55,0.32), preferred over the computed hand-line alignment. Tune live with the ?tuneMainHand= override in character-model.ts."
       },
-      "heightTiles": 0.5
+      "heightTiles": 0.32
     }
   },
   "clips": {

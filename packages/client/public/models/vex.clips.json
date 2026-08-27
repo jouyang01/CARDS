@@ -34,16 +34,16 @@
       "file": "vex_mainHand.glb",
       "version": "6e93ade0eee1",
       "bone": "mixamorigLeftHand",
-      "heightTiles": 0.5,
+      "heightTiles": 0.32,
       "position": [
-        -0.06,
-        0,
-        -0.04
+        -0.1,
+        0.1,
+        -0.1
       ],
       "rotation": [
-        -59,
-        52,
-        57
+        45,
+        -110,
+        -55
       ]
     }
   ]
