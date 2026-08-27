@@ -33,28 +33,37 @@ import { pathToFileURL } from 'node:url';
  * **This is the cap that actually goes off.** Aegis, the first procedural rig,
  * weighs ~1.16 MB (mesh + atlas + every clip). Wisp arrives from the Rodin
  * import path carrying a baked photographic texture atlas, which is heavier —
- * ~1.9 MB with a 1024 atlas — so the cap is 2 MB (owner's call, 2026-08-26): it
- * fits an import-path character with room to spare, and still catches a doubled
- * texture or an unbudgeted second prop. Per character rather than only in total
- * because the total is *expected* to grow as the roster is rigged, and a guard
- * that cannot tell "one more character" from "one character got twice as heavy"
- * is not a guard.
+ * ~1.9 MB with a 1024 atlas. Vex arrives the same way but is the first with a
+ * separately-baked weapon prop (`vex_mainHand.glb`, ~0.95 MB), and props group
+ * under their character, so armed she is ~2.8-3.0 MB — over the old 2 MB cap
+ * before anything went wrong. Re-baselined to 4 MB for the Rodin era (owner's
+ * call, 2026-08-26): it fits an import-path character with a 1024 atlas AND a
+ * weapon prop with room to spare, and still catches a doubled texture or a
+ * second unbudgeted prop. Per character rather than only in total because the
+ * total is *expected* to grow as the roster is rigged, and a guard that cannot
+ * tell "one more character" from "one character got twice as heavy" is not a
+ * guard.
  */
-const PER_CHARACTER = Math.round(2 * 1024 * 1024);
+const PER_CHARACTER = Math.round(4 * 1024 * 1024);
 
 /**
  * Whole-directory ceiling, in bytes: what a player's browser can be asked to
  * hold for the full roster.
  *
- * Nine characters at today's weight is ~10.5 MB, which is the number
- * `ART_PIPELINE.md` §18 is a decision about — every character currently ships
- * its own copy of the four generic Mixamo clips. The cap sits above that and
- * **below** nine-at-the-per-character-cap (18 MB), so the roster fits as it
- * stands today but nine simultaneously heavier characters do not. If this trips,
- * the answer is §18's Option A (a shared clip `.glb`) or Option C (meshopt), not
- * a bigger number here.
+ * A player never downloads this whole directory — the client fetches only a
+ * match's 4 (2v2) or 8 (4v4) characters (ART_PIPELINE §11). So this is a
+ * roster-growth / repo-health guard, not a per-player wait, and the number to
+ * watch for a player is per-character-cap x match size.
+ *
+ * Re-baselined to 30 MB alongside the 4 MB per-character cap (owner's call,
+ * 2026-08-26): nine armed Rodin-era characters at ~2.7-3.0 MB each is ~25 MB, so
+ * the cap sits above the realistic full roster with headroom and **below**
+ * nine-at-the-per-character-cap (36 MB), so nine simultaneously maxed characters
+ * still trip it. If this trips, the answer is §18's Option A (a shared clip
+ * `.glb`) or Option C (meshopt) — the generic clips are duplicated per character
+ * today — not a bigger number here.
  */
-const TOTAL = 12 * 1024 * 1024;
+const TOTAL = 30 * 1024 * 1024;
 
 /**
  * Which character a file belongs to: the leading token before the first `.` or
