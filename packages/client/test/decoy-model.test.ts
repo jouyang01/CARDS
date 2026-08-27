@@ -116,4 +116,17 @@ describe('DECOY-MODEL: the renderer is told which character to draw', () => {
     expect(b.renderer.draw.board.decoys[0]!.pos).toEqual(DECOY_AT);
     expect(b.renderer.draw.board.decoys[0]!.pos).not.toEqual(WISP_AT);
   });
+
+  it('DECOY-FACING: it faces the way Wisp would if she had stepped onto the tile', () => {
+    // Owner: "the decoy needs to face the same direction Wisp would if she had
+    // moved into that spot." She stood at (5,10) and it is at (7,10) — two east —
+    // so the direction she is pretending to have taken is +x. A board-space delta
+    // (not normalised): the renderer owns the angle.
+    const b = match();
+    castVeil(b);
+    const decoy = b.renderer.draw.board.decoys[0]!;
+    expect(decoy.facing).toBeDefined();
+    expect(Math.sign(decoy.facing!.x), 'looking east, toward the tile').toBe(1);
+    expect(decoy.facing!.y, 'and not drifting north/south').toBe(0);
+  });
 });

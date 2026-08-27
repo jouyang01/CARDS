@@ -159,18 +159,46 @@ describe('FOLLOW-THROUGH: scope', () => {
     expect(holdCasts(cues, (_u, a) => (a === 'bola' ? 5 : undefined))).toEqual(cues);
   });
 
-  it('SIMULTANEOUS PHASES ARE LEFT ALONE: a dash cast holds nothing', () => {
-    // In Dash and Move everyone goes at once and step *k* of every mover shares
-    // a beat, so "shift everything after the cast" would open a hole in the
-    // middle of somebody else's run. The rule is sequential-phases-only, and
-    // this is the case that would break silently if it were dropped.
+  it('DASH: a blink cast is held — but from the phase end, so no concurrent run gets a hole', () => {
+    // Dash is simultaneous: step *k* of every mover shares a beat, so shifting
+    // from the CASTER'S slot (the sequential rule) would open a hole in the
+    // middle of somebody else's charge. A dash blink shifts from the PHASE end
+    // instead — every in-phase step is already before it — so the blink gets its
+    // whole clip while the other dashers keep every step and simply wait.
+    const BLINK_BEATS = 4.6;
     const cues: Cue[] = [
       { kind: 'phase', phase: 'dash', t: 0, dur: BEAT },
-      { kind: 'ability', phase: 'dash', t: 1, dur: BEAT, unitId: 'wisp', abilityId: 'dagger_flurry', area: [] },
+      // Wisp blinks: a TELEPORT step plus the cast, both at the dash start.
+      { kind: 'ability', phase: 'dash', t: 1, dur: BEAT, unitId: 'wisp', abilityId: 'blink', area: [] },
+      { kind: 'move', t: 1, dur: BEAT, unitId: 'wisp', from: { x: 5, y: 5 }, to: { x: 9, y: 5 }, teleport: true },
+      // Aegis charges three tiles on foot, one step per beat, straight through.
       { kind: 'move', t: 1, dur: BEAT, unitId: 'aegis', from: { x: 1, y: 1 }, to: { x: 2, y: 1 } },
       { kind: 'move', t: 2, dur: BEAT, unitId: 'aegis', from: { x: 2, y: 1 }, to: { x: 3, y: 1 } },
+      { kind: 'move', t: 3, dur: BEAT, unitId: 'aegis', from: { x: 3, y: 1 }, to: { x: 4, y: 1 } },
+      { kind: 'phase', phase: 'move', t: 4, dur: BEAT },
     ];
-    expect(holdCasts(cues, beatsFor)).toEqual(cues);
+    const held = holdCasts(cues, (_u, a) => (a === 'blink' ? BLINK_BEATS : undefined));
+    // The blink got its whole clip…
+    expect(castIn(held, 'wisp').dur).toBeCloseTo(BLINK_BEATS, 6);
+    // …every one of Aegis's steps is exactly where it was — no hole mid-charge…
+    const steps = held.filter((c) => c.kind === 'move' && c.unitId === 'aegis').map((c) => c.t).sort((a, b) => a - b);
+    expect(steps).toEqual([1, 2, 3]);
+    // …and Move waited for the blink instead of starting underneath it.
+    const move = held.find((c) => c.kind === 'phase' && c.phase === 'move')!;
+    expect(move.t).toBeCloseTo(1 + BLINK_BEATS, 6);
+  });
+
+  it('DASH: a caster charging on foot is left alone — the run is the story, not a cast clip', () => {
+    // `selectClip` ranks ability over movement, so holding a foot-charger's cast
+    // would pin a cast clip over the run it should be playing. Held only when the
+    // caster teleports or does not move; a walked step this phase opts out.
+    const cues: Cue[] = [
+      { kind: 'phase', phase: 'dash', t: 0, dur: BEAT },
+      { kind: 'ability', phase: 'dash', t: 1, dur: BEAT, unitId: 'wisp', abilityId: 'charge', area: [] },
+      { kind: 'move', t: 1, dur: BEAT, unitId: 'wisp', from: { x: 1, y: 1 }, to: { x: 2, y: 1 } },
+      { kind: 'move', t: 2, dur: BEAT, unitId: 'wisp', from: { x: 2, y: 1 }, to: { x: 3, y: 1 } },
+    ];
+    expect(holdCasts(cues, () => 5)).toEqual(cues);
   });
 });
 

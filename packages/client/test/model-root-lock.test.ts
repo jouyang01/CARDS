@@ -276,61 +276,143 @@ describe('MODEL-ROOT-LOCK: the WIRING — a real ModelInstance, not just the hel
   /**
    * The helper above is well covered and that was not enough: deleting the
    * `applyRootLock` call from `ModelInstance.update` left the entire suite
-   * green. `instance()` is where it has to run — it builds the mixer and
-   * **plays idle immediately**, so the first frame of a unit's existence is
-   * already animated — and nothing could reach it outside a browser until
+   * green. `instance()` is where it has to run — it builds the mixer and plays
+   * idle immediately — and nothing could reach it outside a browser until
    * `adopt()` existed.
+   *
+   * The idle is now EXEMPT (IDLE-SWAY, below), so the wiring is asserted on a
+   * PLAYED clip instead: `intercept_cast` travels, and a played cast must be
+   * pinned to the tile like every other one-shot.
    */
-  const travelling = (): CharacterModels => {
+  const withCast = (): CharacterModels => {
     const models = new CharacterModels();
     models.adopt('aegis', {
       scene: aegis().root,
-      clips: [clip('aegis_idle', AEGIS_DEATH_F0, AEGIS_DEATH_F1)],
+      clips: [
+        clip('aegis_idle', AEGIS_DEATH_F0, AEGIS_DEATH_F0), // in-place, auto-played on load
+        clip('intercept_cast', AEGIS_DEATH_F0, AEGIS_DEATH_F1), // travels, and must be pinned
+      ],
       manifest: {
         id: 'aegis',
-        clips: ['aegis_idle'],
-        // Only `idle` names a real clip — the rest are the shape `ClipSet`
-        // requires and are never played here. Idle is the one that matters:
-        // `instance()` starts it on load.
+        clips: ['aegis_idle', 'intercept_cast'],
         map: {
-          idle: 'aegis_idle', run: 'r', hit: 'h', death: 'd', knockback: 'k', abilities: {},
+          idle: 'aegis_idle', run: 'r', hit: 'h', death: 'd', knockback: 'k',
+          abilities: { intercept: 'intercept_cast' },
         },
       },
     });
     return models;
   };
 
-  /** How far off its own square an instance's hips are, after `frames`. */
-  const driftAfter = (models: CharacterModels, frames: number): { flat: number; y: number } => {
+  /** Play `clipName` for `frames`, then report how far the hips left the tile. */
+  const driftPlaying = (models: CharacterModels, clipName: string, frames: number): { flat: number; y: number } => {
     const inst = models.instance('aegis')!;
+    inst.play({ clip: clipName, loop: false, since: 0 }, 1);
     for (let i = 0; i < frames; i += 1) inst.update(1 / 60);
     inst.root.updateMatrixWorld(true);
     const at = inst.root.getObjectByName('mixamorigHips')!.getWorldPosition(new Vector3());
     return { flat: flatFrom(at, AEGIS_BIND_WORLD), y: at.y };
   };
 
-  it('THE ITEM, end to end: instance() plays on load and the unit stays on its tile', () => {
-    expect(driftAfter(travelling(), 1).flat, 'frame one').toBeLessThan(1e-6);
-  });
-
-  it('and holds through a second of animation, while the height still moves', () => {
-    // Both halves in one assertion, because either alone has a trivial way to
-    // pass: a frozen skeleton holds the tile, and no lock at all moves the height.
-    const late = driftAfter(travelling(), 40);
+  it('THE ITEM, end to end: a played travelling cast is pinned to the tile', () => {
+    const late = driftPlaying(withCast(), 'intercept_cast', 40);
     expect(late.flat, 'still over its square').toBeLessThan(1e-6);
-    expect(late.y, 'and has dropped out of the standing pose').toBeLessThan(0.8);
+    expect(late.y, 'and the vertical still moved').not.toBeCloseTo(AEGIS_BIND_WORLD.y, 2);
   });
 
-  it('THE MUTATION GUARD: without the lock this instance walks off its square', () => {
+  it('THE MUTATION GUARD: without the lock that cast walks off its square', () => {
     // Stated as its own assertion so the file records what "broken" measures,
-    // and so a future edit that neuters `update()` fails here by name rather
-    // than by a browser screenshot nobody takes.
+    // and so a future edit that neuters `update()` fails here by name.
     const built = aegis();
     const mixer = new AnimationMixer(built.root);
-    mixer.clipAction(clip('idle', AEGIS_DEATH_F0, AEGIS_DEATH_F1)).play();
+    mixer.clipAction(clip('intercept_cast', AEGIS_DEATH_F0, AEGIS_DEATH_F1)).play();
     mixer.update(0.9);
     built.root.updateMatrixWorld(true);
     expect(flatFrom(built.hips.getWorldPosition(new Vector3()), AEGIS_BIND_WORLD))
       .toBeGreaterThan(0.8);
+  });
+});
+
+/**
+ * IDLE-SWAY — **the looping idle is exempt from the horizontal lock.**
+ *
+ * Owner: *"Wisp's idle has her feet sliding around."* The idle is an in-place
+ * clip — its feet are planted (Wisp's toes travel 0.000 as authored) — but it
+ * plants them by rocking the hips while the legs counter-rotate to hold the
+ * soles still. MODEL-ROOT-LOCK exists to stop a clip walking the rig off its
+ * tile; a looping idle never does (it sways around the bind and returns, net
+ * zero). Pinning its hips anyway leaves the leg counter-motion with nothing to
+ * cancel, so the planted feet skate by the full sway. So the mapped idle clip
+ * — and only it — plays its root translation through.
+ */
+describe('IDLE-SWAY: the idle keeps its planted feet', () => {
+  /** root → hips → foot: the foot hangs below the hips so a sway can be planted. */
+  const footRig = (): { root: Group; hips: Bone; foot: Bone } => {
+    const root = new Group();
+    const hips = new Bone();
+    hips.name = 'mixamorigHips';
+    hips.position.copy(WISP_BIND);
+    const foot = new Bone();
+    foot.name = 'mixamorigRightFoot';
+    foot.position.set(0, -1, 0.15);
+    hips.add(foot);
+    root.add(hips);
+    root.updateMatrixWorld(true);
+    return { root, hips, foot };
+  };
+
+  /**
+   * A weight-shift idle: the hips rock +0.2 in X at the midpoint and RETURN,
+   * while the foot's local X counters it exactly, so the sole stays put in the
+   * world. The shape of every real idle, minimised to two bones.
+   */
+  const swayIdle = (): AnimationClip => new AnimationClip('wisp_idle', 1, [
+    new VectorKeyframeTrack('mixamorigHips.position', [0, 0.5, 1], [
+      WISP_BIND.x, WISP_BIND.y, WISP_BIND.z,
+      WISP_BIND.x + 0.2, WISP_BIND.y, WISP_BIND.z,
+      WISP_BIND.x, WISP_BIND.y, WISP_BIND.z,
+    ]),
+    new VectorKeyframeTrack('mixamorigRightFoot.position', [0, 0.5, 1], [
+      0, -1, 0.15,
+      -0.2, -1, 0.15,
+      0, -1, 0.15,
+    ]),
+  ]);
+
+  const footModels = (built: ReturnType<typeof footRig>): CharacterModels => {
+    const models = new CharacterModels();
+    models.adopt('wisp', {
+      scene: built.root,
+      clips: [swayIdle()],
+      manifest: {
+        id: 'wisp', clips: ['wisp_idle'],
+        map: { idle: 'wisp_idle', run: 'r', hit: 'h', death: 'd', knockback: 'k', abilities: {} },
+      },
+    });
+    return models;
+  };
+
+  it('THE NOTE: at the peak of the sway the sole has not moved — feet planted', () => {
+    const built = footRig();
+    const plantedX = built.foot.getWorldPosition(new Vector3()).x;
+    const inst = footModels(built).instance('wisp')!;
+    for (let i = 0; i < 30; i += 1) inst.update(1 / 60); // to the mid-sway peak (0.5s)
+    inst.root.updateMatrixWorld(true);
+    expect(built.foot.getWorldPosition(new Vector3()).x, 'the sole stayed put').toBeCloseTo(plantedX, 6);
+  });
+
+  it('THE MUTATION IT UNDOES: pinning the idle hips slides that same sole by the sway', () => {
+    // What shipped, executable: measure the lock, play the sway to its peak, and
+    // apply the lock the way a non-exempt clip would — the planted foot skates.
+    const built = footRig();
+    const plantedX = built.foot.getWorldPosition(new Vector3()).x;
+    const lock = measureRootLock(built.root);
+    const mixer = new AnimationMixer(built.root);
+    mixer.clipAction(swayIdle()).play();
+    mixer.update(0.5);
+    applyRootLock(lock); // the pin the idle is now exempt from
+    built.root.updateMatrixWorld(true);
+    expect(Math.abs(built.foot.getWorldPosition(new Vector3()).x - plantedX), 'skated by the sway')
+      .toBeGreaterThan(0.15);
   });
 });

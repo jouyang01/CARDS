@@ -156,14 +156,16 @@ export const BLINK_AT = 0.5;
  * on this side is that a walked step is always to a touching square — one
  * orthogonally or diagonally — and a teleport is generally not.
  *
- * The gap this leaves is real and worth stating: an Intercept that happens to
- * land on a square adjacent to where Aegis stood is indistinguishable from a
- * step, and will slide. Closing it properly means the event saying so, which is
- * an engine change and the Builder's call; until then this is right in every
- * case where the difference is visible at all.
+ * The engine now says so directly: a `teleport` step (blink, Shift, Shadowstep
+ * Strike's arrival) carries the flag from `moveStep`, so a blink that lands one
+ * square away is still a blink and does not slide. The geometric test below is
+ * kept as a fallback for a leg with no flag — a hand-built cue in a test, or a
+ * future mover that forgets to set it — where a jump of more than one square
+ * could only have been a teleport anyway.
  */
 export function isBlink(leg: Leg): boolean {
   if (leg.kind !== 'move') return false; // a knockback is thrown, not teleported
+  if (leg.teleport === true) return true;
   return Math.max(Math.abs(leg.to.x - leg.from.x), Math.abs(leg.to.y - leg.from.y)) > 1;
 }
 

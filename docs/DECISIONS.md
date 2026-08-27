@@ -8264,3 +8264,81 @@ back per character as art lands. Not a defect; worth knowing when reading a futu
     is answered by measurement, and the Aegis cost is paid).
   - **Bola damage 24 vs the Dev Note's 12** (session 20) is still unresolved and
     still a balance question, which is not the Builder's to answer.
+
+## Wisp animation & dagger pass — 2026-08-27
+
+Five owner reports against Wisp on the board, fixed together. Two are engine/
+choreography, three are presentation; all ship with tests in the same commit.
+
+### TELEPORT-FLAG — `moveStep` says whether a step arrived or crossed
+
+The report: *"Wisp's blink should be a teleport, not a slide … her shadowstep
+should be a teleport, not a slide to the tile."* `isBlink` used to guess from
+geometry — a jump of more than one square — because the engine emitted the same
+`moveStep` for a blink and a walk. A blink that lands one square away is then
+indistinguishable from a step and slid. Closed the way the old `blink.ts` comment
+said it would have to be: `teleport()` now sets `teleport: true` on the step,
+`choreograph` carries it onto the `move` cue, and `isBlink` reads the flag
+(geometry kept only as a fallback for hand-built cues). Determinism is untouched —
+the flag is presentation, like `sourceUnitId` on `damage`, and no outcome reads
+it. Every roster teleport (Aegis's Intercept, the Shift catalyst, Wisp's Blink &
+Shadowstep) becomes a true jump at any distance.
+
+### FOLLOW-THROUGH extended to Dash — the blink clip plays to the end
+
+Same report's other half: *"the blink animation does not finish before the blink
+does, it's getting cut off."* `holdCasts` only held sequential phases; Blink and
+Shadowstep fire in Dash, so their 3–4.6-beat clips were cut to one beat. The old
+comment refused Dash because shifting from the caster's slot would hole another
+dasher's charge. Resolved by shifting from the **phase's** action-end instead of
+the caster's slot: every in-phase step is already before it, so the tail (Blast
+and later) moves out while the concurrent dashers keep every step and simply wait.
+Held only when the caster teleports or does not move this phase — a foot-charger's
+run is its own story and must not be pinned under a cast clip.
+
+### IDLE-SWAY — the looping idle is exempt from MODEL-ROOT-LOCK
+
+The report: *"Wisp's idle has her feet sliding around."* Diagnosed by FK on the
+shipped `wisp.glb`: her idle is in-place — the toes travel **0.000** as authored —
+but it plants them by rocking the hips while the legs counter-rotate. Root-lock,
+cancelling the hip sway, left that counter-rotation dragging the planted feet 0.17
+tiles. Aegis's idle never showed it because his hips barely move (0.009). The rule
+was over-broad: a looping idle never walks off its tile (it sways around bind and
+returns, net zero), so the mapped idle clip — and only it — now plays its root
+translation through. Locomotion and every one-shot still pin. This edits a
+Builder-domain, ruled system (MODEL-ROOT-LOCK); the `model-root-lock.test.ts`
+mutation guard was rewritten to prove the lock still runs on a played travelling
+cast, and a new foot-plant test proves the exemption. **Open**: a *badly* baked
+idle with net drift would now walk off-tile silently — acceptable because an
+in-place idle is the roster convention (ART_PIPELINE §8), but worth a validator if
+a future idle drifts.
+
+### DECOY-FACING — the decoy stands the way Wisp would have
+
+The report: *"the decoy needs to face the same direction Wisp would if she had
+moved into that spot."* Facing is presentation (`facing.ts`), and the engine decoy
+carries none, so it is frozen client-side at the cast — the delta from the
+caster's pre-turn square to the decoy's tile — in a `decoyFacings` map beside the
+existing `decoySnapshots`, pruned the same way, and applied to the decoy body like
+a unit's facing (a decoy has no cue timeline of its own to derive one from). A
+decoy on the caster's own square has no direction and keeps its rest heading.
+
+### Daggers — the attach was already right; "claws" was the T-pose
+
+Third report of "Wolverine claws," and this time the answer was *not* the attach.
+Verified by a headless three.js render of the shipped `wisp.glb` (the real
+runtime, not a Blender preview): rotation **[0,0,0]** renders as a clean reverse
+grip, blades down from both fists in the idle pose. The dagger geometry runs
+along its own +Y (long axis, extent 0.54), and the hand bone's local +Y — toward
+the fingers — hangs world-down in idle, so [0,0,0] already points the blade down
+the fist. (A −90° "fix" about local X sends it out along the arm — that would be
+the actual claws, and this pass nearly shipped it before the render caught it.)
+The claws the owner saw are the **bind pose**: with no idle playing — the
+model-below-board render bug the Analyzer/Builder are fixing — the arms splay out
+horizontally and the finger-aligned blade splays with them. It resolves the
+moment the model idles on the board; no attach change was needed. Left [0,0,0] in
+`wisp.json`/`wisp.clips.json` and documented the axis so the next pass does not
+"correct" a grip that is already right. **Lesson**: for a hand-held prop, render
+the actual runtime in the actual clip before touching an offset — an FK read of
+the bone frame is necessary but not sufficient, because it says nothing about the
+*prop's* own authored axis (this pass assumed the blade was +Z; it is +Y).
