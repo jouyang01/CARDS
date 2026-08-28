@@ -179,7 +179,7 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
 
     const seen: number[] = [];
     await vi.waitFor(() => {
-      seen.push(b.renderer.draw.shapesByLayer.get('tracer')?.length ?? 0);
+      seen.push(b.renderer.draw.tracers.length);
       expect(Math.max(...seen), 'no tracer was ever drawn').toBeGreaterThan(0);
     }, { timeout: 15000 });
 
@@ -187,11 +187,11 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     const drawn = seen.findIndex((n) => n > 0);
     expect(drawn).toBeGreaterThanOrEqual(0);
 
-    // And it clears. A shape layer is replaced wholesale, so a tracer left
+    // And it clears. The tracer layer is replaced wholesale, so a tracer left
     // behind would hang over the next planning phase pointing at where somebody
     // used to be.
     await vi.waitFor(() => {
-      expect(b.renderer.draw.shapesByLayer.get('tracer')).toEqual([]);
+      expect(b.renderer.draw.tracers).toEqual([]);
     }, { timeout: 15000 });
   }, 25000);
 
@@ -279,7 +279,7 @@ describe('VFX-WIRING: a landed hit flashes its victim and rattles the camera', (
     await new Promise((r) => setTimeout(r, 4000));
     expect(b.renderer.draw.flashes).toEqual([]);
     expect(b.renderer.draw.shakes).toEqual([]);
-    expect(b.renderer.draw.shapesByLayer.get('tracer') ?? []).toEqual([]);
+    expect(b.renderer.draw.tracers).toEqual([]);
     expect(b.renderer.draw.auras).toEqual([]);
     expect(b.renderer.draw.walls).toEqual([]);
     expect(b.renderer.draw.particles).toEqual([]);

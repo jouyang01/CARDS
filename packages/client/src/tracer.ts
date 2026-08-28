@@ -185,6 +185,47 @@ export function streakQuad(from: Point, to: Point, progress: number): Point[] {
 }
 
 /**
+ * The quad for a BEAM, in fractional board coordinates.
+ *
+ * Unlike `streakQuad`, a beam is the WHOLE line from the muzzle to just short of
+ * the target, lit at once and not a moving segment — a laser is a sustained
+ * thing, which is exactly the read `streakQuad` was built to avoid and this one
+ * is built to give. `progress` still gates it (the caller only draws it inside
+ * the flight window), but the geometry does not grow: the beam is either on or
+ * off, and `tracersAt`'s half-open window already blinks it out on the impact
+ * frame so it never buries its head in the unit the flash is lighting.
+ *
+ * `halfWidth` is the ability's, so a thin rail shot and a wide lance are one
+ * function apart. Same muzzle set-back and same MIN_FLIGHT exclusion as the
+ * streak, for the same reasons.
+ */
+export function beamQuad(from: Point, to: Point, halfWidth: number): Point[] {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy);
+  if (!(distance >= MIN_FLIGHT_TILES) || !(halfWidth > 0)) return [];
+
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const muzzle = Math.min(MUZZLE_TILES, distance / 2);
+  const tail = muzzle;
+  const head = distance - muzzle;
+  if (!(head > tail)) return [];
+
+  const nx = -uy * halfWidth;
+  const ny = ux * halfWidth;
+  const at = (d: number): Point => ({ x: from.x + ux * d, y: from.y + uy * d });
+  const a = at(tail);
+  const b = at(head);
+  return [
+    { x: a.x + nx, y: a.y + ny },
+    { x: b.x + nx, y: b.y + ny },
+    { x: b.x - nx, y: b.y - ny },
+    { x: a.x - nx, y: a.y - ny },
+  ];
+}
+
+/**
  * Every tracer quad to draw at `t`, given a way to locate a unit.
  *
  * `positionOf` rather than positions baked into the cue, for the same reason

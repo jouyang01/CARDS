@@ -92,8 +92,9 @@
     "warmthForbidden": false,
     "abilities": {
       "rail_shot": {
-        "_comment": "The auto attack: an orange laser crosses to the target (the beam is a render primitive; the streak is its fallback). A tight amber spark where it lands — near-zero recoil, so the effect is precise, not messy.",
-        "tracer": "streak",
+        "_comment": "The auto attack: a thin ORANGE LASER lances to the target — a solid beam drawn in her edge amber (tracer: beam), not a streak. A tight amber spark where it lands; near-zero recoil, so the effect is precise, not messy.",
+        "tracer": "beam",
+        "beamHalfTiles": 0.11,
         "impact": { "kind": "ring", "beats": 0.45, "radiusTiles": 0.9, "shade": "core" },
         "particles": { "count": 7, "beats": 0.45, "speedTiles": 2.2, "size": 0.06, "shade": "core", "style": "debris" }
       },
@@ -115,8 +116,9 @@
         "particles": { "count": 12, "beats": 1.2, "speedTiles": 1.0, "size": 0.08, "shade": "core", "style": "drift" }
       },
       "lance_of_dawn": {
-        "_comment": "The ultimate: the ONE time she braces, and a BIG laser lances the line (its own render primitive; the streak is the fallback). A broad amber scorch and a heavy burst where it lands — the largest effect in her kit.",
-        "tracer": "streak",
+        "_comment": "The ultimate: the ONE time she braces, and a BIG amber laser lances the line — a wide solid beam (tracer: beam at ~3x the rail-shot width). A broad amber scorch and a heavy burst where it lands; the largest effect in her kit.",
+        "tracer": "beam",
+        "beamHalfTiles": 0.34,
         "impact": { "kind": "ring", "beats": 1.0, "radiusTiles": 2.2, "shade": "core" },
         "particles": { "count": 24, "beats": 1.0, "speedTiles": 3.6, "size": 0.12, "shade": "edge", "style": "debris" }
       }

@@ -66,6 +66,8 @@ export interface DrawLog {
    * state, and an empty list means the board is clear of them.
    */
   auras: { outline: Vec2[]; color: number; opacity: number }[];
+  /** Coloured tracers on the board — the last `drawTracers` call. */
+  tracers: { outline: Vec2[]; color: number; opacity: number }[];
   /** Standing Warding Wall panels — the last `drawWalls` call. */
   walls: { from: Vec2; to: Vec2 }[];
   /** Impact debris in the air — the last `drawParticles` call. */
@@ -157,7 +159,7 @@ export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
     viewer: undefined,
     highlightColours: new Map(), shapeColours: new Map(), pathColours: new Map(),
-    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], walls: [], particles: [], clips: [], clipQueries: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
+    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], tracers: [], walls: [], particles: [], clips: [], clipQueries: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [], lookAts: [], fitBoards: 0,
     board: { units: [], decoys: [], traps: [] },
   };
@@ -262,6 +264,11 @@ export function stubRenderer(): StubRenderer {
     drawAuras: (auras) => {
       draw.auras = auras.map((a) => ({
         outline: a.outline.map((p) => ({ ...p })), color: a.color, opacity: a.opacity,
+      }));
+    },
+    drawTracers: (tracers) => {
+      draw.tracers = tracers.map((t) => ({
+        outline: t.outline.map((p) => ({ ...p })), color: t.color, opacity: t.opacity,
       }));
     },
     drawShape: (outlines, color, _opacity, layer = 'shape') => {
