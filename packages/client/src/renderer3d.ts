@@ -641,7 +641,7 @@ const TRAP_LIFT = LAYER_LIFT.select - 0.001;
  * there — "invisible" — and neither hides the tile beneath. Owner-coloured, like
  * the plate, so whose trap it is stays legible.
  */
-const TRAP_DRONE_HOVER = TILE * 1.35;
+const TRAP_DRONE_HOVER = TILE * 2.25;
 const TRAP_DRONE_SIZE = TILE * 0.16;
 const TRAP_BEAM_TOP = TILE * 0.03;
 const TRAP_BEAM_BOTTOM = TILE * 0.06;

@@ -22,7 +22,7 @@
 import type { Cue } from './choreograph.js';
 import type { Vec2 } from '@cards/engine';
 import { seedOf } from './vfx.js';
-import { hexColour, type Shade, type VfxTable } from './ability-vfx.js';
+import { areaCentre, hexColour, type Shade, type VfxTable } from './ability-vfx.js';
 
 /** One fragment, mid-flight. */
 export interface Particle {
@@ -55,8 +55,13 @@ export interface ParticleSpec {
    * ease outward that settles and lingers. It also fires on a CAST, not only an
    * impact, so a vanish or a blink can leave smoke where the caster WAS — the
    * signature a ring cannot draw. Wisp's whole kit is drift.
+   *
+   * `burst` is the same ballistic spray as `debris`, but fired once at the
+   * CENTRE of a DELAYED detonation's area (a grenade going off) rather than at a
+   * victim — so the blast throws its fragments from the aim point, on empty
+   * ground too, and never per unit it caught.
    */
-  style?: 'debris' | 'drift';
+  style?: 'debris' | 'drift' | 'burst';
 }
 
 /**
@@ -269,11 +274,18 @@ export function particlesAt(
       : particlesFor(table, characterId, cue.abilityId);
     if (s.count <= 0) continue;
     const drift = s.style === 'drift';
-    // Debris never fires on a cast — only smoke drifts from a vanish.
-    if (cue.kind === 'ability' && !drift) continue;
+    const burst = s.style === 'burst';
+    if (cue.kind === 'ability') {
+      // On a cast: smoke drifts from the caster; a burst throws from the CENTRE
+      // of a delayed detonation; plain debris does neither (impacts only).
+      if (drift) { /* at stays the caster */ }
+      else if (burst && cue.delayed === true) at = areaCentre(cue.area);
+      else continue;
+    }
     if (at === undefined) continue;
     const shade = characterId === undefined ? undefined : table[characterId]?.palette[s.shade];
     const color = shade === undefined ? NEUTRAL_DEBRIS : hexColour(shade);
+    // A burst is ballistic like debris — only drift eases weightlessly.
     const emit = drift ? driftAt : burstAt;
     out.push(...emit(s, at, seedOf(`${cue.unitId}@${cue.t}`), t - cue.t, weight, color));
   }
