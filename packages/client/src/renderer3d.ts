@@ -23,6 +23,8 @@ import {
   Box3,
   BoxGeometry,
   BufferAttribute,
+  CylinderGeometry,
+  OctahedronGeometry,
   BufferGeometry,
   Float32BufferAttribute,
   Color,
@@ -631,6 +633,18 @@ const FOF_RING_OUTER = 0.42;
 
 /** A trap marker rides in the overlay band, just under the selection ring. */
 const TRAP_LIFT = LAYER_LIFT.select - 0.001;
+/**
+ * TRAP-DRONE: an Overwatch Trap reads as a small drone hovering over the tile,
+ * watching it down a thin beam — not a decal on the floor. The body is a faint
+ * octahedron (the "armed mote" in Vex's kit) and the beam is a narrow column of
+ * light from it to the square. Both are translucent so the drone reads as barely
+ * there — "invisible" — and neither hides the tile beneath. Owner-coloured, like
+ * the plate, so whose trap it is stays legible.
+ */
+const TRAP_DRONE_HOVER = TILE * 1.35;
+const TRAP_DRONE_SIZE = TILE * 0.16;
+const TRAP_BEAM_TOP = TILE * 0.03;
+const TRAP_BEAM_BOTTOM = TILE * 0.06;
 /**
  * PADS-INDICATOR — a power-up pad sits low, just above CAMO-REVEAL's red
  * thicket and **below** every planning overlay. Same argument the camo tile
@@ -2659,18 +2673,26 @@ export function createRenderer(
         plate.rotation.x = -Math.PI / 2;
         plate.position.copy(at).setY(TRAP_LIFT);
         trapLayer.add(plate);
-        // A cross on top: the plate alone is another coloured tile among many,
-        // and the whole point is that this one square is dangerous.
-        for (const spin of [Math.PI / 4, -Math.PI / 4]) {
-          const bar = new Mesh(
-            new PlaneGeometry(TILE * TRAP_SIZE * 1.1, TILE * 0.08),
-            new MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.9 }),
-          );
-          bar.rotation.x = -Math.PI / 2;
-          bar.rotation.z = spin;
-          bar.position.copy(at).setY(TRAP_LIFT + 0.001);
-          trapLayer.add(bar);
-        }
+
+        // TRAP-DRONE: a faint octahedron hovering over the tile, watching it
+        // down a thin beam. The drone is the danger; the plate is only where its
+        // beam lands. Both translucent, so the tile stays readable through them.
+        const beamHeight = TRAP_DRONE_HOVER;
+        const beam = new Mesh(
+          new CylinderGeometry(TRAP_BEAM_TOP, TRAP_BEAM_BOTTOM, beamHeight, 8, 1, true),
+          new MeshBasicMaterial({ color: colour, transparent: true, opacity: trap.own ? 0.22 : 0.3, side: DoubleSide }),
+        );
+        // Cylinder is Y-up already: stand it from the plate up to the drone.
+        beam.position.copy(at).setY(TRAP_LIFT + beamHeight / 2);
+        trapLayer.add(beam);
+
+        const drone = new Mesh(
+          new OctahedronGeometry(TRAP_DRONE_SIZE),
+          new MeshBasicMaterial({ color: colour, transparent: true, opacity: trap.own ? 0.4 : 0.5 }),
+        );
+        drone.scale.y = 0.7; // a squat mote, not a ball
+        drone.position.copy(at).setY(TRAP_LIFT + beamHeight);
+        trapLayer.add(drone);
       }
 
       // The decoy's BODY is placed above, with the units. What is left here is
