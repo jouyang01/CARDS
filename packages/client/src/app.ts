@@ -40,8 +40,8 @@ import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { openingFacings, selectFacing, type Facing } from './facing.js';
 import { FLASH_SECONDS, SHAKE_SECONDS, hitstopMs, newImpacts, seedOf, shakeAmplitude } from './vfx.js';
-import { tracerQuads } from './tracer.js';
-import { aurasAt, vfxFor, type VfxTable } from './ability-vfx.js';
+import { tracersAt, streakQuad, beamQuad } from './tracer.js';
+import { aurasAt, hexColour, vfxFor, type VfxTable } from './ability-vfx.js';
 import { panelsFromCues, panelsFromTraps } from './wall.js';
 import { particlesAt } from './particles.js';
 import vfxTable from '../../../data/vfx.json';
@@ -1391,6 +1391,7 @@ export function startHotSeat(
     // Auras live on their own layer, so they need clearing with the rest or the
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
+    renderer.drawTracers([]);
     renderer.drawParticles([]);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
@@ -2592,6 +2593,7 @@ export function startHotSeat(
     // Auras live on their own layer, so they need clearing with the rest or the
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
+    renderer.drawTracers([]);
     renderer.drawParticles([]);
     // PAN-RELEASE-PLAYBACK — a planning pan is released HERE, at the
     // planning→resolution transition and before the first playback `focusOn`.
@@ -2744,11 +2746,30 @@ export function startHotSeat(
         // its state. That also makes it free under hitstop — a frozen clock
         // redraws the same quad, so the shot hangs in the air with everything
         // else instead of sliding on while the world holds still.
-        const hasTracer = (unitId: string, abilityId: string): boolean => {
-          const characterId = characterOf(unitId);
-          return characterId === undefined || vfxFor(VFX, characterId, abilityId).tracer === 'streak';
-        };
-        renderer.drawShape(tracerQuads(cues, now_t, posOf, hasTracer), TRACER, TRACER_OPACITY, 'tracer');
+        // A streak is the legibility blue for anyone; a BEAM is a laser drawn in
+        // the caster's own colour (Vex's orange rail shot, her big amber lance)
+        // and at the ability's width. `none` (a cone, a blink) draws nothing.
+        const tracerDraws: { outline: Vec2[]; color: number; opacity: number }[] = [];
+        for (const tr of tracersAt(cues, now_t)) {
+          const characterId = characterOf(tr.fromUnitId);
+          const vfx = characterId === undefined ? undefined : vfxFor(VFX, characterId, tr.abilityId);
+          const style = vfx?.tracer ?? 'streak';
+          if (style === 'none') continue;
+          const from = posOf(tr.fromUnitId);
+          const to = posOf(tr.toUnitId);
+          if (from === undefined || to === undefined) continue;
+          if (style === 'beam') {
+            const outline = beamQuad(from, to, vfx!.beamHalfTiles);
+            if (outline.length === 0) continue;
+            const tone = VFX[characterId!]?.palette.edge;
+            tracerDraws.push({ outline, color: tone === undefined ? TRACER : hexColour(tone), opacity: 0.9 });
+          } else {
+            const outline = streakQuad(from, to, tr.progress);
+            if (outline.length === 0) continue;
+            tracerDraws.push({ outline, color: TRACER, opacity: TRACER_OPACITY });
+          }
+        }
+        renderer.drawTracers(tracerDraws);
         // PER-ABILITY VFX. Recomputed per frame like the tracers and for the
         // same reason: an aura's radius and fade ARE functions of `now_t`, so a
         // frame is the whole of its state and hitstop holds it with everything
@@ -2983,6 +3004,7 @@ export function startHotSeat(
     // Auras live on their own layer, so they need clearing with the rest or the
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
+    renderer.drawTracers([]);
     renderer.drawParticles([]);
     renderer.setSpotlight(null);
     renderer.fitBoard();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MUZZLE_TILES, STREAK_HALF_WIDTH, STREAK_TILES, streakQuad, tracerQuads, tracersAt } from '../src/tracer.js';
+import { MUZZLE_TILES, STREAK_HALF_WIDTH, STREAK_TILES, beamQuad, streakQuad, tracerQuads, tracersAt } from '../src/tracer.js';
 import type { Cue } from '../src/choreograph.js';
 import type { Vec2 } from '@cards/engine';
 
@@ -166,6 +166,46 @@ describe('streakQuad', () => {
   it('STREAK-CLAMPS-PROGRESS: out-of-range progress stays on the segment', () => {
     expect(Math.max(...streakQuad(from, to, 5).map((p) => p.x))).toBeCloseTo(10 - MUZZLE_TILES, 9);
     expect(Math.min(...streakQuad(from, to, -5).map((p) => p.x))).toBeCloseTo(MUZZLE_TILES, 9);
+  });
+});
+
+describe('beamQuad', () => {
+  const from = { x: 0, y: 0 };
+  const to = { x: 10, y: 0 };
+
+  it('BEAM-FULL-LENGTH: it spans the whole flight, not a trailing streak', () => {
+    // A laser is the whole line at once. muzzle-to-(distance-muzzle), so it is
+    // far longer than a STREAK_TILES segment.
+    const quad = beamQuad(from, to, 0.2);
+    const span = Math.max(...quad.map((p) => p.x)) - Math.min(...quad.map((p) => p.x));
+    expect(span).toBeCloseTo(10 - MUZZLE_TILES * 2, 9);
+    expect(span).toBeGreaterThan(STREAK_TILES);
+  });
+
+  it('BEAM-LEAVES-AND-STOPS: clear of the muzzle, short of the victim', () => {
+    const quad = beamQuad(from, to, 0.2);
+    expect(Math.min(...quad.map((p) => p.x))).toBeCloseTo(MUZZLE_TILES, 9);
+    expect(Math.max(...quad.map((p) => p.x))).toBeCloseTo(10 - MUZZLE_TILES, 9);
+  });
+
+  it('BEAM-WIDTH: as wide as it is told to be, symmetric about the line', () => {
+    const quad = beamQuad(from, to, 0.34);
+    const ys = quad.map((p) => p.y).sort((a, b) => a - b);
+    expect(ys[0]).toBeCloseTo(-0.34, 9);
+    expect(ys[3]).toBeCloseTo(0.34, 9);
+  });
+
+  it('BEAM-TOO-CLOSE: adjacent units leave no room for a beam either', () => {
+    expect(beamQuad({ x: 4, y: 4 }, { x: 4.5, y: 4 }, 0.2)).toEqual([]);
+  });
+
+  it('BEAM-NO-WIDTH: a zero or negative width draws nothing, not a line', () => {
+    expect(beamQuad(from, to, 0)).toEqual([]);
+    expect(beamQuad(from, to, -0.2)).toEqual([]);
+  });
+
+  it('BEAM-COINCIDENT: two units on one square give nothing, not NaN', () => {
+    expect(beamQuad({ x: 3, y: 3 }, { x: 3, y: 3 }, 0.2)).toEqual([]);
   });
 });
 

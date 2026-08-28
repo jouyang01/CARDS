@@ -1001,6 +1001,14 @@ export interface Renderer {
    */
   drawAuras(auras: readonly { outline: readonly Vec2[]; hole?: readonly Vec2[]; color: number; opacity: number }[]): void;
   /**
+   * Tracers, each in its OWN colour — a beam is drawn in the caster's palette,
+   * a plain streak in the legibility blue. Separate from `drawShape('tracer')`
+   * for the same reason `drawAuras` is separate from `drawShape`: one shape
+   * layer is a single colour, and two abilities crossing the board in one phase
+   * are two palettes. At `TRACER_LIFT`, replacing the tracer layer wholesale.
+   */
+  drawTracers(tracers: readonly { outline: readonly Vec2[]; color: number; opacity: number }[]): void;
+  /**
    * WARDING WALL: standing translucent panels, raised from a footprint.
    *
    * The only thing this renderer draws that is *vertical* and not a unit. A
@@ -3042,6 +3050,12 @@ export function createRenderer(
       for (const a of auras) drawOneShape(g, a.outline, a.color, a.opacity, TRACER_LIFT, a.hole);
     },
 
+    drawTracers(tracers) {
+      const g = layerGroup('tracer');
+      disposeChildren(g);
+      for (const tr of tracers) drawOneShape(g, tr.outline, tr.color, tr.opacity, TRACER_LIFT);
+    },
+
     drawShape(outlines, color, opacity = 0.18, layer = 'shape') {
       const g = layerGroup(layer);
       disposeChildren(g);
@@ -3145,7 +3159,7 @@ export function createRenderer(
   const MUTATORS = [
     'show', 'highlight', 'drawPath', 'drawPaths', 'drawShape',
     'setProjection', 'lookAt', 'fitBoard', 'focusOn', 'resize', 'setSafeInsets',
-    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras', 'drawWalls', 'drawParticles',
+    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras', 'drawTracers', 'drawWalls', 'drawParticles',
     'setSpotlight', 'setOrbitEnabled', 'preloadCharacters', 'render',
   ] as const satisfies readonly (keyof Renderer)[];
 

@@ -138,6 +138,15 @@ describe('vfxFor', () => {
     expect(vfxFor(VFX, 'aegis', 'shield_bash').tracer).toBe('none');
   });
 
+  it('VEX-BEAMS: rail shot and the ult are lasers, the ult the wider of the two', () => {
+    expect(vfxFor(VFX, 'vex', 'rail_shot').tracer).toBe('beam');
+    expect(vfxFor(VFX, 'vex', 'lance_of_dawn').tracer).toBe('beam');
+    expect(vfxFor(VFX, 'vex', 'lance_of_dawn').beamHalfTiles)
+      .toBeGreaterThan(vfxFor(VFX, 'vex', 'rail_shot').beamHalfTiles);
+    // The grenade flies as a plain streak, not a laser.
+    expect(vfxFor(VFX, 'vex', 'frag_grenade').tracer).toBe('streak');
+  });
+
   it('VFX-INTERCEPT-BLINKS: and nothing else does', () => {
     expect(blinks(VFX, 'aegis', 'intercept')).toBe(true);
     for (const id of ['shield_bash', 'barrier_pulse', 'warding_wall', 'warding_halo']) {
