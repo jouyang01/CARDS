@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type TurnEvent, type UnitOrders } from '@cards/engine';
-import { BEAT, choreograph, timelineLength, type Cue } from '../src/choreograph.js';
+import { BEAT, choreograph, straightenDashes, timelineLength, type Cue } from '../src/choreograph.js';
 
 /**
  * A2 — the choreographer is asserted on ORDERING and CONCURRENCY only, never on
@@ -314,5 +314,43 @@ describe('MOVE-NO-BANNER-BEAT: movement starts with its banner', () => {
     const banner = of(cues, 'phase').find((c) => c.phase === 'prep')!;
     const cast = of(cues, 'ability').find((c) => c.abilityId === 'guard')!;
     expect(cast.t, 'the banner still reads before Prep acts').toBeGreaterThan(banner.t);
+  });
+});
+
+describe('straightenDashes (STRAIGHT-DASH)', () => {
+  // A diagonal combat roll: a stretched dash ability plus the orthogonal
+  // staircase the engine paths it along (right, up, right, up).
+  const roll = (): Cue[] => [
+    { kind: 'ability', phase: 'dash', t: 0, dur: 4 * BEAT, unitId: 'a',
+      abilityId: 'combat_roll', area: [], stretch: true } as Cue,
+    { kind: 'move', t: 0, dur: BEAT, unitId: 'a', from: { x: 0, y: 0 }, to: { x: 1, y: 0 }, teleport: false } as Cue,
+    { kind: 'move', t: BEAT, dur: BEAT, unitId: 'a', from: { x: 1, y: 0 }, to: { x: 1, y: 1 }, teleport: false } as Cue,
+    { kind: 'move', t: 2 * BEAT, dur: BEAT, unitId: 'a', from: { x: 1, y: 1 }, to: { x: 2, y: 1 }, teleport: false } as Cue,
+    { kind: 'move', t: 3 * BEAT, dur: BEAT, unitId: 'a', from: { x: 2, y: 1 }, to: { x: 2, y: 2 }, teleport: false } as Cue,
+  ];
+
+  it('collapses the staircase into one straight slide from origin to destination', () => {
+    const out = straightenDashes(roll());
+    const moves = out.filter((c) => c.kind === 'move') as Extract<Cue, { kind: 'move' }>[];
+    expect(moves, 'four steps become one').toHaveLength(1);
+    expect(moves[0]!.from).toEqual({ x: 0, y: 0 });
+    expect(moves[0]!.to).toEqual({ x: 2, y: 2 });
+    // Spans the whole traversal, and slides (teleport:false) rather than blinks.
+    expect(moves[0]!.dur).toBe(4 * BEAT);
+    expect(moves[0]!.teleport).toBe(false);
+  });
+
+  it('leaves a normal walk (no stretched dash) alone', () => {
+    const walk: Cue[] = [
+      { kind: 'move', t: 0, dur: BEAT, unitId: 'a', from: { x: 0, y: 0 }, to: { x: 1, y: 0 }, teleport: false } as Cue,
+      { kind: 'move', t: BEAT, dur: BEAT, unitId: 'a', from: { x: 1, y: 0 }, to: { x: 1, y: 1 }, teleport: false } as Cue,
+    ];
+    expect(straightenDashes(walk).filter((c) => c.kind === 'move')).toHaveLength(2);
+  });
+
+  it('keeps the stretched ability cue and its duration untouched', () => {
+    const out = straightenDashes(roll());
+    const ability = out.find((c) => c.kind === 'ability') as Extract<Cue, { kind: 'ability' }>;
+    expect(ability.dur, 'the clip still fits the whole traversal').toBe(4 * BEAT);
   });
 });
