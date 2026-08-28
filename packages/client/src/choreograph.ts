@@ -45,6 +45,14 @@ import { segmentByPhase } from './playback.js';
 /** One beat of timeline. Unitless here; the renderer scales it to milliseconds. */
 export const BEAT = 1;
 
+/**
+ * Beats a combat roll spends per straight-line tile (STRAIGHT-DASH / ROLL-SPEED).
+ * Below one beat because a roll is a quick dash, not a walk — and it is counted
+ * against Chebyshev distance, so a diagonal roll is not slowed by the orthogonal
+ * staircase the engine paths it along.
+ */
+export const ROLL_TILE_BEATS = 0.6;
+
 interface CueBase {
   /** Start time, in beats from the top of the turn. */
   t: number;
@@ -406,10 +414,22 @@ export function straightenDashes(cues: readonly Cue[]): Cue[] {
     steps.sort((a, b) => a.t - b.t);
     const first = steps[0]!;
     const last = steps[steps.length - 1]!;
-    // One step is already straight; keep it as it was.
-    if (steps.length === 1) out.push(first);
-    else out.push({ kind: 'move', t: first.t, dur: last.t + last.dur - first.t,
-      unitId, from: first.from, to: last.to, teleport: false });
+    // One step is already straight and one beat long; keep it.
+    if (steps.length === 1) { out.push(first); continue; }
+    // ROLL-SPEED: time the roll by the STRAIGHT-LINE tile count, not the
+    // orthogonal staircase the engine paths — the staircase over-counts a
+    // diagonal (Manhattan ≥ Chebyshev), so a straight diagonal roll would crawl
+    // across its short line over too many beats. `ROLL_TILE_BEATS < 1` also makes
+    // the dash quicker than a walk, which is what a combat roll should read as.
+    const tiles = Math.max(Math.abs(last.to.x - first.from.x), Math.abs(last.to.y - first.from.y));
+    const span = last.t + last.dur - first.t;
+    const dur = Math.min(span, Math.max(ROLL_TILE_BEATS, tiles * ROLL_TILE_BEATS));
+    out.push({ kind: 'move', t: first.t, dur, unitId, from: first.from, to: last.to, teleport: false });
+    // Fit the roll clip to the same (shorter) traversal so it plays that fast and
+    // still finishes exactly on arrival.
+    for (const c of out) {
+      if (c.kind === 'ability' && c.unitId === unitId && c.stretch === true && c.phase === 'dash') c.dur = dur;
+    }
   }
   return out.sort((a, b) => a.t - b.t);
 }

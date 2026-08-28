@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type TurnEvent, type UnitOrders } from '@cards/engine';
-import { BEAT, choreograph, straightenDashes, timelineLength, type Cue } from '../src/choreograph.js';
+import { BEAT, ROLL_TILE_BEATS, choreograph, straightenDashes, timelineLength, type Cue } from '../src/choreograph.js';
 
 /**
  * A2 — the choreographer is asserted on ORDERING and CONCURRENCY only, never on
@@ -335,8 +335,11 @@ describe('straightenDashes (STRAIGHT-DASH)', () => {
     expect(moves, 'four steps become one').toHaveLength(1);
     expect(moves[0]!.from).toEqual({ x: 0, y: 0 });
     expect(moves[0]!.to).toEqual({ x: 2, y: 2 });
-    // Spans the whole traversal, and slides (teleport:false) rather than blinks.
-    expect(moves[0]!.dur).toBe(4 * BEAT);
+    // ROLL-SPEED: timed by the straight-line distance (Chebyshev 2 from (0,0) to
+    // (2,2)), not the four-step staircase — so a diagonal roll does not crawl.
+    // Slides (teleport:false) rather than blinks.
+    expect(moves[0]!.dur).toBeCloseTo(2 * ROLL_TILE_BEATS, 6);
+    expect(moves[0]!.dur).toBeLessThan(4 * BEAT);
     expect(moves[0]!.teleport).toBe(false);
   });
 
@@ -348,9 +351,11 @@ describe('straightenDashes (STRAIGHT-DASH)', () => {
     expect(straightenDashes(walk).filter((c) => c.kind === 'move')).toHaveLength(2);
   });
 
-  it('keeps the stretched ability cue and its duration untouched', () => {
+  it('fits the roll clip to the straightened (faster) traversal', () => {
     const out = straightenDashes(roll());
     const ability = out.find((c) => c.kind === 'ability') as Extract<Cue, { kind: 'ability' }>;
-    expect(ability.dur, 'the clip still fits the whole traversal').toBe(4 * BEAT);
+    // The clip still finishes on arrival, but over the straight-line time, not
+    // the staircase — so the roll plays quick instead of in slow motion.
+    expect(ability.dur, 'clip fits the straight traversal').toBeCloseTo(2 * ROLL_TILE_BEATS, 6);
   });
 });
