@@ -358,6 +358,62 @@ export function holdCasts(
   return out.sort((a, b) => a.t - b.t);
 }
 
+/**
+ * STRAIGHT-DASH — a combat roll rolls in a straight line to its end square.
+ *
+ * The engine paths a dash along an orthogonal staircase (right, up, right, up on
+ * a diagonal), because cover and reach are square counts. Played step by step
+ * that zig-zags — the unit lurches and, worse, the roll clip tumbles a new
+ * direction every tile. A roll is one committed movement, so here its walked
+ * dash steps are collapsed into ONE straight move from origin to destination.
+ * Position and facing both read these cues, so both go straight.
+ *
+ * Only a unit with a **stretched dash ability** (the roll marks its cue
+ * `stretch`; see the dash block above) is collapsed — a normal walk keeps its
+ * path, and a `teleport` dash never had steps to straighten. The single leg is
+ * flagged `teleport: false` so the renderer slides it however long it is, rather
+ * than reading a multi-tile leap as a blink (`isBlink`). The walked-step COUNT
+ * that set the ability's stretched duration was taken earlier, in `choreograph`,
+ * so shortening the path here does not shorten the clip.
+ */
+export function straightenDashes(cues: readonly Cue[]): Cue[] {
+  const rollers = new Map<string, { t: number; end: number }>();
+  for (const c of cues) {
+    if (c.kind === 'ability' && c.stretch === true && c.phase === 'dash') {
+      rollers.set(c.unitId, { t: c.t, end: c.t + c.dur });
+    }
+  }
+  if (rollers.size === 0) return [...cues];
+
+  const rollStep = (c: Cue): c is Extract<Cue, { kind: 'move' }> => {
+    if (c.kind !== 'move' || c.teleport === true) return false;
+    const win = rollers.get(c.unitId);
+    return win !== undefined && c.t >= win.t - 1e-6 && c.t < win.end + 1e-6;
+  };
+
+  const stepsByUnit = new Map<string, Extract<Cue, { kind: 'move' }>[]>();
+  const out: Cue[] = [];
+  for (const c of cues) {
+    if (rollStep(c)) {
+      const list = stepsByUnit.get(c.unitId) ?? [];
+      list.push(c);
+      stepsByUnit.set(c.unitId, list);
+    } else {
+      out.push(c);
+    }
+  }
+  for (const [unitId, steps] of stepsByUnit) {
+    steps.sort((a, b) => a.t - b.t);
+    const first = steps[0]!;
+    const last = steps[steps.length - 1]!;
+    // One step is already straight; keep it as it was.
+    if (steps.length === 1) out.push(first);
+    else out.push({ kind: 'move', t: first.t, dur: last.t + last.dur - first.t,
+      unitId, from: first.from, to: last.to, teleport: false });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
 /** Total length of a timeline in beats (0 for an empty one). */
 export function timelineLength(cues: readonly Cue[]): number {
   return cues.reduce((m, c) => Math.max(m, c.t + c.dur), 0);

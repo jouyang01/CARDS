@@ -641,7 +641,7 @@ const TRAP_LIFT = LAYER_LIFT.select - 0.001;
  * there — "invisible" — and neither hides the tile beneath. Owner-coloured, like
  * the plate, so whose trap it is stays legible.
  */
-const TRAP_DRONE_HOVER = TILE * 1.35;
+const TRAP_DRONE_HOVER = TILE * 2.25;
 const TRAP_DRONE_SIZE = TILE * 0.16;
 const TRAP_BEAM_TOP = TILE * 0.03;
 const TRAP_BEAM_BOTTOM = TILE * 0.06;
@@ -2680,7 +2680,7 @@ export function createRenderer(
         const beamHeight = TRAP_DRONE_HOVER;
         const beam = new Mesh(
           new CylinderGeometry(TRAP_BEAM_TOP, TRAP_BEAM_BOTTOM, beamHeight, 8, 1, true),
-          new MeshBasicMaterial({ color: colour, transparent: true, opacity: trap.own ? 0.22 : 0.3, side: DoubleSide }),
+          new MeshBasicMaterial({ color: colour, transparent: true, opacity: trap.own ? 0.55 : 0.7, side: DoubleSide }),
         );
         // Cylinder is Y-up already: stand it from the plate up to the drone.
         beam.position.copy(at).setY(TRAP_LIFT + beamHeight / 2);

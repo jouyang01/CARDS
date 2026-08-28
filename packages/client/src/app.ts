@@ -40,7 +40,7 @@ import { createTurnPlayer } from './turn-player.js';
 import { MS_PER_BEAT, MS_PER_MOVE_STEP, focusSquares, phaseWindow, sampleFrame, type Frame, type Readout } from './animate.js';
 import { openingFacings, selectFacing, type Facing } from './facing.js';
 import { FLASH_SECONDS, SHAKE_SECONDS, hitstopMs, newImpacts, seedOf, shakeAmplitude } from './vfx.js';
-import { tracersAt, streakQuad, beamQuad } from './tracer.js';
+import { tracersAt, streakQuad, beamQuad, farEnd } from './tracer.js';
 import { aurasAt, hexColour, vfxFor, type VfxTable } from './ability-vfx.js';
 import { panelsFromCues, panelsFromTraps } from './wall.js';
 import { particlesAt } from './particles.js';
@@ -340,6 +340,13 @@ const WALL = 0xc9d2c4;
 const WALL_OPACITY = WALL_FIELD_OPACITY;
 const TRACER = 0xcfe4ff;
 const TRACER_OPACITY = 0.85;
+/**
+ * How long a BEAM stays lit after its cast, in beats — a laser flash, not a
+ * sustained hold. Read against the cast cue's own time (not its `holdCasts`-
+ * grown `dur`, which follows the whole firing animation), so the beam blinks off
+ * while the recoil plays on.
+ */
+const BEAM_FLASH_BEATS = 0.9;
 /**
  * Fog (VISION1). Near-black rather than a tint: unseen board should read as
  * *absence of information*, and any hue would suggest the terrain underneath
@@ -2750,24 +2757,38 @@ export function startHotSeat(
         // the caster's own colour (Vex's orange rail shot, her big amber lance)
         // and at the ability's width. `none` (a cone, a blink) draws nothing.
         const tracerDraws: { outline: Vec2[]; color: number; opacity: number }[] = [];
+        // STREAKS are impact-driven: a shot only streaks because it hit someone,
+        // and it streaks TO them. Beams are handled below and skipped here.
         for (const tr of tracersAt(cues, now_t)) {
           const characterId = characterOf(tr.fromUnitId);
           const vfx = characterId === undefined ? undefined : vfxFor(VFX, characterId, tr.abilityId);
-          const style = vfx?.tracer ?? 'streak';
-          if (style === 'none') continue;
+          if ((vfx?.tracer ?? 'streak') !== 'streak') continue;
           const from = posOf(tr.fromUnitId);
           const to = posOf(tr.toUnitId);
           if (from === undefined || to === undefined) continue;
-          if (style === 'beam') {
-            const outline = beamQuad(from, to, vfx!.beamHalfTiles);
-            if (outline.length === 0) continue;
-            const tone = VFX[characterId!]?.palette.edge;
-            tracerDraws.push({ outline, color: tone === undefined ? TRACER : hexColour(tone), opacity: 0.9 });
-          } else {
-            const outline = streakQuad(from, to, tr.progress);
-            if (outline.length === 0) continue;
-            tracerDraws.push({ outline, color: TRACER, opacity: TRACER_OPACITY });
-          }
+          const outline = streakQuad(from, to, tr.progress);
+          if (outline.length === 0) continue;
+          tracerDraws.push({ outline, color: TRACER, opacity: TRACER_OPACITY });
+        }
+        // BEAMS are cast-driven, so the shot draws its FULL flight whether or not
+        // it connects — a rail shot that misses still lances the whole distance.
+        // A brief flash from the muzzle to the far end of the aimed `area` (the
+        // victim on a hit, the aim square on a miss), in the caster's colour.
+        for (const cue of cues) {
+          if (cue.kind !== 'ability' || cue.delayed === true) continue;
+          const characterId = characterOf(cue.unitId);
+          if (characterId === undefined) continue;
+          const vfx = vfxFor(VFX, characterId, cue.abilityId);
+          if (vfx.tracer !== 'beam') continue;
+          const age = now_t - cue.t;
+          if (age < 0 || age >= BEAM_FLASH_BEATS) continue;
+          const from = posOf(cue.unitId);
+          const end = from === undefined ? undefined : farEnd(from, cue.area);
+          if (from === undefined || end === undefined) continue;
+          const outline = beamQuad(from, end, vfx.beamHalfTiles);
+          if (outline.length === 0) continue;
+          const tone = VFX[characterId]?.palette.edge;
+          tracerDraws.push({ outline, color: tone === undefined ? TRACER : hexColour(tone), opacity: 0.9 });
         }
         renderer.drawTracers(tracerDraws);
         // PER-ABILITY VFX. Recomputed per frame like the tracers and for the

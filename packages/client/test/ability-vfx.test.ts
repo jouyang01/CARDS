@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AURA_PEAK_OPACITY, NO_VFX, aurasAt, blinks, discOutline, hexColour, isWarm, RING_THICKNESS, ringOutline, vfxFor,
+  AURA_PEAK_OPACITY, NO_VFX, areaCentre, aurasAt, blinks, discOutline, hexColour, isWarm, RING_THICKNESS, ringOutline, vfxFor,
   type VfxTable,
 } from '../src/ability-vfx.js';
 import type { Cue } from '../src/choreograph.js';
@@ -143,8 +143,37 @@ describe('vfxFor', () => {
     expect(vfxFor(VFX, 'vex', 'lance_of_dawn').tracer).toBe('beam');
     expect(vfxFor(VFX, 'vex', 'lance_of_dawn').beamHalfTiles)
       .toBeGreaterThan(vfxFor(VFX, 'vex', 'rail_shot').beamHalfTiles);
-    // The grenade flies as a plain streak, not a laser.
-    expect(vfxFor(VFX, 'vex', 'frag_grenade').tracer).toBe('streak');
+    // The grenade has no tracer at all — it just detonates.
+    expect(vfxFor(VFX, 'vex', 'frag_grenade').tracer).toBe('none');
+  });
+
+  it('VEX-GRENADE-DETONATES-AT-CENTRE: one blast on the delayed cue, at the area centre', () => {
+    // The explosion is the `detonation` aura, drawn once on the delayed cue at
+    // the mean of its area — not per victim and not on the throw turn.
+    const grenade = vfxFor(VFX, 'vex', 'frag_grenade');
+    expect(grenade.detonation.kind).toBe('ring');
+    expect(grenade.impact.kind, 'no per-victim ring').toBe('none');
+    // A delayed detonation over a 3x3-ish disc centres on the aim square.
+    const disc = [
+      { x: 4, y: 4 }, { x: 5, y: 4 }, { x: 6, y: 4 },
+      { x: 4, y: 5 }, { x: 5, y: 5 }, { x: 6, y: 5 },
+      { x: 4, y: 6 }, { x: 5, y: 6 }, { x: 6, y: 6 },
+    ];
+    const centre = areaCentre(disc)!;
+    expect(centre).toEqual({ x: 5, y: 5 });
+    const cue = { kind: 'ability', phase: 'blast', t: 0, dur: BEAT, unitId: 'a',
+                  abilityId: 'frag_grenade', area: disc, delayed: true } as Cue;
+    const auras = aurasAt([cue], 0.2, VFX, () => 'vex', () => ({ x: 0, y: 0 }));
+    expect(auras, 'one blast, not nine').toHaveLength(1);
+    const xs = auras[0]!.outline.map((p) => p.x);
+    expect((Math.min(...xs) + Math.max(...xs)) / 2, 'centred on the aim, not the caster at 0,0')
+      .toBeCloseTo(5, 6);
+  });
+
+  it('VEX-GRENADE-QUIET-ON-THROW: the throw turn (non-delayed cue) shows no blast', () => {
+    const throwCue = { kind: 'ability', phase: 'blast', t: 0, dur: BEAT, unitId: 'a',
+                       abilityId: 'frag_grenade', area: [{ x: 5, y: 5 }] } as Cue;
+    expect(aurasAt([throwCue], 0.2, VFX, () => 'vex', () => ({ x: 1, y: 1 }))).toEqual([]);
   });
 
   it('VFX-INTERCEPT-BLINKS: and nothing else does', () => {

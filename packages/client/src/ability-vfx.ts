@@ -49,6 +49,14 @@ export interface AbilityVfx {
   beamHalfTiles: number;
   cast: AuraSpec;
   impact: AuraSpec;
+  /**
+   * The flash of a DELAYED detonation (a grenade going off): drawn once at the
+   * CENTRE of the ability's area, on the delayed `ability` cue — not per victim
+   * (so it lands on empty ground too) and not on the throw turn (that cue is not
+   * delayed). Separate from `impact` precisely so a grenade shows one blast at
+   * the aim point instead of a ring on each unit it caught.
+   */
+  detonation: AuraSpec;
   /** Intercept: the caster does not travel, it is simply somewhere else. */
   blink: boolean;
 }
@@ -59,6 +67,7 @@ export interface CharacterVfx {
   abilities: Record<string, Partial<AbilityVfx> & {
     cast?: Partial<AuraSpec>;
     impact?: Partial<AuraSpec>;
+    detonation?: Partial<AuraSpec>;
   }>;
 }
 
@@ -79,7 +88,7 @@ const NO_AURA: AuraSpec = { kind: 'none', beats: 0, radiusTiles: 0, shade: 'core
  * roster before this table existed. Defaulting it off would have quietly
  * deleted a feature from eight characters as the price of styling one.
  */
-export const NO_VFX: AbilityVfx = { tracer: 'streak', beamHalfTiles: 0, cast: NO_AURA, impact: NO_AURA, blink: false };
+export const NO_VFX: AbilityVfx = { tracer: 'streak', beamHalfTiles: 0, cast: NO_AURA, impact: NO_AURA, detonation: NO_AURA, blink: false };
 
 /** A beam with no width declared: a rifle-shot laser, thin but unmistakably lit. */
 export const DEFAULT_BEAM_HALF_TILES = 0.13;
@@ -101,6 +110,7 @@ export function vfxFor(table: VfxTable, characterId: string, abilityId: string):
     beamHalfTiles: entry.beamHalfTiles ?? DEFAULT_BEAM_HALF_TILES,
     cast: aura(entry.cast),
     impact: aura(entry.impact),
+    detonation: entry.detonation === undefined ? NO_AURA : aura(entry.detonation),
     blink: entry.blink ?? false,
   };
 }
@@ -233,6 +243,22 @@ export const AURA_BIRTH_RADIUS = 0.4;
  * always the two ends of one event rather than two independent effects that
  * happen to be near each other.
  */
+/**
+ * The centre of an ability's area, in board coordinates — the mean of its
+ * squares. For a circle that is the aimed square; for any footprint it is the
+ * middle of the blast. Empty area → undefined (nothing to centre on).
+ */
+export function areaCentre(area: readonly Vec2[] | undefined): Vec2 | undefined {
+  if (area === undefined || area.length === 0) return undefined;
+  let sx = 0;
+  let sy = 0;
+  for (const p of area) {
+    sx += p.x;
+    sy += p.y;
+  }
+  return { x: sx / area.length, y: sy / area.length };
+}
+
 export function aurasAt(
   cues: readonly Cue[],
   t: number,
@@ -258,7 +284,14 @@ export function aurasAt(
     if (cue.kind === 'ability') {
       const characterId = characterOf(cue.unitId);
       if (characterId === undefined) continue;
-      add(vfxFor(table, characterId, cue.abilityId).cast, characterId, positionOf(cue.unitId), t - cue.t);
+      const vfx = vfxFor(table, characterId, cue.abilityId);
+      if (cue.delayed === true) {
+        // AoE-CENTRE: a delayed detonation flashes ONCE at the centre of its
+        // area — the aim point — not at the caster and not per victim.
+        add(vfx.detonation, characterId, areaCentre(cue.area), t - cue.t);
+      } else {
+        add(vfx.cast, characterId, positionOf(cue.unitId), t - cue.t);
+      }
     } else if (cue.kind === 'impact' || cue.kind === 'benefit') {
       // Styled by the ABILITY that caused it, which means by the caster's
       // character — a heal from Aegis is Aegis's colour wherever it lands.
