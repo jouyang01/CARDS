@@ -110,9 +110,10 @@
         "particles": { "count": 8, "beats": 0.5, "speedTiles": 1.6, "size": 0.07, "shade": "edge", "style": "debris" }
       },
       "overwatch_trap": {
-        "_comment": "The free-action mine: an armed amber mote floats UP off the tile (drift fires on the cast) and a ring marks the watched square where the hovering drone's beam will fall. The drone-and-downward-beam itself is a render primitive; this is its glow.",
+        "_comment": "The free-action mine: on placement an armed amber mote floats UP off the tile (drift, on the cast) and a ring marks the watched square; the hovering drone and its bright downward beam are the render primitive (renderer3d TRAP-DRONE). On ACTIVATION the trap deals damage at the tile, so its `impact` fires a tight bright strike-ring there — the beam coming down.",
         "tracer": "none",
         "cast": { "kind": "ring", "beats": 1.0, "radiusTiles": 1.3, "shade": "edge" },
+        "impact": { "kind": "ring", "beats": 0.5, "radiusTiles": 1.0, "shade": "core" },
         "particles": { "count": 12, "beats": 1.2, "speedTiles": 1.0, "size": 0.08, "shade": "core", "style": "drift" }
       },
       "lance_of_dawn": {
