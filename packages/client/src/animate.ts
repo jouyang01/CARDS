@@ -166,6 +166,10 @@ export const BLINK_AT = 0.5;
 export function isBlink(leg: Leg): boolean {
   if (leg.kind !== 'move') return false; // a knockback is thrown, not teleported
   if (leg.teleport === true) return true;
+  // An explicit `false` is trusted however long the leg: a combat roll collapsed
+  // to one straight cross-board slide (STRAIGHT-DASH) is many tiles but must
+  // slide, not jump. The geometric guess is only for a leg that set no flag.
+  if (leg.teleport === false) return false;
   return Math.max(Math.abs(leg.to.x - leg.from.x), Math.abs(leg.to.y - leg.from.y)) > 1;
 }
 
