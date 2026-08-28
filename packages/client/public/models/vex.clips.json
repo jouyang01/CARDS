@@ -1,6 +1,6 @@
 {
   "id": "vex",
-  "version": "f4d62c0acbea",
+  "version": "9eef651f5e1f",
   "clips": [
     "knocked_down",
     "rifle_death",
@@ -20,7 +20,7 @@
     "death": "rifle_death",
     "knockback": "knocked_down",
     "trim": {
-      "vex_trap": 0.4
+      "vex_trap": 0.52
     },
     "abilities": {
       "rail_shot": "vex_railshot",
