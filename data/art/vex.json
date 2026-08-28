@@ -56,7 +56,7 @@
     "knockback": "knocked_down",
     "_trimNote": "trim = {clip: keep-fraction}; build_glb.py drops keyframes past that fraction so a long take ends early. vex_trap's Mixamo take runs 7.0s (near the idle's length) with seconds of settle after the flick — the trap is a FREE throwaway action, so keep the first 40% (~2.8s, in line with the grenade/ult) and let the renderer crossfade to idle from there.",
     "trim": {
-      "vex_trap": 0.4
+      "vex_trap": 0.52
     },
     "abilities": {
       "rail_shot": "vex_railshot",
