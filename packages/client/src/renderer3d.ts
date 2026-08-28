@@ -2680,7 +2680,7 @@ export function createRenderer(
         const beamHeight = TRAP_DRONE_HOVER;
         const beam = new Mesh(
           new CylinderGeometry(TRAP_BEAM_TOP, TRAP_BEAM_BOTTOM, beamHeight, 8, 1, true),
-          new MeshBasicMaterial({ color: colour, transparent: true, opacity: trap.own ? 0.22 : 0.3, side: DoubleSide }),
+          new MeshBasicMaterial({ color: colour, transparent: true, opacity: trap.own ? 0.55 : 0.7, side: DoubleSide }),
         );
         // Cylinder is Y-up already: stand it from the plate up to the drone.
         beam.position.copy(at).setY(TRAP_LIFT + beamHeight / 2);
