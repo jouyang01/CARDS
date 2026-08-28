@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MUZZLE_TILES, STREAK_HALF_WIDTH, STREAK_TILES, beamQuad, streakQuad, tracerQuads, tracersAt } from '../src/tracer.js';
+import { MUZZLE_TILES, STREAK_HALF_WIDTH, STREAK_TILES, beamQuad, farEnd, streakQuad, tracerQuads, tracersAt } from '../src/tracer.js';
 import type { Cue } from '../src/choreograph.js';
 import type { Vec2 } from '@cards/engine';
 
@@ -166,6 +166,21 @@ describe('streakQuad', () => {
   it('STREAK-CLAMPS-PROGRESS: out-of-range progress stays on the segment', () => {
     expect(Math.max(...streakQuad(from, to, 5).map((p) => p.x))).toBeCloseTo(10 - MUZZLE_TILES, 9);
     expect(Math.min(...streakQuad(from, to, -5).map((p) => p.x))).toBeCloseTo(MUZZLE_TILES, 9);
+  });
+});
+
+describe('farEnd', () => {
+  const from = { x: 0, y: 0 };
+
+  it('FAREND-AIM: the farthest square of the area is the shot\'s endpoint', () => {
+    // A line's area to the aim, truncated at what it hit. The end is the last
+    // square either way — the victim on a hit, the aim square on a miss.
+    const line = [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }];
+    expect(farEnd(from, line)).toEqual({ x: 4, y: 0 });
+  });
+
+  it('FAREND-EMPTY: no area, no endpoint', () => {
+    expect(farEnd(from, [])).toBeUndefined();
   });
 });
 

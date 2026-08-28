@@ -185,6 +185,28 @@ export function streakQuad(from: Point, to: Point, progress: number): Point[] {
 }
 
 /**
+ * The far end of an ability's area from the caster — the aim point of a line.
+ *
+ * A `line` ability's `area` is the squares it covers, truncated at whatever it
+ * hit (`truncateAtImpact`); so the farthest square is the victim on a hit and
+ * the aimed square on a miss. That is exactly where a beam should end either
+ * way, which is what lets the shot draw its full flight even when it connects
+ * with nothing. Empty area → undefined.
+ */
+export function farEnd(from: Vec2, area: readonly Vec2[]): Vec2 | undefined {
+  let best: Vec2 | undefined;
+  let bestD = -1;
+  for (const p of area) {
+    const d = (p.x - from.x) ** 2 + (p.y - from.y) ** 2;
+    if (d > bestD) {
+      bestD = d;
+      best = p;
+    }
+  }
+  return best;
+}
+
+/**
  * The quad for a BEAM, in fractional board coordinates.
  *
  * Unlike `streakQuad`, a beam is the WHOLE line from the muzzle to just short of
