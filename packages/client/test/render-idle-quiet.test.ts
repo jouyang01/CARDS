@@ -50,7 +50,7 @@ const POOL = buildCatalystPool(catalystData as unknown as CatalystData);
  * new mutator be added to both at once and slip through.
  */
 const MARKING = [
-  'show', 'highlight', 'drawPath', 'drawPaths', 'drawShape', 'drawAuras', 'drawTracers', 'drawWalls',
+  'show', 'highlight', 'drawPath', 'drawPaths', 'drawShape', 'drawAuras', 'drawTracers', 'drawTrapStrikes', 'drawWalls',
   'drawParticles', 'focusOn', 'lookAt', 'fitBoard', 'setUnitAt', 'setUnitFade',
   'setUnitClip', 'setUnitFacing', 'setSpotlight', 'setProjection', 'resize', 'render',
 ] as const;

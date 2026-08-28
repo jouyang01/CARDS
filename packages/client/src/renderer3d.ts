@@ -646,6 +646,17 @@ const TRAP_DRONE_SIZE = TILE * 0.16;
 const TRAP_BEAM_TOP = TILE * 0.03;
 const TRAP_BEAM_BOTTOM = TILE * 0.06;
 /**
+ * TRAP-STRIKE — the bolt a trap fires straight down when it triggers. A bright
+ * amber column that lances from the drone's hover height to the tile over the
+ * first part of its life, then flashes and fades. `drawTrapStrikes` is driven
+ * per frame by the ability's impact cues (app.ts), so it holds under hitstop
+ * like every other cue-timed effect. Amber, not owner-coloured: a discharge is
+ * the drone's energy, and the persistent plate already answers whose trap it is.
+ */
+const TRAP_STRIKE_COLOUR = 0xffc65a;
+const TRAP_STRIKE_RADIUS = TILE * 0.09;
+const TRAP_STRIKE_DESCENT = 0.35; // fraction of life the bolt spends coming down
+/**
  * PADS-INDICATOR — a power-up pad sits low, just above CAMO-REVEAL's red
  * thicket and **below** every planning overlay. Same argument the camo tile
  * makes: a pad is *board state*, not something you are aiming, so a range
@@ -1022,6 +1033,12 @@ export interface Renderer {
    * are two palettes. At `TRACER_LIFT`, replacing the tracer layer wholesale.
    */
   drawTracers(tracers: readonly { outline: readonly Vec2[]; color: number; opacity: number }[]): void;
+  /**
+   * TRAP-STRIKE: vertical bolts a trap fires down when it triggers. Each is a
+   * board square and a progress `p` in [0,1]; the renderer lances a column from
+   * the drone height to the tile and fades it. Replaces the layer wholesale.
+   */
+  drawTrapStrikes(strikes: readonly { x: number; y: number; p: number }[]): void;
   /**
    * WARDING WALL: standing translucent panels, raised from a footprint.
    *
@@ -3078,6 +3095,28 @@ export function createRenderer(
       for (const tr of tracers) drawOneShape(g, tr.outline, tr.color, tr.opacity, TRACER_LIFT);
     },
 
+    drawTrapStrikes(strikes) {
+      const g = layerGroup('trapStrike');
+      disposeChildren(g);
+      for (const s of strikes) {
+        const p = Math.max(0, Math.min(1, s.p));
+        // The bolt's leading edge descends over the first TRAP_STRIKE_DESCENT of
+        // its life, then the full column flashes and fades over the rest.
+        const descent = Math.min(1, p / TRAP_STRIKE_DESCENT);
+        const bottom = TRAP_DRONE_HOVER * (1 - descent);
+        const len = TRAP_DRONE_HOVER - bottom;
+        if (len <= 0) continue;
+        const fade = p < TRAP_STRIKE_DESCENT ? 1 : Math.max(0, 1 - (p - TRAP_STRIKE_DESCENT) / (1 - TRAP_STRIKE_DESCENT));
+        const { x, z } = squareToWorldXZ(map, { x: s.x, y: s.y });
+        const beam = new Mesh(
+          new CylinderGeometry(TRAP_STRIKE_RADIUS * 0.5, TRAP_STRIKE_RADIUS, len, 10, 1, true),
+          new MeshBasicMaterial({ color: TRAP_STRIKE_COLOUR, transparent: true, opacity: 0.9 * fade, side: DoubleSide }),
+        );
+        beam.position.set(x, bottom + len / 2, z);
+        g.add(beam);
+      }
+    },
+
     drawShape(outlines, color, opacity = 0.18, layer = 'shape') {
       const g = layerGroup(layer);
       disposeChildren(g);
@@ -3181,7 +3220,7 @@ export function createRenderer(
   const MUTATORS = [
     'show', 'highlight', 'drawPath', 'drawPaths', 'drawShape',
     'setProjection', 'lookAt', 'fitBoard', 'focusOn', 'resize', 'setSafeInsets',
-    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras', 'drawTracers', 'drawWalls', 'drawParticles',
+    'setUnitAt', 'setUnitFade', 'setUnitClip', 'setUnitFacing', 'drawAuras', 'drawTracers', 'drawTrapStrikes', 'drawWalls', 'drawParticles',
     'setSpotlight', 'setOrbitEnabled', 'preloadCharacters', 'render',
   ] as const satisfies readonly (keyof Renderer)[];
 

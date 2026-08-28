@@ -57,6 +57,13 @@ export interface AbilityVfx {
    * the aim point instead of a ring on each unit it caught.
    */
   detonation: AuraSpec;
+  /**
+   * A trap that fires a beam straight DOWN onto the tile when it triggers: the
+   * hovering drone's laser coming down. Drawn as a transient vertical bolt at
+   * the struck square (renderer `drawTrapStrikes`), keyed off this ability's
+   * `impact` cues. Overwatch Trap only.
+   */
+  beamDown: boolean;
   /** Intercept: the caster does not travel, it is simply somewhere else. */
   blink: boolean;
 }
@@ -88,7 +95,7 @@ const NO_AURA: AuraSpec = { kind: 'none', beats: 0, radiusTiles: 0, shade: 'core
  * roster before this table existed. Defaulting it off would have quietly
  * deleted a feature from eight characters as the price of styling one.
  */
-export const NO_VFX: AbilityVfx = { tracer: 'streak', beamHalfTiles: 0, cast: NO_AURA, impact: NO_AURA, detonation: NO_AURA, blink: false };
+export const NO_VFX: AbilityVfx = { tracer: 'streak', beamHalfTiles: 0, cast: NO_AURA, impact: NO_AURA, detonation: NO_AURA, beamDown: false, blink: false };
 
 /** A beam with no width declared: a rifle-shot laser, thin but unmistakably lit. */
 export const DEFAULT_BEAM_HALF_TILES = 0.13;
@@ -111,6 +118,7 @@ export function vfxFor(table: VfxTable, characterId: string, abilityId: string):
     cast: aura(entry.cast),
     impact: aura(entry.impact),
     detonation: entry.detonation === undefined ? NO_AURA : aura(entry.detonation),
+    beamDown: entry.beamDown ?? false,
     blink: entry.blink ?? false,
   };
 }

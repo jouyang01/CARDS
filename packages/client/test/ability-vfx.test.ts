@@ -176,6 +176,12 @@ describe('vfxFor', () => {
     expect(aurasAt([throwCue], 0.2, VFX, () => 'vex', () => ({ x: 1, y: 1 }))).toEqual([]);
   });
 
+  it('VEX-TRAP-BEAMS-DOWN: the trap fires a downward bolt, and nothing else does', () => {
+    expect(vfxFor(VFX, 'vex', 'overwatch_trap').beamDown).toBe(true);
+    expect(vfxFor(VFX, 'vex', 'rail_shot').beamDown).toBe(false);
+    expect(vfxFor(VFX, 'vex', 'frag_grenade').beamDown).toBe(false);
+  });
+
   it('VFX-INTERCEPT-BLINKS: and nothing else does', () => {
     expect(blinks(VFX, 'aegis', 'intercept')).toBe(true);
     for (const id of ['shield_bash', 'barrier_pulse', 'warding_wall', 'warding_halo']) {

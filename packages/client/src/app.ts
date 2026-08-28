@@ -347,6 +347,8 @@ const TRACER_OPACITY = 0.85;
  * while the recoil plays on.
  */
 const BEAM_FLASH_BEATS = 0.9;
+/** How long a trap's downward strike-bolt lives, in beats — a quick lance. */
+const STRIKE_LIFETIME_BEATS = 0.6;
 /**
  * Fog (VISION1). Near-black rather than a tint: unseen board should read as
  * *absence of information*, and any hue would suggest the terrain underneath
@@ -1399,6 +1401,7 @@ export function startHotSeat(
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
     renderer.drawTracers([]);
+    renderer.drawTrapStrikes([]);
     renderer.drawParticles([]);
     renderer.drawPath([], MOVE_LINE, false);
     renderer.drawPath([], DASH_LINE, false, 'catalystPath');
@@ -2601,6 +2604,7 @@ export function startHotSeat(
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
     renderer.drawTracers([]);
+    renderer.drawTrapStrikes([]);
     renderer.drawParticles([]);
     // PAN-RELEASE-PLAYBACK — a planning pan is released HERE, at the
     // planning→resolution transition and before the first playback `focusOn`.
@@ -2791,6 +2795,21 @@ export function startHotSeat(
           tracerDraws.push({ outline, color: tone === undefined ? TRACER : hexColour(tone), opacity: 0.9 });
         }
         renderer.drawTracers(tracerDraws);
+        // TRAP STRIKES: a trap that fires a beam DOWN when it triggers. Keyed off
+        // the impact its damage lands (at the struck tile), for beamDown abilities
+        // (Overwatch Trap). Per frame, so `p` tracks now_t and hitstop holds it.
+        const trapStrikes: { x: number; y: number; p: number }[] = [];
+        for (const cue of cues) {
+          if (cue.kind !== 'impact') continue;
+          const characterId = characterOf(cue.sourceUnitId);
+          if (characterId === undefined || !vfxFor(VFX, characterId, cue.abilityId).beamDown) continue;
+          const age = now_t - cue.t;
+          if (age < 0 || age >= STRIKE_LIFETIME_BEATS) continue;
+          const at = posOf(cue.unitId);
+          if (at === undefined) continue;
+          trapStrikes.push({ x: at.x, y: at.y, p: age / STRIKE_LIFETIME_BEATS });
+        }
+        renderer.drawTrapStrikes(trapStrikes);
         // PER-ABILITY VFX. Recomputed per frame like the tracers and for the
         // same reason: an aura's radius and fade ARE functions of `now_t`, so a
         // frame is the whole of its state and hitstop holds it with everything
@@ -3026,6 +3045,7 @@ export function startHotSeat(
     // last ring of a resolution hangs over the next planning phase.
     renderer.drawAuras([]);
     renderer.drawTracers([]);
+    renderer.drawTrapStrikes([]);
     renderer.drawParticles([]);
     renderer.setSpotlight(null);
     renderer.fitBoard();

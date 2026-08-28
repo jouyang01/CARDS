@@ -68,6 +68,8 @@ export interface DrawLog {
   auras: { outline: Vec2[]; color: number; opacity: number }[];
   /** Coloured tracers on the board — the last `drawTracers` call. */
   tracers: { outline: Vec2[]; color: number; opacity: number }[];
+  /** Trap-activation bolts on the board — the last `drawTrapStrikes` call. */
+  trapStrikes: { x: number; y: number; p: number }[];
   /** Standing Warding Wall panels — the last `drawWalls` call. */
   walls: { from: Vec2; to: Vec2 }[];
   /** Impact debris in the air — the last `drawParticles` call. */
@@ -159,7 +161,7 @@ export function stubRenderer(): StubRenderer {
   const draw: DrawLog = {
     viewer: undefined,
     highlightColours: new Map(), shapeColours: new Map(), pathColours: new Map(),
-    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], tracers: [], walls: [], particles: [], clips: [], clipQueries: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
+    highlights: new Map(), paths: [], shapes: [], shapesByLayer: new Map(), auras: [], tracers: [], trapStrikes: [], walls: [], particles: [], clips: [], clipQueries: [], preloads: [], facing: new Map(), flashes: [], shakes: [],
     focus: [], pans: [], lookAts: [], fitBoards: 0,
     board: { units: [], decoys: [], traps: [] },
   };
@@ -270,6 +272,9 @@ export function stubRenderer(): StubRenderer {
       draw.tracers = tracers.map((t) => ({
         outline: t.outline.map((p) => ({ ...p })), color: t.color, opacity: t.opacity,
       }));
+    },
+    drawTrapStrikes: (strikes) => {
+      draw.trapStrikes = strikes.map((s) => ({ x: s.x, y: s.y, p: s.p }));
     },
     drawShape: (outlines, color, _opacity, layer = 'shape') => {
       draw.shapeColours.set(layer, color);
