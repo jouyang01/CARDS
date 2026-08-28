@@ -157,7 +157,7 @@ describe('particlesFor', () => {
     // Not because of WHO hit it. Defaulting this off meant Vex railgunning
     // somebody produced a flash, a shake, hitstop and a tracer — and no debris —
     // while Aegis hitting the same target for the same damage threw fragments.
-    expect(particlesFor(VFX, 'vex', 'rail_shot')).toEqual(DEFAULT_PARTICLES);
+    expect(particlesFor(VFX, 'thorn', 'anything')).toEqual(DEFAULT_PARTICLES);
     expect(particlesFor(VFX, 'nobody', 'nothing').count).toBeGreaterThan(0);
   });
 
@@ -198,14 +198,15 @@ describe('particlesAt', () => {
   });
 
   it('AT-ANY-ATTACKER: a hit from an unstyled character throws debris too', () => {
-    const asVex = (): string => 'vex';
-    expect(particlesAt([impact(0, 'v', 'a', 'rail_shot')], 0.2, VFX, asVex, places).length)
+    const asThorn = (): string => 'thorn';
+    expect(particlesAt([impact(0, 'v', 'a', 'thorn_hit')], 0.2, VFX, asThorn, places).length)
       .toBeGreaterThan(0);
   });
 
   it('AT-NEUTRAL-TINT: and in a neutral grit, since they have no palette yet', () => {
-    const asVex = (): string => 'vex';
-    for (const p of particlesAt([impact(0, 'v', 'a', 'rail_shot')], 0.2, VFX, asVex, places)) {
+    // `thorn` is the unstyled stand-in now that Vex has an amber palette.
+    const asThorn = (): string => 'thorn';
+    for (const p of particlesAt([impact(0, 'v', 'a', 'thorn_hit')], 0.2, VFX, asThorn, places)) {
       expect(p.color).toBe(NEUTRAL_DEBRIS);
     }
   });
