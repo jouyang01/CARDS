@@ -8,6 +8,8 @@ import type { Vec2 } from '@cards/engine';
 import table from '../../../data/vfx.json';
 import aegisArt from '../../../data/art/aegis.json';
 import aegis from '../../../data/characters/aegis.json';
+import vexArt from '../../../data/art/vex.json';
+import vex from '../../../data/characters/vex.json';
 
 const VFX = table as unknown as VfxTable;
 const BEAT = 1;
@@ -50,6 +52,32 @@ describe('the table agrees with the art it was copied from', () => {
     const ids = (aegis as unknown as { abilities: { id: string }[] }).abilities.map((a) => a.id);
     for (const id of ids) {
       expect(Object.keys(VFX['aegis']!.abilities), `no VFX for aegis/${id}`).toContain(id);
+    }
+  });
+
+  it('VEX-PALETTE-MATCHES-ART: Vex draws in her art data\'s amber', () => {
+    const magic = (vexArt as unknown as { magic: Record<string, string> }).magic;
+    expect(VFX['vex']!.palette.core).toBe(magic['core']);
+    expect(VFX['vex']!.palette.edge).toBe(magic['edge']);
+    expect(VFX['vex']!.palette.deep).toBe(magic['deep']);
+  });
+
+  it('VEX-WARM-BY-DESIGN: her amber is warm — the exact inverse of Aegis and Wisp', () => {
+    // Aegis and Wisp forbid warmth; Vex's whole identity is warm amber ordnance.
+    // The one enforced fact is that she does NOT carry the forbidden flag and her
+    // core/edge tones read warm, so a cold-blue "fix" later would trip this.
+    expect(VFX['vex']!.warmthForbidden ?? false).toBe(false);
+    expect(isWarm(VFX['vex']!.palette.core), VFX['vex']!.palette.core).toBe(true);
+    expect(isWarm(VFX['vex']!.palette.edge), VFX['vex']!.palette.edge).toBe(true);
+  });
+
+  it('VEX-COVERS-THE-KIT: every ability Vex has, ultimate included, is styled', () => {
+    const ids = [
+      ...(vex as unknown as { abilities: { id: string }[] }).abilities.map((a) => a.id),
+      (vex as unknown as { ultimate: { id: string } }).ultimate.id,
+    ];
+    for (const id of ids) {
+      expect(Object.keys(VFX['vex']!.abilities), `no VFX for vex/${id}`).toContain(id);
     }
   });
 });
@@ -96,16 +124,27 @@ describe('vfxFor', () => {
     // Defaulting this off would have deleted a shipped feature from eight
     // characters as the price of styling one.
     expect(NO_VFX.tracer).toBe('streak');
-    expect(vfxFor(VFX, 'vex', 'rail_shot').tracer).toBe('streak');
+    expect(vfxFor(VFX, 'thorn', 'anything').tracer).toBe('streak');
   });
 
   it('VFX-DEFAULT-NO-AURA: but an unstyled ability gets no aura, so absence shows', () => {
-    expect(vfxFor(VFX, 'vex', 'rail_shot').cast.kind).toBe('none');
-    expect(vfxFor(VFX, 'vex', 'rail_shot').impact.kind).toBe('none');
+    // `thorn` has no VFX entry — the stand-in for "nobody styled this yet" now
+    // that Vex is styled.
+    expect(vfxFor(VFX, 'thorn', 'anything').cast.kind).toBe('none');
+    expect(vfxFor(VFX, 'thorn', 'anything').impact.kind).toBe('none');
   });
 
   it('VFX-CONE-HAS-NO-PROJECTILE: Shield Bash declares it, rather than being filtered by distance', () => {
     expect(vfxFor(VFX, 'aegis', 'shield_bash').tracer).toBe('none');
+  });
+
+  it('VEX-BEAMS: rail shot and the ult are lasers, the ult the wider of the two', () => {
+    expect(vfxFor(VFX, 'vex', 'rail_shot').tracer).toBe('beam');
+    expect(vfxFor(VFX, 'vex', 'lance_of_dawn').tracer).toBe('beam');
+    expect(vfxFor(VFX, 'vex', 'lance_of_dawn').beamHalfTiles)
+      .toBeGreaterThan(vfxFor(VFX, 'vex', 'rail_shot').beamHalfTiles);
+    // The grenade flies as a plain streak, not a laser.
+    expect(vfxFor(VFX, 'vex', 'frag_grenade').tracer).toBe('streak');
   });
 
   it('VFX-INTERCEPT-BLINKS: and nothing else does', () => {
@@ -210,8 +249,8 @@ describe('aurasAt', () => {
   });
 
   it('AURA-UNSTYLED-IS-SILENT: a character with no entry draws none', () => {
-    const asVex = (): string => 'vex';
-    expect(aurasAt([ability(0, 'a', 'rail_shot')], 0.2, VFX, asVex, positions)).toEqual([]);
+    const asThorn = (): string => 'thorn';
+    expect(aurasAt([ability(0, 'a', 'thorn_ability')], 0.2, VFX, asThorn, positions)).toEqual([]);
   });
 
   it('AURA-NEEDS-A-PLACE: a unit that cannot be located contributes nothing', () => {

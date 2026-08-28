@@ -31,8 +31,22 @@ export interface AuraSpec {
   shade: Shade;
 }
 
+/**
+ * How a shot draws its flight.
+ *
+ * - `streak` — a short segment with a leading edge that crosses the gap; the
+ *   default, legible for any projectile (`tracer.ts`).
+ * - `beam` — a solid full-length line lit for the whole flight window: a laser.
+ *   Drawn in the caster's own colour and at `beamHalfTiles` wide, so an ability
+ *   can be a thin rail shot or a wide lance from data alone.
+ * - `none` — a cone or a blink; nothing travels.
+ */
+export type TracerStyle = 'streak' | 'beam' | 'none';
+
 export interface AbilityVfx {
-  tracer: 'streak' | 'none';
+  tracer: TracerStyle;
+  /** Half-width of a `beam`, in tiles. Ignored for `streak`/`none`. */
+  beamHalfTiles: number;
   cast: AuraSpec;
   impact: AuraSpec;
   /** Intercept: the caster does not travel, it is simply somewhere else. */
@@ -65,7 +79,10 @@ const NO_AURA: AuraSpec = { kind: 'none', beats: 0, radiusTiles: 0, shade: 'core
  * roster before this table existed. Defaulting it off would have quietly
  * deleted a feature from eight characters as the price of styling one.
  */
-export const NO_VFX: AbilityVfx = { tracer: 'streak', cast: NO_AURA, impact: NO_AURA, blink: false };
+export const NO_VFX: AbilityVfx = { tracer: 'streak', beamHalfTiles: 0, cast: NO_AURA, impact: NO_AURA, blink: false };
+
+/** A beam with no width declared: a rifle-shot laser, thin but unmistakably lit. */
+export const DEFAULT_BEAM_HALF_TILES = 0.13;
 
 const aura = (spec: Partial<AuraSpec> | undefined): AuraSpec =>
   spec === undefined ? NO_AURA : {
@@ -81,6 +98,7 @@ export function vfxFor(table: VfxTable, characterId: string, abilityId: string):
   if (entry === undefined) return NO_VFX;
   return {
     tracer: entry.tracer ?? NO_VFX.tracer,
+    beamHalfTiles: entry.beamHalfTiles ?? DEFAULT_BEAM_HALF_TILES,
     cast: aura(entry.cast),
     impact: aura(entry.impact),
     blink: entry.blink ?? false,

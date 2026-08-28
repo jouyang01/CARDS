@@ -13,6 +13,13 @@
     "amberHotCore": "#ffd486",
     "rifleBody": "#3a3d44"
   },
+  "magic": {
+    "_comment": "Her ordnance language (VFX primitive in the thesis): one hovering amber armed mote/mine repeated across beam, grenade, trap and ult — emissive, precise, warm. The exact mirror of Wisp's cold plum. Duplicated into data/vfx.json (ability-vfx.test.ts asserts they agree). Warmth is INTENTIONAL here — amber is fire-warm and that is the point — so warmthForbidden is false, unlike Aegis and Wisp.",
+    "core": "#ffd486",
+    "edge": "#f2a23c",
+    "deep": "#a85f22",
+    "warmthForbidden": false
+  },
   "weapon": {
     "_comment": "The rifle is a Rodin-generated prop, baked low-poly with tools/art/rodin_prop_lowpoly.py (emissive amber composited into the base colour so the emitter/heat-sinks read under flat lighting). It is NOT rigged and NOT in the Mixamo upload (ART_PIPELINE \u00a712/\u00a714); it parents to the right-hand bone at runtime. attach offsets (bone-local, in tiles) are tuned AFTER the body is rigged and vex.glb exists \u2014 the values below are a placeholder to be measured then.",
     "mainHand": {
@@ -56,7 +63,7 @@
     "knockback": "knocked_down",
     "_trimNote": "trim = {clip: keep-fraction}; build_glb.py drops keyframes past that fraction so a long take ends early. vex_trap's Mixamo take runs 7.0s (near the idle's length) with seconds of settle after the flick — the trap is a FREE throwaway action, so keep the first 40% (~2.8s, in line with the grenade/ult) and let the renderer crossfade to idle from there.",
     "trim": {
-      "vex_trap": 0.4
+      "vex_trap": 0.52
     },
     "abilities": {
       "rail_shot": "vex_railshot",
