@@ -768,6 +768,30 @@ export function placementIsFree(def: AbilityDef, target: Vec2, state: GameState 
   return !state.units.some((u) => u.alive && vecEq(u.pos, target));
 }
 
+/**
+ * LOBBED-WALL — may an area's centre sit on this square's terrain?
+ *
+ * A blast rests on the ground. `circleSquares` already drops walls *within* the
+ * radius, but the aimed centre itself was not covered by that, so a grenade
+ * could be dropped onto a solid block and detonate from on top of it.
+ *
+ * Owner Dev Note (2026-08-29): *"No lobbed projectiles should be able to be
+ * lobbed onto hard walls."* `lobbed` is the case that makes it reachable — an
+ * arcing shot skips the caster's line-of-sight gate, so a wall is not otherwise
+ * in its way — but the rule is written for **every** circle rather than for that
+ * flag, because a direct burst that somehow reached a wall square would have the
+ * same nothing to land on. Cover is deliberately allowed: it is crouch-height,
+ * and a grenade lands on the floor behind it.
+ *
+ * Exported so the client's preview and its click gate read this rule rather than
+ * keeping copies of it. A preview that drew a burst the order pipeline then
+ * dropped is the bug this is factored out to close.
+ */
+export function blastCentreAllowed(board: Board, def: AbilityDef, target: Vec2): boolean {
+  if (def.shape !== 'circle') return true;
+  return terrainAt(board, target) !== 'wall';
+}
+
 /** Is an ability's aim geometrically legal for its shape and range? */
 function aimIsLegal(
   board: Board, unit: UnitState, def: AbilityDef, aim: readonly Vec2[], aimStep?: number,
@@ -783,13 +807,9 @@ function aimIsLegal(
       // always has a line to, so self-centred bursts are untouched.
       const target = aim[0];
       if (target === undefined || !aimInRange(unit.pos, target, def.range)) return false;
-      // A blast centre may not sit inside a solid wall. `circleSquares` already
-      // drops walls *within* the radius, but the aimed centre itself was never
-      // checked — so a frag grenade could be lobbed onto a wall block, where it
-      // has nothing to rest on. A `range: 0` self-burst is unaffected: a unit
-      // never stands on a wall. (Cover is deliberately not blocked — it is
-      // crouch-height, and a grenade lands on the floor behind it.)
-      if (terrainAt(board, target) === 'wall') return false;
+      // LOBBED-WALL, and the client's preview and click read the same function.
+      // A `range: 0` self-burst is unaffected: a unit never stands on a wall.
+      if (!blastCentreAllowed(board, def, target)) return false;
       return aimVisionAllows(board, state, unit, def, target);
     }
     case 'square': {
