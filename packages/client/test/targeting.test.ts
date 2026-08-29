@@ -215,6 +215,23 @@ describe('ability tooltips read straight off the AbilityDef (TT1)', () => {
     expect(lines).toContain(rail.description);
   });
 
+  it('ENERGY-PER-HIT: the econ line says the energy is PER HIT', () => {
+    // The number stopped meaning "what a cast pays" on 2026-08-29, so the
+    // tooltip has to stop reading that way: a rail shot through three enemies
+    // pays 24 and a bare "+8" is now the wrong claim in both directions.
+    const rail = VEX.abilities.find((a) => a.id === 'rail_shot')!;
+    expect(abilityTooltip(rail).join('\n')).toContain(`energy +${rail.energyGain} per hit`);
+  });
+
+  it('…but a blink says just "+4" — it earns the act, not a recipient', () => {
+    // The other branch, and the reason the qualifier is derived from the
+    // engine's own predicate rather than printed on everything.
+    const roll = VEX.abilities.find((a) => a.id === 'combat_roll')!;
+    const econ = abilityTooltip(roll).find((l) => l.includes('energy +'))!;
+    expect(econ).toContain(`energy +${roll.energyGain}`);
+    expect(econ, 'a teleport has nobody to hit').not.toContain('per hit');
+  });
+
   it("surfaces a grenade's radius and delay", () => {
     const nade = VEX.abilities.find((a) => a.id === 'frag_grenade')!;
     const lines = abilityTooltip(nade).join('\n');

@@ -20,6 +20,7 @@ import {
   chargedUnits,
   lineImpact,
   blastCentreAllowed,
+  energyIsPerHit,
   placementIsFree,
   truncateAtImpact,
   abilityProfile,
@@ -170,7 +171,12 @@ export function abilityTooltip(def: AbilityDef): string[] {
   const reach = [`range ${def.range}`];
   if (def.radius !== undefined) reach.push(`radius ${def.radius}`);
   lines.push(reach.join(' · '));
-  const econ = [`cooldown ${def.cooldown}`, `energy +${def.energyGain}`];
+  // ENERGY-PER-HIT: `energyGain` is paid once per unit the ability lands on, so
+  // a bare "+8" now understates a rail shot through three enemies and overstates
+  // one down an empty row. The engine's own predicate decides which abilities
+  // get the qualifier — a blink still earns its tick for the act.
+  const per = energyIsPerHit(def) ? ' per hit' : '';
+  const econ = [`cooldown ${def.cooldown}`, `energy +${def.energyGain}${per}`];
   if (def.delayTurns !== undefined) econ.push(`delay ${def.delayTurns}t`);
   lines.push(econ.join(' · '));
   // AUTO-PREVIEW: the numeric tell, above the raw effect list. It is the line

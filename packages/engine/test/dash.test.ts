@@ -228,14 +228,30 @@ describe('R1b: hits "all" sweeps every crossed enemy', () => {
     expect(unit(first.state, 'e2').hp).toBe(100);
   });
 
-  it('energy is still granted once per use, not per enemy', () => {
+  it('ENERGY-PER-HIT: a sweep through two enemies pays for both', () => {
+    // Re-specced 2026-08-29. This asserted the opposite — "once per use, not per
+    // enemy" — until the owner ruled the other way: *"If it hits multiple it
+    // should give multiple ticks of energy."* Two crossed enemies, 8 each, plus
+    // the 5 passive that is not per-hit and never was.
     const units = [makeUnit('u', 0, { x: 0, y: 0 }), makeUnit('e1', 1, { x: 2, y: 0 }), makeUnit('e2', 1, { x: 3, y: 0 })];
     const { state } = run(
       makeState(units),
       [{ unitId: 'u', ability: { abilityId: 'sweep', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }] } }],
       [],
     );
-    expect(unit(state, 'u').energy).toBe(13); // 8 on-hit (once) + 5 passive — not 8 per enemy
+    expect(unit(state, 'u').energy).toBe(21); // 8 + 8 on-hit + 5 passive
+  });
+
+  it('…and a "first" charge through the same two pays for the one it struck', () => {
+    // The pairing that makes the number above about the victims rather than
+    // about the sweep: same board, same two enemies, one hit.
+    const units = [makeUnit('u', 0, { x: 0, y: 0 }), makeUnit('e1', 1, { x: 2, y: 0 }), makeUnit('e2', 1, { x: 3, y: 0 })];
+    const { state } = run(
+      makeState(units),
+      [{ unitId: 'u', ability: { abilityId: 'charge', target: [{ x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }] } }],
+      [],
+    );
+    expect(unit(state, 'u').energy).toBe(13); // 8 on-hit + 5 passive
   });
 });
 

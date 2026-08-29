@@ -345,14 +345,6 @@ function onDamageTaken(
 const isHarmfulUse = (def: AbilityDef): boolean =>
   def.effects.some((e) => HARMFUL_KINDS.has(e.kind));
 
-/** Does using this ability grant its energy even without hitting an enemy? */
-function isSelfOrUtility(def: AbilityDef): boolean {
-  return (
-    def.shape === 'self' ||
-    def.effects.some((e) => NEUTRAL_KINDS.has(e.kind) || BENEFICIAL_KINDS.has(e.kind))
-  );
-}
-
 /**
  * Validate a single unit's order against the current draft, dropping any illegal
  * component (an unusable ability, an illegal path) rather than the whole order —
@@ -1324,10 +1316,85 @@ function markAbilityUsed(unit: UnitState, planned: PlannedAbility, events: TurnE
   if (planned.def.cooldown > 0) unit.cooldowns[planned.def.id] = planned.def.cooldown;
 }
 
-function grantUseEnergy(unit: UnitState, def: AbilityDef, hitEnemy: boolean, events: TurnEvent[]): void {
-  if (!hitEnemy && !isSelfOrUtility(def)) return;
-  const gained = grantEnergy(unit, def.energyGain);
-  if (gained > 0) events.push({ type: 'energyGained', unitId: unit.unitId, amount: gained });
+/**
+ * ENERGY-PER-HIT — who an ability's energy is owed for.
+ *
+ * Two sets rather than a count, because a unit may be reached twice by one cast
+ * (a cone that both damages and slows) and must still be paid for once, and
+ * because the two halves are asked in different places in each phase.
+ */
+interface EnergyTicks {
+  /** Enemy units this cast landed a HARMFUL effect on. */
+  harmed: Set<string>;
+  /** Allied units — the caster included — it landed a BENEFICIAL one on. */
+  helped: Set<string>;
+}
+
+const noTicks = (): EnergyTicks => ({ harmed: new Set(), helped: new Set() });
+
+/**
+ * Does this ability earn its energy without landing on anybody?
+ *
+ * Only placement and movement do: a trap laid, a decoy dropped, a blink taken —
+ * things whose whole effect is the act, with no recipient to count. `shape:
+ * 'self'` is here for the same reason and is nearly always redundant, since a
+ * self-cast that buffs its caster already counts the caster as an ally helped.
+ *
+ * Narrower than the `isSelfOrUtility` it replaces, which answered yes to
+ * anything with a beneficial effect **anywhere in its list** — so Lumen's auto
+ * attack, which damages enemies and heals allies, was paid in full for hitting
+ * nothing at all.
+ */
+function isPlacementOrTravel(def: AbilityDef): boolean {
+  return def.shape === 'self' || def.effects.some((e) => NEUTRAL_KINDS.has(e.kind));
+}
+
+/**
+ * Is this ability's `energyGain` paid **per recipient** rather than per cast?
+ *
+ * The tooltip's question, answered from the resolver's own predicate so the
+ * number a player reads and the number they are paid cannot describe two
+ * different rules. True for anything that lands on somebody; false for the
+ * placement and travel abilities that earn the act itself.
+ */
+export function energyIsPerHit(def: AbilityDef): boolean {
+  return !isPlacementOrTravel(def);
+}
+
+/**
+ * ENERGY-PER-HIT — **one tick of `energyGain` per unit the ability landed on.**
+ *
+ * Owner Dev Notes (2026-08-29):
+ *
+ *   1. *"Energy on attacks should give energy only if it hits the enemy unit.
+ *      If it hits multiple it should give multiple ticks of energy… if Vex's
+ *      rail shot hits two enemies, it should give a total of 16 energy + the 5
+ *      energy per turn."* With the caveat: *"hitting allies with damaging skills
+ *      should NOT give energy."*
+ *   2. *"Energy on heals/shields should give energy only if it hits allied
+ *      units. If it hits multiple it should give multiple ticks."*
+ *
+ * So the unit of payment is a **recipient**, not a cast: an enemy that took
+ * something harmful, or an ally that took something good. An ability that is
+ * both — the owner names Lumen's auto attack, *"a heal for allies and damage for
+ * enemies"* — is paid for each, from one list, because the rule is about who was
+ * reached and not about which half of the kit reached them.
+ *
+ * Granted tick by tick rather than as `energyGain × n` in one call, which is
+ * what "multiple ticks" says and what the arithmetic has to honour: Energized
+ * floors each grant (`grantEnergy`), and flooring twice is not flooring once at
+ * double. Two ticks of 5 under Energized is 7 + 7 = 14, not `floor(15)`.
+ *
+ * One `energyGained` event carries the total. The event is the combat log's line
+ * for this cast, and a four-victim rail shot should read as one gain of 32
+ * rather than as four lines of 8.
+ */
+function grantUseEnergy(unit: UnitState, def: AbilityDef, ticks: EnergyTicks, events: TurnEvent[]): void {
+  const landed = ticks.harmed.size + ticks.helped.size;
+  const count = landed > 0 ? landed : (isPlacementOrTravel(def) ? 1 : 0);
+  let total = 0;
+  for (let i = 0; i < count; i += 1) total += grantEnergy(unit, def.energyGain);
+  if (total > 0) events.push({ type: 'energyGained', unitId: unit.unitId, amount: total });
 }
 
 function runPrep(draft: GameState, board: Board, plans: UnitPlan[], events: TurnEvent[], trapHits: TrapHits): void {
@@ -1366,6 +1433,11 @@ function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbi
   // would be, so the check is on the effects rather than on the phase.
   if (isHarmfulUse(a.def)) revealIfConcealed(board, unit, unit.pos, a.def.id, events);
 
+  // ENERGY-PER-HIT: Prep lands nothing harmful of its own — its damage-shaped
+  // act is arming a trap, which hits nobody now — so a Prep cast is paid for the
+  // allies its boons reached, or, for a placement, by the flat single tick
+  // `grantUseEnergy` gives one.
+  const ticks = noTicks();
   const trapEffect = a.def.effects.find((e) => e.kind === 'trap');
   if (trapEffect !== undefined) {
     arming.push(() => placeTraps(draft, unit, a, trapEffect, events));
@@ -1376,9 +1448,9 @@ function firePrep(draft: GameState, board: Board, unit: UnitState, a: PlannedAbi
     // radius 1 — only ever shielded Aegis. A self-cast still lands on the
     // caster because `a.area` for a `self` shape *is* the caster's square, so
     // there is no special case here and no way for the two to disagree.
-    applyAreaBoons(draft, unit, a, sourceOf(unit, a.def.id), events);
+    ticks.helped = applyAreaBoons(draft, unit, a, sourceOf(unit, a.def.id), events);
   }
-  grantUseEnergy(unit, a.def, false, events);
+  grantUseEnergy(unit, a.def, ticks, events);
 }
 
 /**
@@ -1404,7 +1476,12 @@ function applyAreaBoons(
   a: PlannedAbility,
   source: Source,
   events: TurnEvent[],
-): void {
+): Set<string> {
+  // ENERGY-PER-HIT: who actually received something good. Collected here rather
+  // than re-derived by the caller, because "was this unit in the area" is only
+  // half the question — `target: "self"`, CASTER-SAFE and the boon filter each
+  // decide whether an effect really landed, and all three live in this function.
+  const helped = new Set<string>();
   const area = new Set(a.area.map(vecKey));
   // W1: an effect that names its own target is routed by that name and takes no
   // further part in the area rules below. Everything else — which is every
@@ -1417,7 +1494,10 @@ function applyAreaBoons(
     // tiles away and still has to vanish *Wisp*, so its stealth cannot be
     // conditioned on her standing where the decoy goes.
     const onCaster = casterSafe(directed.filter((e) => e.target === 'self'));
-    if (onCaster.length > 0) applySelfEffects(draft, caster, onCaster, source, events);
+    if (onCaster.length > 0) {
+      applySelfEffects(draft, caster, onCaster, source, events);
+      if (onCaster.some((e) => BENEFICIAL_KINDS.has(e.kind))) helped.add(caster.unitId);
+    }
     // `target: "aimed"` is placed at the aimed square rather than on anybody.
     const placed = directed.filter((e) => e.target === 'aimed');
     if (placed.length > 0) {
@@ -1429,14 +1509,20 @@ function applyAreaBoons(
   // the caster is in its own area — which for a self-cast is always. Minus the
   // harmful ones: CASTER-SAFE means your own Weaken or Root never lands on you,
   // however faithfully the area covers your square.
-  if (area.has(vecKey(caster.pos))) applySelfEffects(draft, caster, casterSafe(ambient), source, events);
+  if (area.has(vecKey(caster.pos))) {
+    const own = casterSafe(ambient);
+    applySelfEffects(draft, caster, own, source, events);
+    if (own.some((e) => BENEFICIAL_KINDS.has(e.kind))) helped.add(caster.unitId);
+  }
   const boons = ambient.filter((e) => BENEFICIAL_KINDS.has(e.kind));
-  if (boons.length === 0) return;
+  if (boons.length === 0) return helped;
   for (const ally of draft.units) {
     if (!ally.alive || ally.owner !== caster.owner || ally.unitId === caster.unitId) continue;
     if (!area.has(vecKey(ally.pos))) continue;
     applySelfEffects(draft, ally, boons, source, events);
+    helped.add(ally.unitId);
   }
+  return helped;
 }
 
 /**
@@ -1871,7 +1957,9 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // beside the damage and applied in the status batch below, which is where
     // PHASE-STATUS-FIRST puts every other status in the phase.
     const riders = a.def.effects.filter((e) => HARMFUL_KINDS.has(e.kind) && isStatusKind(e.kind));
-    let hitEnemy = false;
+    // ENERGY-PER-HIT: one tick per enemy run through, one per ally the landing
+    // buffed. A dash that damages nobody and shields nobody earns nothing.
+    const ticks = noTicks();
     const struck = new Set<string>(); // each unit is affected at most once
     // The victim list is built for a rider-only dash too. Gating it on damage —
     // as it was — is what makes a status effect a field the engine reads and
@@ -1894,7 +1982,9 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
         // but it is asserted in `dash-status.test.ts` so a future change to
         // either list cannot quietly let a dasher root itself.
         if (isUntargetable(victim)) continue; // UNTGT1 — no damage, no rider, no energy
-        if (victim.owner !== plan.unit.owner) hitEnemy = true; // energy is enemy-only
+        // Enemies only: a dash that ploughs through a teammate pays nothing for
+        // them, which is the owner's caveat on the harmful half.
+        if (victim.owner !== plan.unit.owner) ticks.harmed.add(victim.unitId);
         for (const e of riders) {
           dashDebuffs.push({ victim, effect: e, source: sourceOf(plan.unit, a.def.id) });
         }
@@ -1920,12 +2010,11 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
     // shielded twice.
     const boons = a.def.effects.filter((e) => BENEFICIAL_KINDS.has(e.kind));
     if (boons.length > 0) {
-      const helped = new Set<string>();
       for (const { area } of blasts) {
         for (const ally of draft.units) {
           if (!ally.alive || ally.owner !== plan.unit.owner || ally.unitId === plan.unit.unitId) continue;
-          if (!area.has(vecKey(ally.pos)) || helped.has(ally.unitId)) continue;
-          helped.add(ally.unitId);
+          if (!area.has(vecKey(ally.pos)) || ticks.helped.has(ally.unitId)) continue;
+          ticks.helped.add(ally.unitId);
           applySelfEffects(draft, ally, boons, sourceOf(plan.unit, a.def.id), events);
         }
       }
@@ -1973,16 +2062,17 @@ function runDash(draft: GameState, board: Board, plans: UnitPlan[], pending: Dis
       // path would otherwise hand Aegis a guard pointing at himself — a unit
       // standing in for itself, which is both meaningless and a redirect loop
       // waiting to be written.
-      applySelfEffects(draft, plan.unit, casterSafe(a.def.effects).filter((e) => e.kind !== 'guard'),
-        sourceOf(plan.unit, a.def.id), events);
+      const own = casterSafe(a.def.effects).filter((e) => e.kind !== 'guard');
+      applySelfEffects(draft, plan.unit, own, sourceOf(plan.unit, a.def.id), events);
+      if (own.some((e) => BENEFICIAL_KINDS.has(e.kind))) ticks.helped.add(plan.unit.unitId);
     }
-    grantUseEnergy(plan.unit, a.def, hitEnemy, events);
+    grantUseEnergy(plan.unit, a.def, ticks, events);
     // CAMO-REVEAL / REVEAL-FIX: a dash gives a *concealed* dasher away, whether
     // it landed damage or merely carried a debuff or a shove — and gives an open
     // one away not at all. Measured from `origin`: the tile it launched from is
     // the one that hid it, not the one it arrived on. One gate for both cases
     // now that the damaging branch is no longer unconditional.
-    if (hitEnemy || isHarmfulUse(a.def)) revealIfConcealed(board, plan.unit, origin, a.def.id, events);
+    if (ticks.harmed.size > 0 || isHarmfulUse(a.def)) revealIfConcealed(board, plan.unit, origin, a.def.id, events);
     if (!vecEq(plan.unit.pos, origin)) repositioned.push(plan.unit);
     // TRAP-CENTRE: a dash may arm a mine too. No shipped kit does, but a trap
     // effect that silently did nothing on one phase out of three would be a
@@ -2388,7 +2478,10 @@ function runBlast(
     const stoppedOn = stopAt === undefined
       ? undefined
       : draft.units.find((u) => u.alive && vecEq(u.pos, stopAt));
-    let hitEnemy = false;
+    // ENERGY-PER-HIT: one tick per enemy the shot lands on, one per ally its
+    // boons reach. Lumen's auto attack — damage one way, a heal the other — is
+    // paid out of both halves of this one tally.
+    const ticks = noTicks();
     // ALLY-SAFE (Dev Note #11): FF1's default is that an attack endangers
     // whoever is standing in it. An ability may opt out of the friendly half.
     const allySafe = a.def.noFriendlyFire === true;
@@ -2408,8 +2501,9 @@ function runBlast(
           if (self && a.def.selfHarm !== true) continue;
           if (allySafe && !enemy) continue; // ALLY-SAFE — this one spares the team
           if (untargetable) continue; // the whole harmful half is skipped, energy included
-          // Energy stays enemy-only, so splashing an ally pays nothing.
-          if (enemy) hitEnemy = true;
+          // Enemies only: splashing a teammate pays nothing, which is the
+          // owner's caveat on the harmful half.
+          if (enemy) ticks.harmed.add(target.unitId);
           if (e.kind === 'damage') {
             const key = vecKey(target.pos);
             const base = innerAmount !== undefined && inner.has(key) ? innerAmount : (e.amount ?? 0);
@@ -2425,6 +2519,7 @@ function runBlast(
           else debuffs.push({ victim: target, effect: e, source: sourceOf(plan.unit, a.def.id) }); // weaken/slow/root/reveal
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
           if (enemy) continue; // beneficial effects never touch enemies
+          ticks.helped.add(target.unitId);
           benefits.push({ target, effect: e, source: sourceOf(plan.unit, a.def.id) });
         }
       }
@@ -2463,11 +2558,11 @@ function runBlast(
     }
 
     // A decoy in a damaging ability's area is destroyed (R2) — no energy, no
-    // riders; it never counts as an enemy hit, so `hitEnemy` stays units-only.
+    // riders; it never counts as an enemy hit, so the tally stays units-only.
     if (a.def.effects.some((e) => e.kind === 'damage')) {
       destroyDecoysInArea(draft, a.area, plan.unit.owner, events);
     }
-    grantUseEnergy(plan.unit, a.def, hitEnemy, events);
+    grantUseEnergy(plan.unit, a.def, ticks, events);
   }
 
   // ── Sub-step 1: every status in the phase, both teams at once ──────────────
@@ -2611,7 +2706,8 @@ function detonateDelayedBlasts(
     // enemy — a grenade does not check tags on its way off. Beneficial effects
     // still reach only the caster's own team.
     const area = new Set(d.area.map(vecKey));
-    let hitEnemy = false;
+    // ENERGY-PER-HIT, one turn late: the same tally, for the same reasons.
+    const ticks = noTicks();
     for (const target of draft.units) {
       if (!target.alive || !area.has(vecKey(target.pos))) continue;
       // AOE-LoS — the shelter is re-read **now**, against where everybody
@@ -2632,7 +2728,7 @@ function detonateDelayedBlasts(
           if (target.unitId === caster.unitId && def.selfHarm !== true) continue;
           if (def.noFriendlyFire === true && !enemy) continue; // ALLY-SAFE
           if (untargetable) continue;
-          if (enemy) hitEnemy = true; // energy stays enemy-only
+          if (enemy) ticks.harmed.add(target.unitId); // enemies only
           if (e.kind === 'damage') {
             // AOE-LoS: the amount is the one stamped at cast (or the authored
             // number, for a grenade thrown before this rule existed) and the
@@ -2646,14 +2742,14 @@ function detonateDelayedBlasts(
           }
           else if (isStatusKind(e.kind)) debuffs.push({ victim: target, effect: e, source: sourceOf(caster, def.id) });
         } else if (BENEFICIAL_KINDS.has(e.kind)) {
-          if (!enemy) benefits.push({ target, effect: e, source: sourceOf(caster, def.id) });
+          if (!enemy) {
+            ticks.helped.add(target.unitId);
+            benefits.push({ target, effect: e, source: sourceOf(caster, def.id) });
+          }
         }
       }
     }
-    if (hitEnemy && caster.alive) {
-      const gained = grantEnergy(caster, def.energyGain);
-      if (gained > 0) events.push({ type: 'energyGained', unitId: caster.unitId, amount: gained });
-    }
+    if (caster.alive) grantUseEnergy(caster, def, ticks, events);
   }
 }
 

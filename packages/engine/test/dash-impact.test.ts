@@ -164,7 +164,7 @@ describe('DASH-IMPACT: FF1 polarity — harmful to enemies, beneficial to allies
     expect(hpOf(state, 'enemy')).toBe(70);
   });
 
-  it('energy is once per use and needs an enemy — a blast that hits only air pays nothing', () => {
+  it('ENERGY-PER-HIT: a blast that hits only air pays nothing, two enemies pay twice', () => {
     const alone = makeState([
       makeUnit('u', 0, { x: 0, y: 7 }, { characterId: 'test-char' }),
       makeUnit('e', 1, { x: 14, y: 0 }, { characterId: 'test-char' }),
@@ -177,9 +177,12 @@ describe('DASH-IMPACT: FF1 polarity — harmful to enemies, beneficial to allies
       makeUnit('a', 1, { x: 6, y: 8 }, { characterId: 'test-char' }),
       makeUnit('b', 1, { x: 7, y: 7 }, { characterId: 'test-char' }),
     ]);
-    // Two enemies caught, one `energyGain` — not two.
+    // Re-specced 2026-08-29: this read "two enemies caught, one `energyGain` —
+    // not two" until the owner ruled that multiple hits pay multiple ticks. The
+    // *needs an enemy* half above is untouched, and is the half that keeps this
+    // from being "energy for casting".
     expect(unit(run(crowd, [{ unitId: 'u', ability: { abilityId: 'leap', target: [{ x: 6, y: 7 }] } }]).state, 'u').energy)
-      .toBe(4 + 5);
+      .toBe(4 + 4 + 5);
   });
 });
 
