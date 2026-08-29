@@ -359,3 +359,38 @@ describe('straightenDashes (STRAIGHT-DASH)', () => {
     expect(ability.dur, 'clip fits the straight traversal').toBeCloseTo(2 * ROLL_TILE_BEATS, 6);
   });
 });
+
+describe('TRAP-INSTANT (a trap fires as the walker steps on it)', () => {
+  it('times a trap hit at the arrival on the trap tile, not the move end', () => {
+    // The engine emits moveStep(onto trap) -> trapTriggered -> damage, and the
+    // walker keeps going (a non-halting trap continues to its destination).
+    const events = [
+      { type: 'phaseStart', phase: 'move' },
+      { type: 'moveStep', unitId: 'e', from: { x: 0, y: 0 }, to: { x: 1, y: 0 } },
+      { type: 'moveStep', unitId: 'e', from: { x: 1, y: 0 }, to: { x: 2, y: 0 } }, // onto the trap
+      { type: 'trapTriggered', trapId: 't1', unitId: 'e' },
+      { type: 'damage', unitId: 'e', amount: 20, absorbed: 0, sourceUnitId: 'v', abilityId: 'overwatch_trap' },
+      { type: 'moveStep', unitId: 'e', from: { x: 2, y: 0 }, to: { x: 3, y: 0 } }, // walks on
+    ] as unknown as import('@cards/engine').TurnEvent[];
+    const cues = choreograph(events);
+    const moves = of(cues, 'move').filter((c) => c.unitId === 'e').sort((a, b) => a.t - b.t);
+    const onTrap = moves.find((m) => m.to.x === 2 && m.to.y === 0)!;
+    const impact = of(cues, 'impact').find((c) => c.abilityId === 'overwatch_trap')!;
+    // Fires as the walker ARRIVES on the trap (end of that step)…
+    expect(impact.t).toBeCloseTo(endOf(onTrap), 6);
+    // …which is before the walk finishes — the last step ends a beat later.
+    expect(impact.t).toBeLessThan(Math.max(...moves.map(endOf)));
+  });
+
+  it('a non-trap hit in the same phase still lands at the phase end', () => {
+    const events = [
+      { type: 'phaseStart', phase: 'move' },
+      { type: 'moveStep', unitId: 'e', from: { x: 0, y: 0 }, to: { x: 1, y: 0 } },
+      { type: 'moveStep', unitId: 'e', from: { x: 1, y: 0 }, to: { x: 2, y: 0 } },
+      { type: 'damage', unitId: 'e', amount: 5, absorbed: 0, sourceUnitId: 'v', abilityId: 'chip' },
+    ] as unknown as import('@cards/engine').TurnEvent[];
+    const cues = choreograph(events);
+    const moves = of(cues, 'move').filter((c) => c.unitId === 'e');
+    expect(of(cues, 'impact')[0]!.t).toBeCloseTo(Math.max(...moves.map(endOf)), 6);
+  });
+});
