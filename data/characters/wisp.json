@@ -64,7 +64,7 @@
       "name": "Bola",
       "phase": "blast",
       "shape": "line",
-      "range": 6,
+      "range": 5,
       "hits": "first",
       "cooldown": 3,
       "energyGain": 8,

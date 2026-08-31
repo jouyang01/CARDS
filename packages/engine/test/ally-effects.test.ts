@@ -39,7 +39,13 @@ describe('FF1: friendly fire — harmful hits everyone, beneficial stays own-tea
     // and he is in the area); he is simply already full. `caster-safe.test.ts`
     // carries the rule in full, including the ally half that this test pins.
     expect(unit(state, 'A1').hp).toBe(100);
-    expect(unit(state, 'A1').energy).toBe(13); // hit an enemy → 8 on hit + 5 passive
+    // ENERGY-PER-HIT (2026-08-29). `nova` is the shape the owner named — *"a
+    // heal for allies and damage for enemies"* — so it is paid out of both
+    // halves at once: one tick for the enemy it damaged, one for each of the two
+    // allies its heal reached (the caster included, full HP or not: the rule is
+    // who the effect landed on, exactly as a hit fully eaten by a shield is
+    // still a hit). 3 x 8 + 5 passive.
+    expect(unit(state, 'A1').energy).toBe(29);
   });
 
   it('harmful riders ride along onto allies too — slow and knockback', () => {
@@ -85,12 +91,25 @@ describe('FF1: friendly fire — harmful hits everyone, beneficial stays own-tea
     expect(state.kills).toEqual([1, 0]);
   });
 
-  it('a heal-only AoE grants energy on use even with no enemy in the area', () => {
+  it('a heal-only AoE pays per ALLY reached, and needs no enemy at all', () => {
+    // Re-specced 2026-08-29. It read "grants energy on use" — a flat tick for
+    // casting — until the owner ruled: *"Energy on heals/shields should give
+    // energy only if it hits allied units. If it hits multiple it should give
+    // multiple ticks."* Two allies in the disc (the caster is one), so 2 x 8.
     const caster = makeUnit('A1', 0, { x: 5, y: 5 });
     const ally = makeUnit('A2', 0, { x: 6, y: 5 }, { hp: 40 });
     const { state } = run(makeState([caster, ally, makeUnit('E', 1, { x: 0, y: 0 })]), [{ unitId: 'A1', ability: { abilityId: 'mend', target: [{ x: 5, y: 5 }] } }], []);
     expect(unit(state, 'A2').hp).toBe(60); // ally healed 20
-    expect(unit(state, 'A1').energy).toBe(13); // support use pays energy: 8 on use + 5 passive
+    expect(unit(state, 'A1').energy).toBe(21); // 8 + 8 on the two allies + 5 passive
+  });
+
+  it('…and a heal that reaches NOBODY pays nothing — support is not paid for casting', () => {
+    // The half that makes the number above about the recipients. `mend` is a
+    // `circle` aimed away from the caster with no ally standing in it; before
+    // this rule it paid in full for landing on empty ground.
+    const caster = makeUnit('A1', 0, { x: 5, y: 5 });
+    const { state } = run(makeState([caster, makeUnit('E', 1, { x: 0, y: 0 })]), [{ unitId: 'A1', ability: { abilityId: 'mend', target: [{ x: 9, y: 9 }] } }], []);
+    expect(unit(state, 'A1').energy).toBe(5); // the passive tick only
   });
 
   it('a beneficial buff AoE never lands on enemies', () => {

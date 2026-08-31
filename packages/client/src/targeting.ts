@@ -19,6 +19,8 @@ import {
   chargeVictims,
   chargedUnits,
   lineImpact,
+  blastCentreAllowed,
+  energyIsPerHit,
   placementIsFree,
   truncateAtImpact,
   abilityProfile,
@@ -36,7 +38,6 @@ import {
   reachableSquares,
   reconstructPath,
   stepCost,
-  terrainAt,
   validateMovePath,
   vecEq,
   vectorToStep,
@@ -170,7 +171,12 @@ export function abilityTooltip(def: AbilityDef): string[] {
   const reach = [`range ${def.range}`];
   if (def.radius !== undefined) reach.push(`radius ${def.radius}`);
   lines.push(reach.join(' · '));
-  const econ = [`cooldown ${def.cooldown}`, `energy +${def.energyGain}`];
+  // ENERGY-PER-HIT: `energyGain` is paid once per unit the ability lands on, so
+  // a bare "+8" now understates a rail shot through three enemies and overstates
+  // one down an empty row. The engine's own predicate decides which abilities
+  // get the qualifier — a blink still earns its tick for the act.
+  const per = energyIsPerHit(def) ? ' per hit' : '';
+  const econ = [`cooldown ${def.cooldown}`, `energy +${def.energyGain}${per}`];
   if (def.delayTurns !== undefined) econ.push(`delay ${def.delayTurns}t`);
   lines.push(econ.join(' · '));
   // AUTO-PREVIEW: the numeric tell, above the raw effect list. It is the line
@@ -377,9 +383,15 @@ export function abilityPreview(
   if (!aimLegal(unit, ability, aim, aimStep)) return [];
   const target = aim[0];
   if (target !== undefined && !placementIsFree(ability, target, state)) return [];
+  const board = buildBoard(map);
+  // LOBBED-WALL: …and the same refusal for a blast centred on a solid block.
+  // `aimLegal` cannot answer this — it is handed no board — so without it here
+  // the hover drew a full burst over a wall that `commitAim` then refused: the
+  // preview said yes and the click said no, on the same tile, at the same time.
+  if (target !== undefined && !blastCentreAllowed(board, ability, target)) return [];
   // Same call the engine makes, same step — so the preview is exactly the tile
   // set that will be hit, rotation included.
-  const area = expandShape(buildBoard(map), ability, unit.pos, aim, aimStep);
+  const area = expandShape(board, ability, unit.pos, aim, aimStep);
   // BOLA-OVERLAY: …and the same truncation, so a `hits: "first"` line is drawn
   // to the enemy it stops on rather than promising the full range behind them.
   // The engine's own function, on the engine's own area — there is no second
@@ -985,10 +997,10 @@ export function commitAim(
     if (guardLandings(buildBoard(map), state, unit, ability.range).length > 0) return undefined;
   }
 
-  // A blast centre may not sit on a wall (mirrors the engine's `aimIsLegal`): a
-  // grenade cannot be lobbed onto a solid wall block. Refused at the click so the
-  // board never offers a target the order pipeline would then drop.
-  if (ability.shape === 'circle' && terrainAt(buildBoard(map), target) === 'wall') return undefined;
+  // LOBBED-WALL: a blast centre may not sit on a solid wall block. The engine's
+  // own predicate, not a copy of it — `abilityPreview` above calls the same one,
+  // so the tile the board offers and the tile the click takes cannot disagree.
+  if (!blastCentreAllowed(buildBoard(map), ability, target)) return undefined;
 
   const resolved = aimFor(map, state, unit, ability, target, rotation);
   return aimLegal(unit, ability, resolved.aim, resolved.aimStep) ? resolved : undefined;

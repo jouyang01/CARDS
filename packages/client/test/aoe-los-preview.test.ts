@@ -5,7 +5,7 @@ import {
   type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster,
   type UnitState, type Vec2,
 } from '@cards/engine';
-import { abilityPreview, previewBandSets, rangeEnvelope } from '../src/targeting.js';
+import { abilityPreview, commitAim, previewBandSets, rangeEnvelope } from '../src/targeting.js';
 import { previewNumbers } from '../src/preview-numbers.js';
 import { startHotSeat } from '../src/app.js';
 import { aimAndCommit, armAbility, layer, mountUI } from './app-harness.js';
@@ -238,5 +238,64 @@ describe('AOE-LoS: driven through the controller, the overlay the player sees', 
     expect(lit.has('10,10'), 'the sheltered tile is NOT drawn as covered').toBe(false);
     expect(lit.has('10,11'), 'nor is the pillar').toBe(false);
     expect(lit.has('10,13'), 'the tile south of the centre is').toBe(true);
+  });
+});
+
+// ── LOBBED-WALL ─────────────────────────────────────────────────────────────
+
+/**
+ * LOBBED-WALL — **the preview refuses the wall too, not just the click.**
+ *
+ * Owner Dev Note (2026-08-29): *"No lobbed projectiles should be able to be
+ * lobbed onto hard walls."*
+ *
+ * The engine has refused a wall-centred blast since AOE-LoS, and so has
+ * `commitAim`. What did not was the **hover**: `aimLegal` decides whether
+ * `abilityPreview` draws anything and it is handed no board, so it could only
+ * ask about range. Hovering the pillar therefore lit a full radius-2 disc
+ * centred on it — the loud half of the UI saying yes — while the refusal marker
+ * beside it said no and the click did nothing. A player reads the disc.
+ *
+ * Both halves now call the engine's `blastCentreAllowed`, which is why this is
+ * asserted through `abilityPreview` and `commitAim` rather than through a
+ * predicate: the bug was never in the rule, it was in which callers knew it.
+ */
+describe('LOBBED-WALL: a blast may not be centred on a wall', () => {
+  it('THE NOTE: hovering the pillar draws NO burst', () => {
+    const { state, me } = field(PILLAR, { x: 10, y: 10 });
+    expect(abilityPreview(PILLAR, me, GRENADE, [{ x: 10, y: 11 }], undefined, state))
+      .toEqual([]);
+  });
+
+  it('…and the click is refused, as it already was', () => {
+    const { state, me } = field(PILLAR, { x: 10, y: 10 });
+    expect(commitAim(PILLAR, state, me, GRENADE, { x: 10, y: 11 })).toBeUndefined();
+  });
+
+  it('THE CONTROL: one tile south, on open floor, both still say yes', () => {
+    // The pair that keeps the two above about the wall rather than about the
+    // grenade being unaimable here at all.
+    const { state, me } = field(PILLAR, { x: 10, y: 10 });
+    expect(abilityPreview(PILLAR, me, GRENADE, [CENTRE], undefined, state).length)
+      .toBeGreaterThan(4);
+    expect(commitAim(PILLAR, state, me, GRENADE, CENTRE)).toBeDefined();
+  });
+
+  it('COVER IS NOT A WALL: a grenade still lands on a barricade square', () => {
+    // Deliberate, and stated so a future reading of "hard walls" does not
+    // quietly widen: cover is crouch-height and the grenade lands on the floor
+    // behind it. The barricade board puts cover at (12,12).
+    const { state, me } = field(BARRICADE, { x: 10, y: 10 });
+    expect(commitAim(BARRICADE, state, me, GRENADE, { x: 12, y: 12 })).toBeDefined();
+    expect(abilityPreview(BARRICADE, me, GRENADE, [{ x: 12, y: 12 }], undefined, state).length)
+      .toBeGreaterThan(0);
+  });
+
+  it('the preview and the resolver agree about the refusal, end to end', () => {
+    // PREVIEW-AUDIT's rule for this case: an empty preview must mean a turn in
+    // which nothing happened, not merely a quiet overlay over a live shot.
+    const { state, me, foe } = field(PILLAR, { x: 10, y: 10 });
+    expect(resolved(PILLAR, state, me, [{ x: 10, y: 11 }], foe.unitId), 'the order dropped')
+      .toBe(0);
   });
 });

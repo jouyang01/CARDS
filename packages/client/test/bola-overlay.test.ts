@@ -16,7 +16,7 @@ import bastion from '../../../data/characters/bastion.json';
  * BOLA-OVERLAY — **the drawn line stops where the bola stops.**
  *
  * Owner (W2, the UI consequence): *"the drawn line overlay must TERMINATE AT THE
- * IMPACT POINT, not extend to the full range 6 — otherwise the overlay promises
+ * IMPACT POINT, not extend to the full range 5 — otherwise the overlay promises
  * reach the ability no longer has."*
  *
  * The fix is not a shorter line drawn over a longer area — it is that the area
@@ -34,7 +34,7 @@ const POOL = buildCatalystPool(catalystData as unknown as CatalystData);
 const BOLA: AbilityDef = WISP.abilities.find((a) => a.id === 'bola')!;
 const K = (p: Vec2): string => `${p.x},${p.y}`;
 
-/** Open, and wide enough that range 6 never runs out of board. */
+/** Open, and wide enough that the bola's range never runs out of board. */
 const MAP: MapDef = {
   id: 'lane', name: 'lane', width: 21, height: 21, walls: [], cover: [], brush: [],
   spawns: [[{ x: 4, y: 10 }, { x: 4, y: 12 }], [{ x: 16, y: 10 }, { x: 16, y: 12 }]],
@@ -59,11 +59,11 @@ describe('BOLA-OVERLAY: the beam is drawn to the impact point', () => {
   });
 
   it('THE PROMISE IT NO LONGER MAKES: it does not run on to full range', () => {
-    // Range 6 from (4,10) reaches (10,10). The four tiles past the impact are
+    // Range 5 from (4,10) reaches (9,10). The two tiles past the impact are
     // the "reach the ability no longer has", and drawing them is the bug.
     const { state, me } = field({ x: 7, y: 10 });
     const drawn = new Set(abilityPreview(MAP, me, BOLA, [EAST], undefined, state).map(K));
-    for (const x of [8, 9, 10]) {
+    for (const x of [8, 9]) {
       expect(drawn.has(`${x},10`), `${x},10 is behind the impact`).toBe(false);
     }
   });
@@ -74,7 +74,7 @@ describe('BOLA-OVERLAY: the beam is drawn to the impact point', () => {
     // about the impact rather than about the line being short.
     const { state, me } = field({ x: 4, y: 18 }); // off the row entirely
     const drawn = abilityPreview(MAP, me, BOLA, [EAST], undefined, state).map(K);
-    expect(drawn).toEqual(['5,10', '6,10', '7,10', '8,10', '9,10', '10,10']);
+    expect(drawn).toEqual(['5,10', '6,10', '7,10', '8,10', '9,10']);
   });
 
   it('the nearer of two enemies is the one it stops on', () => {

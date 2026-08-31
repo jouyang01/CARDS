@@ -8342,3 +8342,107 @@ earlier pass assumed the blade was +Z; it is +Y, and nearly shipped a −90° th
 would have splayed it out sideways — real claws). (2) "Reverse grip" was
 under-specified; "down" and "back" are both reverse grips, and only a render in
 front of the owner settled which.
+
+---
+
+## 2026-08-29 — Energy per hit, the bola's reach, and a wall the preview forgot
+
+### ENERGY-PER-HIT — the judgment calls the two notes did not settle
+
+The owner's notes give the rule and one worked example (Rail Shot through two
+enemies pays 16). Three things they do not say, decided here and worth the
+record because each could reasonably have gone the other way:
+
+**1. A recipient is a unit the effect LANDED ON, not one it changed.** A heal
+that reaches an ally already at full HP is still a tick; so is a shield on
+somebody who already has one. The alternative — pay only when something moved —
+is more satisfying to describe and much worse to hold: it would have to rule on
+a 0-heal, a refreshed status, and damage entirely eaten by a shield, and that
+last one already counts as a hit everywhere else in the engine. "Who did it
+reach" is the same question FF1 and CASTER-SAFE already answer, so there is one
+notion of *landed* rather than two.
+
+**2. The caster counts as an ally.** Aegis's Barrier Pulse shielding himself and
+one teammate is two ticks. He is an allied unit standing in his own area and the
+shield really lands on him; excluding him would need a rule that exists only to
+make the caster special, and self-buffs would then pay nothing at all — a
+regression the notes plainly do not intend.
+
+**3. Ticks are granted one at a time, so Energized floors each.** Two ticks of 5
+under Energized is 7 + 7 = 14, not `floor(10 × 1.5)` = 15. "Multiple ticks" is
+what the note says and the arithmetic follows the words. It is also the version
+that cannot drift: `grantEnergy` is the only place the multiplier lives, and
+calling it n times needs no second rounding rule.
+
+**And one exception the notes do not mention but require.** `isSelfOrUtility`
+granted energy to anything with a beneficial effect *anywhere in its list*, so
+Lumen's auto attack — damage one way, a heal the other — was paid in full for
+hitting nothing. Replacing it with "count the recipients" would also have
+silently stopped paying every trap, decoy and blink in the roster, which is not
+what was asked. `isPlacementOrTravel` is the narrow version: abilities whose
+whole effect is the act, with nobody to count. Flagged rather than buried,
+because it is the one place the implementation is broader than the two notes.
+
+**The consequence nobody has playtested.** Energy income goes up, in the
+places the game already rewards: a four-target ultimate now pays four ticks, and
+`Energized` compounds with the count rather than with a single grant. Ultimates
+will come round faster on crowded boards. That is what the note asks for and it
+is a balance change, so it is named here rather than absorbed.
+
+### LOBBED-WALL — the rule was right, two of its three callers knew it
+
+The owner asked that lobbed projectiles not land on hard walls. The engine has
+refused a wall-centred blast since AOE-LoS and `commitAim` has refused the click;
+the **hover** had not, because `aimLegal` decides whether `abilityPreview` draws
+anything and is handed no board, so for a circle it could only ask about range.
+Hovering a pillar lit a full radius-2 disc while the refusal marker beside it
+said no.
+
+This is the same failure DECISIONS 2026-10-07 already names — a shared rule is
+not finished until every caller has been looked at. The rule is now one exported
+engine predicate, `blastCentreAllowed`, called by the resolver, the preview and
+the click; the inline copy in `commitAim` is gone. Written for **every** circle
+rather than for the `lobbed` flag: lobbed is what makes a wall reachable (an
+arcing shot skips the caster's line-of-sight gate), but a direct burst that got
+there would have the same nothing to land on. Cover stays allowed — crouch-height,
+the grenade lands on the floor behind it — and there is a named test saying so,
+so a later reading of "hard walls" cannot quietly widen.
+
+### GAME_SPEC edited, deliberately
+
+§4 and §5 stated the old energy rule in prose ("only if it hits at least one
+enemy"). Leaving them would have left the ruleset contradicting the resolver on
+the exact sentence the owner rewrote, so both are updated, including the
+per-tick flooring. Noted because GAME_SPEC is the ruleset rather than the
+Builder's file: this is a transcription of an owner instruction, not a design
+call, and anything beyond transcription still belongs to whoever owns the spec.
+
+## Open Questions for the Analyzer — 2026-08-29
+
+### Open Question 10 — energy income is up and nothing re-balances around it
+
+Per-hit energy raises income most for the abilities that already reward
+positioning: AoE ultimates, Ravok's circles, Bastion's ram through a line. Ult
+uptime on a crowded board is now a function of how many bodies you catch, which
+is the point — but `ULT_COST` is still 100 and no `energyGain` was touched. If
+ultimates start coming round every other turn in 4v4, the lever is the per-ability
+`energyGain` in `data/`, which is balance and not the Builder's. Worth measuring
+before it is tuned; not filed as an item because the right answer may be "good".
+
+### Open Question 11 — the HUD shows no energy preview, so per-hit is invisible before you fire
+
+`previewNumbers` writes damage, shields and heals over the units an aim would
+reach; it says nothing about energy. That was defensible when a cast paid a flat
+number a player could read off the tooltip. Now the payment depends on **how many
+units the aim catches**, which is exactly the sort of thing the preview exists to
+answer — "line these two up and you ult next turn" is a real decision the board
+currently cannot show. The tooltip's new "per hit" is the cheap half; a previewed
+total would be the honest one.
+
+### Carried over, still open
+
+  - **Session 21 OQ #7** (Blast pacing after FOLLOW-THROUGH) is still unplayed.
+  - **Session 21 OQ #8** (`build_glb.py --in-place` still produces the corruption
+    the rebuild worked around) is untouched — no Blender in this environment.
+  - **Bola damage 24 vs an earlier Dev Note's 12** remains unresolved. The range
+    is now 5; the damage question is still a balance call nobody has made.

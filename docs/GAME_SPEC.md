@@ -138,12 +138,17 @@ Every turn = **Decision Phase** then **Resolution**.
   stealth, decoy, teleport, untargetable`. New effect kinds require an engine change
   (Designer marks these `ENGINE ASK`).
 - **Cooldowns** tick down at end of turn. Using an ability grants its `energyGain`
-  only if it hits at least one enemy (self-buffs grant their listed energy on use).
+  **once per unit it lands on** — one tick per enemy a harmful effect reaches, one
+  per ally a beneficial one reaches, so an ability that is both (Lumen's Radiant
+  Lash) is paid for each. Hitting an ally with a damaging effect pays nothing.
+  Placement and travel abilities (traps, decoys, teleports) have no recipient to
+  count and grant their listed energy once on use.
 
 ## 5. Energy and ultimates
 
-- Start at 0. **+5 passive per turn** (end of turn). Abilities grant energy on hit.
-  `Energized` gives +50% energy gained (round down).
+- Start at 0. **+5 passive per turn** (end of turn). Abilities grant energy per hit
+  (§4). `Energized` gives +50% energy gained (round down), applied to **each tick**
+  — two ticks of 5 under Energized is 7 + 7, not `floor(10 × 1.5)`.
 - **Ultimate costs 100 energy**, resets to 0 on use. Ultimates are phase-tagged like
   any ability and follow the same resolution rules.
 
