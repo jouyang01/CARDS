@@ -1,6 +1,22 @@
 {
   "id": "bastion",
-  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
   "weaponClass": "unarmed",
-  "_weaponClassNote": "Fists and gauntlets. Both hands empty, both hands are the weapon."
+  "_weaponClassNote": "Fists and gauntlets. Both hands empty, both hands are the weapon. Unlike Vex's rifle or Aegis's door there is NO separated hand-bone prop: the matched gauntlets are worn, they move with the arms, so they are part of the body sculpt and rig. The only runtime-generated object is the in-flight Chain Hook (a VFX/animation concern, ART_PIPELINE §13), never a held prop.",
+  "thesis": "Bastion doesn't predict where you'll be — he decides. A buff, oversized industrial frontliner, the ANCHOR: not a wall that stands still but the thing you are attached to and cannot get away from. He is the ONLY character with no weapon and no magic — everything he does is muscle and machinery and NOTHING he does glows. His hands are the kit: a matched pair of massive, blunt, mechanical gauntlets, with a heavy chain coiled across both forearms and shoulders that fires and hooks you across the board. He reads as SKIN AND IRON — the darkest, heaviest, widest mass on the board, warm bare muscle above the gauntlets doing the value contrast against near-black metal and the cool slate terrain. He leans TOWARD the fight, chest out, chin up, eager — the opposite of the two big characters he must never converge with: not hunched, burdened or grim like Aegis, and not red-hot blood-and-rage like Ravok. Cold, colourless, upright and pleased to see you. VFX primitive: the hot white IMPACT FLASH — he emits force, not light; a hard white flash and compression at the instant of contact (knuckle, shoulder, hook bite), short and violent and gone; dead grey until he connects. The chain is not an effect but a real physical object with weight — the primary all-angle silhouette identifier, coiled when idle and spanning the whole board when it hooks.",
+  "_artNote": "Board token built via the Rodin IMPORT path (tools/art/rodin_bake_lowpoly.py), the same as Wisp and Vex — not the procedural generator. Owner supplied a Rodin text/image-to-3D export (base_basic_pbr.glb, 120k tris, diffuse+normal+metallic-roughness). Baked to 8000 tris / 1024 atlas (matching Vex's body budget; ART_PIPELINE §7 propose-and-confirm — owner to confirm, could push lower). Voxel-remesh + shade-smooth + Smart-UV re-unwrap + diffuse bake onto clean UVs, per the Rodin path. Text-to-image generation summary that fed Rodin: docs/design/bastion-text-to-image.md. Turnaround QA (iso 4-yaw + 8° low + top-down) confirmed: buff/broadest footprint, bare warm-skin arms vs near-black iron torso/legs, coiled chain reads as dark bands from every angle including top-down, matched symmetric gauntlets, bare bearded head, upright and forward, separates cleanly from the #12141a board. The baked token + atlas + rig-ready FBX live in build/art/bastion/ (gitignored). REMAINING: rig bastion_rig.fbx + bastion_atlas.png through Mixamo (weaponClass 'unarmed' — fists/gauntlets, No Fingers), then run build_glb.py to assemble packages/client/public/models/bastion.glb + clips manifest; his forward lean is applied as posture bone offsets after rigging, never baked. Full parameter block (build/posture/face/vfxLanguage) still to be written; palette below to be re-sampled from the baked texture.",
+  "palette": {
+    "_comment": "PROPOSED targets for the text-to-image reference and the token bake (propose-and-confirm, ART_PIPELINE.md §7) — owner to confirm. NOT yet sampled: like Wisp's and Vex's, the shipped palette should be re-sampled from the baked Rodin texture and this block replaced. He has NO accent colour — the whole palette is two materials, iron and warm skin, plus a contact-only white. Test against the real board (#12141a bg, cool slate terrain), never white. His readability lives entirely in the skin/iron value split: warm bright skin vs near-black iron, distinct from Ravok's warm/red register and Aegis's hunched covered mass.",
+    "ironBase": "#1a1c20",
+    "ironWornEdge": "#3a3d43",
+    "chainLinks": "#26282e",
+    "skinMid": "#c88a5e",
+    "skinHighlight": "#e2a97c",
+    "skinShadow": "#8a5638"
+  },
+  "impact": {
+    "_comment": "Bastion has NO magic and NO power source — this is deliberately not a 'magic' block. His ONLY effect is the hot white IMPACT FLASH at the instant of contact (knuckle, shoulder, hook bite): force, not light. Short, violent, gone — never a persistent glow on the baked body. This is a VFX/animation concern handled downstream in data/vfx.json (ability-vfx.ts) after the mesh is rigged; recorded here only so the sculpt and palette are not built in a way that forecloses it. warmthForbidden is true: the flash is a cold white, NOT warm — warm is Ravok's register.",
+    "flashCore": "#ffffff",
+    "flashEdge": "#ffe6c0",
+    "warmthForbidden": true
+  }
 }
