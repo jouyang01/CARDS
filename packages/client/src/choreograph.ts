@@ -213,12 +213,30 @@ function simultaneousPhase(phase: Phase, events: readonly TurnEvent[], start: nu
   // Movement: step k of every mover plays at the same beat, so a simultaneous
   // Move phase reads as simultaneous. The engine emits Move step-major and Dash
   // unit-major; counting per unit gives the right beat under both.
+  //
+  // TRAP-INSTANT: a trap fires the moment the walker steps onto it, not when the
+  // whole move settles. The engine emits `moveStep(onto trap) → trapTriggered →
+  // damage` in order and the walker keeps going (a non-halting trap), so all of
+  // its damage would otherwise land at the phase end (`impactT` below), reading
+  // as "it went off when they reached their destination". Instead, remember the
+  // beat the walker ARRIVES on the trap (its step count so far), and time that
+  // trap's damage there rather than at the phase end.
   const stepsSoFar = new Map<string, number>();
+  const trapArrival = new Map<string, number>(); // victim -> beat their damage fires, if a trap fired it
+  const damageTimes: (number | undefined)[] = []; // per damage event, in order; undefined = phase end
   for (const e of events) {
-    if (e.type !== 'moveStep') continue;
-    const k = stepsSoFar.get(e.unitId) ?? 0;
-    stepsSoFar.set(e.unitId, k + 1);
-    cues.push({ kind: 'move', t: start + k * BEAT, dur: BEAT, unitId: e.unitId, from: e.from, to: e.to, teleport: e.teleport });
+    if (e.type === 'moveStep') {
+      const k = stepsSoFar.get(e.unitId) ?? 0;
+      stepsSoFar.set(e.unitId, k + 1);
+      cues.push({ kind: 'move', t: start + k * BEAT, dur: BEAT, unitId: e.unitId, from: e.from, to: e.to, teleport: e.teleport });
+    } else if (e.type === 'trapTriggered') {
+      // Arrival on the trap = end of the step that entered it = step count * BEAT.
+      trapArrival.set(e.unitId, start + (stepsSoFar.get(e.unitId) ?? 0) * BEAT);
+    } else if (e.type === 'damage') {
+      const at = trapArrival.get(e.unitId);
+      if (at !== undefined) trapArrival.delete(e.unitId); // one trap, one hit — consume it
+      damageTimes.push(at);
+    }
   }
 
   // WALKED-DASH — a combat roll traverses its squares (walked moveSteps), and its
@@ -249,9 +267,13 @@ function simultaneousPhase(phase: Phase, events: readonly TurnEvent[], start: nu
   }
 
   const impactT = maxEnd(cues, start);
+  let di = 0;
   for (const e of events) {
     if (e.type === 'damage') {
-      cues.push({ kind: 'impact', t: impactT, dur: BEAT, unitId: e.unitId, amount: e.amount, absorbed: e.absorbed, sourceUnitId: e.sourceUnitId, abilityId: e.abilityId });
+      // A trap hit fires on arrival (TRAP-INSTANT); everything else lands at the
+      // phase end, where the shot's flight and the blast have finished.
+      const t = damageTimes[di++] ?? impactT;
+      cues.push({ kind: 'impact', t, dur: BEAT, unitId: e.unitId, amount: e.amount, absorbed: e.absorbed, sourceUnitId: e.sourceUnitId, abilityId: e.abilityId });
     }
   }
   for (const b of benefitEvents(events)) cues.push({ kind: 'benefit', t: impactT, dur: BEAT, ...b });
