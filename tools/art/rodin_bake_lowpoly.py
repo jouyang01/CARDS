@@ -51,6 +51,7 @@ os.environ.setdefault("GALLIUM_DRIVER", "llvmpipe")
 os.environ.setdefault("EGL_PLATFORM", "surfaceless")
 
 import bpy  # noqa: E402
+import bmesh  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 from mathutils import Vector  # noqa: E402
@@ -110,6 +111,112 @@ def build_lowpoly(high, target, voxel_div):
         bpy.ops.object.modifier_apply(modifier=dm.name)
     bpy.ops.object.shade_smooth()
     return low
+
+
+def build_lowpoly_collapse(high, target, weld_frac, smooth_angle):
+    """Collapse-decimate keeping the ORIGINAL UVs — no remesh, no re-bake. Returns
+    the new low object.
+
+    WHY THIS EXISTS (see docs/DECISIONS.md, Bastion). The voxel path above rebuilds
+    the surface, which is right for a hidden or smooth face (Wisp, Vex) but destroys
+    a BARE face: the head becomes a lump and the re-bake smears the mouth. Keeping
+    the original topology + UVs + diffuse preserves the face exactly.
+
+    The catch is that a Rodin sculpt is not watertight — it is tens of thousands of
+    disconnected shells (Bastion's chain is separate links), and blind collapse
+    shreds each thin shell into spikes. A small pre-WELD (`remove_doubles` at
+    `weld_frac` * bounding diagonal) stitches those fragments so thin features
+    reduce as continuous bands instead of jagged spikes. Keep it SMALL: a bare face's
+    features (eyes, nose) are close together and a large weld fuses and shreds them
+    (0.005 stitches the chain and spares Bastion's face; 0.008 already breaks it).
+
+    Then smooth-by-angle (not a flat shade_smooth) so curved muscle reads smooth
+    while genuine plate edges stay crisp."""
+    low = high.copy()
+    low.data = high.data.copy()
+    bpy.context.scene.collection.objects.link(low)
+    low.name = "LOW"
+    bpy.context.view_layer.objects.active = low
+    bpy.ops.object.select_all(action="DESELECT")
+    low.select_set(True)
+    vs = [v.co for v in low.data.vertices]
+    diag = (Vector((max(v.x for v in vs), max(v.y for v in vs), max(v.z for v in vs)))
+            - Vector((min(v.x for v in vs), min(v.y for v in vs), min(v.z for v in vs)))).length
+    if weld_frac > 0:
+        me = low.data
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=weld_frac * diag)
+        bm.to_mesh(me)
+        bm.free()
+        me.update()
+    cur = tri_count(low)
+    if cur > target:
+        dm = low.modifiers.new("dm", "DECIMATE")
+        dm.decimate_type = "COLLAPSE"
+        dm.ratio = target / cur
+        dm.use_collapse_triangulate = False   # keep quads where possible; fewer slivers
+        bpy.ops.object.modifier_apply(modifier=dm.name)
+    try:
+        bpy.ops.object.shade_smooth(use_auto_smooth=True,
+                                    auto_smooth_angle=math.radians(smooth_angle))
+    except TypeError:                          # older Blender: separate operator
+        bpy.ops.object.shade_smooth()
+    return low
+
+
+def extract_diffuse(high, res, out_png):
+    """Save the input mesh's base-colour (diffuse) texture to out_png at res x res.
+
+    Collapse mode keeps the original UVs, so the ORIGINAL Rodin diffuse maps 1:1 and
+    there is nothing to bake — the crisp face texture is exactly what we want to keep.
+    Prefers the image feeding Base Color, then one named *diffuse*, then any image."""
+    img = None
+    mat = high.data.materials[0] if high.data.materials else None
+    if mat and mat.use_nodes:
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf and bsdf.inputs["Base Color"].links:
+            src = bsdf.inputs["Base Color"].links[0].from_node
+            if src.type == "TEX_IMAGE":
+                img = src.image
+        if img is None:
+            for nd in mat.node_tree.nodes:
+                if nd.type == "TEX_IMAGE" and nd.image and "diffuse" in (nd.image.name or "").lower():
+                    img = nd.image
+                    break
+        if img is None:
+            for nd in mat.node_tree.nodes:
+                if nd.type == "TEX_IMAGE" and nd.image:
+                    img = nd.image
+                    break
+    if img is None:
+        raise SystemExit("collapse mode: no diffuse texture on the input material")
+    tmp = out_png.with_suffix(".orig.png")
+    img.filepath_raw = str(tmp)
+    img.file_format = "PNG"
+    img.save()
+    im = Image.open(tmp).convert("RGB")
+    if im.width == im.height and im.width != res:
+        im = im.resize((res, res), Image.LANCZOS)
+    elif im.width != im.height:
+        print(f"  ! diffuse is {im.width}x{im.height} (not square) — kept as-is, not resized to {res}")
+    im.save(out_png)
+    tmp.unlink()
+
+
+def apply_flat_texture(low, atlas_png, cid):
+    """Give the collapsed mesh a flat-lit material pointing at the atlas, keeping its
+    original UVs. Mirrors the tail of unwrap_and_bake so token render + export match
+    what build_glb.py re-applies after rigging."""
+    mat = bpy.data.materials.new(f"{cid}_collapse")
+    mat.use_nodes = True
+    tex = mat.node_tree.nodes.new("ShaderNodeTexImage")
+    tex.image = bpy.data.images.load(str(atlas_png))
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    mat.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    bsdf.inputs["Roughness"].default_value = 1.0
+    low.data.materials.clear()
+    low.data.materials.append(mat)
 
 
 def unwrap_and_bake(high, low, res):
@@ -289,7 +396,18 @@ def main():
     ap.add_argument("--in", dest="infile", required=True, help="high-poly TEXTURED glb/obj/fbx")
     ap.add_argument("--id", default="wisp")
     ap.add_argument("--target", type=int, default=4200, help="triangle budget (see ART_PIPELINE §7)")
-    ap.add_argument("--voxel-div", type=float, default=240.0, help="remesh fineness: diag/this")
+    ap.add_argument("--method", choices=("voxel", "collapse"), default="voxel",
+                    help="voxel: remesh + re-bake (smooth bodies / hidden faces — "
+                         "Wisp, Vex). collapse: decimate keeping original UVs+texture "
+                         "(preserves a BARE face — Bastion). See build_lowpoly_collapse.")
+    ap.add_argument("--voxel-div", type=float, default=240.0, help="remesh fineness: diag/this (voxel)")
+    ap.add_argument("--weld", type=float, default=0.005,
+                    help="collapse: pre-weld distance as a fraction of the bounding "
+                         "diagonal, to stitch Rodin's fragmented shells. Keep small — "
+                         "a big weld shreds a bare face. 0 disables.")
+    ap.add_argument("--smooth-angle", type=float, default=35.0,
+                    help="collapse: smooth-by-angle threshold in degrees (crisp plate "
+                         "edges above it, smooth curves below).")
     ap.add_argument("--bake-res", type=int, default=1024,
                     help="atlas resolution. 1024 fits the 2 MB per-character "
                          "budget (ART_PIPELINE §18); drop to 512 for a smaller "
@@ -310,46 +428,62 @@ def main():
     high = import_mesh(infile)
     high.name = "HIGH"
     print(f"imported {infile.name}: {tri_count(high):,} tris")
-    low = build_lowpoly(high, args.target, args.voxel_div)
-    print(f"low-poly: {tri_count(low):,} tris (voxel diag/{args.voxel_div:g} + smooth)")
-    img, _ = unwrap_and_bake(high, low, args.bake_res)
-    print("baked diffuse onto clean UVs")
-    # save the baked texture and the body-only baked mesh
-    png = out_dir / f"{args.id}_baked.png"
-    img.filepath_raw = str(png)
-    img.file_format = "PNG"
-    img.save()
-    body_glb = out_dir / f"{args.id}_body_baked.glb"
-    bpy.ops.object.select_all(action="DESELECT")
-    low.select_set(True)
-    bpy.context.view_layer.objects.active = low
-    bpy.ops.export_scene.gltf(filepath=str(body_glb), use_selection=True, export_format="GLB")
 
-    # Reimport the exported body: the glTF roundtrip triangulates the mesh and
-    # normalises it into exactly the UV/texel space the texture was baked against.
-    # Painting on this reloaded mesh (not the in-session one) is what makes the
-    # blindfold land cleanly — the in-session mesh rasterises sparsely.
-    clear()
-    token = import_mesh(body_glb)
-    token.name = "TOKEN"
-    tex = None
-    for nd in token.data.materials[0].node_tree.nodes:
-        if nd.type == "TEX_IMAGE":
-            tex = nd
-    if args.blindfold:
-        lo_nz, hi_nz = (float(x) for x in args.blindfold_band.split(","))
-        n = paint_blindfold(token, png, (lo_nz, hi_nz), args.blindfold_color)
-        print(f"painted blindfold band nz[{lo_nz},{hi_nz}] ({n} texels)")
-    if tex is not None:
-        tex.image = bpy.data.images.load(str(png))   # painted (or plain) texture
-    low = token
+    if args.method == "collapse":
+        # Bare-face path: decimate keeping the original UVs + diffuse, no re-bake.
+        low = build_lowpoly_collapse(high, args.target, args.weld, args.smooth_angle)
+        print(f"low-poly: {tri_count(low):,} tris "
+              f"(collapse, weld {args.weld:g}*diag + auto-smooth {args.smooth_angle:g}deg)")
+        png = out_dir / f"{args.id}_baked.png"
+        extract_diffuse(high, args.bake_res, png)
+        print(f"kept original Rodin diffuse -> {png.relative_to(ROOT)} ({args.bake_res}px)")
+        if args.blindfold:
+            print("  ! --blindfold is ignored in collapse mode (voxel-path feature)")
+        atlas = out_dir / f"{args.id}_atlas.png"
+        atlas.write_bytes(png.read_bytes())
+        print(f"wrote {atlas.relative_to(ROOT)} (for build_glb.py)")
+        apply_flat_texture(low, atlas, args.id)
+    else:
+        low = build_lowpoly(high, args.target, args.voxel_div)
+        print(f"low-poly: {tri_count(low):,} tris (voxel diag/{args.voxel_div:g} + smooth)")
+        img, _ = unwrap_and_bake(high, low, args.bake_res)
+        print("baked diffuse onto clean UVs")
+        # save the baked texture and the body-only baked mesh
+        png = out_dir / f"{args.id}_baked.png"
+        img.filepath_raw = str(png)
+        img.file_format = "PNG"
+        img.save()
+        body_glb = out_dir / f"{args.id}_body_baked.glb"
+        bpy.ops.object.select_all(action="DESELECT")
+        low.select_set(True)
+        bpy.context.view_layer.objects.active = low
+        bpy.ops.export_scene.gltf(filepath=str(body_glb), use_selection=True, export_format="GLB")
 
-    # Emit the texture under the name build_glb.py looks for (<id>_atlas.png), so
-    # after Mixamo rigging `build_glb.py -- <id> <folder>` textures the rig with
-    # no manual copy. Same pixels as <id>_baked.png; both are written.
-    atlas = out_dir / f"{args.id}_atlas.png"
-    atlas.write_bytes(png.read_bytes())
-    print(f"wrote {atlas.relative_to(ROOT)} (for build_glb.py)")
+        # Reimport the exported body: the glTF roundtrip triangulates the mesh and
+        # normalises it into exactly the UV/texel space the texture was baked against.
+        # Painting on this reloaded mesh (not the in-session one) is what makes the
+        # blindfold land cleanly — the in-session mesh rasterises sparsely.
+        clear()
+        token = import_mesh(body_glb)
+        token.name = "TOKEN"
+        tex = None
+        for nd in token.data.materials[0].node_tree.nodes:
+            if nd.type == "TEX_IMAGE":
+                tex = nd
+        if args.blindfold:
+            lo_nz, hi_nz = (float(x) for x in args.blindfold_band.split(","))
+            n = paint_blindfold(token, png, (lo_nz, hi_nz), args.blindfold_color)
+            print(f"painted blindfold band nz[{lo_nz},{hi_nz}] ({n} texels)")
+        if tex is not None:
+            tex.image = bpy.data.images.load(str(png))   # painted (or plain) texture
+        low = token
+
+        # Emit the texture under the name build_glb.py looks for (<id>_atlas.png), so
+        # after Mixamo rigging `build_glb.py -- <id> <folder>` textures the rig with
+        # no manual copy. Same pixels as <id>_baked.png; both are written.
+        atlas = out_dir / f"{args.id}_atlas.png"
+        atlas.write_bytes(png.read_bytes())
+        print(f"wrote {atlas.relative_to(ROOT)} (for build_glb.py)")
 
     glb = out_dir / f"{args.id}_token.glb"
     bpy.ops.object.select_all(action="DESELECT")
