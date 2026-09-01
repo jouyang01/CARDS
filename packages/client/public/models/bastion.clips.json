@@ -1,0 +1,31 @@
+{
+  "id": "bastion",
+  "version": "755643e706f4",
+  "clips": [
+    "bulwark",
+    "chain_hook",
+    "crushing_slam",
+    "death",
+    "fortress_protocol",
+    "hit_reaction",
+    "idle",
+    "knockback",
+    "ram_charge",
+    "running"
+  ],
+  "map": {
+    "idle": "idle",
+    "run": "running",
+    "hit": "hit_reaction",
+    "death": "death",
+    "knockback": "knockback",
+    "abilities": {
+      "crushing_slam": "crushing_slam",
+      "bulwark": "bulwark",
+      "ram_charge": "ram_charge",
+      "chain_hook": "chain_hook",
+      "fortress_protocol": "fortress_protocol"
+    }
+  },
+  "posture": {}
+}

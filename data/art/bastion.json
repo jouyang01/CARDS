@@ -1,6 +1,50 @@
 {
   "id": "bastion",
-  "_todo": "Art direction not yet written. See docs/ART_PIPELINE.md \u00a73 for the parameter block.",
   "weaponClass": "unarmed",
-  "_weaponClassNote": "Fists and gauntlets. Both hands empty, both hands are the weapon."
+  "_weaponClassNote": "Fists and gauntlets. Both hands empty, both hands are the weapon. Unlike Vex's rifle or Aegis's door there is NO separated hand-bone prop: the matched gauntlets are worn, they move with the arms, so they are part of the body sculpt and rig. The only runtime-generated object is the in-flight Chain Hook (a VFX/animation concern, ART_PIPELINE §13), never a held prop.",
+  "thesis": "Bastion doesn't predict where you'll be — he decides. A buff, oversized industrial frontliner, the ANCHOR: not a wall that stands still but the thing you are attached to and cannot get away from. He is the ONLY character with no weapon and no magic — everything he does is muscle and machinery and NOTHING he does glows. His hands are the kit: a matched pair of massive, blunt, mechanical gauntlets, with a heavy chain coiled across both forearms and shoulders that fires and hooks you across the board. He reads as SKIN AND IRON — the darkest, heaviest, widest mass on the board, warm bare muscle above the gauntlets doing the value contrast against near-black metal and the cool slate terrain. He leans TOWARD the fight, chest out, chin up, eager — the opposite of the two big characters he must never converge with: not hunched, burdened or grim like Aegis, and not red-hot blood-and-rage like Ravok. Cold, colourless, upright and pleased to see you. VFX primitive: the hot white IMPACT FLASH — he emits force, not light; a hard white flash and compression at the instant of contact (knuckle, shoulder, hook bite), short and violent and gone; dead grey until he connects. The chain is not an effect but a real physical object with weight — the primary all-angle silhouette identifier, coiled when idle and spanning the whole board when it hooks.",
+  "_artNote": "Board token built via the Rodin IMPORT path (tools/art/rodin_bake_lowpoly.py), the same as Wisp and Vex — not the procedural generator. Owner supplied a Rodin text/image-to-3D export (base_basic_pbr.glb, 120k tris, diffuse+normal+metallic-roughness). Reduced by the COLLAPSE method (--method collapse, added for Bastion): weld 0.005*diag + collapse-decimate keeping the ORIGINAL Rodin UVs + diffuse, then smooth-by-angle 35deg. Target 28000 tris (27,998), 1024 atlas (owner-confirmed 2026-09-01; a 2048 atlas was tried but pushed bastion.glb to 5.4MB, over the 4MB per-character asset cap — asset-budget.test.ts — so dropped to 1024 like Vex/Wisp, glb ~3.8MB, face still reads). WHY collapse, not the default voxel bake: Vex/Wisp use voxel-remesh + re-bake, which is right for a hidden/smooth face but destroys a BARE face — the head becomes a lump and the re-bake smears the mouth (that was the 'too smooth / weird face' the owner rejected on the first 16k voxel bake). Collapse keeps the original topology + UVs + face texture, so the face reads. The catch: a Rodin sculpt is not watertight (this one is ~29,000 disconnected shells; the chain is separate links), so blind collapse shreds thin features into spikes — hence the small pre-WELD to stitch fragments into bands before decimating (kept small: a big weld fuses and shreds the face; 0.005 spares it, 0.008 breaks it). At actual board scale (~48-64px) the collapse token is indistinguishable from the 120k Rodin. Budget note: 28k (vs the earlier 16k voxel plan) because collapse keeps real chain/gauntlet geometry; still far under Mixamo's 150k rig ceiling (ART_PIPELINE §6), and Bastion carries NO separate weapon prop so this is his whole on-board mass. Text-to-image summary that fed Rodin: docs/design/bastion-text-to-image.md. Turnaround QA (iso 4-yaw + face + chain + 64px board) confirmed: buff/broadest footprint, bare warm-skin arms vs near-black iron, face + beard preserved, coiled chain reads as bands (not shredded) from every angle, clean separation from the #12141a board. The token + atlas + rig-ready FBX live in build/art/bastion/ (gitignored). REMAINING: rig bastion_rig.fbx + bastion_atlas.png through Mixamo (weaponClass 'unarmed' — fists/gauntlets, No Fingers), then run build_glb.py to assemble packages/client/public/models/bastion.glb + clips manifest; his forward lean is applied as posture bone offsets after rigging, never baked. VALIDATION CAVEAT: collapse topology is less uniform than the voxel path's, so check elbow/knee deformation in the Mixamo rig preview before collecting clips (the face has no bones, so its topology is deformation-irrelevant). Full parameter block (build/posture/face/vfxLanguage) still to be written; palette below to be re-sampled from the baked texture.",
+  "palette": {
+    "_comment": "PROPOSED targets for the text-to-image reference and the token bake (propose-and-confirm, ART_PIPELINE.md §7) — owner to confirm. NOT yet sampled: like Wisp's and Vex's, the shipped palette should be re-sampled from the baked Rodin texture and this block replaced. He has NO accent colour — the whole palette is two materials, iron and warm skin, plus a contact-only white. Test against the real board (#12141a bg, cool slate terrain), never white. His readability lives entirely in the skin/iron value split: warm bright skin vs near-black iron, distinct from Ravok's warm/red register and Aegis's hunched covered mass.",
+    "ironBase": "#1a1c20",
+    "ironWornEdge": "#3a3d43",
+    "chainLinks": "#26282e",
+    "skinMid": "#c88a5e",
+    "skinHighlight": "#e2a97c",
+    "skinShadow": "#8a5638"
+  },
+  "impact": {
+    "_comment": "Bastion has NO magic and NO power source — this is deliberately not a 'magic' block. His ONLY effect is the hot white IMPACT FLASH at the instant of contact (knuckle, shoulder, hook bite): force, not light. Short, violent, gone — never a persistent glow on the baked body. This is a VFX/animation concern handled downstream in data/vfx.json (ability-vfx.ts) after the mesh is rigged; recorded here only so the sculpt and palette are not built in a way that forecloses it. warmthForbidden is true: the flash is a cold white, NOT warm — warm is Ravok's register.",
+    "flashCore": "#ffffff",
+    "flashEdge": "#ffe6c0",
+    "warmthForbidden": true
+  },
+  "clips": {
+    "_comment": "Clip names as they appear in bastion.glb, normalised by build_glb.py from the Mixamo filenames (lowercase + underscores). Ability keys are the ability ids from data/characters/bastion.json; a missing id falls back to idle (character-clips.ts). The drift guard (character-clips.test.ts) asserts every ability (incl. the ultimate) has a clip and no clip names a missing ability. weaponClass 'unarmed' — fists/gauntlets, rigged No Fingers. hit/death/knockback are Bastion's own for now; candidates for later roster/unarmed-class dedup (ART_PIPELINE §18).",
+    "_source": {
+      "idle": "Mixamo 'Idle' — impatient not watchful (§7): rolling the shoulders, shifting the chain's weight, waiting to be let off the leash.",
+      "running": "Mixamo 'Running' — the one locomotion clip, serves dash + move. In Place (exported correctly).",
+      "crushing_slam": "Mixamo 'Crushing slam' — full-commitment punch with follow-through (§7), not a jab.",
+      "bulwark": "Mixamo 'Standing 1H Cast Spell 01' — a set/brace self-buff for the Bulwark shield (the prep self-buff clip, §9). No travel.",
+      "ram_charge": "Mixamo 'ram charge' — head-down shoulder drive. Built --in-place: Mixamo offered no In Place checkbox for this clip, so build_glb.py's strip_root_motion pinned the Hips horizontal drift (2.57u raw) while keeping the vertical. The engine owns position (§7.2).",
+      "chain_hook": "Mixamo 'Chain_hook' — fire/reach; the taut hold + end-of-phase yank are VFX/timing (§7.1), not this clip.",
+      "fortress_protocol": "Mixamo 'Fortress Protocol' — the ult self-buff: he sets himself. 'Walk at them' (§7); no roar.",
+      "hit_reaction": "Mixamo 'hit reaction' — brief flinch.",
+      "death": "Mixamo 'Death'. Built --in-place (no In Place checkbox offered): horizontal drift (0.81u) pinned, vertical fall kept.",
+      "knockback": "Mixamo 'Knockback'. Built --in-place (no In Place checkbox offered): horizontal drift (0.51u) pinned, vertical kept."
+    },
+    "_inPlaceNote": "Assembled with `build_glb.py -- bastion <folder> --in-place`. Mixamo does not offer the In Place checkbox for ram_charge/death/knockback, so strip_root_motion flattens the Hips X/Z translation (never index 1 = up, and never the idle — IDLE-SWAY). model-root-motion.test.ts guards that the shipped clips carry no root motion.",
+    "idle": "idle",
+    "run": "running",
+    "hit": "hit_reaction",
+    "death": "death",
+    "knockback": "knockback",
+    "abilities": {
+      "crushing_slam": "crushing_slam",
+      "bulwark": "bulwark",
+      "ram_charge": "ram_charge",
+      "chain_hook": "chain_hook",
+      "fortress_protocol": "fortress_protocol"
+    }
+  }
 }

@@ -103,7 +103,7 @@ describe('ASSET-WEIGHT-BUDGET: it actually fails', () => {
     const { report } = await load();
     const out = report(new URL('../public/models/', import.meta.url).pathname);
     expect(out.errors, 'the checked-in art is inside both budgets').toEqual([]);
-    expect(out.characters.map((c) => c.id), 'the rigged characters shipped so far').toEqual(['aegis', 'vex', 'wisp']);
+    expect(out.characters.map((c) => c.id), 'the rigged characters shipped so far').toEqual(['aegis', 'bastion', 'vex', 'wisp']);
     expect(out.lines.join('\n')).toContain('budget');
   });
 
@@ -113,7 +113,7 @@ describe('ASSET-WEIGHT-BUDGET: it actually fails', () => {
     // still being bytes a player downloads, so they count toward the grand total.
     const { report } = await load();
     const out = report(new URL('../public/models/', import.meta.url).pathname);
-    expect(out.characters.map((c) => c.id), 'props are not in the character list').toEqual(['aegis', 'vex', 'wisp']);
+    expect(out.characters.map((c) => c.id), 'props are not in the character list').toEqual(['aegis', 'bastion', 'vex', 'wisp']);
     expect(out.props, 'the Proving Floor props are weighed').toBeGreaterThan(0);
     expect(out.props, 'and are well under the per-character cap').toBeLessThan(2 * 1024 * 1024);
     expect(out.total, 'the total includes them').toBeGreaterThan(
