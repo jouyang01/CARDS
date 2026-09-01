@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type TurnEvent, type UnitOrders } from '@cards/engine';
-import { BEAT, ROLL_TILE_BEATS, choreograph, straightenDashes, timelineLength, type Cue } from '../src/choreograph.js';
+import { BEAT, ROLL_TILE_BEATS, choreograph, straightenDashes, timeDashImpacts, timelineLength, type Cue } from '../src/choreograph.js';
 
 /**
  * A2 — the choreographer is asserted on ORDERING and CONCURRENCY only, never on
@@ -357,6 +357,56 @@ describe('straightenDashes (STRAIGHT-DASH)', () => {
     // The clip still finishes on arrival, but over the straight-line time, not
     // the staircase — so the roll plays quick instead of in slow motion.
     expect(ability.dur, 'clip fits the straight traversal').toBeCloseTo(2 * ROLL_TILE_BEATS, 6);
+  });
+});
+
+describe('IMPACT-ON-CROSSING (a charge hits each victim as it reaches their tile)', () => {
+  // Bastion's Flying Charge: (2,7) -> (6,7) through two enemies at (3,7) and
+  // (5,7). The engine emits all four steps, then both damages, then the shoves.
+  const charge = (): Cue[] => [
+    { kind: 'ability', phase: 'dash', t: 0, dur: 4 * BEAT, unitId: 'a', abilityId: 'ram_charge', area: [], stretch: true } as Cue,
+    { kind: 'move', t: 0, dur: BEAT, unitId: 'a', from: { x: 2, y: 7 }, to: { x: 3, y: 7 }, teleport: false } as Cue,
+    { kind: 'move', t: BEAT, dur: BEAT, unitId: 'a', from: { x: 3, y: 7 }, to: { x: 4, y: 7 }, teleport: false } as Cue,
+    { kind: 'move', t: 2 * BEAT, dur: BEAT, unitId: 'a', from: { x: 4, y: 7 }, to: { x: 5, y: 7 }, teleport: false } as Cue,
+    { kind: 'move', t: 3 * BEAT, dur: BEAT, unitId: 'a', from: { x: 5, y: 7 }, to: { x: 6, y: 7 }, teleport: false } as Cue,
+    { kind: 'impact', t: 4 * BEAT, dur: BEAT, unitId: 'v1', amount: 23, absorbed: 0, sourceUnitId: 'a', abilityId: 'ram_charge' } as Cue,
+    { kind: 'impact', t: 4 * BEAT, dur: BEAT, unitId: 'v2', amount: 23, absorbed: 0, sourceUnitId: 'a', abilityId: 'ram_charge' } as Cue,
+    { kind: 'displace', t: 4 * BEAT, dur: BEAT, unitId: 'v1', from: { x: 3, y: 7 }, to: { x: 2, y: 7 }, displaceKind: 'knockback' } as Cue,
+    { kind: 'displace', t: 4 * BEAT, dur: BEAT, unitId: 'v2', from: { x: 5, y: 7 }, to: { x: 6, y: 7 }, displaceKind: 'knockback' } as Cue,
+  ];
+
+  const impactT = (cues: Cue[], v: string): number =>
+    (cues.find((c) => c.kind === 'impact' && c.unitId === v) as Extract<Cue, { kind: 'impact' }>).t;
+
+  it('times each victim by how far along the straightened leg its tile sits', () => {
+    const out = timeDashImpacts(straightenDashes(charge()));
+    // The leg is (2,7)->(6,7), 4 tiles, over 4*ROLL_TILE_BEATS. The near enemy at
+    // (3,7) is 1/4 along; the far one at (5,7) is 3/4 along.
+    expect(impactT(out, 'v1')).toBeCloseTo(0.25 * 4 * ROLL_TILE_BEATS, 6);
+    expect(impactT(out, 'v2')).toBeCloseTo(0.75 * 4 * ROLL_TILE_BEATS, 6);
+    // And they fire in crossing order, both before the charge finishes.
+    expect(impactT(out, 'v1')).toBeLessThan(impactT(out, 'v2'));
+    expect(impactT(out, 'v2')).toBeLessThan(4 * ROLL_TILE_BEATS);
+  });
+
+  it('leaves a victim with no displacement at the phase-end timing (fallback)', () => {
+    const cues = charge().filter((c) => !(c.kind === 'displace' && c.unitId === 'v2'));
+    const out = timeDashImpacts(straightenDashes(cues));
+    // v1 still gets crossed-timed; v2 (no shove to read its tile from) is left at
+    // the phase-end time it was authored with.
+    expect(impactT(out, 'v1')).toBeCloseTo(0.25 * 4 * ROLL_TILE_BEATS, 6);
+    expect(impactT(out, 'v2')).toBeCloseTo(4 * BEAT, 6);
+  });
+
+  it('does not touch an impact from a different source or ability', () => {
+    const cues: Cue[] = [
+      ...charge(),
+      { kind: 'impact', t: 4 * BEAT, dur: BEAT, unitId: 'v1', amount: 10, absorbed: 0, sourceUnitId: 'b', abilityId: 'rail_shot' } as Cue,
+    ];
+    const out = timeDashImpacts(straightenDashes(cues));
+    const other = out.filter((c) => c.kind === 'impact' && c.sourceUnitId === 'b') as Extract<Cue, { kind: 'impact' }>[];
+    expect(other).toHaveLength(1);
+    expect(other[0]!.t).toBeCloseTo(4 * BEAT, 6);
   });
 });
 

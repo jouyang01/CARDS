@@ -17,7 +17,7 @@
 
 import { PHASES, type GameState, type Phase, type TurnEvent } from '@cards/engine';
 import { applyEvent, initView, segmentByPhase, type ViewState } from './playback.js';
-import { choreograph, holdCasts, straightenDashes, type Cue } from './choreograph.js';
+import { choreograph, holdCasts, straightenDashes, timeDashImpacts, type Cue } from './choreograph.js';
 
 export interface TurnPlayer {
   /** The live view — mutated in place as phases are applied. */
@@ -58,9 +58,9 @@ export function createTurnPlayer(
   castBeats?: (unitId: string, abilityId: string) => number | undefined,
 ): TurnPlayer {
   const view = initView(prev);
-  const cues = straightenDashes(castBeats === undefined
+  const cues = timeDashImpacts(straightenDashes(castBeats === undefined
     ? choreograph(events)
-    : holdCasts(choreograph(events), castBeats));
+    : holdCasts(choreograph(events), castBeats)));
   const segments = segmentByPhase(events);
   let next = 0;
 
