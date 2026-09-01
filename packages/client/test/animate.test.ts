@@ -100,6 +100,26 @@ describe('positions tween between whole squares', () => {
     expect(sampleFrame(cues, push.t).poses.get('victim')!.lift).toBe(0);
     expect(sampleFrame(cues, push.t + push.dur).poses.get('victim')!.lift).toBe(0);
   });
+
+  it('a LEAP vaults off the floor and lands cleanly on its tile', () => {
+    // A charge leg marked leap (markLeaps): from (0,0) to (4,0) over 2 beats.
+    const cues: Cue[] = [
+      { kind: 'move', t: 0, dur: 2, unitId: 'a', from: { x: 0, y: 0 }, to: { x: 4, y: 0 }, teleport: false, leap: true } as Cue,
+    ];
+    // Airborne mid-flight...
+    expect(sampleFrame(cues, 1).poses.get('a')!.lift).toBeGreaterThan(0.5);
+    // ...and grounded at both ends, landed exactly on the destination tile (no
+    // residual slide past the end of the leg).
+    expect(sampleFrame(cues, 0).poses.get('a')!.lift).toBe(0);
+    const land = sampleFrame(cues, 2).poses.get('a')!;
+    expect(land.lift).toBe(0);
+    expect(land).toMatchObject({ x: 4, y: 0 });
+    // A grounded step over the same leg (no leap flag) never leaves the floor.
+    const flat: Cue[] = [
+      { kind: 'move', t: 0, dur: 2, unitId: 'a', from: { x: 0, y: 0 }, to: { x: 4, y: 0 }, teleport: false } as Cue,
+    ];
+    expect(sampleFrame(flat, 1).poses.get('a')!.lift).toBe(0);
+  });
 });
 
 describe('death defers: a unit stays solid until it has played its own action', () => {

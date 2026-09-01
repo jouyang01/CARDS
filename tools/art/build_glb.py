@@ -18,12 +18,14 @@ animation set serve the whole roster instead of one set per character.
 
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
 import sys
 
 import bpy
+from mathutils import Euler
 
 # World units a clip's root may drift before it counts as root motion. Generous:
 # a genuine idle sways a little, a walk cycle travels metres.
@@ -101,6 +103,48 @@ def strip_root_motion(action):
             fc.update()
             n += 1
     return n
+
+
+def apply_pose_adjust(arm, action, adjust):
+    """Add a constant LOCAL rotation offset to named bones across EVERY frame of a
+    clip — a surgical, per-clip pose fix that leaves all other clips untouched.
+
+    Owner feedback on Bastion's idle: the Mixamo idle crosses the forearms toward
+    the centreline and plants a stance too wide for a tile. Re-authoring a Mixamo
+    clip in a DCC is out of scope for this pipeline, but a constant additive bone
+    rotation on this one action is: for each keyframe, post-multiply the bone's
+    local rotation by the delta (so it composes with the sway rather than
+    replacing it). Only the clip named in `data/art/<id>.json` clips.pose is
+    changed — the run/punch/hook actions never see it.
+
+    `adjust` is {boneName: [x, y, z] degrees}. Bone names match Mixamo's, with or
+    without the `mixamorig`/`mixamorig:` prefix. Applied while the clip's own
+    armature is still in the scene (before it is deleted), so the pose evaluates.
+    """
+    arm.animation_data_create()
+    arm.animation_data.action = action
+    deltas = {}
+    for bn, xyz in adjust.items():
+        for n in (f"mixamorig:{bn}", f"mixamorig{bn}", bn):
+            if n in arm.pose.bones:
+                deltas[n] = Euler((math.radians(xyz[0]), math.radians(xyz[1]), math.radians(xyz[2])), "XYZ").to_quaternion()
+                break
+        else:
+            print(f"  ! pose-adjust: bone '{bn}' not found on {action.name}")
+    if not deltas:
+        return 0
+    fs, fe = int(action.frame_range[0]), int(action.frame_range[1])
+    for f in range(fs, fe + 1):
+        bpy.context.scene.frame_set(f)
+        for n, dq in deltas.items():
+            pb = arm.pose.bones[n]
+            if pb.rotation_mode == "QUATERNION":
+                pb.rotation_quaternion = pb.rotation_quaternion @ dq
+                pb.keyframe_insert("rotation_quaternion", frame=f, group=n)
+            else:
+                pb.rotation_euler = (pb.rotation_euler.to_quaternion() @ dq).to_euler(pb.rotation_mode)
+                pb.keyframe_insert("rotation_euler", frame=f, group=n)
+    return len(deltas)
 
 
 def scale_action_translation(action, factor):
@@ -337,6 +381,7 @@ def main():
     art_clips = (json.loads(art_early.read_text()).get("clips") or {}) if art_early.exists() else {}
     idle_clip = art_clips.get("idle")
     trims = art_clips.get("trim") or {}   # {clip_name: keep_fraction} — end long clips early
+    poses = art_clips.get("pose") or {}   # {clip_name: {bone: [x,y,z] deg}} — per-clip constant rotation fix
     clips = []
     rooted = []
     for path in fbx:
@@ -358,6 +403,9 @@ def main():
                               f"(keep {float(trims[action.name]):.0%})")
                 if in_place and action.name != idle_clip:
                     strip_root_motion(action)    # flatten Hips horizontal drift (never the idle — IDLE-SWAY)
+                if action.name in poses:
+                    k = apply_pose_adjust(arm, action, poses[action.name])
+                    print(f"  pose   {action.name:<24} adjusted {k} bone(s)")
                 n = curve_count(action)
                 travel = root_travel(arm, action)
                 flag = ""

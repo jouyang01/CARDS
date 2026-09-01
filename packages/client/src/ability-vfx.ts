@@ -66,6 +66,14 @@ export interface AbilityVfx {
   beamDown: boolean;
   /** Intercept: the caster does not travel, it is simply somewhere else. */
   blink: boolean;
+  /**
+   * A charge that VAULTS to its tile (Bastion's Flying Charge): `animate.ts` arcs
+   * it into the air and eases it onto the destination rather than sliding it flat
+   * along the ground. Opt-in per ability — a combat roll is also a `path` dash but
+   * stays a grounded slide, so this cannot be inferred from shape. Read as an
+   * ability-id set by `leapingAbilityIds` and applied by `choreograph.markLeaps`.
+   */
+  leap: boolean;
 }
 
 export interface CharacterVfx {
@@ -95,7 +103,7 @@ const NO_AURA: AuraSpec = { kind: 'none', beats: 0, radiusTiles: 0, shade: 'core
  * roster before this table existed. Defaulting it off would have quietly
  * deleted a feature from eight characters as the price of styling one.
  */
-export const NO_VFX: AbilityVfx = { tracer: 'streak', beamHalfTiles: 0, cast: NO_AURA, impact: NO_AURA, detonation: NO_AURA, beamDown: false, blink: false };
+export const NO_VFX: AbilityVfx = { tracer: 'streak', beamHalfTiles: 0, cast: NO_AURA, impact: NO_AURA, detonation: NO_AURA, beamDown: false, blink: false, leap: false };
 
 /** A beam with no width declared: a rifle-shot laser, thin but unmistakably lit. */
 export const DEFAULT_BEAM_HALF_TILES = 0.13;
@@ -120,12 +128,28 @@ export function vfxFor(table: VfxTable, characterId: string, abilityId: string):
     detonation: entry.detonation === undefined ? NO_AURA : aura(entry.detonation),
     beamDown: entry.beamDown ?? false,
     blink: entry.blink ?? false,
+    leap: entry.leap ?? false,
   };
 }
 
 /** Whether an ability blinks its caster instead of walking them. */
 export function blinks(table: VfxTable, characterId: string, abilityId: string): boolean {
   return vfxFor(table, characterId, abilityId).blink;
+}
+
+/**
+ * The ability ids that VAULT (`leap: true`) — a flat set across the whole table.
+ * Ability ids are globally unique, so `choreograph.markLeaps` can mark a leg from
+ * the cue's `abilityId` alone, with no unit→character lookup.
+ */
+export function leapingAbilityIds(table: VfxTable): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const character of Object.values(table)) {
+    for (const [id, entry] of Object.entries(character.abilities ?? {})) {
+      if (entry.leap === true) out.add(id);
+    }
+  }
+  return out;
 }
 
 /** `#rrggbb` to the number Three.js wants. Unparseable is a visible magenta. */

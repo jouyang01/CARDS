@@ -69,7 +69,11 @@ export type Cue =
   // rather than crosses, so `animate.ts` jumps it instead of sliding it. A blink
   // that lands one tile away is still a blink — the flag says so where geometry
   // (an adjacent square looks exactly like a walk) cannot.
-  | (CueBase & { kind: 'move'; unitId: string; from: Vec2; to: Vec2; teleport?: boolean })
+  // `leap` marks a charge that vaults to its tile (Bastion's Flying Charge):
+  // `animate.ts` arcs it into the air and eases it onto the destination instead
+  // of the flat linear slide a walk uses. Set by `markLeaps` from the ability's
+  // vfx `leap` flag; a combat roll (also a `path` dash) stays a grounded slide.
+  | (CueBase & { kind: 'move'; unitId: string; from: Vec2; to: Vec2; teleport?: boolean; leap?: boolean })
   | (CueBase & { kind: 'displace'; unitId: string; from: Vec2; to: Vec2; displaceKind: 'knockback' | 'pull' })
   | (CueBase & { kind: 'impact'; unitId: string; amount: number; absorbed: number; sourceUnitId: string; abilityId: string })
   // A benefit landing (UI5). Same shape as an impact and bound to its actor the
@@ -454,6 +458,93 @@ export function straightenDashes(cues: readonly Cue[]): Cue[] {
     }
   }
   return out.sort((a, b) => a.t - b.t);
+}
+
+/**
+ * IMPACT-ON-CROSSING — a path dash (Bastion's Flying Charge) lands on each victim
+ * the instant the charger crosses that victim's tile, not all at once at the
+ * phase end.
+ *
+ * `simultaneousPhase` times every dash `impact` at the phase end (`impactT`),
+ * which reads as "everyone the charge passed took it when he finished". Owner
+ * wants the flash on each victim as the charge reaches them. Run AFTER
+ * `straightenDashes`, so the charge is one linear leg (`from`→`to` over
+ * `[t, t+dur]`): a victim sits on that line at a Chebyshev fraction `f` of the
+ * way along, so the hit lands at `t + f*dur`. The victim's tile is read off their
+ * `displace` cue — the knockback's `from` is the square the charge caught them
+ * on. A victim with no displacement (a blocked shove) keeps the phase-end timing,
+ * and every non-dash impact is untouched (matched by dasher + ability id).
+ *
+ * Presentation only: it moves an `impact` cue's `t`, never the engine-owned
+ * displacement (which still resolves at the phase end) and never state.
+ */
+export function timeDashImpacts(cues: readonly Cue[]): Cue[] {
+  const cheb = (a: Vec2, b: Vec2): number => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+  // Each straightened dash leg, by charger: the single move cue inside its
+  // stretched dash-ability window.
+  const legs = new Map<string, { from: Vec2; to: Vec2; t: number; dur: number; abilityId: string }>();
+  for (const a of cues) {
+    if (a.kind === 'ability' && a.phase === 'dash' && a.stretch === true) {
+      const move = cues.find((c): c is Extract<Cue, { kind: 'move' }> =>
+        c.kind === 'move' && c.unitId === a.unitId && c.t >= a.t - 1e-6 && c.t < a.t + a.dur + 1e-6);
+      if (move !== undefined) legs.set(a.unitId, { from: move.from, to: move.to, t: move.t, dur: move.dur, abilityId: a.abilityId });
+    }
+  }
+  if (legs.size === 0) return [...cues];
+  const displacedFrom = new Map<string, Vec2[]>(); // victim → the square(s) they were shoved from
+  for (const c of cues) {
+    if (c.kind === 'displace') { const l = displacedFrom.get(c.unitId) ?? []; l.push(c.from); displacedFrom.set(c.unitId, l); }
+  }
+  // Fraction along the straight (orthogonal or diagonal) leg at which tile `p`
+  // sits, or undefined if `p` is not a square the leg actually crosses.
+  const fractionOnLeg = (leg: { from: Vec2; to: Vec2 }, p: Vec2): number | undefined => {
+    const steps = cheb(leg.from, leg.to);
+    if (steps === 0) return undefined;
+    const k = cheb(leg.from, p);
+    if (k > steps) return undefined;
+    const sx = Math.sign(leg.to.x - leg.from.x);
+    const sy = Math.sign(leg.to.y - leg.from.y);
+    if (leg.from.x + k * sx !== p.x || leg.from.y + k * sy !== p.y) return undefined;
+    return k / steps;
+  };
+  const out = cues.map((c) => {
+    if (c.kind !== 'impact') return c;
+    const leg = legs.get(c.sourceUnitId);
+    if (leg === undefined || c.abilityId !== leg.abilityId) return c;
+    for (const tile of displacedFrom.get(c.unitId) ?? []) {
+      const f = fractionOnLeg(leg, tile);
+      if (f !== undefined) return { ...c, t: leg.t + f * leg.dur };
+    }
+    return c;
+  });
+  return out.sort((a, b) => a.t - b.t);
+}
+
+/**
+ * LEAP — mark a leaping charge's straightened move leg so `animate.ts` vaults it.
+ *
+ * A charge whose ability id is in `leapAbilityIds` (from the vfx `leap` flag)
+ * gets a `leap: true` on its dash move leg; the renderer then arcs it into the
+ * air and eases it onto the tile. Only the DASH leg is marked — the charger's
+ * ordinary Move-phase steps are untouched — and only a walked leg (never a
+ * teleport). Run after `straightenDashes`, so it marks the one collapsed leg.
+ * Pure: takes the id set as data, imports no table.
+ */
+export function markLeaps(cues: readonly Cue[], leapAbilityIds: ReadonlySet<string>): Cue[] {
+  if (leapAbilityIds.size === 0) return [...cues];
+  const legByCharger = new Map<string, { t: number; dur: number }>();
+  for (const a of cues) {
+    if (a.kind === 'ability' && a.phase === 'dash' && leapAbilityIds.has(a.abilityId)) {
+      legByCharger.set(a.unitId, { t: a.t, dur: a.dur });
+    }
+  }
+  if (legByCharger.size === 0) return [...cues];
+  return cues.map((c) => {
+    if (c.kind !== 'move' || c.teleport === true) return c;
+    const win = legByCharger.get(c.unitId);
+    if (win === undefined || c.t < win.t - 1e-6 || c.t >= win.t + win.dur + 1e-6) return c;
+    return { ...c, leap: true };
+  });
 }
 
 /** Total length of a timeline in beats (0 for an empty one). */

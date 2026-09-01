@@ -128,6 +128,13 @@ export const MS_PER_BEAT = 760;
 export const MS_PER_MOVE_STEP = 440;
 /** Peak height of a knockback/pull arc, in world units. */
 const ARC = 0.35;
+/**
+ * Peak height of a LEAP (Bastion's Flying Charge), in world units — taller than a
+ * knockback so he plainly clears the ground and lands on the tile. He is ~1.9
+ * tiles tall; ~0.7 reads as airborne without launching him off the top of the
+ * board. Tune here if the vault wants more or less air.
+ */
+const LEAP_ARC = 0.7;
 
 /** easeInOutQuad — soft on both ends so a step reads as a step, not a teleport. */
 const ease = (u: number): number => (u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2);
@@ -253,6 +260,18 @@ function poseFrom(legs: readonly Leg[], t: number): UnitPose | undefined {
           x: leg.from.x + (leg.to.x - leg.from.x) * there,
           y: leg.from.y + (leg.to.y - leg.from.y) * there,
           lift: 0,
+        };
+      }
+      // A LEAP vaults: ease the horizontal so it launches and settles onto the
+      // tile (no residual linear slide — the ends are at zero velocity and the
+      // clip is fitted to the same duration, so body and ground arrive together),
+      // and lift it on a sine arc that peaks mid-flight and touches down at 1.
+      if (leg.kind === 'move' && leg.leap === true) {
+        const u = ease(p);
+        return {
+          x: leg.from.x + (leg.to.x - leg.from.x) * u,
+          y: leg.from.y + (leg.to.y - leg.from.y) * u,
+          lift: Math.sin(Math.PI * p) * LEAP_ARC,
         };
       }
       const u = leg.kind === 'displace' ? ease(p) : p;
