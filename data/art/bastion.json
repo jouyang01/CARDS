@@ -34,6 +34,17 @@
       "knockback": "Mixamo 'Knockback'. Built --in-place (no In Place checkbox offered): horizontal drift (0.51u) pinned, vertical kept."
     },
     "_inPlaceNote": "Assembled with `build_glb.py -- bastion <folder> --in-place`. Mixamo does not offer the In Place checkbox for ram_charge/death/knockback, so strip_root_motion flattens the Hips X/Z translation (never index 1 = up, and never the idle — IDLE-SWAY). model-root-motion.test.ts guards that the shipped clips carry no root motion.",
+    "_poseNote": "pose = per-clip constant LOCAL bone-rotation fix (build_glb.py apply_pose_adjust), degrees [x,y,z]. Owner feedback on the Mixamo idle: forearms crossed to the centreline and the stance was too wide (crossed the tile). Only the idle clip is adjusted — arms spread outward, leg stance narrowed; run/punch/hook are untouched.",
+    "pose": {
+      "idle": {
+        "LeftArm": [0, 0, -18],
+        "RightArm": [0, 0, 18],
+        "LeftForeArm": [0, 0, -25],
+        "RightForeArm": [0, 0, 25],
+        "LeftUpLeg": [0, 0, 13],
+        "RightUpLeg": [0, 0, -13]
+      }
+    },
     "idle": "idle",
     "run": "running",
     "hit": "hit_reaction",

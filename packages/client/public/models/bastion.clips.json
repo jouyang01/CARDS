@@ -1,6 +1,6 @@
 {
   "id": "bastion",
-  "version": "755643e706f4",
+  "version": "39bbc8dba84d",
   "clips": [
     "bulwark",
     "chain_hook",
@@ -14,6 +14,40 @@
     "running"
   ],
   "map": {
+    "pose": {
+      "idle": {
+        "LeftArm": [
+          0,
+          0,
+          -18
+        ],
+        "RightArm": [
+          0,
+          0,
+          18
+        ],
+        "LeftForeArm": [
+          0,
+          0,
+          -25
+        ],
+        "RightForeArm": [
+          0,
+          0,
+          25
+        ],
+        "LeftUpLeg": [
+          0,
+          0,
+          13
+        ],
+        "RightUpLeg": [
+          0,
+          0,
+          -13
+        ]
+      }
+    },
     "idle": "idle",
     "run": "running",
     "hit": "hit_reaction",
