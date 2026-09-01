@@ -41,7 +41,7 @@
     },
     {
       "id": "ram_charge",
-      "name": "Ram Charge",
+      "name": "Flying Charge",
       "phase": "dash",
       "shape": "path",
       "range": 4,

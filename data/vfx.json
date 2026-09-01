@@ -125,5 +125,20 @@
         "particles": { "count": 24, "beats": 1.0, "speedTiles": 3.6, "size": 0.12, "shade": "edge", "style": "debris" }
       }
     }
+  },
+  "bastion": {
+    "_thesis": "He emits FORCE, not light — no glow, no magic, no coloured ordnance. His only 'effect' is a hard white IMPACT FLASH at the instant of contact (knuckle, shoulder, hook bite) plus physical debris; nothing flies, nothing lingers. Cold white, never warm (warm is Ravok's register). Mirrors the `impact` block in data/art/bastion.json.",
+    "palette": {
+      "core": "#ffffff",
+      "edge": "#ffe6c0",
+      "deep": "#8a5638"
+    },
+    "warmthForbidden": true,
+    "abilities": {
+      "ram_charge": {
+        "_comment": "FLYING CHARGE: a leaping dash that connects with the FIRST enemy it crosses. NO tracer — he is not throwing anything, he IS the projectile, so a projectile streak reads wrong. The leap arc + impact/hitstop are animation (animate.ts) and the impact lands as he crosses the victim's tile (choreograph.ts), not a drawn flying effect.",
+        "tracer": "none"
+      }
+    }
   }
 }
