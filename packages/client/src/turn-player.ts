@@ -17,7 +17,12 @@
 
 import { PHASES, type GameState, type Phase, type TurnEvent } from '@cards/engine';
 import { applyEvent, initView, segmentByPhase, type ViewState } from './playback.js';
-import { choreograph, holdCasts, straightenDashes, timeDashImpacts, type Cue } from './choreograph.js';
+import { choreograph, holdCasts, markLeaps, straightenDashes, timeDashImpacts, type Cue } from './choreograph.js';
+import { leapingAbilityIds, type VfxTable } from './ability-vfx.js';
+import vfxTable from '../../../data/vfx.json';
+
+/** Ability ids that vault (Bastion's Flying Charge), derived once from the vfx data. */
+const LEAP_IDS = leapingAbilityIds(vfxTable as unknown as VfxTable);
 
 export interface TurnPlayer {
   /** The live view — mutated in place as phases are applied. */
@@ -58,9 +63,9 @@ export function createTurnPlayer(
   castBeats?: (unitId: string, abilityId: string) => number | undefined,
 ): TurnPlayer {
   const view = initView(prev);
-  const cues = timeDashImpacts(straightenDashes(castBeats === undefined
+  const cues = timeDashImpacts(markLeaps(straightenDashes(castBeats === undefined
     ? choreograph(events)
-    : holdCasts(choreograph(events), castBeats)));
+    : holdCasts(choreograph(events), castBeats)), LEAP_IDS));
   const segments = segmentByPhase(events);
   let next = 0;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type TurnEvent, type UnitOrders } from '@cards/engine';
-import { BEAT, ROLL_TILE_BEATS, choreograph, straightenDashes, timeDashImpacts, timelineLength, type Cue } from '../src/choreograph.js';
+import { BEAT, ROLL_TILE_BEATS, choreograph, markLeaps, straightenDashes, timeDashImpacts, timelineLength, type Cue } from '../src/choreograph.js';
 
 /**
  * A2 — the choreographer is asserted on ORDERING and CONCURRENCY only, never on
@@ -357,6 +357,39 @@ describe('straightenDashes (STRAIGHT-DASH)', () => {
     // The clip still finishes on arrival, but over the straight-line time, not
     // the staircase — so the roll plays quick instead of in slow motion.
     expect(ability.dur, 'clip fits the straight traversal').toBeCloseTo(2 * ROLL_TILE_BEATS, 6);
+  });
+});
+
+describe('LEAP (markLeaps flags a vaulting charge, not a grounded roll)', () => {
+  const dashMove = (unitId: string, abilityId: string): Cue[] => [
+    { kind: 'ability', phase: 'dash', t: 0, dur: 3 * BEAT, unitId, abilityId, area: [], stretch: true } as Cue,
+    { kind: 'move', t: 0, dur: 3 * BEAT, unitId, from: { x: 0, y: 0 }, to: { x: 3, y: 0 }, teleport: false } as Cue,
+  ];
+  const moveLeap = (cues: Cue[], unitId: string): boolean | undefined =>
+    (cues.find((c) => c.kind === 'move' && c.unitId === unitId) as Extract<Cue, { kind: 'move' }>).leap;
+
+  it("marks a leaping ability's dash leg, and leaves a non-leaping dash alone", () => {
+    const cues = [...dashMove('a', 'ram_charge'), ...dashMove('b', 'combat_roll')];
+    const out = markLeaps(cues, new Set(['ram_charge']));
+    expect(moveLeap(out, 'a'), 'the charge vaults').toBe(true);
+    expect(moveLeap(out, 'b'), 'the roll stays grounded').toBeUndefined();
+  });
+
+  it('leaves a charger\'s ordinary Move-phase step unmarked', () => {
+    const cues: Cue[] = [
+      ...dashMove('a', 'ram_charge'),
+      // A later Move-phase step by the same unit, outside the dash window.
+      { kind: 'move', t: 10 * BEAT, dur: BEAT, unitId: 'a', from: { x: 3, y: 0 }, to: { x: 4, y: 0 }, teleport: false } as Cue,
+    ];
+    const out = markLeaps(cues, new Set(['ram_charge']));
+    const moves = out.filter((c) => c.kind === 'move' && c.unitId === 'a') as Extract<Cue, { kind: 'move' }>[];
+    expect(moves.find((m) => m.t === 0)!.leap, 'the dash leg').toBe(true);
+    expect(moves.find((m) => m.t === 10 * BEAT)!.leap, 'the walk step').toBeUndefined();
+  });
+
+  it('an empty leap set changes nothing', () => {
+    const cues = dashMove('a', 'ram_charge');
+    expect(moveLeap(markLeaps(cues, new Set()), 'a')).toBeUndefined();
   });
 });
 

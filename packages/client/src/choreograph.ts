@@ -69,7 +69,11 @@ export type Cue =
   // rather than crosses, so `animate.ts` jumps it instead of sliding it. A blink
   // that lands one tile away is still a blink — the flag says so where geometry
   // (an adjacent square looks exactly like a walk) cannot.
-  | (CueBase & { kind: 'move'; unitId: string; from: Vec2; to: Vec2; teleport?: boolean })
+  // `leap` marks a charge that vaults to its tile (Bastion's Flying Charge):
+  // `animate.ts` arcs it into the air and eases it onto the destination instead
+  // of the flat linear slide a walk uses. Set by `markLeaps` from the ability's
+  // vfx `leap` flag; a combat roll (also a `path` dash) stays a grounded slide.
+  | (CueBase & { kind: 'move'; unitId: string; from: Vec2; to: Vec2; teleport?: boolean; leap?: boolean })
   | (CueBase & { kind: 'displace'; unitId: string; from: Vec2; to: Vec2; displaceKind: 'knockback' | 'pull' })
   | (CueBase & { kind: 'impact'; unitId: string; amount: number; absorbed: number; sourceUnitId: string; abilityId: string })
   // A benefit landing (UI5). Same shape as an impact and bound to its actor the
@@ -514,6 +518,33 @@ export function timeDashImpacts(cues: readonly Cue[]): Cue[] {
     return c;
   });
   return out.sort((a, b) => a.t - b.t);
+}
+
+/**
+ * LEAP — mark a leaping charge's straightened move leg so `animate.ts` vaults it.
+ *
+ * A charge whose ability id is in `leapAbilityIds` (from the vfx `leap` flag)
+ * gets a `leap: true` on its dash move leg; the renderer then arcs it into the
+ * air and eases it onto the tile. Only the DASH leg is marked — the charger's
+ * ordinary Move-phase steps are untouched — and only a walked leg (never a
+ * teleport). Run after `straightenDashes`, so it marks the one collapsed leg.
+ * Pure: takes the id set as data, imports no table.
+ */
+export function markLeaps(cues: readonly Cue[], leapAbilityIds: ReadonlySet<string>): Cue[] {
+  if (leapAbilityIds.size === 0) return [...cues];
+  const legByCharger = new Map<string, { t: number; dur: number }>();
+  for (const a of cues) {
+    if (a.kind === 'ability' && a.phase === 'dash' && leapAbilityIds.has(a.abilityId)) {
+      legByCharger.set(a.unitId, { t: a.t, dur: a.dur });
+    }
+  }
+  if (legByCharger.size === 0) return [...cues];
+  return cues.map((c) => {
+    if (c.kind !== 'move' || c.teleport === true) return c;
+    const win = legByCharger.get(c.unitId);
+    if (win === undefined || c.t < win.t - 1e-6 || c.t >= win.t + win.dur + 1e-6) return c;
+    return { ...c, leap: true };
+  });
 }
 
 /** Total length of a timeline in beats (0 for an empty one). */

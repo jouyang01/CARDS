@@ -136,8 +136,9 @@
     "warmthForbidden": true,
     "abilities": {
       "ram_charge": {
-        "_comment": "FLYING CHARGE: a leaping dash that connects with the FIRST enemy it crosses. NO tracer — he is not throwing anything, he IS the projectile, so a projectile streak reads wrong. The leap arc + impact/hitstop are animation (animate.ts) and the impact lands as he crosses the victim's tile (choreograph.ts), not a drawn flying effect.",
-        "tracer": "none"
+        "_comment": "FLYING CHARGE: a leaping dash that connects with the FIRST enemy it crosses. NO tracer — he is not throwing anything, he IS the projectile, so a projectile streak reads wrong. leap: he vaults into the air and lands on the tile (animate.ts arcs + eases it), not a flat slide — a combat roll is also a path dash but stays grounded, so leap is opt-in. The impact lands as he crosses the victim's tile (choreograph.timeDashImpacts).",
+        "tracer": "none",
+        "leap": true
       }
     }
   }
