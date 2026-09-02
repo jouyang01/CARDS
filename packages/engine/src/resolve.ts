@@ -2766,6 +2766,15 @@ interface Mover {
    * time the walk-back needs it.
    */
   origin: Vec2;
+  /**
+   * MOVE-REROUTE: the movement cost this unit was allowed to spend, so a
+   * re-route can ask what is *left* after the squares already walked. Held on the
+   * mover because `movementBudget` is read once, before the phase, and a Slow
+   * landing later must not retroactively change what was already paid for.
+   */
+  budget: number;
+  /** MOVE-REROUTE: whether this mover has already spent its one alternate route. */
+  rerouted: boolean;
 }
 
 function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: ReadonlySet<string>, events: TurnEvent[], trapHits: TrapHits): void {
@@ -2802,7 +2811,9 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
     // Re-clamp by *cost* (a Blast-phase Slow may have shrunk the budget since the
     // path was validated in Prep); diagonals cost 1/2/1/2… (MV3).
     const path = pathWithinBudget(plan.movePath, plan.unit.pos, budget);
-    if (path.length > 0) movers.push({ unit: plan.unit, path, halted: false, origin: { ...plan.unit.pos } });
+    if (path.length > 0) {
+      movers.push({ unit: plan.unit, path, halted: false, origin: { ...plan.unit.pos }, budget, rerouted: false });
+    }
   }
 
   // CLASH-AR (a): one collector for the whole Move phase — normal movers and
@@ -2830,14 +2841,23 @@ function runMove(draft: GameState, board: Board, plans: UnitPlan[], displaced: R
   resolvePowerups(draft, board, events, coEntries);
 }
 
-/** Advance a set of movers on one shared clock until every path is spent. */
+/**
+ * Advance a set of movers on one shared clock until every path is spent.
+ *
+ * The bound is re-read every step rather than measured once, because
+ * MOVE-REROUTE can make a path longer than it was when the phase began: a unit
+ * that goes the long way round has more squares to walk than the one it planned.
+ * Termination does not rest on the bound — each mover re-routes at most once and
+ * every route is finite — so this only has to notice the growth.
+ */
 function runSteps(
   draft: GameState, board: Board, movers: Mover[], events: TurnEvent[], trapHits: TrapHits,
   coEntries?: VoidedClaims,
 ): void {
   if (movers.length === 0) return;
-  const maxLen = Math.max(...movers.map((m) => m.path.length));
-  for (let step = 0; step < maxLen; step++) stepMovers(draft, board, movers, step, events, trapHits, coEntries);
+  for (let step = 0; step < Math.max(...movers.map((m) => m.path.length)); step++) {
+    stepMovers(draft, board, movers, step, events, trapHits, coEntries);
+  }
 }
 
 /**
@@ -2890,7 +2910,12 @@ function planChases(
       to: { x: pursuit.goal.x, y: pursuit.goal.y },
       seen: pursuit.seen,
     });
-    if (pursuit.path.length > 0) chasers.push({ unit: chaser, path: pursuit.path, halted: false, origin: { ...chaser.pos } });
+    if (pursuit.path.length > 0) {
+      chasers.push({
+        unit: chaser, path: pursuit.path, halted: false, origin: { ...chaser.pos },
+        budget: movementBudget(chaser, false), rerouted: false,
+      });
+    }
   }
   return chasers;
 }
@@ -3323,6 +3348,83 @@ function cancelMove(movers: readonly Mover[], m: Mover, events: TurnEvent[]): vo
 }
 
 /**
+ * MOVE-REROUTE — **a blocked mover goes around, if it can still afford to.**
+ *
+ * Owner Dev Note (2026-09-02): *"If movement path is blocked, the character
+ * should try alternate pathing to get to the spot if there is enough movement
+ * points to get there."*
+ *
+ * This amends the standing ruling that *"a blocked/contested unit stops for the
+ * rest of the phase (remaining path dropped)"* (edge-cases, contested square).
+ * The stop is what the player sees when somebody steps into the corridor they
+ * planned through: the route was legal against the board they planned on, and
+ * the turn is simultaneous, so being cut off is nobody's mistake. Halting on the
+ * spot spends the whole Move phase on one square of progress.
+ *
+ * Four things make this bounded and deterministic rather than a second
+ * pathfinder loose in the middle of a simultaneous phase:
+ *
+ *   • **The destination is the one the player asked for** — the last square of
+ *     the path, never a nearer consolation. "Get to the spot" is the note's
+ *     phrase, and a unit that quietly settles somewhere else is the bug MOVE1
+ *     already ruled against at planning time.
+ *   • **The budget is what is left**, measured from the squares actually walked.
+ *     A long way round that does not fit is not taken, which is the note's *"if
+ *     there is enough movement points"* exactly.
+ *   • **Every occupied square is a wall for the re-route.** The original path was
+ *     allowed to bank on an ally moving out of the way (the pass-through
+ *     affordance); a re-route may not, because it is being computed precisely
+ *     because that bet failed, and one that failed again would leave the unit
+ *     worse off than halting. It also makes the new route walkable against the
+ *     board as it stands rather than as it might become.
+ *   • **Once per phase.** Without a cap two units can block each other's fresh
+ *     routes turn and turn about, each re-routing forever without moving, and the
+ *     step clock would never run out. One attempt is what "try alternate pathing"
+ *     asks for and it terminates by construction.
+ *
+ * The step in which the re-route happens is spent standing still — the unit's
+ * own square is spliced in as that step — so the clock advances, other movers see
+ * a board that has not shifted under them mid-step, and the new route starts on
+ * the step after. Hesitating for a beat is also the honest picture of what
+ * happened.
+ *
+ * Returns whether a new route was taken; `false` leaves the caller to halt as
+ * before, which is still the answer when the spot is unreachable, unaffordable,
+ * or somebody is standing on it.
+ */
+function rerouteMover(draft: GameState, board: Board, m: Mover, step: number): boolean {
+  if (m.rerouted) return false;
+  const destination = m.path.at(-1);
+  if (destination === undefined || vecEq(m.unit.pos, destination)) return false;
+  // Cost already paid: the squares this mover actually walked, which is its path
+  // up to the step it is stuck on. `stepCost` is the engine's own metric, so the
+  // budget a re-route is measured against is the one `validateMovePath` charged.
+  let spent = 0;
+  let prev = m.origin;
+  for (const p of m.path.slice(0, step)) {
+    spent += stepCost(p.x - prev.x, p.y - prev.y);
+    prev = p;
+  }
+  const left = m.budget - spent;
+  if (left <= 0) return false;
+
+  const blocked = new Set(
+    draft.units.filter((u) => u.alive && u.unitId !== m.unit.unitId).map((u) => vecKey(u.pos)),
+  );
+  const route = reconstructPath(
+    reachableSquares(board, draft, m.unit, left, blocked), m.unit.pos, destination,
+  );
+  if (route === null || route.length === 0) return false;
+
+  m.rerouted = true;
+  // The stall square keeps `step` meaning what it meant: index `step` is where
+  // the unit is (it moves nowhere this step) and the new route begins at
+  // `step + 1`. Splicing without it would skip the route's first square.
+  m.path = [...m.path.slice(0, step), { x: m.unit.pos.x, y: m.unit.pos.y }, ...route];
+  return true;
+}
+
+/**
  * Resolve one simultaneous step across all still-moving units.
  *
  * **CLASH-AR — only an ender is stopped.** The rule used to be "a contested
@@ -3421,7 +3523,7 @@ function stepMovers(
       entered.set(k, [...(entered.get(k) ?? []), m]);
       events.push({ type: 'moveStep', unitId: m.unit.unitId, from, to: m.unit.pos });
       if (triggerTrapsOnEntry(draft, board, m.unit, events, trapHits, 'move')) m.halted = true; // died or halted → rest of the path dropped
-    } else {
+    } else if (!rerouteMover(draft, board, m, step)) {
       m.halted = true; // stops on the last square before the contested/blocked one
       bounceOffOccupied(draft, movers, m, step, events);
     }
