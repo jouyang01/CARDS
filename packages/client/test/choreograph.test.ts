@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTurn, type AbilityDef, type CharacterDef, type GameState, type MapDef, type Roster, type TurnEvent, type UnitOrders } from '@cards/engine';
-import { BEAT, ROLL_TILE_BEATS, choreograph, markLeaps, straightenDashes, timeDashImpacts, timelineLength, type Cue } from '../src/choreograph.js';
+import { BEAT, LEAP_TILE_BEATS, ROLL_TILE_BEATS, choreograph, markLeaps, straightenDashes, timeDashImpacts, timelineLength, type Cue } from '../src/choreograph.js';
 
 /**
  * A2 — the choreographer is asserted on ORDERING and CONCURRENCY only, never on
@@ -373,6 +373,17 @@ describe('LEAP (markLeaps flags a vaulting charge, not a grounded roll)', () => 
     const out = markLeaps(cues, new Set(['ram_charge']));
     expect(moveLeap(out, 'a'), 'the charge vaults').toBe(true);
     expect(moveLeap(out, 'b'), 'the roll stays grounded').toBeUndefined();
+  });
+
+  it('paces the vault (leg and clip) quicker than a roll', () => {
+    // A 3-tile charge: the leg and the fitted clip both take 3*LEAP_TILE_BEATS,
+    // shorter than the 3*ROLL_TILE_BEATS a grounded roll would — a launch, not a drift.
+    const out = markLeaps(dashMove('a', 'ram_charge'), new Set(['ram_charge']));
+    const leg = out.find((c) => c.kind === 'move' && c.unitId === 'a') as Extract<Cue, { kind: 'move' }>;
+    const ability = out.find((c) => c.kind === 'ability' && c.unitId === 'a') as Extract<Cue, { kind: 'ability' }>;
+    expect(leg.dur).toBeCloseTo(3 * LEAP_TILE_BEATS, 6);
+    expect(ability.dur).toBeCloseTo(3 * LEAP_TILE_BEATS, 6);
+    expect(LEAP_TILE_BEATS).toBeLessThan(ROLL_TILE_BEATS);
   });
 
   it('leaves a charger\'s ordinary Move-phase step unmarked', () => {

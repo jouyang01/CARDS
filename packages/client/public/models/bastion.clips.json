@@ -1,6 +1,6 @@
 {
   "id": "bastion",
-  "version": "39bbc8dba84d",
+  "version": "1277c55b28e8",
   "clips": [
     "bulwark",
     "chain_hook",
@@ -19,32 +19,32 @@
         "LeftArm": [
           0,
           0,
-          -18
+          -12
         ],
         "RightArm": [
           0,
           0,
-          18
+          12
         ],
         "LeftForeArm": [
           0,
           0,
-          -25
+          -15
         ],
         "RightForeArm": [
           0,
           0,
-          25
+          15
         ],
         "LeftUpLeg": [
           0,
           0,
-          13
+          26
         ],
         "RightUpLeg": [
           0,
           0,
-          -13
+          -26
         ]
       }
     },

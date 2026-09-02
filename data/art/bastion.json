@@ -37,12 +37,12 @@
     "_poseNote": "pose = per-clip constant LOCAL bone-rotation fix (build_glb.py apply_pose_adjust), degrees [x,y,z]. Owner feedback on the Mixamo idle: forearms crossed to the centreline and the stance was too wide (crossed the tile). Only the idle clip is adjusted — arms spread outward, leg stance narrowed; run/punch/hook are untouched.",
     "pose": {
       "idle": {
-        "LeftArm": [0, 0, -18],
-        "RightArm": [0, 0, 18],
-        "LeftForeArm": [0, 0, -25],
-        "RightForeArm": [0, 0, 25],
-        "LeftUpLeg": [0, 0, 13],
-        "RightUpLeg": [0, 0, -13]
+        "LeftArm": [0, 0, -12],
+        "RightArm": [0, 0, 12],
+        "LeftForeArm": [0, 0, -15],
+        "RightForeArm": [0, 0, 15],
+        "LeftUpLeg": [0, 0, 26],
+        "RightUpLeg": [0, 0, -26]
       }
     },
     "idle": "idle",

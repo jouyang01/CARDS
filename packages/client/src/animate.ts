@@ -262,15 +262,17 @@ function poseFrom(legs: readonly Leg[], t: number): UnitPose | undefined {
           lift: 0,
         };
       }
-      // A LEAP vaults: ease the horizontal so it launches and settles onto the
-      // tile (no residual linear slide — the ends are at zero velocity and the
-      // clip is fitted to the same duration, so body and ground arrive together),
-      // and lift it on a sine arc that peaks mid-flight and touches down at 1.
+      // A LEAP vaults: BALLISTIC horizontal (constant speed, `p` linear) under a
+      // sine height arc, so the trajectory is one clean symmetric parabola rather
+      // than the easeInOut float that read as a glide — a thrown body does not
+      // slow down at the top of its arc. No slide: the charge clip is in-place
+      // (carries no ground travel) and fitted to the leg, so it lands exactly as
+      // `p` reaches 1. `markLeaps` also paces the leg quicker than a roll, so the
+      // vault is a launch, not a drift.
       if (leg.kind === 'move' && leg.leap === true) {
-        const u = ease(p);
         return {
-          x: leg.from.x + (leg.to.x - leg.from.x) * u,
-          y: leg.from.y + (leg.to.y - leg.from.y) * u,
+          x: leg.from.x + (leg.to.x - leg.from.x) * p,
+          y: leg.from.y + (leg.to.y - leg.from.y) * p,
           lift: Math.sin(Math.PI * p) * LEAP_ARC,
         };
       }
