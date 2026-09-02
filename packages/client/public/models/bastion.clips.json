@@ -1,6 +1,6 @@
 {
   "id": "bastion",
-  "version": "1277c55b28e8",
+  "version": "80726cdead69",
   "clips": [
     "bulwark",
     "chain_hook",
@@ -39,12 +39,12 @@
         "LeftUpLeg": [
           0,
           0,
-          26
+          -22
         ],
         "RightUpLeg": [
           0,
           0,
-          -26
+          22
         ]
       }
     },

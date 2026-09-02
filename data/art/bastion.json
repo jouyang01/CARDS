@@ -41,8 +41,8 @@
         "RightArm": [0, 0, 12],
         "LeftForeArm": [0, 0, -15],
         "RightForeArm": [0, 0, 15],
-        "LeftUpLeg": [0, 0, 26],
-        "RightUpLeg": [0, 0, -26]
+        "LeftUpLeg": [0, 0, -22],
+        "RightUpLeg": [0, 0, 22]
       }
     },
     "idle": "idle",
