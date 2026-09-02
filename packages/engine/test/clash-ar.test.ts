@@ -256,7 +256,7 @@ describe('CLASH-CORNER: a blocked passer never rests on an occupied square', () 
       blocker({ x: 6, y: X.y }),
       makeUnit('e', 1, { x: X.x, y: 3 }, { characterId: 'test-char' }),
     ]);
-    const { state } = run(
+    const { state, events } = run(
       s,
       [{ unitId: 'a', movePath: east(3, 7) }],
       [{ unitId: 'e', movePath: south(3, 5) }],
@@ -265,11 +265,24 @@ describe('CLASH-CORNER: a blocked passer never rests on an occupied square', () 
     expect(at(state, 'e'), 'the ender rested, as rule 3 says').toEqual(X);
     expect(at(state, 'a'), 'and the wedged passer fell back off it').toEqual({ x: 4, y: X.y });
     expect(new Set(rests(state)).size, 'nobody is stacked').toBe(rests(state).length);
+    // The bounce is a step in the log, so playback animates it rather than
+    // snapping the model back. (Asserted here since MOVE-REROUTE: this is the
+    // case with no budget for a detour, so it is the one that still bounces —
+    // `a` walks 4 to reach (7,5) and the cheapest way around `b` costs more.)
+    const mine = events.filter((e) => e.type === 'moveStep' && e.unitId === 'a');
+    expect(mine.at(-1)).toMatchObject({ from: X, to: { x: 4, y: X.y } });
   });
 
-  it('falls back along its own path, never onto a square it did not walk', () => {
-    // The retreat is one square, not a scatter: (4,5) is where `a` last stood
-    // alone, and it is on `a`'s own route.
+  it('MOVE-REROUTE: with the points to spare, the wedged passer goes AROUND', () => {
+    // Re-specced 2026-09-02. This asserted the bounce — `a` wedged against `b`
+    // and fell back to (4,5) — until the owner ruled: *"If movement path is
+    // blocked, the character should try alternate pathing to get to the spot if
+    // there is enough movement points to get there."* Sprinting, `a` has 8 to
+    // spend on a 5-cost walk, so the detour around `b` fits and it arrives.
+    //
+    // The bounce itself is not lost: the case above is the same wedge on a Move
+    // budget that cannot afford any way round, and it still falls back one
+    // square along its own path.
     const s = makeState([
       makeUnit('a', 0, { x: 2, y: X.y }, { characterId: 'test-char' }),
       blocker({ x: 6, y: X.y }),
@@ -284,11 +297,14 @@ describe('CLASH-CORNER: a blocked passer never rests on an occupied square', () 
       [{ unitId: 'e', movePath: south(2, 5) }],
       BARE,
     );
-    expect(at(state, 'a')).toEqual({ x: 4, y: X.y });
-    // The bounce is a step in the log, so playback animates it rather than
-    // snapping the model back.
+    expect(at(state, 'a'), 'it reached the square it was sent to').toEqual({ x: 7, y: X.y });
+    // …and it went round rather than through: `b` never vacated (6,5), so a
+    // route that still crossed it would have been the old wedge again.
     const mine = events.filter((e) => e.type === 'moveStep' && e.unitId === 'a');
-    expect(mine.at(-1)).toMatchObject({ from: X, to: { x: 4, y: X.y } });
+    expect(mine.some((e) => e.type === 'moveStep' && e.to.x === 6 && e.to.y === X.y),
+      'nobody walks through the blocker').toBe(false);
+    expect(at(state, 'b'), 'which is still standing there').toEqual({ x: 6, y: X.y });
+    expect(new Set(rests(state)).size, 'nobody is stacked').toBe(rests(state).length);
   });
 
   it('a BODY is the only thing that can wedge a passer — terrain never gets the chance', () => {

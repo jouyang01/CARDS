@@ -8446,3 +8446,111 @@ total would be the honest one.
     the rebuild worked around) is untouched — no Blender in this environment.
   - **Bola damage 24 vs an earlier Dev Note's 12** remains unresolved. The range
     is now 5; the damage question is still a balance call nobody has made.
+
+---
+
+## 2026-09-02 — MOVE-REROUTE: a blocked mover goes around
+
+### The ruling this amends, and why the amendment is the smaller change
+
+`docs/design/edge-cases.md` rules that a blocked or contested unit *"stops for
+the rest of the phase (remaining path dropped)"*. The owner's Dev Note —
+*"If movement path is blocked, the character should try alternate pathing to get
+to the spot if there is enough movement points to get there"* — replaces the
+"remaining path dropped" half. **The ruling is not edited here: `docs/design/` is
+the Designer's file.** Flagged for whoever owns it; the resolver and this entry
+are the record until then.
+
+Worth saying why the old rule was defensible and is now not. It falls out of the
+simultaneous model: nobody can plan against a board that has not happened yet, so
+being cut off is nobody's mistake, and stopping is the conservative reading. What
+makes it wrong in play is the asymmetry — the *planner* already routes around
+every obstacle it can see (`pathTo` is a Dijkstra over the same board the engine
+walks), so the player's experience is that pathing is clever right up until the
+moment it matters, and then a unit walks two squares and stands still for the
+rest of the phase.
+
+### The four constraints, and why each is load-bearing
+
+Adding a pathfind to the middle of a simultaneous phase is the risky part, not
+the re-route itself. Each of these was chosen against a specific way it could go
+wrong, and each is mutation-checked in `move-reroute.test.ts`:
+
+**1. The destination is the square the player asked for.** Not the nearest
+reachable one. MOVE1 already grants that forgiveness at *planning* time, where
+the player watches it happen and can click again; granting it silently at
+resolution would put a unit somewhere nobody chose, which is the same defect
+MOVE1 exists to prevent, moved somewhere the player cannot see it.
+
+**2. The budget is what is LEFT.** Measured from the squares actually walked,
+not the allowance the unit started with. This is the note's own condition, and it
+is the half that a plausible implementation gets wrong: checking the detour
+against the full budget lets a unit that has already spent three points walk a
+six-point way round on a five-point remainder. The test that pins it is built so
+the two answers differ — halt at (4,5) versus arrive at (8,5) — because a test
+where both readings agree proves nothing.
+
+**3. Every occupied square is a wall for the re-route, not just the blocker.**
+The original path was allowed to bank on an ally stepping aside — that is the
+pass-through affordance, and it is right for a plan. A re-route may not, because
+it is being computed *precisely because that bet failed*, and a second route that
+bet again would leave the unit worse off than halting. It also means the new
+route is walkable against the board as it stands rather than as it might become,
+which is what makes one attempt enough.
+
+**4. Once per phase.** The termination guard. Two units can cut each other's
+fresh routes turn and turn about — each re-routing, neither moving, the step
+clock never running out because `runSteps` re-reads its bound to notice a longer
+path. One attempt is what "try alternate pathing" asks for and it terminates by
+construction. **Not directly tested**, and that is stated rather than hidden: the
+setup needed to make a *second* block land on the re-routed path at the right
+step is contrived enough that the test would pin the contrivance rather than the
+rule. What is tested is the property the cap exists for — the phase terminates,
+resolves identically twice, and leaves nobody stacked.
+
+**And one consequence worth naming.** The step on which a unit re-routes is spent
+standing still: its own square is spliced into the path as that step. That keeps
+the step clock honest (other movers see a board that did not shift under them
+mid-step) and makes the index arithmetic trivial, and it is also the truthful
+picture — the unit hesitated. It costs the unit a beat of the phase but no
+movement points.
+
+### Applied to chasers too, for free
+
+`runSteps` is shared by ordinary movers and CHASE1's pursuers, so a chaser cut
+off mid-pursuit re-routes on the same terms. That is consistent rather than
+deliberate scope: a chase is a walk like any other, and CHASE-COLLIDE already
+made a chaser treat bodies as walls when it plans, which is exactly what the
+re-route does when it replans.
+
+## Open Questions for the Analyzer — 2026-09-02
+
+### Open Question 12 — the edge-case ruling now disagrees with the resolver
+
+`docs/design/edge-cases.md`'s contested-square entry still ends *"A
+blocked/contested unit stops for the rest of the phase (remaining path
+dropped)"*. The first clause holds; the second no longer does. Left unedited
+because the file is the Designer's, but it is the kind of drift that gets read as
+truth six sessions from now. The replacement sentence, if it helps: *a blocked
+unit re-routes once to its intended square within the movement it has left,
+treating every occupied square as a wall, and halts where it stood if no such
+route exists*.
+
+### Open Question 13 — the playback does not tell the player a re-route happened
+
+A re-routed unit walks a path nobody drew. The `moveStep` events carry it, so the
+animation is correct and the board is never a surprise — but the *reason* is
+invisible: from the stands it looks like the route the player clicked was never
+the route at all. Atlas Reactor draws the blocked step. Worth a tell (the halted
+square flashing, or the abandoned tail drawn faint) before a player concludes the
+router is unpredictable; not filed as an item because the right treatment is a
+design call.
+
+### Carried over, still open
+
+  - **Session 21 OQ #7** (Blast pacing after FOLLOW-THROUGH) is still unplayed.
+  - **Session 21 OQ #8** (`build_glb.py --in-place` still produces the corruption
+    the Wisp rebuild worked around) is untouched — no Blender in this environment.
+  - **Session 22 OQ #10** (energy income is up and nothing re-balances around it)
+    and **OQ #11** (no energy preview, so per-hit is invisible before you fire).
+  - **Bola damage 24 vs an earlier Dev Note's 12** remains an unmade balance call.
