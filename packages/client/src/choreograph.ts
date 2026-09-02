@@ -52,6 +52,13 @@ export const BEAT = 1;
  * staircase the engine paths it along.
  */
 export const ROLL_TILE_BEATS = 0.6;
+/**
+ * Beats per tile for a LEAP (Bastion's Flying Charge) — quicker than a roll so the
+ * vault launches and lands rather than drifting. A slow airborne cross reads as a
+ * glide; ~0.42 makes it a committed hop. Tune here (with `LEAP_ARC` in animate.ts)
+ * for more or less air-time.
+ */
+export const LEAP_TILE_BEATS = 0.42;
 
 interface CueBase {
   /** Start time, in beats from the top of the turn. */
@@ -532,18 +539,37 @@ export function timeDashImpacts(cues: readonly Cue[]): Cue[] {
  */
 export function markLeaps(cues: readonly Cue[], leapAbilityIds: ReadonlySet<string>): Cue[] {
   if (leapAbilityIds.size === 0) return [...cues];
-  const legByCharger = new Map<string, { t: number; dur: number }>();
+  const cheb = (a: Vec2, b: Vec2): number => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
+  const win = new Map<string, { t: number; dur: number }>();
   for (const a of cues) {
     if (a.kind === 'ability' && a.phase === 'dash' && leapAbilityIds.has(a.abilityId)) {
-      legByCharger.set(a.unitId, { t: a.t, dur: a.dur });
+      win.set(a.unitId, { t: a.t, dur: a.dur });
     }
   }
-  if (legByCharger.size === 0) return [...cues];
+  if (win.size === 0) return [...cues];
+  // The vault's own duration, from each charger's straightened leg: quicker than a
+  // roll so it launches rather than drifts. Both the leg and the clip take it.
+  const leapDur = new Map<string, number>();
+  for (const c of cues) {
+    if (c.kind !== 'move' || c.teleport === true) continue;
+    const w = win.get(c.unitId);
+    if (w === undefined || c.t < w.t - 1e-6 || c.t >= w.t + w.dur + 1e-6) continue;
+    leapDur.set(c.unitId, Math.max(LEAP_TILE_BEATS, cheb(c.from, c.to) * LEAP_TILE_BEATS));
+  }
   return cues.map((c) => {
-    if (c.kind !== 'move' || c.teleport === true) return c;
-    const win = legByCharger.get(c.unitId);
-    if (win === undefined || c.t < win.t - 1e-6 || c.t >= win.t + win.dur + 1e-6) return c;
-    return { ...c, leap: true };
+    if (c.kind === 'move' && c.teleport !== true) {
+      const w = win.get(c.unitId);
+      const d = leapDur.get(c.unitId);
+      if (w !== undefined && d !== undefined && c.t >= w.t - 1e-6 && c.t < w.t + w.dur + 1e-6) {
+        return { ...c, leap: true, dur: d };
+      }
+    }
+    // Fit the charge clip to the same quicker vault so it plays as a launch.
+    if (c.kind === 'ability' && c.phase === 'dash' && leapAbilityIds.has(c.abilityId)) {
+      const d = leapDur.get(c.unitId);
+      if (d !== undefined) return { ...c, dur: d };
+    }
+    return c;
   });
 }
 
